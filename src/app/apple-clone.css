@@ -1,0 +1,631 @@
+/* ==========================================================================
+   www.apple.com/ clone — site/page scoped foundation
+   site: www-apple-com-736d3707 · page: root-8a5edab2
+
+   Everything here is either (a) a design token extracted from the target,
+   (b) an @font-face for the target's own SF Pro files, or (c) a rule that
+   Tailwind utilities cannot express (pseudo-element pills, SMIL-driven
+   chevrons, the dotnav progress animation).
+
+   All page rules are scoped under `.ac-root` so other routes are untouched.
+   ========================================================================== */
+
+@theme {
+  /* Apple's three hard breakpoints (see BEHAVIORS.md §7).
+     `am:` >=735px · `anav:` >=834px · `al:` >=1069px, plus max-* variants. */
+  --breakpoint-am: 735px;
+  --breakpoint-anav: 834px;
+  --breakpoint-al: 1069px;
+}
+
+/* ------------------------------------------------------------------ fonts */
+/* SF Pro Text / SF Pro Display — © Apple Inc., downloaded from the target
+   (public/sites/www-apple-com-736d3707/root-8a5edab2/fonts). Only the five
+   weights the homepage actually renders. */
+
+@font-face {
+  font-family: "SF Pro Text";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-text_regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "SF Pro Text";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-text_semibold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "SF Pro Display";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-display_regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "SF Pro Display";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-display_semibold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "SF Pro Display";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-display_bold.woff2") format("woff2");
+}
+
+/* ------------------------------------------------------------------ tokens */
+
+.ac-root {
+  /* colour */
+  --ac-text: rgb(29, 29, 31);
+  --ac-text-secondary: rgb(51, 51, 54);
+  --ac-text-grey: rgb(110, 110, 115);
+  --ac-text-invert: rgb(245, 245, 247);
+  --ac-text-muted-56: rgba(0, 0, 0, 0.56);
+  --ac-text-muted-72: rgba(0, 0, 0, 0.72);
+  --ac-text-muted-88: rgba(0, 0, 0, 0.88);
+  --ac-nav-link: rgba(0, 0, 0, 0.8);
+  --ac-link: rgb(0, 102, 204);
+  --ac-link-dark: rgb(41, 151, 255);
+  --ac-blue: rgb(0, 113, 227);
+  --ac-blue-hover: rgb(0, 118, 223);
+  --ac-bg-tile: rgb(245, 245, 247);
+  --ac-bg-flyout: rgb(250, 250, 252);
+  --ac-nav-bg: rgba(255, 255, 255, 0.8);
+  --ac-curtain: rgba(232, 232, 237, 0.4);
+  --ac-dotnav-control: rgba(210, 210, 215, 0.64);
+  --ac-dotnav-control-hover: rgba(223, 223, 227, 0.698);
+
+  /* type */
+  --ac-font-text: "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ac-font-display: "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ac-font-footer: "SF Pro Text", "Myriad Set Pro", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  /* motion */
+  --ac-ease: cubic-bezier(0.4, 0, 0.6, 1);
+
+  /* layout */
+  --ac-content-max: 1024px;
+  --ac-nav-height: 48px;
+  --ac-banner-height: 70px;
+
+  font-family: var(--ac-font-text);
+  font-size: 17px;
+  line-height: 25px;
+  letter-spacing: -0.374px;
+  color: var(--ac-text);
+  background: #fff;
+  /* the target renders with default smoothing, not -webkit-font-smoothing: antialiased */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+@media (min-width: 834px) {
+  .ac-root {
+    --ac-nav-height: 44px;
+  }
+}
+
+/* Element resets live in the base layer so Tailwind utilities still win. */
+@layer base {
+  .ac-root :where(h1, h2, h3, h4, p, ul, ol, li, figure) {
+    margin: 0;
+    padding: 0;
+  }
+
+  .ac-root :where(ul, ol) {
+    list-style: none;
+  }
+
+  .ac-root :where(a) {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+/* Screen-reader-only, matching the target's .visuallyhidden */
+.ac-visuallyhidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------ buttons */
+/* `all 0s` transition is deliberate: the target's buttons snap (BEHAVIORS §5). */
+
+.ac-button {
+  display: inline-block;
+  border-radius: 980px;
+  border: 1px solid transparent;
+  min-width: 26px;
+  font-family: var(--ac-font-text);
+  font-size: 17px;
+  line-height: 20.0002px;
+  letter-spacing: -0.374px;
+  padding: 11px 21px;
+  background: var(--ac-blue);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ac-button:hover {
+  background: var(--ac-blue-hover);
+}
+
+.ac-button-secondary {
+  background: transparent;
+  border-color: var(--ac-link);
+  color: var(--ac-link);
+}
+
+.ac-button-secondary:hover {
+  background: var(--ac-blue-hover);
+  border-color: transparent;
+  color: #fff;
+}
+
+.ac-theme-dark .ac-button-secondary {
+  border-color: var(--ac-link-dark);
+  color: var(--ac-link-dark);
+}
+
+.ac-theme-dark .ac-button-secondary:hover {
+  border-color: transparent;
+  color: #fff;
+}
+
+/* small variant used by the promo tiles */
+.ac-button-small {
+  font-size: 14px;
+  line-height: 18.0008px;
+  letter-spacing: -0.224px;
+  padding: 8px 15px;
+  min-width: 28px;
+}
+
+/* hero CTAs are small below 735px and full size above it */
+@media (min-width: 735px) {
+  .ac-button-hero {
+    font-size: 17px;
+    line-height: 20.0002px;
+    letter-spacing: -0.374px;
+    padding: 11px 21px;
+    min-width: 26px;
+  }
+}
+
+/* neutral pill on the entertainment cards */
+.ac-button-neutral {
+  background: var(--ac-bg-tile);
+  color: #000;
+  border-color: transparent;
+}
+
+.ac-button-neutral:hover {
+  background: #fff;
+}
+
+/* extra-small pill used by the small entertainment cards below 1069px */
+.ac-button-xsmall {
+  font-size: 12px;
+  line-height: 16.0005px;
+  letter-spacing: -0.12px;
+  padding: 3px 10px;
+  min-width: 28px;
+}
+
+@media (min-width: 1069px) {
+  /* large TV card pill grows to the full button size */
+  .ac-button-gallery-tv {
+    font-size: 17px;
+    line-height: 20.0002px;
+    letter-spacing: -0.374px;
+    padding: 11px 21px;
+    min-width: 26px;
+  }
+
+  /* small card pill grows to the small button size */
+  .ac-button-gallery-fam {
+    font-size: 14px;
+    line-height: 18.0008px;
+    letter-spacing: -0.224px;
+    padding: 8px 15px;
+  }
+}
+
+/* the genre prefix is separated from the description by a bullet */
+.ac-gallery-genre::after {
+  content: "•";
+  padding: 0 5.25px;
+}
+
+/* below 735px the genre takes its own centred line and drops the bullet */
+@media (max-width: 734px) {
+  .ac-gallery-genre {
+    display: block;
+  }
+
+  .ac-gallery-genre::after {
+    content: none;
+  }
+}
+
+/* ---------------------------------------------------------------- footnotes */
+
+/* Several tile subheads are capped so the copy wraps at a designed width, and
+   the cap changes per breakpoint (see data/tiles.ts subheadMaxWidth). */
+.ac-tile-subhead {
+  max-width: var(--ac-subhead-sm, none);
+}
+
+@media (min-width: 735px) {
+  .ac-tile-subhead {
+    max-width: var(--ac-subhead-md, none);
+  }
+}
+
+@media (min-width: 1069px) {
+  .ac-tile-subhead {
+    max-width: var(--ac-subhead-lg, none);
+  }
+}
+
+/* The asterisk is a fixed 14px glyph on the baseline (not a superscript); the
+   numbered footnote is a real <sup> that inherits the subhead's size. */
+.ac-footnote-glyph {
+  position: relative;
+  font-size: 14px;
+  line-height: 20.0003px;
+  vertical-align: baseline;
+}
+
+/* the target draws the numeral with OpenType numerator figures, keeping the
+   inherited 21px/19px font-size but rendering a small raised glyph */
+/* the target draws the numeral with OpenType numerator figures, keeping the
+   inherited 21px/19px font-size but rendering a small raised glyph */
+.ac-footnote-number {
+  position: relative;
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  font-feature-settings: "numr";
+}
+
+/* --------------------------------------------------------------- nav flyout */
+
+.ac-flyout {
+  overflow: hidden;
+  max-height: 812px;
+  transition: height 0.254s var(--ac-ease);
+}
+
+.ac-nav-link {
+  color: var(--ac-nav-link);
+  transition: color 0.32s var(--ac-ease);
+}
+
+.ac-nav-link:hover {
+  color: #000;
+}
+
+.ac-submenu-link {
+  color: var(--ac-text-secondary);
+  transition: color 0.32s var(--ac-ease);
+}
+
+/* elevated (24px) links do not change on hover; small ones go to black */
+.ac-submenu-link-small:hover {
+  color: #000;
+}
+
+.ac-curtain {
+  background: var(--ac-curtain);
+  backdrop-filter: blur(20px);
+  transition:
+    opacity 0.32s var(--ac-ease),
+    visibility 0.32s steps(1);
+}
+
+.ac-curtain[data-open="true"] {
+  transition:
+    opacity 0.32s var(--ac-ease),
+    visibility 0.32s steps(1, start);
+}
+
+/* search quick links */
+.ac-search-quicklink {
+  border-radius: 5px;
+  padding: 4px 8px;
+  color: var(--ac-text-secondary);
+  transition:
+    color 0.02s var(--ac-ease),
+    background-color 0.02s var(--ac-ease),
+    fill 0.02s var(--ac-ease);
+}
+
+.ac-search-quicklink:hover {
+  color: #000;
+  background-color: var(--ac-bg-tile);
+}
+
+/* --------------------------------------------------------- mobile drawer */
+
+.ac-drawer-content {
+  transition:
+    height 0.422s var(--ac-ease),
+    background 0.422s var(--ac-ease);
+}
+
+.ac-drawer-row {
+  font-family: var(--ac-font-display);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: 0px;
+  color: var(--ac-text-secondary);
+}
+
+.ac-menutrigger-bread {
+  position: absolute;
+  left: 50%;
+  width: 17px;
+  height: 1px;
+  background: var(--ac-nav-link);
+  transform: translateX(-50%);
+  transition:
+    transform 0.24s var(--ac-ease),
+    top 0.24s var(--ac-ease);
+}
+
+.ac-menutrigger-bread-top {
+  top: 21px;
+}
+
+.ac-menutrigger-bread-bottom {
+  top: 26px;
+}
+
+[data-menu-open="true"] .ac-menutrigger-bread-top {
+  top: 23.5px;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+[data-menu-open="true"] .ac-menutrigger-bread-bottom {
+  top: 23.5px;
+  transform: translateX(-50%) rotate(-45deg);
+}
+
+.ac-drawer-back {
+  transition:
+    opacity 0.24s var(--ac-ease),
+    transform 0.24s var(--ac-ease),
+    visibility 0.24s steps(1);
+}
+
+/* ------------------------------------------------------------------ dotnav */
+/* 8x8 pill that stretches to 32x8 when current; ::after fills over the dwell. */
+
+.ac-dot {
+  position: relative;
+  display: block;
+  width: 8px;
+  height: 8px;
+  padding: 8px;
+  box-sizing: content-box;
+  cursor: pointer;
+}
+
+.ac-dot::before,
+.ac-dot::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  height: 8px;
+  border-radius: 999px;
+  transition: width 0.25s linear;
+}
+
+.ac-dot::before {
+  width: 8px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.ac-dot::after {
+  width: 0;
+  background: #000;
+  opacity: 0;
+}
+
+.ac-dot:hover::before {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.ac-dot[data-current="true"] {
+  width: 32px;
+  cursor: default;
+}
+
+.ac-dot[data-current="true"]::before {
+  width: 32px;
+}
+
+.ac-dot[data-current="true"]::after {
+  opacity: 1;
+  animation: ac-dot-progress var(--ac-dot-duration, 4160ms) linear forwards;
+}
+
+.ac-dot[data-current="true"][data-paused="true"]::after {
+  animation-play-state: paused;
+}
+
+@keyframes ac-dot-progress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 32px;
+  }
+}
+
+.ac-dotnav-control {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--ac-dotnav-control);
+  color: rgba(0, 0, 0, 0.48);
+  transition: background-color 0.1s linear;
+}
+
+.ac-dotnav-control:hover {
+  background: var(--ac-dotnav-control-hover);
+  color: rgba(0, 0, 0, 0.72);
+}
+
+/* --------------------------------------------------------- gallery scrims */
+
+.ac-gallery-scrim-large {
+  background-image: radial-gradient(100% 33% at 0% 100%, rgba(0, 0, 0, 0.5) 0%, rgba(255, 255, 255, 0));
+}
+
+.ac-gallery-scrim-small {
+  background-image: linear-gradient(
+    rgba(29, 29, 31, 0.4) 0%,
+    rgba(29, 29, 31, 0) 70px,
+    rgba(29, 29, 31, 0) calc(100% - 70px),
+    rgba(29, 29, 31, 0.4) 100%
+  );
+}
+
+.ac-gallery-track {
+  transition: transform var(--ac-slide-duration, 1000ms) var(--ac-ease);
+}
+
+.ac-gallery-bottom-content {
+  transition: opacity 0.4s;
+}
+
+/* ------------------------------------------------------------------ footer */
+
+.ac-footer-link {
+  color: var(--ac-text-muted-56);
+}
+
+.ac-footer-link:hover {
+  text-decoration: underline;
+}
+
+.ac-footer-legal-link,
+.ac-footer-locale-link {
+  color: var(--ac-text-muted-72);
+}
+
+.ac-footer-legal-link:hover,
+.ac-footer-locale-link:hover {
+  text-decoration: underline;
+}
+
+/* 1x10 divider between the legal links; the last item has none */
+.ac-footer-legal-item {
+  position: relative;
+}
+
+.ac-footer-legal-item::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1px;
+  height: 10px;
+  margin: 3px 0;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.ac-footer-legal-item:last-child::after {
+  display: none;
+}
+
+/* the footnote block keeps the target's own markup: style it as a whole */
+.ac-sosumi {
+  color: var(--ac-text-muted-56);
+  font-size: 12px;
+  line-height: 16.0005px;
+  letter-spacing: -0.12px;
+}
+
+.ac-sosumi ul {
+  list-style: none;
+  padding: 0;
+}
+
+/* the numbered footnote keeps the target's decimal marker in a 17px gutter */
+.ac-sosumi ol {
+  list-style: decimal;
+  padding: 0 17px;
+}
+
+.ac-sosumi li {
+  padding-bottom: 9.6px;
+}
+
+.ac-sosumi small {
+  font-size: inherit;
+}
+
+.ac-sosumi a {
+  color: var(--ac-text-muted-72);
+  text-decoration: underline;
+}
+
+.ac-footer-shop a {
+  color: var(--ac-link);
+  text-decoration: underline;
+}
+
+.ac-footer-shop .nowrap {
+  white-space: nowrap;
+}
+
+/* Each accordion row carries a 1px hairline under its title below 834px. */
+@media (max-width: 833px) {
+  .ac-footer-section {
+    position: relative;
+  }
+
+  .ac-footer-section::after {
+    content: "";
+    position: absolute;
+    top: 36px;
+    right: 4px;
+    left: 4px;
+    height: 1px;
+    background: rgba(0, 0, 0, 0.16);
+  }
+}
+
+/* accordion chevron only rotates/animates below the nav breakpoint */
+.ac-footer-accordion-icon {
+  display: none;
+}
+
+@media (max-width: 833px) {
+  .ac-footer-accordion-icon {
+    display: inline-flex;
+  }
+}
