@@ -34,9 +34,9 @@ export function AppleHomePage() {
           bannerVisible ? 'pt-[183px] anav:pt-[114px]' : 'pt-[48px] anav:pt-[44px]',
         )}
       >
-        <HeroSection />
-        <PromoSection />
         <EndlessEntertainmentGallery />
+        <PromoSection />
+        <HeroSection />
       </main>
 
       <GlobalFooter />

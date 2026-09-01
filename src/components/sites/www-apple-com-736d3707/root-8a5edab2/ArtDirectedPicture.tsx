@@ -36,7 +36,7 @@ export function ArtDirectedPicture({
         <source
           key={`${source.media}|${source.src}`}
           media={source.media}
-          srcSet={source.src2x ? `${source.src}, ${source.src2x} 2x` : source.src}
+          srcSet={source.src2x ? `${source.src} 1x, ${source.src2x} 2x` : source.src}
         />
       ))}
       <img

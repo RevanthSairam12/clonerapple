@@ -147,7 +147,6 @@
 }
 
 /* ------------------------------------------------------------------ buttons */
-/* `all 0s` transition is deliberate: the target's buttons snap (BEHAVIORS §5). */
 
 .ac-button {
   display: inline-block;
@@ -162,6 +161,10 @@
   background: var(--ac-blue);
   color: #fff;
   cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .ac-button:hover {

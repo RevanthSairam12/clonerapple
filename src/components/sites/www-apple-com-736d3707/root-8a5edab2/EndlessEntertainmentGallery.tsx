@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+/** Convert a relative Apple path to a full URL so links navigate correctly. */
+const appleUrl = (href: string) =>
+  href.startsWith('http') ? href : `https://www.apple.com${href}`;
+
 import { cn } from '@/lib/utils';
 
 import { ArtDirectedPicture } from './ArtDirectedPicture';
@@ -16,25 +20,33 @@ function CardShell({
   offset,
   children,
   className,
+  mounted,
 }: {
   item: GalleryItem;
   active: boolean;
   offset: number;
   children: React.ReactNode;
   className?: string;
+  mounted?: boolean;
 }) {
+  const isVisible = Math.abs(offset) <= 2;
   return (
     <li
       id={item.id}
       role="tabpanel"
       aria-hidden={!active}
-      className="ac-gallery-track absolute inset-0 flex justify-center"
-      style={{ transform: `translateX(${offset * 100}%)` }}
+      className={cn('absolute inset-0 flex justify-center', mounted && 'ac-gallery-track')}
+      style={{
+        transform: `translateX(${offset * 100}%)`,
+        visibility: isVisible ? 'visible' : 'hidden',
+      }}
     >
       <a
-        href={item.href}
+        href={appleUrl(item.href)}
         aria-label={item.ariaLabel}
         tabIndex={active ? 0 : -1}
+        target="_blank"
+        rel="noopener noreferrer"
         className={cn('relative block overflow-hidden bg-black', className)}
       >
         {children}
@@ -44,9 +56,9 @@ function CardShell({
 }
 
 /** Large Apple TV card: art + radial scrim + pill and caption along the bottom. */
-function TvCard({ item, active, offset }: { item: GalleryItem; active: boolean; offset: number }) {
+function TvCard({ item, active, offset, mounted }: { item: GalleryItem; active: boolean; offset: number; mounted: boolean }) {
   return (
-    <CardShell item={item} active={active} offset={offset} className="h-full w-[275px] am:w-[688px] al:w-[930px]">
+    <CardShell item={item} active={active} offset={offset} mounted={mounted} className="h-full w-[275px] am:w-[688px] al:w-[930px]">
       {item.background ? (
         <ArtDirectedPicture
           data={item.background}
@@ -96,11 +108,11 @@ function TvCard({ item, active, offset }: { item: GalleryItem; active: boolean; 
  * 13px top margin); above it the art sits left of the caption and the pill moves
  * to the right of the bottom row with the logo in the top-right corner.
  */
-function FamCard({ item, active, offset }: { item: GalleryItem; active: boolean; offset: number }) {
+function FamCard({ item, active, offset, mounted }: { item: GalleryItem; active: boolean; offset: number; mounted: boolean }) {
   const logo = item.logo ? GALLERY_LOGOS[item.logo] : null;
 
   return (
-    <CardShell item={item} active={active} offset={offset} className="h-full w-[188px] al:w-[417px]">
+    <CardShell item={item} active={active} offset={offset} mounted={mounted} className="h-full w-[188px] al:w-[417px]">
       {item.musicLayout ? (
         <div className="absolute inset-0 flex flex-col items-center bg-black al:flex-row">
           {item.background ? (
@@ -163,7 +175,10 @@ export function EndlessEntertainmentGallery() {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [dotWindow, setDotWindow] = useState(GALLERY_META.visibleDots);
+  const [mounted, setMounted] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     const apply = () => setDotWindow(window.matchMedia('(max-width: 480px)').matches ? 5 : GALLERY_META.visibleDots);
@@ -183,35 +198,43 @@ export function EndlessEntertainmentGallery() {
   const half = Math.floor(dotWindow / 2);
   const start = Math.min(Math.max(0, index - half), Math.max(0, COUNT - dotWindow));
 
+  /** Wrap offset so items circulate instead of leaving gaps at edges. */
+  const circularOffset = (i: number) => {
+    const raw = ((i - index) % COUNT + COUNT) % COUNT;
+    return raw <= Math.floor(COUNT / 2) ? raw : raw - COUNT;
+  };
+
   return (
-    <section className="bg-[#f5f5f7]">
-      <div className="flex flex-col pt-[36px] al:pt-[53px]">
-        <div className="mb-[17px] al:mb-[26px]">
-          <h2
-            className="text-center text-[32px] leading-[36px] font-semibold tracking-[0.128px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]"
-            style={{ fontFamily: 'var(--ac-font-display)' }}
-          >
-            {GALLERY_META.headline}
-          </h2>
-        </div>
+    <section className={cn('bg-[#f5f5f7]', !GALLERY_META.headline && 'mt-[20px] al:mt-[30px]')}>
+      <div className={cn('flex flex-col', GALLERY_META.headline && 'pt-[36px] al:pt-[53px]')}>
+        {GALLERY_META.headline ? (
+          <div className="mb-[17px] al:mb-[26px]">
+            <h2
+              className="text-center text-[32px] leading-[36px] font-semibold tracking-[0.128px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]"
+              style={{ fontFamily: 'var(--ac-font-display)' }}
+            >
+              {GALLERY_META.headline}
+            </h2>
+          </div>
+        ) : null}
 
         {/* #tv-media-gallery */}
-        <div className="relative h-[496px] am:h-[367px] al:h-[523px]">
+        <div className="relative h-[496px] am:h-[367px] al:h-[523px] overflow-hidden">
           <ul
             role="tablist"
             className="relative mx-auto h-full w-[288px] am:w-[701px] al:w-[943px]"
           >
             {TV_GALLERY_ITEMS.map((item, i) => (
-              <TvCard key={item.id} item={item} active={i === index} offset={i - index} />
+              <TvCard key={item.id} item={item} active={i === index} offset={circularOffset(i)} mounted={mounted} />
             ))}
           </ul>
         </div>
 
         {/* #fam-media-gallery */}
-        <div className="relative box-content h-[254px] pt-[13px] al:h-[234px]">
+        <div className="relative box-content h-[254px] pt-[13px] al:h-[234px] overflow-hidden">
           <ul className="relative mx-auto h-full w-[201px] al:w-[430px]">
             {FAM_GALLERY_ITEMS.map((item, i) => (
-              <FamCard key={item.id} item={item} active={i === index} offset={i - index} />
+              <FamCard key={item.id} item={item} active={i === index} offset={circularOffset(i)} mounted={mounted} />
             ))}
           </ul>
         </div>

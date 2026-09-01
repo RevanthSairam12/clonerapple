@@ -8,6 +8,10 @@ import type { SubheadSegment, Tile } from './data/tiles';
 /** `none` keeps the cap unset at that breakpoint instead of inheriting a wider one. */
 const px = (value: number | null) => (value === null ? 'none' : `${value}px`);
 
+/** Convert a relative Apple path to a full URL so links navigate correctly. */
+const appleUrl = (href: string) =>
+  href.startsWith('http') ? href : `https://www.apple.com${href}`;
+
 function Subhead({ segments }: { segments: SubheadSegment[] }) {
   return (
     <>
@@ -133,8 +137,10 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
           {tile.ctas.map((cta) => (
             <a
               key={`${cta.label}|${cta.href}`}
-              href={cta.href}
+              href={appleUrl(cta.href)}
               aria-label={cta.ariaLabel ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
               className={cn(
                 'ac-button relative z-4',
                 cta.variant === 'secondary' && 'ac-button-secondary',
@@ -150,7 +156,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
       </div>
 
       {/* a.tile-link — covers the tile; the CTAs sit above it */}
-      <a href={tile.href} className="absolute inset-0 z-3" aria-hidden="true" tabIndex={-1} />
+      <a href={appleUrl(tile.href)} target="_blank" rel="noopener noreferrer" className="absolute inset-0 z-2" aria-hidden="true" tabIndex={-1} />
     </div>
   );
 }

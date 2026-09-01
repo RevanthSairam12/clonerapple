@@ -298,36 +298,12 @@ export const PROMO_TILES: Tile[] = [
     "index": 0,
     "theme": "light",
     "href": "/ipad-air/",
-    "headline": null,
-    "headlineLogo": {
-      "sources": [
-        {
-          "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_small.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_small_2x.png"
-        },
-        {
-          "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_medium.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_medium_2x.png"
-        },
-        {
-          "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_large.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_large_2x.png"
-        }
-      ],
-      "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_ipad_air__dqdj4ni03quu_large_2x.png",
-        "alt": "",
-        "width": 144,
-        "height": 49
-      }
-    },
+    "headline": "Power Adapter & Cable",
+    "headlineLogo": null,
     "subhead": [
       {
         "kind": "text",
-        "value": "Now supercharged by M4."
+        "value": "20W USB-C Power Adapter"
       }
     ],
     "subheadMaxWidth": {
@@ -353,22 +329,22 @@ export const PROMO_TILES: Tile[] = [
       "sources": [
         {
           "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_small.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_small_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/6_promo_adapter_small.jpg.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/3_promo_adapter_small_2x.jpg.jpg"
         },
         {
           "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_medium.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_medium_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/4_promo_adapter_medium.jpg.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/5_promo_adapter_medium_2x.jpg.jpg"
         },
         {
           "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_large.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_large_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/2_promo_adapter_large_2x.jpg.jpg"
         }
       ],
       "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_air_m4__bgcv7t286k8y_large_2x.jpg",
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/2_promo_adapter_large_2x.jpg.jpg",
         "alt": "iPad Air models floating, back exterior, single-lens camera, front exterior, rounded corners, black display bezel",
         "width": 1262,
         "height": 580
@@ -381,12 +357,12 @@ export const PROMO_TILES: Tile[] = [
     "index": 1,
     "theme": "dark",
     "href": "/macbook-pro/",
-    "headline": "MacBook Pro",
+    "headline": "Wired Earphones",
     "headlineLogo": null,
     "subhead": [
       {
         "kind": "text",
-        "value": "Now with M5, M5 Pro, and M5 Max."
+        "value": "Zero charging. Just pure sound."
       }
     ],
     "subheadMaxWidth": {
@@ -412,22 +388,22 @@ export const PROMO_TILES: Tile[] = [
       "sources": [
         {
           "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_small.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_small_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_small.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_small_2x.jpg"
         },
         {
           "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_medium.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_medium_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_medium.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_medium_2x.jpg"
         },
         {
           "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_large.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_large_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg"
         }
       ],
       "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_macbook_pro__c9td9w1mc8ia_large_2x.jpg",
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large.jpg",
         "alt": "MacBook Pro positioned into the shape of a V, referencing the M5 chip family",
         "width": 1262,
         "height": 580
@@ -440,36 +416,12 @@ export const PROMO_TILES: Tile[] = [
     "index": 2,
     "theme": "light",
     "href": "/apple-watch-series-11/",
-    "headline": null,
-    "headlineLogo": {
-      "sources": [
-        {
-          "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_small.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_small_2x.png"
-        },
-        {
-          "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_medium.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_medium_2x.png"
-        },
-        {
-          "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_large.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_large_2x.png"
-        }
-      ],
-      "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_apple_watch_series_11__5r9c4l119tuy_large_2x.png",
-        "alt": "",
-        "width": 296,
-        "height": 49
-      }
-    },
+    "headline": "Cable & Plug Case",
+    "headlineLogo": null,
     "subhead": [
       {
         "kind": "text",
-        "value": "The ultimate way to watch your health."
+        "value": "No frayed ends. Just solid defense."
       }
     ],
     "subheadMaxWidth": {
@@ -495,22 +447,22 @@ export const PROMO_TILES: Tile[] = [
       "sources": [
         {
           "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_small.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_small_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_small.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_small_2x.jpg"
         },
         {
           "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_medium.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_medium_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_medium.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_medium_2x.jpg"
         },
         {
           "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_large.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_large_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_large.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_large_2x.jpg"
         }
       ],
       "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_apple_watch_series_11__gnlwqxe1jlu2_large_2x.jpg",
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/chargercover_large.jpg",
         "alt": "Apple Watch Series 11, rose gold color, aluminum case, sleep score, right side exterior, Digital Crown, microphone, side button, starlight Sport Band",
         "width": 1262,
         "height": 580
@@ -523,18 +475,18 @@ export const PROMO_TILES: Tile[] = [
     "index": 3,
     "theme": "dark",
     "href": "/ipad-pro/",
-    "headline": "iPad Pro",
+    "headline": "Case for AirPods",
     "headlineLogo": null,
     "subhead": [
       {
         "kind": "text",
-        "value": "Advanced AI performance and game-changing capabilities."
+        "value": "One favorite style. Endless possibilities."
       }
     ],
     "subheadMaxWidth": {
-      "sm": 270,
-      "md": 275,
-      "lg": 295
+      "sm": null,
+      "md": null,
+      "lg": null
     },
     "ctas": [
       {
@@ -554,22 +506,22 @@ export const PROMO_TILES: Tile[] = [
       "sources": [
         {
           "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_small.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_small_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_small.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_small_2x.jpg"
         },
         {
           "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_medium.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_medium_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_medium.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_medium_2x.jpg"
         },
         {
           "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_large.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_large_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg"
         }
       ],
       "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_ipad_pro__emtduc920o02_large_2x.jpg",
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large.jpg",
         "alt": "Two iPad Pro devices, front exterior, portrait orientation, black display bezel, display showing multicolored, curved line art, side exterior, thin profile, volume-up button, volume-down button, raised Pro Camera System",
         "width": 1262,
         "height": 580
