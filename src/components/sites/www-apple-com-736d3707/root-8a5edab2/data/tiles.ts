@@ -303,7 +303,7 @@ export const PROMO_TILES: Tile[] = [
     "subhead": [
       {
         "kind": "text",
-        "value": "20W USB-C Power Adapter"
+        "value": "Fast charge. Anywhere you go."
       }
     ],
     "subheadMaxWidth": {
@@ -313,15 +313,15 @@ export const PROMO_TILES: Tile[] = [
     },
     "ctas": [
       {
-        "label": "Learn more",
+        "label": "Find your power",
         "href": "/ipad-air/",
-        "ariaLabel": "Learn more, iPad Air",
+        "ariaLabel": "Find your power, Adapter",
         "variant": "primary"
       },
       {
-        "label": "Buy",
+        "label": "Grab Charger",
         "href": "/us/shop/goto/buy_ipad/ipad_air",
-        "ariaLabel": "Buy, iPad Air",
+        "ariaLabel": "Grab Charger, Adapter",
         "variant": "secondary"
       }
     ],
@@ -372,15 +372,15 @@ export const PROMO_TILES: Tile[] = [
     },
     "ctas": [
       {
-        "label": "Learn more",
+        "label": "Explore audio",
         "href": "/macbook-pro/",
-        "ariaLabel": "Learn more, MacBook Pro",
+        "ariaLabel": "Explore audio, Wired Earphones",
         "variant": "primary"
       },
       {
-        "label": "Buy",
+        "label": "Get yours",
         "href": "/us/shop/goto/buy_mac/macbook_pro",
-        "ariaLabel": "Buy, MacBook Pro",
+        "ariaLabel": "Get yours, Wired Earphones",
         "variant": "secondary"
       }
     ],
@@ -431,15 +431,15 @@ export const PROMO_TILES: Tile[] = [
     },
     "ctas": [
       {
-        "label": "Learn more",
+        "label": "End tangles",
         "href": "/apple-watch-series-11/",
-        "ariaLabel": "Learn more, Apple Watch Series 11",
+        "ariaLabel": "End tangles, Cable & Plug Case",
         "variant": "primary"
       },
       {
-        "label": "Buy",
+        "label": "Get the set",
         "href": "/us/shop/goto/buy_watch/apple_watch_series_11",
-        "ariaLabel": "Buy, Apple Watch Series 11",
+        "ariaLabel": "Get the set, Cable & Plug Case",
         "variant": "secondary"
       }
     ],
@@ -490,15 +490,15 @@ export const PROMO_TILES: Tile[] = [
     },
     "ctas": [
       {
-        "label": "Learn more",
+        "label": "Pick a finish",
         "href": "/ipad-pro/",
-        "ariaLabel": "Learn more, iPad Pro",
+        "ariaLabel": "Pick a finish, Case for AirPods",
         "variant": "primary"
       },
       {
-        "label": "Buy",
+        "label": "Wrap your case",
         "href": "/us/shop/goto/ipad_pro/select",
-        "ariaLabel": "Buy, iPad Pro",
+        "ariaLabel": "Wrap your case, Case for AirPods",
         "variant": "secondary"
       }
     ],
@@ -533,76 +533,54 @@ export const PROMO_TILES: Tile[] = [
     "group": "promo",
     "index": 4,
     "theme": "light",
-    "href": "/us/shop/goto/trade_in",
-    "headline": null,
-    "headlineLogo": {
-      "sources": [
-        {
-          "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_small.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_small_2x.png"
-        },
-        {
-          "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_medium.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_medium_2x.png"
-        },
-        {
-          "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_large.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_large_2x.png"
-        }
-      ],
-      "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_logo_iphone_tradein__bb7assu7ubo2_large_2x.png",
-        "alt": "",
-        "width": 156,
-        "height": 49
-      }
-    },
+    "href": "/us/shop/goto/iphone/accessories",
+    "headline": "Mobile Cases",
+    "headlineLogo": null,
     "subhead": [
       {
         "kind": "text",
-        "value": "Get up to $205–$720 in credit when you trade in iPhone 13 or higher."
-      },
-      {
-        "kind": "footnoteNumber",
-        "value": "1"
+        "value": "Slim profile. Serious protection."
       }
     ],
     "subheadMaxWidth": {
-      "sm": 220,
-      "md": 245,
-      "lg": 265
+      "sm": 320,
+      "md": 360,
+      "lg": 400
     },
     "ctas": [
       {
-        "label": "Get your estimate",
-        "href": "/us/shop/goto/trade_in",
-        "ariaLabel": "Get your estimate",
+        "label": "Explore cases",
+        "href": "/us/shop/goto/iphone/accessories",
+        "ariaLabel": "Explore cases",
         "variant": "primary"
+      },
+      {
+        "label": "Shop now",
+        "href": "/us/shop/goto/buy_accessories",
+        "ariaLabel": "Shop now",
+        "variant": "secondary"
       }
     ],
     "image": {
       "sources": [
         {
           "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_small.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_small_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/4_iph_case_small.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/6_iph_case_small_2x.jpg"
         },
         {
           "media": "(max-width:1068px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_medium.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_medium_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/3_iph_case_medium.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/2_iph_case_medium_2x.jpg"
         },
         {
           "media": "(min-width:0px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_large.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_large_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_iph_case_large.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/5_iph_case_large_2x.jpg"
         }
       ],
       "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/promo_iphone_tradein__e4hrjxmgmf0i_large_2x.jpg",
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/5_iph_case_large_2x.jpg",
         "alt": "Side-by-side, hand holding iPhone 13 in silicon case with stickers on back exterior, trade-in with hand holding new iPhone box for iPhone 17 Pro",
         "width": 1262,
         "height": 580

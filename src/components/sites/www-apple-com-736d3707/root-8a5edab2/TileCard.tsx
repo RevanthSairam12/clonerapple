@@ -58,7 +58,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
   return (
     <div
       className={cn(
-        'relative flex justify-center overflow-clip',
+        'relative flex justify-center overflow-clip rounded-[0.01rem]',
         isDark ? 'ac-theme-dark bg-black' : 'bg-[#f5f5f7]',
         isHero
           ? 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[650px] am:pt-[61px] am:pb-[69px] al:min-h-[692px] al:pt-[56px] al:pb-[63px]'

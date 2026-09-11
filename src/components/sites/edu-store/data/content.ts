@@ -1,4 +1,4 @@
-F// Content data for Apple Education Store India clone
+// Content data for Apple Education Store India clone
 // Source: https://www.apple.com/in-edu/store
 
 export const HERO = {

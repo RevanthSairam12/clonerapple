@@ -104,6 +104,32 @@ export function GlobalNav({ bannerVisible }: { bannerVisible: boolean }) {
               </a>
             </li>
 
+            {/* Brand switcher — OPPO/Android */}
+            <li className={cn('anav:grow-0', drawerOpen && 'invisible anav:visible')}>
+              <a
+                href="/android"
+                aria-label="Switch to OPPO Android"
+                className="ac-nav-link flex h-[48px] items-center px-[8px] anav:h-[44px] anav:px-[8px]"
+                style={{ gap: '4px' }}
+              >
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#006D2E',
+                  color: '#fff',
+                  fontSize: '8px',
+                  fontWeight: 800,
+                  letterSpacing: '1.5px',
+                  padding: '3px 6px',
+                  borderRadius: '3px',
+                  lineHeight: 1,
+                }}>
+                  OPPO
+                </span>
+              </a>
+            </li>
+
             {/* product items — desktop only */}
             {NAV_ITEMS.map((item) => {
               const isOpen = activeMenu === item.key;

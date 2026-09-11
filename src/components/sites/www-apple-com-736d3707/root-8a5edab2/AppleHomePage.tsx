@@ -10,6 +10,7 @@ import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5eda
 import { HeroSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection';
 import { LocaleBanner } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/LocaleBanner';
 import { PromoSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/PromoSection';
+import { Ribbon } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/Ribbon';
 
 /**
  * Page shell for the www.apple.com/ clone.
@@ -20,7 +21,7 @@ import { PromoSection } from '@/components/sites/www-apple-com-736d3707/root-8a5
  * exactly as measured on the target.
  */
 export function AppleHomePage() {
-  const [bannerVisible, setBannerVisible] = useState(true);
+  const [bannerVisible, setBannerVisible] = useState(false);
 
   return (
     <div className="ac-root">
@@ -34,6 +35,7 @@ export function AppleHomePage() {
           bannerVisible ? 'pt-[183px] anav:pt-[114px]' : 'pt-[48px] anav:pt-[44px]',
         )}
       >
+        <Ribbon />
         <EndlessEntertainmentGallery />
         <PromoSection />
         <HeroSection />

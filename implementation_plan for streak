@@ -1,0 +1,156 @@
+# 🔥 Daily Streak System — Snapchat-Style Engagement
+
+A daily activity streak shown in the Navbar, designed to create a habit loop and make users come back every day.
+
+## Core Concept
+
+The streak tracks whether a user **did something meaningful** on the platform each day. Any qualifying action counts — they don't need to do all of them, just **one per day** to maintain the streak. Like Snapchat, the streak counter is always visible in the header with a fire emoji and animated effects.
+
+### What Counts as Activity (any 1 per day)
+- Viewed a job listing
+- Applied to a job / saved a job
+- Generated a resume or cover letter
+- Ran an ATS scan or deep evaluation
+- Completed a skill quiz in Aptitude Arena
+- Logged a daily commit activity
+- Updated their profile or settings
+- Used any AI tool
+- Searched HR contacts
+
+---
+
+## Proposed Changes
+
+### 1. Database — New Migration
+
+#### [NEW] `supabase/migrations/48_user_streaks.sql`
+
+```sql
+CREATE TABLE IF NOT EXISTS user_streaks (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  current_streak  INTEGER NOT NULL DEFAULT 0,
+  longest_streak  INTEGER NOT NULL DEFAULT 0,
+  last_active_date DATE,                     -- last date user performed a qualifying action
+  total_active_days INTEGER NOT NULL DEFAULT 0,
+  streak_level    TEXT NOT NULL DEFAULT 'spark'
+                  CHECK (streak_level IN ('spark','flame','blaze','inferno','legendary')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_streaks_user ON user_streaks(user_id);
+```
+
+**Streak levels** (visual tiers):
+| Days | Level | Emoji | Effect |
+|------|-------|-------|--------|
+| 1–2 | Spark | 🔥 | Static fire |
+| 3–6 | Flame | 🔥 | Gentle pulse |
+| 7–13 | Blaze | 🔥🔥 | Orange glow + pulse |
+| 14–29 | Inferno | 🔥🔥🔥 | Red/orange gradient + shimmer |
+| 30+ | Legendary | ⚡🔥 | Rainbow shimmer + particle-like glow |
+
+---
+
+### 2. API Layer
+
+#### [NEW] `app/api/streak/route.ts`
+
+- **GET**: Returns the current user's streak data (current_streak, longest_streak, streak_level, last_active_date)
+- **POST**: Records today's activity → bumps streak if `last_active_date` was yesterday, resets to 1 if it was earlier, no-ops if already today. Called automatically from the Navbar on page load and from key actions.
+
+Logic:
+```
+if last_active_date == today       → no-op (already active today)
+if last_active_date == yesterday   → current_streak += 1, update level
+if last_active_date < yesterday    → current_streak = 1 (streak broken, restart)
+if last_active_date is null        → current_streak = 1 (first ever)
+
+Always update: longest_streak = max(longest_streak, current_streak)
+```
+
+---
+
+### 3. Frontend Components
+
+#### [NEW] `components/streak/StreakBadge.tsx`
+
+A compact badge that sits in the Navbar's right-side items (between PlanBadge and NotificationBell). Design:
+
+- **Fire emoji** + **number** (e.g. `🔥 7`)
+- **Animated glow** that intensifies with streak level
+- **Hover tooltip** showing: "7-day streak! Your longest: 23 days"
+- **Pulse animation** when streak just increased
+- CSS `@keyframes` glow/pulse based on the streak level tier
+- On click: opens a small popover with streak details + milestone badges
+
+#### [MODIFY] `components/layout/Navbar.tsx`
+
+- Import and render `<StreakBadge />` between the PlanBadge and NotificationBell
+- The badge auto-fetches streak on mount and POSTs a "heartbeat" to record today's activity
+
+---
+
+### 4. Auto-Tracking (Silent Heartbeat)
+
+The streak is bumped automatically when the user simply **visits the dashboard**. No extra clicks needed. The `<StreakBadge>` component itself will:
+
+1. `GET /api/streak` on mount → display current streak
+2. `POST /api/streak` on mount → record today's visit (idempotent)
+
+This means any page load inside the dashboard layout counts. Passive and frictionless.
+
+---
+
+## 🧠 Additional Ideas to Make It Cooler
+
+Here are more engagement ideas beyond the basic streak, organized by difficulty:
+
+### Easy Wins (can ship now)
+1. **Streak Milestones Toast** — Show a celebratory toast notification when hitting 3, 7, 14, 30, 60, 100 days
+2. **Streak Freeze** (Pro feature) — Let Pro users "freeze" their streak for 1 day/week if they miss, like Duolingo
+3. **"Streak at Risk" Warning** — If it's past 8PM and user hasn't visited today, show a gentle reminder notification
+
+### Medium Effort
+4. **Weekly Streak Summary Email** — "You're on a 12-day streak! Here's what you accomplished this week"
+5. **Streak Leaderboard** — Anonymous leaderboard showing longest streaks ("You're in the top 5% of Offizzy users!")
+6. **Achievement Badges** — Permanent badges for milestones: "Week Warrior (7 days)", "Monthly Master (30 days)", "Century Club (100 days)" — displayed on profile
+
+### High Impact
+7. **Daily Challenge System** — Each day, show 1 micro-challenge: "Apply to 1 job today" or "Review 3 job matches" — completing it gives bonus streak XP
+8. **Streak-Gated Rewards** — Unlock premium features temporarily at streak milestones (e.g., 7-day streak → 1 free deep evaluation)
+9. **Streak Sharing** — "Share your streak on LinkedIn" with a branded card showing their stats
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Where to place the streak badge in the Navbar?**
+> Current Navbar order: `[Logo] .... [PlanBadge] [NotificationBell] [Avatar] [Name] [Sign out]`
+> I'm proposing to add it between PlanBadge and NotificationBell: `[PlanBadge] [🔥 Streak] [NotificationBell]`
+
+> [!NOTE]
+> **Streak is mode-agnostic** — works for both Fresher and Professional modes. Every user gets it.
+
+## Open Questions
+
+1. **Should the streak also show in the Sidebar** (e.g. a small fire icon next to the logo), or Navbar only?
+2. **Should we implement Streak Freeze for Pro users** right away, or keep it simple for V1?
+3. From the "Additional Ideas" list above — which ones excite you most? I can include 1-2 in V1.
+
+## Verification Plan
+
+### Automated Tests
+- Visit dashboard → verify GET returns streak 0 for new user
+- POST streak → verify streak increments to 1
+- POST again same day → verify no double-count
+- Simulate "yesterday" last_active_date → verify streak increments
+- Simulate "2 days ago" → verify streak resets to 1
+
+### Manual Verification
+- Open dashboard → see 🔥 badge appear in Navbar with animation
+- Hover → see tooltip with streak info
+- Refresh page → streak should not double-increment
+- Check different streak levels render different visual effects
