@@ -93,6 +93,8 @@
 
   /* motion */
   --ac-ease: cubic-bezier(0.4, 0, 0.6, 1);
+  --ac-gallery-duration: 650ms;
+  --ac-gallery-ease: cubic-bezier(0.25, 1, 0.5, 1);
 
   /* layout */
   --ac-content-max: 1024px;
@@ -517,7 +519,9 @@
 }
 
 .ac-gallery-track {
-  transition: transform var(--ac-slide-duration, 1000ms) var(--ac-ease);
+  transition: transform var(--ac-gallery-duration, 650ms) var(--ac-gallery-ease, cubic-bezier(0.25, 1, 0.5, 1)),
+              opacity var(--ac-gallery-duration, 650ms) var(--ac-gallery-ease, cubic-bezier(0.25, 1, 0.5, 1));
+  will-change: transform, opacity;
 }
 
 .ac-gallery-bottom-content {
@@ -632,3 +636,19 @@
     display: inline-flex;
   }
 }
+
+/* -------------------------------------------------- promo marquee animation */
+@keyframes promo-marquee {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-promo-marquee {
+  animation: promo-marquee 32s linear infinite;
+  will-change: transform;
+}
+

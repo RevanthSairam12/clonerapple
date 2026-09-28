@@ -8,6 +8,8 @@ import { APPLE_LOGO, NAV_ITEMS, NAV_MENUS, SEARCH_PANEL, type NavWordmark } from
 import { BagIcon, DrawerBackIcon, DrawerChevronIcon, SearchIcon } from './icons';
 import { NavFlyoutGroups } from './NavFlyoutGroups';
 import { NavSearchPanel } from './NavSearchPanel';
+import { mergeNavItems, type NavLabelsOverride } from './admin-overrides';
+import { FloatingBrandSwitcher } from '@/components/common/FloatingBrandSwitcher';
 
 const NAV_HEIGHT_DESKTOP = 44;
 const SEARCH_KEY = '__search__';
@@ -39,7 +41,8 @@ function Wordmark({ mark, className }: { mark: NavWordmark; className?: string }
  * animates over 254ms, curtain fades in over 320ms). Below 834px the bar shows a
  * hamburger that expands the whole nav into a full-height drawer.
  */
-export function GlobalNav({ bannerVisible }: { bannerVisible: boolean }) {
+export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; labels?: NavLabelsOverride }) {
+  const NAV_ITEMS_RESOLVED = mergeNavItems(NAV_ITEMS, labels);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMenu, setDrawerMenu] = useState<string | null>(null);
@@ -95,43 +98,20 @@ export function GlobalNav({ bannerVisible }: { bannerVisible: boolean }) {
           <ul className="flex h-[48px] justify-between pr-[48px] anav:-mx-[8px] anav:h-[44px] anav:pr-0">
             <li className={cn('grow anav:grow-0', drawerOpen && 'invisible anav:visible')}>
               <a
-                href={APPLE_LOGO.href}
-                aria-label={APPLE_LOGO.label}
-                className="ac-nav-link flex h-[48px] items-center px-[16px] anav:h-[44px] anav:px-[8px]"
+                href="/"
+                aria-label="Gadzio"
+                className="ac-nav-link flex h-[48px] items-center px-[16px] anav:h-[44px] anav:px-[8px] transition-opacity duration-200 hover:opacity-75"
               >
-                <Wordmark mark={APPLE_LOGO.compact} className="anav:hidden" />
-                <Wordmark mark={APPLE_LOGO.regular} className="hidden anav:block" />
-              </a>
-            </li>
-
-            {/* Brand switcher — OPPO/Android */}
-            <li className={cn('anav:grow-0', drawerOpen && 'invisible anav:visible')}>
-              <a
-                href="/android"
-                aria-label="Switch to OPPO Android"
-                className="ac-nav-link flex h-[48px] items-center px-[8px] anav:h-[44px] anav:px-[8px]"
-                style={{ gap: '4px' }}
-              >
-                <span style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: '#006D2E',
-                  color: '#fff',
-                  fontSize: '8px',
-                  fontWeight: 800,
-                  letterSpacing: '1.5px',
-                  padding: '3px 6px',
-                  borderRadius: '3px',
-                  lineHeight: 1,
-                }}>
-                  OPPO
-                </span>
+                <img
+                  src="/gadzio_logo.png"
+                  alt="Gadzio"
+                  className="h-[22px] anav:h-[19px] w-auto max-w-[90px] object-contain select-none"
+                />
               </a>
             </li>
 
             {/* product items — desktop only */}
-            {NAV_ITEMS.map((item) => {
+            {NAV_ITEMS_RESOLVED.map((item) => {
               const isOpen = activeMenu === item.key;
               return (
                 <li key={item.key} className="hidden anav:block">
@@ -143,7 +123,14 @@ export function GlobalNav({ bannerVisible }: { bannerVisible: boolean }) {
                     onClick={() => setActiveMenu(isOpen ? null : item.key)}
                     className="ac-nav-link flex h-[44px] cursor-pointer items-center px-[8px]"
                   >
-                    <Wordmark mark={item.wordmark} />
+                    {/* Items without a wordmark (added via the admin panel) show their label. */}
+                    {item.wordmark.paths.length > 0 ? (
+                      <Wordmark mark={item.wordmark} />
+                    ) : (
+                      <span style={{ fontSize: 12, fontWeight: 400, opacity: 0.8 }}>
+                        {item.label}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
@@ -207,7 +194,7 @@ export function GlobalNav({ bannerVisible }: { bannerVisible: boolean }) {
                 </div>
               ) : (
                 <ul className="pb-[84px]">
-                  {NAV_ITEMS.map((item, i) => (
+                  {NAV_ITEMS_RESOLVED.map((item, i) => (
                     <li key={item.key} className={cn('block', i === 0 && '-mt-[3px]')}>
                       <button
                         type="button"
@@ -279,6 +266,9 @@ export function GlobalNav({ bannerVisible }: { bannerVisible: boolean }) {
           curtainOpen ? 'visible opacity-100' : 'invisible opacity-0',
         )}
       />
+
+      {/* Floating Side Tab / Sticky Drawer for OPPO Android */}
+      <FloatingBrandSwitcher currentBrand="apple" />
     </>
   );
 }

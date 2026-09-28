@@ -1,3 +1,5 @@
+import type { OppoProductOverride } from './admin-overrides';
+
 interface ProductCard {
   title: string;
   titleSup?: string;
@@ -69,11 +71,34 @@ const PRODUCTS: ProductCard[] = [
   },
 ];
 
-export function OppoProductGrid() {
+export function OppoProductGrid({ items: overrides }: { items?: OppoProductOverride[] } = {}) {
+  // Override array length wins — an added card clones the last one (its
+  // placeholder styling carries over; the editor sets title/description).
+  const products = overrides
+    ? overrides.map((o, i) => {
+        const product = PRODUCTS[i] ?? PRODUCTS[PRODUCTS.length - 1];
+        // The admin editor edits descriptions as a newline-separated textarea.
+        const descs = o.descriptions;
+        return {
+          ...product,
+          title: o.title ?? product.title,
+          titleSup: o.titleSup ?? product.titleSup,
+          image: o.image ?? product.image,
+          descriptions: Array.isArray(descs)
+            ? descs
+            : typeof descs === 'string' && descs.length > 0
+              ? descs.split('\n').map((d) => d.trim()).filter(Boolean)
+              : product.descriptions,
+          learnHref: o.learnHref ?? product.learnHref,
+          buyHref: o.buyHref ?? product.buyHref,
+        };
+      })
+    : PRODUCTS;
+
   return (
     <section style={{ paddingBottom: '2px' }}>
       <div className="oppo-product-grid">
-        {PRODUCTS.map((product) => (
+        {products.map((product) => (
           <div key={product.title} className="oppo-product-card">
             <h3 className="oppo-product-card-title">
               {product.title}

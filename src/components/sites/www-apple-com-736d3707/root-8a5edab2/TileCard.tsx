@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 import { ArtDirectedPicture } from './ArtDirectedPicture';
+import { TileInfoTooltip } from './TileInfoTooltip';
 import type { SubheadSegment, Tile } from './data/tiles';
 
 /** `none` keeps the cap unset at that breakpoint instead of inheriting a wider one. */
@@ -59,7 +60,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
     <div
       className={cn(
         'relative flex justify-center overflow-clip rounded-[0.01rem]',
-        isDark ? 'ac-theme-dark bg-black' : 'bg-[#f5f5f7]',
+        isDark ? 'ac-theme-dark bg-black' : (tile.index === 0 && isHero ? 'bg-white' : 'bg-[#f5f5f7]'),
         isHero
           ? 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[650px] am:pt-[61px] am:pb-[69px] al:min-h-[692px] al:pt-[56px] al:pb-[63px]'
           : 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[490px] am:pt-[44px] am:pb-[48px] al:min-h-[580px] al:pt-[53px] al:pb-[60px]',
@@ -71,7 +72,11 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
           <ArtDirectedPicture
             data={tile.image}
             imgClassName="absolute left-1/2 h-full w-auto max-w-none -translate-x-1/2 object-cover"
-            imgStyle={{ objectPosition: isHero ? '50% 30%' : '50% 50%' }}
+            imgStyle={{
+              objectPosition: isHero
+                ? (tile.index === 0 ? '50% 100%' : (tile.index === 1 ? '50% 50%' : '50% 30%'))
+                : '50% 50%',
+            }}
             fetchPriority={priority ? 'high' : undefined}
             loading={priority ? 'eager' : 'lazy'}
           />
@@ -134,23 +139,28 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
               : 'mt-[11px] gap-x-[14px] am:mt-[12px]',
           )}
         >
-          {tile.ctas.map((cta) => (
-            <a
-              key={`${cta.label}|${cta.href}`}
-              href={appleUrl(cta.href)}
-              aria-label={cta.ariaLabel ?? undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(
-                'ac-button relative z-4',
-                cta.variant === 'secondary' && 'ac-button-secondary',
-                // hero buttons are small below 735px; promo buttons are always small
-                'ac-button-small',
-                isHero && 'ac-button-hero',
-              )}
-            >
-              {cta.label}
-            </a>
+          {tile.ctas.map((cta, i) => (
+            <div key={`${cta.label}|${cta.href}`} className="relative inline-flex items-center">
+              <a
+                href={appleUrl(cta.href)}
+                aria-label={cta.ariaLabel ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(
+                  'ac-button relative z-4',
+                  cta.variant === 'secondary' && 'ac-button-secondary',
+                  // hero buttons are small below 735px; promo buttons are always small
+                  'ac-button-small',
+                  isHero && 'ac-button-hero',
+                )}
+              >
+                {cta.label}
+              </a>
+              {/* Very small (i) icon nestled at the corner of the CTA button */}
+              {i === 0 && tile.infoTooltip ? (
+                <TileInfoTooltip text={tile.infoTooltip} />
+              ) : null}
+            </div>
           ))}
         </div>
       </div>

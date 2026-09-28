@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 
+import { FloatingBrandSwitcher } from '@/components/common/FloatingBrandSwitcher';
+import type { OppoNavOverride } from './admin-overrides';
+
 const NAV_LINKS_LEFT = [
   { label: 'Smartphones', href: '#' },
   { label: 'Tablets', href: '#' },
@@ -18,7 +21,22 @@ const NAV_LINKS_RIGHT = [
   { label: 'My OPPO', href: '#' },
 ];
 
-export function OppoNav() {
+function mergeLinks(
+  links: { label: string; href: string }[],
+  overrides: { label?: string; href?: string }[] | undefined,
+) {
+  if (!overrides) return links;
+  // Override array length wins — an added link defaults to a "#" placeholder.
+  return overrides.map((o, i) => {
+    const link = links[i] ?? { label: '', href: '#' };
+    return { ...link, label: o.label ?? link.label, href: o.href ?? link.href };
+  });
+}
+
+export function OppoNav({ content }: { content?: OppoNavOverride } = {}) {
+  const logoText = content?.logoText ?? 'OPPO';
+  const leftLinks = mergeLinks(NAV_LINKS_LEFT, content?.leftLinks);
+  const rightLinks = mergeLinks(NAV_LINKS_RIGHT, content?.rightLinks);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -26,36 +44,12 @@ export function OppoNav() {
       <div className="oppo-nav-inner">
         {/* Logo */}
         <a href="/android" className="oppo-nav-logo">
-          OPPO
-        </a>
-
-        {/* Brand switcher — Apple */}
-        <a
-          href="/"
-          aria-label="Switch to Apple"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: '16px',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            background: '#1d1d1f',
-            color: '#fff',
-            transition: 'opacity 0.2s',
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.8'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
-        >
-          <svg width="14" height="14" viewBox="0 0 814 1000" fill="currentColor">
-            <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57.8-155.5-127.4c-58.4-81.5-105.9-207.1-105.9-326.5C0 406.2 61 283.7 157.8 220c48.4-32.2 106.8-53.4 169.8-53.4 65.4 0 119.3 42.1 167.9 42.1 46.7 0 95.6-44.7 170.6-44.7 27.5 0 126.4 2.2 191.7 83.9l-69.7 93z" />
-          </svg>
+          {logoText}
         </a>
 
         {/* Desktop left links */}
         <div className="oppo-nav-links">
-          {NAV_LINKS_LEFT.map((link) => (
+          {leftLinks.map((link) => (
             <a key={link.label} href={link.href} className="oppo-nav-link">
               {link.label}
             </a>
@@ -63,7 +57,7 @@ export function OppoNav() {
 
           <div className="oppo-nav-separator" />
 
-          {NAV_LINKS_RIGHT.map((link) => (
+          {rightLinks.map((link) => (
             <a key={link.label} href={link.href} className="oppo-nav-link">
               {link.label}
             </a>
@@ -115,14 +109,17 @@ export function OppoNav() {
         </button>
       </div>
 
-      {/* Mobile menu */}
+      {/* Mobile menu — follows the merged desktop lists */}
       <div className="oppo-mobile-menu" data-open={mobileOpen}>
-        {[...NAV_LINKS_LEFT, ...NAV_LINKS_RIGHT].map((link) => (
+        {[...leftLinks, ...rightLinks].map((link) => (
           <a key={link.label} href={link.href} onClick={() => setMobileOpen(false)}>
             {link.label}
           </a>
         ))}
       </div>
+
+      {/* Floating Side Tab / Sticky Drawer for Gadzio Apple Store */}
+      <FloatingBrandSwitcher currentBrand="oppo" />
     </nav>
   );
 }

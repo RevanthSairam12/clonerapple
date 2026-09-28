@@ -2,6 +2,8 @@
 
 import { useRef } from 'react';
 
+import type { OppoExploreOverride } from './admin-overrides';
+
 interface ExploreCard {
   title: string;
   description: string;
@@ -36,7 +38,27 @@ const EXPLORE_CARDS: ExploreCard[] = [
   },
 ];
 
-export function OppoExploreCarousel() {
+export function OppoExploreCarousel({
+  heading = 'Explore OPPO',
+  items: overrides,
+}: {
+  heading?: string;
+  items?: OppoExploreOverride[];
+} = {}) {
+  // Override array length wins — an added card clones the last one.
+  const cards = overrides
+    ? overrides.map((o, i) => {
+        const card = EXPLORE_CARDS[i] ?? EXPLORE_CARDS[EXPLORE_CARDS.length - 1];
+        return {
+          ...card,
+          title: o.title ?? card.title,
+          description: o.description ?? card.description,
+          image: o.image ?? card.image,
+          href: o.href ?? card.href,
+        };
+      })
+    : EXPLORE_CARDS;
+
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: 'left' | 'right') => {
@@ -52,7 +74,7 @@ export function OppoExploreCarousel() {
     <section className="oppo-explore-section">
       <div className="oppo-explore-container">
         <div className="oppo-explore-header">
-          <h2 className="oppo-explore-title">Explore OPPO</h2>
+          <h2 className="oppo-explore-title">{heading}</h2>
           <div className="oppo-explore-controls">
             <button
               type="button"
@@ -78,7 +100,7 @@ export function OppoExploreCarousel() {
         </div>
 
         <div className="oppo-explore-track" ref={scrollRef}>
-          {EXPLORE_CARDS.map((card) => (
+          {cards.map((card) => (
             <a key={card.title} href={card.href || '#'} className="oppo-explore-card">
               <div className="oppo-explore-card-image">
                 <img

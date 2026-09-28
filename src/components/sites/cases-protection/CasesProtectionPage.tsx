@@ -8,6 +8,11 @@ import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5eda
 import { FilterSidebar } from './FilterSidebar';
 import { ProductGrid } from './ProductGrid';
 import { PRODUCTS, SORT_OPTIONS } from './data/products';
+import type {
+  CasesCategoryLinkOverride,
+  CasesPageHeaderOverride,
+  CasesProductOverride,
+} from './admin-overrides';
 
 const CATEGORY_LINKS = [
   { label: 'All Accessories', href: 'https://www.apple.com/in/shop/iphone/accessories' },
@@ -20,7 +25,52 @@ const CATEGORY_LINKS = [
   { label: 'Health & Fitness', href: 'https://www.apple.com/in/shop/iphone/accessories/health-fitness' },
 ];
 
-export function CasesProtectionPage() {
+/** Admin overrides; every field falls back to the hardcoded default. */
+export interface CasesProtectionOverrides {
+  categoryLinks?: CasesCategoryLinkOverride[];
+  header?: CasesPageHeaderOverride;
+  products?: CasesProductOverride[];
+}
+
+function mergeCategoryLinks(overrides: CasesCategoryLinkOverride[] | undefined) {
+  if (!overrides) return CATEGORY_LINKS;
+  // Override array length wins — an added link defaults to the placeholder.
+  return overrides.map((o, i) => {
+    const link = CATEGORY_LINKS[i] ?? { label: '', href: '#', active: false };
+    return { ...link, label: o.label ?? link.label, href: o.href ?? link.href };
+  });
+}
+
+function mergeProducts(overrides: CasesProductOverride[] | undefined) {
+  if (!overrides) return PRODUCTS;
+  // Override array length wins — an added product clones the last one (its
+  // filters/compatibility carry over; the editor sets name/price/image).
+  return overrides.map((o, i) => {
+    const product = PRODUCTS[i] ?? PRODUCTS[PRODUCTS.length - 1];
+    // The admin editor stores text inputs as strings; accept either shape.
+    const rawPrice = o.price;
+    const parsedPrice =
+      rawPrice === undefined || rawPrice === null || (rawPrice as unknown) === ''
+        ? product.price
+        : Number(rawPrice);
+    return {
+      ...product,
+      name: o.name ?? product.name,
+      subtitle: o.subtitle ?? product.subtitle,
+      price: Number.isFinite(parsedPrice) ? parsedPrice : product.price,
+      priceDisplay: o.priceDisplay ?? product.priceDisplay,
+      image: o.image ?? product.image,
+      badge: o.badge !== undefined ? (o.badge || undefined) : product.badge,
+      href: o.href ?? product.href,
+    };
+  });
+}
+
+export function CasesProtectionPage({ overrides }: { overrides?: CasesProtectionOverrides } = {}) {
+  const categoryLinks = mergeCategoryLinks(overrides?.categoryLinks);
+  const allProducts = mergeProducts(overrides?.products);
+  const pageTitle = overrides?.header?.title ?? 'Cases & Protection';
+  const sortLabel = overrides?.header?.sortLabel ?? 'Sort by';
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [selectedMaterials, setSelectedMaterials] = useState<string[]>([]);
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
@@ -43,7 +93,7 @@ export function CasesProtectionPage() {
   ];
 
   const filtered = useMemo(() => {
-    let out = PRODUCTS;
+    let out = allProducts;
 
     if (selectedModels.length > 0) {
       out = out.filter((p) => p.compatibility.some((c) => selectedModels.includes(c)));
@@ -60,7 +110,7 @@ export function CasesProtectionPage() {
     if (sortBy === 'newest') out = [...out].filter((p) => p.badge === 'New').concat(out.filter((p) => p.badge !== 'New'));
 
     return out;
-  }, [selectedModels, selectedMaterials, selectedBrands, sortBy]);
+  }, [allProducts, selectedModels, selectedMaterials, selectedBrands, sortBy]);
 
   return (
     <div className="cp-root ac-root">
@@ -70,7 +120,7 @@ export function CasesProtectionPage() {
       {/* ---- Category sub-nav ---- */}
       <nav className="cp-category-nav" aria-label="iPhone Accessories categories" style={{ marginTop: 44 }}>
         <div className="cp-category-nav-inner">
-          {CATEGORY_LINKS.map((link) => (
+          {categoryLinks.map((link) => (
             <a
               key={link.label}
               href={link.href}
@@ -121,7 +171,7 @@ export function CasesProtectionPage() {
           {/* Header row */}
           <div className="cp-content-header">
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 0, flexWrap: 'wrap' }}>
-              <h1 className="cp-page-title">Cases &amp; Protection</h1>
+              <h1 className="cp-page-title">{pageTitle}</h1>
               <span className="cp-product-count">({filtered.length} results)</span>
             </div>
 
@@ -139,7 +189,7 @@ export function CasesProtectionPage() {
                 Filter
               </button>
 
-              <span className="cp-sort-label">Sort by</span>
+              <span className="cp-sort-label">{sortLabel}</span>
               <select
                 className="cp-sort-select"
                 value={sortBy}

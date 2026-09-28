@@ -1,4 +1,13 @@
-export function OppoHotSale() {
+import type { OppoHotSaleOverride } from './admin-overrides';
+
+export function OppoHotSale({ content }: { content?: OppoHotSaleOverride } = {}) {
+  const badge = content?.badge ?? 'OPPO AI Phone';
+  const title = content?.title ?? 'OPPO Find X9s';
+  const tagline = content?.tagline ?? 'Your Story Matters.\nCreate with Find.';
+  const image = content?.image ?? '/sites/oppo-india/images/find_x9s.jpg';
+  const learnLabel = content?.learnLabel ?? 'Learn more';
+  const buyLabel = content?.buyLabel ?? 'Buy now';
+
   return (
     <section>
       <div className="oppo-section-header">
@@ -13,23 +22,27 @@ export function OppoHotSale() {
       <div className="oppo-hot-sale">
         <div className="oppo-hot-sale-card">
           <div className="oppo-hot-sale-info">
-            <span className="oppo-hero-badge">OPPO AI Phone</span>
+            <span className="oppo-hero-badge">{badge}</span>
             <h3 style={{ fontSize: '32px', fontWeight: 700, marginTop: '12px', color: '#1d1d1f' }}>
-              OPPO Find X9s
+              {title}
             </h3>
             <div className="oppo-hot-sale-tagline">
-              Your Story Matters.<br />
-              Create with Find.
+              {tagline.split('\n').map((line, i, arr) => (
+                <span key={i}>
+                  {line}
+                  {i < arr.length - 1 && <br />}
+                </span>
+              ))}
             </div>
             <div className="oppo-hot-sale-links">
-              <a href="#">Learn more</a>
-              <a href="#">Buy now</a>
+              <a href="#">{learnLabel}</a>
+              <a href="#">{buyLabel}</a>
             </div>
           </div>
           <div className="oppo-hot-sale-image">
             <img
-              src="/sites/oppo-india/images/find_x9s.jpg"
-              alt="OPPO Find X9s in three colors"
+              src={image}
+              alt={title}
             />
           </div>
         </div>

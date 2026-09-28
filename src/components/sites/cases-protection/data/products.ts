@@ -60,7 +60,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 5900,
     priceDisplay: '₹5,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MXYK3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17-silicone-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Storm Blue', hex: '#6b7f9e' },
@@ -82,7 +82,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 5900,
     priceDisplay: '₹5,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MYFD3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17pro-silicone-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Deep Blue', hex: '#2c4b6e' },
@@ -102,7 +102,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Clear',
     price: 4900,
     priceDisplay: '₹4,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MXYM3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17-clear-magsafe.jpg',
     colors: [
       { name: 'Clear', hex: '#e8e8ed' },
     ],
@@ -118,7 +118,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Clear',
     price: 4900,
     priceDisplay: '₹4,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MYFE3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
     colors: [
       { name: 'Clear', hex: '#e8e8ed' },
     ],
@@ -134,7 +134,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 7900,
     priceDisplay: '₹7,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MXYN3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17-finewoven-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Taupe', hex: '#8e7f6e' },
@@ -153,7 +153,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 7900,
     priceDisplay: '₹7,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MYFG3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17pro-finewoven-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Taupe', hex: '#8e7f6e' },
@@ -171,7 +171,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 5400,
     priceDisplay: '₹5,400.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1Q3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16-silicone-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Lake Green', hex: '#4a7c6a' },
@@ -191,7 +191,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 5400,
     priceDisplay: '₹5,400.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1C3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16pro-silicone-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Plum', hex: '#6b4f6a' },
@@ -210,7 +210,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Clear',
     price: 4400,
     priceDisplay: '₹4,400.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1T3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16-clear-magsafe.jpg',
     colors: [
       { name: 'Clear', hex: '#e8e8ed' },
     ],
@@ -225,7 +225,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Clear',
     price: 4400,
     priceDisplay: '₹4,400.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1G3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16pro-clear-magsafe.jpg',
     colors: [
       { name: 'Clear', hex: '#e8e8ed' },
     ],
@@ -240,7 +240,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 6900,
     priceDisplay: '₹6,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1R3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16-finewoven-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Taupe', hex: '#8e7f6e' },
@@ -259,7 +259,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 5900,
     priceDisplay: '₹5,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MYFF3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17pro-max-silicone.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Deep Blue', hex: '#2c4b6e' },
@@ -279,7 +279,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Storm Blue',
     price: 5900,
     priceDisplay: '₹5,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MXYL3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone17plus-silicone.jpg',
     colors: [
       { name: 'Storm Blue', hex: '#6b7f9e' },
       { name: 'Black', hex: '#1d1d1f' },
@@ -299,7 +299,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 5400,
     priceDisplay: '₹5,400.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1D3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16pro-max-silicone.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Plum', hex: '#6b4f6a' },
@@ -317,7 +317,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Denim',
     price: 5400,
     priceDisplay: '₹5,400.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MY1S3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1723512903505',
+    image: '/sites/cases-protection/images/iphone16plus-silicone-denim.jpg',
     colors: [
       { name: 'Denim', hex: '#4f6f8f' },
       { name: 'Black', hex: '#1d1d1f' },
@@ -337,7 +337,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 4900,
     priceDisplay: '₹4,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MT0X3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1694647474782',
+    image: '/sites/cases-protection/images/iphone15pro-silicone-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Winter Blue', hex: '#7fa8c0' },
@@ -357,7 +357,7 @@ export const PRODUCTS: Product[] = [
     subtitle: 'Black',
     price: 4900,
     priceDisplay: '₹4,900.00',
-    image: 'https://store.storeimages.cdn-apple.com/4668/as-images.apple.com/is/MT1K3?wid=600&hei=600&fmt=jpeg&qlt=90&.v=1694647474782',
+    image: '/sites/cases-protection/images/iphone15pro-max-silicone-black.jpg',
     colors: [
       { name: 'Black', hex: '#1d1d1f' },
       { name: 'Winter Blue', hex: '#7fa8c0' },

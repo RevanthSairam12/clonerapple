@@ -11,8 +11,52 @@ import { OppoExploreCarousel } from './OppoExploreCarousel';
 import { OppoSupportSection } from './OppoSupportSection';
 import { OppoCommunitySection } from './OppoCommunitySection';
 import { OppoFooter } from './OppoFooter';
+import type {
+  OppoAnnounceOverride,
+  OppoCommunityOverride,
+  OppoExploreOverride,
+  OppoFooterOverride,
+  OppoHotSaleOverride,
+  OppoNavOverride,
+  OppoOfferOverride,
+  OppoProductOverride,
+  OppoSlideOverride,
+} from './admin-overrides';
 
-export function OppoHomePage() {
+/** Admin-panel overrides; each defaults to the original hardcoded content. */
+export interface OppoHomePageOverrides {
+  announce?: OppoAnnounceOverride;
+  /** false = announcement bar disabled in the admin panel. */
+  announceEnabled?: boolean;
+  nav?: OppoNavOverride;
+  heroSlides?: OppoSlideOverride[];
+  /** false = hero carousel disabled in the admin panel. */
+  heroEnabled?: boolean;
+  hotSale?: OppoHotSaleOverride;
+  /** false = hot-sale card disabled in the admin panel. */
+  hotSaleEnabled?: boolean;
+  products?: OppoProductOverride[];
+  /** false = product grid disabled in the admin panel. */
+  productsEnabled?: boolean;
+  offersHeading?: string;
+  offers?: OppoOfferOverride[];
+  /** false = offers section disabled in the admin panel. */
+  offersEnabled?: boolean;
+  exploreHeading?: string;
+  explore?: OppoExploreOverride[];
+  /** false = explore carousel disabled in the admin panel. */
+  exploreEnabled?: boolean;
+  supportHeading?: string;
+  supportItems?: string[];
+  /** false = support section disabled in the admin panel. */
+  supportEnabled?: boolean;
+  community?: OppoCommunityOverride;
+  /** false = community section disabled in the admin panel. */
+  communityEnabled?: boolean;
+  footer?: OppoFooterOverride;
+}
+
+export function OppoHomePage({ overrides }: { overrides?: OppoHomePageOverrides } = {}) {
   const [bannerVisible, setBannerVisible] = useState(true);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -28,14 +72,18 @@ export function OppoHomePage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const announceText = overrides?.announce?.text ?? 'SHOP LIVE: Tap to unlock live discounts! ';
+  const announceLinkLabel = overrides?.announce?.linkLabel ?? 'Watch Now';
+  const announceLinkHref = overrides?.announce?.linkHref ?? '#';
+
   return (
     <div className="oppo-root">
       {/* Announcement bar */}
-      {bannerVisible && (
+      {overrides?.announceEnabled !== false && bannerVisible && (
         <div className="oppo-announce-bar">
           <span>
-            SHOP LIVE: Tap to unlock live discounts!{' '}
-            <a href="#">Watch Now</a>
+            {announceText}{' '}
+            <a href={announceLinkHref}>{announceLinkLabel}</a>
           </span>
           <button
             type="button"
@@ -48,23 +96,31 @@ export function OppoHomePage() {
         </div>
       )}
 
-      <OppoNav />
+      <OppoNav content={overrides?.nav} />
 
       <h1 style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>
         OPPO India - Android Smartphones & Accessories
       </h1>
 
       <main>
-        <OppoHeroBanner />
-        <OppoHotSale />
-        <OppoProductGrid />
-        <OppoOffersSection />
-        <OppoExploreCarousel />
-        <OppoSupportSection />
-        <OppoCommunitySection />
+        {overrides?.heroEnabled !== false ? <OppoHeroBanner slides={overrides?.heroSlides} /> : null}
+        {overrides?.hotSaleEnabled !== false ? <OppoHotSale content={overrides?.hotSale} /> : null}
+        {overrides?.productsEnabled !== false ? <OppoProductGrid items={overrides?.products} /> : null}
+        {overrides?.offersEnabled !== false ? (
+          <OppoOffersSection heading={overrides?.offersHeading} items={overrides?.offers} />
+        ) : null}
+        {overrides?.exploreEnabled !== false ? (
+          <OppoExploreCarousel heading={overrides?.exploreHeading} items={overrides?.explore} />
+        ) : null}
+        {overrides?.supportEnabled !== false ? (
+          <OppoSupportSection heading={overrides?.supportHeading} items={overrides?.supportItems} />
+        ) : null}
+        {overrides?.communityEnabled !== false ? (
+          <OppoCommunitySection content={overrides?.community} />
+        ) : null}
       </main>
 
-      <OppoFooter />
+      <OppoFooter content={overrides?.footer} />
 
       {/* Floating action dock */}
       <div className="oppo-floating-dock">

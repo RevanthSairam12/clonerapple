@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 
 import { FOOTER_BOTTOM, FOOTER_DIRECTORY, FOOTER_FOOTNOTES_HTML } from './data/footer';
 import { FooterChevronIcon } from './icons';
+import type { FooterOverride } from './admin-overrides';
 
 /**
  * `footer#ac-globalfooter`.
@@ -16,8 +17,13 @@ import { FooterChevronIcon } from './icons';
  * accordions (measured collapsed: section height 37px, list `visibility:hidden`
  * clipped by `overflow:hidden`, `aria-expanded="false"`).
  */
-export function GlobalFooter() {
+export function GlobalFooter({ content }: { content?: FooterOverride } = {}) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+
+  const footnotesHtml = content?.footnotesHtml ?? FOOTER_FOOTNOTES_HTML;
+  const copyright = content?.copyright ?? FOOTER_BOTTOM.copyright;
+  const localeLabel = content?.localeLabel ?? FOOTER_BOTTOM.localeLabel;
+  const localeHref = content?.localeHref ?? FOOTER_BOTTOM.localeHref;
 
   const toggle = (key: string) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -30,7 +36,7 @@ export function GlobalFooter() {
         <section
           aria-label="Footnotes"
           className="ac-sosumi pt-[17px] pb-[11px]"
-          dangerouslySetInnerHTML={{ __html: FOOTER_FOOTNOTES_HTML }}
+          dangerouslySetInnerHTML={{ __html: footnotesHtml }}
         />
 
         {/* .ac-gf-directory */}
@@ -109,16 +115,16 @@ export function GlobalFooter() {
           {/* locale link — shown only below 834px, where it sits above the legal row */}
           <div className="mt-[5px] pt-[4px] text-[12px] leading-[16.0005px] tracking-[-0.12px] anav:hidden">
             <a
-              href={FOOTER_BOTTOM.localeHref}
+              href={localeHref}
               title="Choose your country or region"
               className="ac-footer-locale-link -my-[4px] inline-block py-[4px] whitespace-nowrap"
             >
-              {FOOTER_BOTTOM.localeLabel}
+              {localeLabel}
             </a>
           </div>
 
           <div className="relative pt-[12px] text-[12px] leading-[16.0005px] tracking-[-0.12px] text-[rgba(0,0,0,0.56)] anav:flow-root anav:pt-0">
-            <div className="mt-[5px] anav:mr-[30px] anav:float-left">{FOOTER_BOTTOM.copyright}</div>
+            <div className="mt-[5px] anav:mr-[30px] anav:float-left">{copyright}</div>
             <ul className="mt-[5px] block anav:mr-[30px] anav:float-left" role="list">
               {FOOTER_BOTTOM.legalLinks.map((link) => (
                 <li key={link.href} className="ac-footer-legal-item mt-[8px] mr-[6px] inline-block anav:mt-[5px]" role="listitem">
@@ -133,11 +139,11 @@ export function GlobalFooter() {
             </ul>
             <div className="hidden anav:block anav:text-right">
               <a
-                href={FOOTER_BOTTOM.localeHref}
+                href={localeHref}
                 title="Choose your country or region"
                 className="ac-footer-locale-link -my-[4px] inline-block py-[4px] whitespace-nowrap"
               >
-                {FOOTER_BOTTOM.localeLabel}
+                {localeLabel}
               </a>
             </div>
           </div>

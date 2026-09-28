@@ -11,13 +11,30 @@ import { cn } from '@/lib/utils';
 import { ArtDirectedPicture } from './ArtDirectedPicture';
 import { FAM_GALLERY_ITEMS, GALLERY_META, TV_GALLERY_ITEMS, type GalleryItem } from './data/gallery';
 import { GALLERY_LOGOS, GalleryPauseIcon, GalleryPlayIcon } from './icons';
+import { applyResponsiveImage, type GalleryItemOverride, type GalleryOverride } from './admin-overrides';
 
-const COUNT = TV_GALLERY_ITEMS.length;
+/** Merge admin overrides onto gallery items (captions + background art). */
+function mergeGalleryItems(
+  items: GalleryItem[],
+  overrides: GalleryItemOverride[] | undefined,
+): GalleryItem[] {
+  if (!overrides) return items;
+  // Override array length wins — an added card clones the last one (its art
+  // stays; the editor can change its caption or upload new art).
+  return overrides.map((o, i) => {
+    const item = items[i] ?? items[items.length - 1];
+    const caption = o?.title;
+    const background = applyResponsiveImage(item.background, o);
+    const withCaption = caption === undefined || !caption ? item : { ...item, caption };
+    return background === item.background ? withCaption : { ...withCaption, background };
+  });
+}
 
 function CardShell({
   item,
   active,
   offset,
+  onSelect,
   children,
   className,
   mounted,
@@ -25,29 +42,80 @@ function CardShell({
   item: GalleryItem;
   active: boolean;
   offset: number;
+  onSelect?: () => void;
   children: React.ReactNode;
   className?: string;
   mounted?: boolean;
 }) {
-  const isVisible = Math.abs(offset) <= 2;
+  const liRef = useRef<HTMLLIElement>(null);
+  const prevOffsetRef = useRef(offset);
+
+  // Issue 1: Fix wrapping glitch
+  // If offset jumped by >= 3 (e.g. from -4 to +4 when wrapping around),
+  // immediately disable transition so the card teleports outside the viewport
+  // instead of flying across the screen in reverse.
+  const isWrapJump = Math.abs(offset - prevOffsetRef.current) >= 3;
+
+  useEffect(() => {
+    prevOffsetRef.current = offset;
+    if (isWrapJump && liRef.current) {
+      const el = liRef.current;
+      const raf = requestAnimationFrame(() => {
+        el.style.transition = '';
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [offset, isWrapJump]);
+
+  // Issue 2: Fix cutoff edges
+  // Show items up to offset ±3 so wide displays (>1440px) are fully populated without blank voids
+  const isVisible = Math.abs(offset) <= 3;
+
+  // Issue 3: Fix side card behavior
+  // Clicking peeked cards scrolls them into focus instead of opening external link
+  const handleClick = (e: React.MouseEvent) => {
+    if (!active) {
+      e.preventDefault();
+      e.stopPropagation();
+      onSelect?.();
+    }
+  };
+
+  // Progressive depth opacity fade towards edges
+  const absOffset = Math.abs(offset);
+  const opacity = active ? 1 : absOffset === 1 ? 0.65 : absOffset === 2 ? 0.35 : 0.15;
+  const zIndex = active ? 10 : Math.max(1, 5 - absOffset);
+
   return (
     <li
+      ref={liRef}
       id={item.id}
       role="tabpanel"
       aria-hidden={!active}
-      className={cn('absolute inset-0 flex justify-center', mounted && 'ac-gallery-track')}
+      className={cn(
+        'absolute inset-0 flex justify-center',
+        mounted && !isWrapJump && 'ac-gallery-track'
+      )}
       style={{
         transform: `translateX(${offset * 100}%)`,
+        transition: isWrapJump ? 'none' : undefined,
         visibility: isVisible ? 'visible' : 'hidden',
+        opacity: isVisible ? opacity : 0,
+        zIndex,
       }}
     >
       <a
         href={appleUrl(item.href)}
-        aria-label={item.ariaLabel}
+        aria-label={active ? item.ariaLabel : `View ${item.caption || item.ariaLabel}`}
         tabIndex={active ? 0 : -1}
         target="_blank"
         rel="noopener noreferrer"
-        className={cn('relative block overflow-hidden bg-black', className)}
+        onClick={handleClick}
+        className={cn(
+          'relative block overflow-hidden bg-black transition-opacity duration-300',
+          !active && 'cursor-pointer hover:opacity-90',
+          className
+        )}
       >
         {children}
       </a>
@@ -56,9 +124,28 @@ function CardShell({
 }
 
 /** Large Apple TV card: art + radial scrim + pill and caption along the bottom. */
-function TvCard({ item, active, offset, mounted }: { item: GalleryItem; active: boolean; offset: number; mounted: boolean }) {
+function TvCard({
+  item,
+  active,
+  offset,
+  mounted,
+  onSelect,
+}: {
+  item: GalleryItem;
+  active: boolean;
+  offset: number;
+  mounted: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <CardShell item={item} active={active} offset={offset} mounted={mounted} className="h-full w-[275px] am:w-[688px] al:w-[930px]">
+    <CardShell
+      item={item}
+      active={active}
+      offset={offset}
+      mounted={mounted}
+      onSelect={onSelect}
+      className="h-full w-[275px] am:w-[688px] al:w-[930px]"
+    >
       {item.background ? (
         <ArtDirectedPicture
           data={item.background}
@@ -108,11 +195,30 @@ function TvCard({ item, active, offset, mounted }: { item: GalleryItem; active: 
  * 13px top margin); above it the art sits left of the caption and the pill moves
  * to the right of the bottom row with the logo in the top-right corner.
  */
-function FamCard({ item, active, offset, mounted }: { item: GalleryItem; active: boolean; offset: number; mounted: boolean }) {
+function FamCard({
+  item,
+  active,
+  offset,
+  mounted,
+  onSelect,
+}: {
+  item: GalleryItem;
+  active: boolean;
+  offset: number;
+  mounted: boolean;
+  onSelect: () => void;
+}) {
   const logo = item.logo ? GALLERY_LOGOS[item.logo] : null;
 
   return (
-    <CardShell item={item} active={active} offset={offset} mounted={mounted} className="h-full w-[188px] al:w-[417px]">
+    <CardShell
+      item={item}
+      active={active}
+      offset={offset}
+      mounted={mounted}
+      onSelect={onSelect}
+      className="h-full w-[188px] al:w-[417px]"
+    >
       {item.musicLayout ? (
         <div className="absolute inset-0 flex flex-col items-center bg-black al:flex-row">
           {item.background ? (
@@ -163,17 +269,20 @@ function FamCard({ item, active, offset, mounted }: { item: GalleryItem; active:
 /**
  * `.section-endless-entertainment-gallery` — two carousels driven by one index.
  *
- * INTERACTION MODEL: time-driven. Each item dwells 4.16s
- * (`--sk-dotnav-timed-duration`) and the slide itself takes 1s
- * (`--sk-dotnav-variable-duration`). Dots jump to an item; the round control
- * pauses/resumes. Both galleries advance together.
- *
- * The target truncates the dot row to 7 dots (5 below 481px) with
- * `dotnav-trunc-*` classes; the clone renders a sliding window of the same size.
+ * INTERACTION MODEL: time-driven with interactive controls.
+ * Each item dwells 4.16s (`--sk-dotnav-timed-duration`) and the slide takes 650ms
+ * with Apple's refined cubic-bezier curve.
+ * Users can click dots, click side cards, swipe on touch, use arrow keys, or click
+ * subtle navigation chevrons.
  */
-export function EndlessEntertainmentGallery() {
+export function EndlessEntertainmentGallery({ content }: { content?: GalleryOverride } = {}) {
+  const tvItems = mergeGalleryItems(TV_GALLERY_ITEMS, content?.items);
+  const count = tvItems.length;
+  const secondRowEnabled = content?.secondRowEnabled !== false;
+
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const [dotWindow, setDotWindow] = useState(GALLERY_META.visibleDots);
   const [mounted, setMounted] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -187,21 +296,58 @@ export function EndlessEntertainmentGallery() {
     return () => window.removeEventListener('resize', apply);
   }, []);
 
+  const goToPrev = () => setIndex((i) => (i - 1 + count) % count);
+  const goToNext = () => setIndex((i) => (i + 1) % count);
+
   useEffect(() => {
-    if (paused) return;
-    timer.current = setTimeout(() => setIndex((i) => (i + 1) % COUNT), GALLERY_META.itemDurationMs);
+    if (paused || hovered) return;
+    timer.current = setTimeout(() => setIndex((i) => (i + 1) % count), GALLERY_META.itemDurationMs);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [index, paused]);
+  }, [index, paused, hovered, count]);
+
+  // Keyboard navigation: Left/Right arrows
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') goToPrev();
+      if (e.key === 'ArrowRight') goToNext();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [count]);
+
+  // Touch swipe support
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
+    const deltaY = e.changedTouches[0].clientY - (touchStartY.current ?? 0);
+    if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (deltaX > 0) {
+        goToPrev();
+      } else {
+        goToNext();
+      }
+    }
+    touchStartX.current = null;
+    touchStartY.current = null;
+  };
 
   const half = Math.floor(dotWindow / 2);
-  const start = Math.min(Math.max(0, index - half), Math.max(0, COUNT - dotWindow));
+  const start = Math.min(Math.max(0, index - half), Math.max(0, count - dotWindow));
 
   /** Wrap offset so items circulate instead of leaving gaps at edges. */
   const circularOffset = (i: number) => {
-    const raw = ((i - index) % COUNT + COUNT) % COUNT;
-    return raw <= Math.floor(COUNT / 2) ? raw : raw - COUNT;
+    const raw = ((i - index) % count + count) % count;
+    return raw <= Math.floor(count / 2) ? raw : raw - count;
   };
 
   return (
@@ -219,30 +365,82 @@ export function EndlessEntertainmentGallery() {
         ) : null}
 
         {/* #tv-media-gallery */}
-        <div className="relative h-[496px] am:h-[367px] al:h-[523px] overflow-hidden">
+        <div
+          className="group/gallery relative h-[496px] am:h-[367px] al:h-[523px] overflow-hidden select-none"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Previous chevron */}
+          <button
+            type="button"
+            onClick={goToPrev}
+            aria-label="Previous slide"
+            className="absolute left-3 top-1/2 -translate-y-1/2 z-30 hidden am:flex size-11 items-center justify-center rounded-full bg-[rgba(210,210,215,0.7)] text-black/70 backdrop-blur-md opacity-0 group-hover/gallery:opacity-100 transition-all hover:bg-[rgba(223,223,227,0.9)] hover:scale-105 active:scale-95 cursor-pointer shadow-md"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+
+          {/* Next chevron */}
+          <button
+            type="button"
+            onClick={goToNext}
+            aria-label="Next slide"
+            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 hidden am:flex size-11 items-center justify-center rounded-full bg-[rgba(210,210,215,0.7)] text-black/70 backdrop-blur-md opacity-0 group-hover/gallery:opacity-100 transition-all hover:bg-[rgba(223,223,227,0.9)] hover:scale-105 active:scale-95 cursor-pointer shadow-md"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+
           <ul
             role="tablist"
             className="relative mx-auto h-full w-[288px] am:w-[701px] al:w-[943px]"
           >
-            {TV_GALLERY_ITEMS.map((item, i) => (
-              <TvCard key={item.id} item={item} active={i === index} offset={circularOffset(i)} mounted={mounted} />
+            {tvItems.map((item, i) => (
+              <TvCard
+                key={item.id}
+                item={item}
+                active={i === index}
+                offset={circularOffset(i)}
+                mounted={mounted}
+                onSelect={() => setIndex(i)}
+              />
             ))}
           </ul>
         </div>
 
         {/* #fam-media-gallery */}
-        <div className="relative box-content h-[254px] pt-[13px] al:h-[234px] overflow-hidden">
-          <ul className="relative mx-auto h-full w-[201px] al:w-[430px]">
-            {FAM_GALLERY_ITEMS.map((item, i) => (
-              <FamCard key={item.id} item={item} active={i === index} offset={circularOffset(i)} mounted={mounted} />
-            ))}
-          </ul>
-        </div>
+        {secondRowEnabled ? (
+          <div
+            className="relative box-content h-[254px] pt-[13px] al:h-[234px] overflow-hidden select-none"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+          >
+            <ul className="relative mx-auto h-full w-[201px] al:w-[430px]">
+              {FAM_GALLERY_ITEMS.map((item, i) => (
+                <FamCard
+                  key={item.id}
+                  item={item}
+                  active={i === index}
+                  offset={circularOffset(i)}
+                  mounted={mounted}
+                  onSelect={() => setIndex(i)}
+                />
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         {/* .media-gallery-dotnav */}
         <div className="relative my-[10px] flex h-[24px] justify-center am:my-[12px]">
           <ul role="tablist" className="flex justify-center">
-            {TV_GALLERY_ITEMS.map((item, i) => {
+            {tvItems.map((item, i) => {
               const visible = i >= start && i < start + dotWindow;
               const current = i === index;
               return (
@@ -254,7 +452,7 @@ export function EndlessEntertainmentGallery() {
                     aria-controls={item.id}
                     onClick={() => setIndex(i)}
                     data-current={current}
-                    data-paused={paused}
+                    data-paused={paused || hovered}
                     className={cn('ac-dot', !visible && 'invisible')}
                     style={{ '--ac-dot-duration': `${GALLERY_META.itemDurationMs}ms` } as React.CSSProperties}
                   >

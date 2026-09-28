@@ -14,6 +14,43 @@ import {
   MAC_PRODUCTS,
   SHOP_CATEGORIES,
 } from './data/content';
+import type {
+  EduCategoryOverride,
+  EduEligibilityOverride,
+  EduHeroOverride,
+  EduInActionItemOverride,
+  EduOfferItemOverride,
+  EduProductOverride,
+  EduSectionHeadingsOverride,
+  EduStepOverride,
+} from './admin-overrides';
+
+/** Admin overrides; every field falls back to the hardcoded default. */
+export interface EduStoreOverrides {
+  hero?: EduHeroOverride;
+  btsOffers?: EduOfferItemOverride[];
+  /** false = section disabled in the admin panel. */
+  btsEnabled?: boolean;
+  macProducts?: EduProductOverride[];
+  /** false = section disabled in the admin panel. */
+  macEnabled?: boolean;
+  ipadProducts?: EduProductOverride[];
+  /** false = section disabled in the admin panel. */
+  ipadEnabled?: boolean;
+  sections?: EduSectionHeadingsOverride;
+  inAction?: EduInActionItemOverride[];
+  /** false = section disabled in the admin panel. */
+  inActionEnabled?: boolean;
+  eligibility?: EduEligibilityOverride;
+  /** false = section disabled in the admin panel. */
+  eligibilityEnabled?: boolean;
+  howToBuy?: { eyebrow?: string; headline?: string; steps?: EduStepOverride[] };
+  /** false = section disabled in the admin panel. */
+  howToBuyEnabled?: boolean;
+  categories?: EduCategoryOverride[];
+  /** false = section disabled in the admin panel. */
+  categoriesEnabled?: boolean;
+}
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -55,17 +92,24 @@ function ImgWithFallback({
 
 /* ---------------------------------------------------------------- Hero */
 
-function EduHero() {
+function EduHero({ content }: { content?: EduHeroOverride }) {
+  const badge = content?.badge ?? HERO.badge;
+  const headline = content?.headline ?? HERO.headline;
+  const subhead = content?.subhead ?? HERO.subhead;
+  const promoHeadline = content?.promoHeadline ?? HERO.promo.headline;
+  const promoOffer = content?.promoOffer ?? HERO.promo.offer;
+  const promoDisclaimer = content?.promoDisclaimer ?? HERO.promo.disclaimer;
+
   return (
     <section className="edu-hero" aria-label="Education Store hero">
       <div className="edu-container">
-        <p className="edu-hero-badge">🎓 {HERO.badge}</p>
-        <h1 className="edu-hero-headline">{HERO.headline}</h1>
-        <p className="edu-hero-subhead">{HERO.subhead}</p>
+        <p className="edu-hero-badge">🎓 {badge}</p>
+        <h1 className="edu-hero-headline">{headline}</h1>
+        <p className="edu-hero-subhead">{subhead}</p>
         <div className="edu-hero-promo-box">
-          <p className="edu-hero-promo-label">🍎 {HERO.promo.headline}</p>
-          <p className="edu-hero-promo-text">{HERO.promo.offer}</p>
-          <p className="edu-hero-promo-disclaimer">{HERO.promo.disclaimer}</p>
+          <p className="edu-hero-promo-label">🍎 {promoHeadline}</p>
+          <p className="edu-hero-promo-text">{promoOffer}</p>
+          <p className="edu-hero-promo-disclaimer">{promoDisclaimer}</p>
         </div>
       </div>
     </section>
@@ -74,12 +118,35 @@ function EduHero() {
 
 /* ---------------------------------------------------------------- Back to School tiles */
 
-function BtsTiles() {
+function BtsTiles({ items: overrides }: { items?: EduOfferItemOverride[] }) {
+  // Override array length wins — an added tile clones the last one.
+  const offers = overrides
+    ? overrides.map((o, i) => {
+        const offer = BTS_OFFERS[i] ?? BTS_OFFERS[BTS_OFFERS.length - 1];
+        return {
+          ...offer,
+          kicker: o.kicker ?? offer.kicker,
+          headline: o.headline ?? offer.headline,
+          offer: o.offer ?? offer.offer,
+          upgradeNote: o.upgradeNote ?? offer.upgradeNote,
+          image: o.image ?? offer.image,
+          ctaPrimary: {
+            label: o.ctaPrimaryLabel ?? offer.ctaPrimary.label,
+            href: o.ctaPrimaryHref ?? offer.ctaPrimary.href,
+          },
+          ctaSecondary: {
+            label: o.ctaSecondaryLabel ?? offer.ctaSecondary.label,
+            href: o.ctaSecondaryHref ?? offer.ctaSecondary.href,
+          },
+        };
+      })
+    : BTS_OFFERS;
+
   return (
     <section className="edu-section edu-section-black" aria-label="Back to School offers">
       <div className="edu-container">
         <div className="edu-bts-grid">
-          {BTS_OFFERS.map((offer) => {
+          {offers.map((offer) => {
             const isDark = offer.theme === 'dark';
             return (
               <div
@@ -132,6 +199,7 @@ function ProductSection({
   headline,
   subhead,
   products,
+  overrides,
   cols,
   theme,
 }: {
@@ -139,10 +207,29 @@ function ProductSection({
   headline: string;
   subhead: string;
   products: typeof MAC_PRODUCTS | typeof IPAD_PRODUCTS;
+  overrides?: EduProductOverride[];
   cols: 3 | 4;
   theme: 'dark' | 'light';
 }) {
   const isDark = theme === 'dark';
+  // Override array length wins — an added card clones the last one.
+  const items = overrides
+    ? overrides.map((o, i) => {
+        const product = products[i] ?? products[products.length - 1];
+        return {
+          ...product,
+          name: o.name ?? product.name,
+          descriptor: o.descriptor ?? product.descriptor,
+          chip: o.chip ?? product.chip,
+          price: o.price ?? product.price,
+          priceNote: o.priceNote ?? product.priceNote,
+          image: o.image ?? product.image,
+          buyHref: o.buyHref ?? product.buyHref,
+          learnHref: o.learnHref ?? product.learnHref,
+        };
+      })
+    : products;
+
   return (
     <section
       className={`edu-section ${isDark ? 'edu-section-dark' : 'edu-section-light'}`}
@@ -160,7 +247,7 @@ function ProductSection({
         </div>
 
         <div className={`edu-product-grid edu-product-grid-${cols}`}>
-          {products.map((product) => (
+          {items.map((product) => (
             <div
               key={product.id}
               className={`edu-product-card ${isDark ? '' : 'edu-product-card-light'}`}
@@ -218,7 +305,23 @@ function ProductSection({
 
 /* ---------------------------------------------------------------- Education in Action */
 
-function EduInAction() {
+function EduInAction({ items: overrides }: { items?: EduInActionItemOverride[] }) {
+  // Override array length wins — an added card clones the last one (its
+  // colors carry over; the editor sets field/device/headline/body).
+  const items = overrides
+    ? overrides.map((o, i) => {
+        const item = EDU_IN_ACTION[i] ?? EDU_IN_ACTION[EDU_IN_ACTION.length - 1];
+        return {
+          ...item,
+          field: o.field ?? item.field,
+          device: o.device ?? item.device,
+          headline: o.headline ?? item.headline,
+          body: o.body ?? item.body,
+          app: o.app ?? item.app,
+        };
+      })
+    : EDU_IN_ACTION;
+
   return (
     <section className="edu-section edu-section-black" aria-label="Apple Education in Action">
       <div className="edu-container">
@@ -231,7 +334,7 @@ function EduInAction() {
         </div>
 
         <div className="edu-action-grid">
-          {EDU_IN_ACTION.map((item) => (
+          {items.map((item) => (
             <div
               key={item.id}
               className="edu-action-card"
@@ -257,28 +360,42 @@ function EduInAction() {
 
 /* ---------------------------------------------------------------- Eligibility banner */
 
-function EligibilityBanner() {
+const DEFAULT_TAGS = [
+  'College Students',
+  'Newly Accepted Students',
+  'Parents of Students',
+  'Teachers',
+  'Faculty & Staff',
+  'Homeschool Educators',
+];
+
+function EligibilityBanner({ content }: { content?: EduEligibilityOverride }) {
+  const headline = content?.headline ?? 'Who can shop the Education Store?';
+  const body =
+    content?.body ??
+    'Apple Education Pricing is available to current and newly accepted college students, students’ parents, and teachers and staff at all grade levels.';
+  const tags = content?.tags ? content.tags.split('\n').map((t) => t.trim()).filter(Boolean) : DEFAULT_TAGS;
+  const ctaLabel = content?.ctaLabel ?? 'Verify my eligibility';
+  const ctaHref = content?.ctaHref ?? 'https://www.apple.com/in-edu/store';
+
   return (
     <section className="edu-section edu-section-dark" aria-label="Eligibility">
       <div className="edu-container">
         <div className="edu-elig-banner">
-          <h2 className="edu-elig-headline">Who can shop the Education Store?</h2>
-          <p className="edu-elig-body">
-            Apple Education Pricing is available to current and newly accepted college students,
-            students&rsquo; parents, and teachers and staff at all grade levels.
-          </p>
+          <h2 className="edu-elig-headline">{headline}</h2>
+          <p className="edu-elig-body">{body}</p>
           <div className="edu-elig-tags">
-            {['College Students', 'Newly Accepted Students', 'Parents of Students', 'Teachers', 'Faculty & Staff', 'Homeschool Educators'].map((tag) => (
+            {tags.map((tag) => (
               <span key={tag} className="edu-elig-tag">{tag}</span>
             ))}
           </div>
           <a
-            href="https://www.apple.com/in-edu/store"
+            href={ctaHref}
             target="_blank"
             rel="noopener noreferrer"
             className="edu-btn edu-btn-primary"
           >
-            Verify my eligibility
+            {ctaLabel}
           </a>
         </div>
       </div>
@@ -288,19 +405,41 @@ function EligibilityBanner() {
 
 /* ---------------------------------------------------------------- How to Buy */
 
-function HowToBuy() {
+function HowToBuy({
+  eyebrow = 'Buying Guide',
+  headline = 'How to buy with education savings.',
+  steps: overrides,
+}: {
+  eyebrow?: string;
+  headline?: string;
+  steps?: EduStepOverride[];
+} = {}) {
+  // Override array length wins — an added step clones the last one.
+  const steps = overrides
+    ? overrides.map((o, i) => {
+        const step = HOW_TO_BUY_STEPS[i] ?? HOW_TO_BUY_STEPS[HOW_TO_BUY_STEPS.length - 1];
+        return {
+          ...step,
+          step: o.step ?? step.step,
+          headline: o.headline ?? step.headline,
+          body: o.body ?? step.body,
+          link: { label: o.linkLabel ?? step.link.label, href: o.linkHref ?? step.link.href },
+        };
+      })
+    : HOW_TO_BUY_STEPS;
+
   return (
     <section className="edu-section edu-section-light" aria-label="How to buy">
       <div className="edu-container">
         <div className="edu-section-title-group">
-          <p className="edu-section-eyebrow edu-section-eyebrow-dark">Buying Guide</p>
+          <p className="edu-section-eyebrow edu-section-eyebrow-dark">{eyebrow}</p>
           <h2 className="edu-section-headline" style={{ color: '#1d1d1f' }}>
-            How to buy with education savings.
+            {headline}
           </h2>
         </div>
 
         <div className="edu-steps-grid">
-          {HOW_TO_BUY_STEPS.map((step) => (
+          {steps.map((step) => (
             <div key={step.step}>
               <p className="edu-step-number edu-step-number-dark">{step.step}</p>
               <h3 className="edu-step-headline" style={{ color: '#1d1d1f' }}>
@@ -325,15 +464,29 @@ function HowToBuy() {
 
 /* ---------------------------------------------------------------- Shop Categories */
 
-function ShopCategories() {
+function ShopCategories({
+  headline = 'Browse the Education Store.',
+  items: overrides,
+}: {
+  headline?: string;
+  items?: EduCategoryOverride[];
+} = {}) {
+  // Override array length wins — an added tile clones the last one.
+  const categories = overrides
+    ? overrides.map((o, i) => {
+        const cat = SHOP_CATEGORIES[i] ?? SHOP_CATEGORIES[SHOP_CATEGORIES.length - 1];
+        return { ...cat, label: o.label ?? cat.label, icon: o.icon ?? cat.icon, href: o.href ?? cat.href };
+      })
+    : SHOP_CATEGORIES;
+
   return (
     <section className="edu-section edu-section-dark" aria-label="Shop categories">
       <div className="edu-container">
         <div className="edu-section-title-group">
-          <h2 className="edu-section-headline">Browse the Education Store.</h2>
+          <h2 className="edu-section-headline">{headline}</h2>
         </div>
         <div className="edu-categories-grid">
-          {SHOP_CATEGORIES.map((cat) => (
+          {categories.map((cat) => (
             <a
               key={cat.label}
               href={appleUrl(cat.href)}
@@ -353,38 +506,59 @@ function ShopCategories() {
 
 /* ---------------------------------------------------------------- Page */
 
-export function EduStorePage() {
+export function EduStorePage({ overrides }: { overrides?: EduStoreOverrides } = {}) {
+  const s = overrides?.sections;
+
   return (
     <div className="edu-root ac-root">
       {/* Global Nav — reused, no changes */}
       <GlobalNav bannerVisible={false} />
 
       <div className="edu-page-wrap">
-        <EduHero />
-        <BtsTiles />
+        <EduHero content={overrides?.hero} />
+        {overrides?.btsEnabled !== false ? <BtsTiles items={overrides?.btsOffers} /> : null}
 
-        <ProductSection
-          eyebrow="Mac for Education"
-          headline="Mac. Made for more."
-          subhead="The power of Apple silicon takes students further, faster."
-          products={MAC_PRODUCTS}
-          cols={3}
-          theme="dark"
-        />
+        {overrides?.macEnabled !== false ? (
+          <ProductSection
+            eyebrow={s?.mac?.eyebrow ?? 'Mac for Education'}
+            headline={s?.mac?.headline ?? 'Mac. Made for more.'}
+            subhead={s?.mac?.subhead ?? 'The power of Apple silicon takes students further, faster.'}
+            products={MAC_PRODUCTS}
+            overrides={overrides?.macProducts}
+            cols={3}
+            theme="dark"
+          />
+        ) : null}
 
-        <ProductSection
-          eyebrow="iPad for Education"
-          headline="iPad. The ultimate learning tool."
-          subhead="Versatile, powerful, and perfect with Apple Pencil."
-          products={IPAD_PRODUCTS}
-          cols={4}
-          theme="light"
-        />
+        {overrides?.ipadEnabled !== false ? (
+          <ProductSection
+            eyebrow={s?.ipad?.eyebrow ?? 'iPad for Education'}
+            headline={s?.ipad?.headline ?? 'iPad. The ultimate learning tool.'}
+            subhead={s?.ipad?.subhead ?? 'Versatile, powerful, and perfect with Apple Pencil.'}
+            products={IPAD_PRODUCTS}
+            overrides={overrides?.ipadProducts}
+            cols={4}
+            theme="light"
+          />
+        ) : null}
 
-        <EduInAction />
-        <EligibilityBanner />
-        <HowToBuy />
-        <ShopCategories />
+        {overrides?.inActionEnabled !== false ? <EduInAction items={overrides?.inAction} /> : null}
+        {overrides?.eligibilityEnabled !== false ? (
+          <EligibilityBanner content={overrides?.eligibility} />
+        ) : null}
+        {overrides?.howToBuyEnabled !== false ? (
+          <HowToBuy
+            eyebrow={overrides?.howToBuy?.eyebrow}
+            headline={overrides?.howToBuy?.headline}
+            steps={overrides?.howToBuy?.steps}
+          />
+        ) : null}
+        {overrides?.categoriesEnabled !== false ? (
+          <ShopCategories
+            headline={s?.categories?.headline}
+            items={overrides?.categories}
+          />
+        ) : null}
       </div>
 
       {/* Global Footer — reused, no changes */}

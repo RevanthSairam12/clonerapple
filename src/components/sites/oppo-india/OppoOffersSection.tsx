@@ -1,3 +1,5 @@
+import type { OppoOfferOverride } from './admin-overrides';
+
 interface OfferCard {
   title: string;
   description: string;
@@ -26,14 +28,34 @@ const OFFERS: OfferCard[] = [
   },
 ];
 
-export function OppoOffersSection() {
+export function OppoOffersSection({
+  heading = 'Offers made for you',
+  items: overrides,
+}: {
+  heading?: string;
+  items?: OppoOfferOverride[];
+} = {}) {
+  // Override array length wins — an added card clones the last one.
+  const offers = overrides
+    ? overrides.map((o, i) => {
+        const offer = OFFERS[i] ?? OFFERS[OFFERS.length - 1];
+        return {
+          ...offer,
+          title: o.title ?? offer.title,
+          description: o.description ?? offer.description,
+          image: o.image ?? offer.image,
+          href: o.href ?? offer.href,
+        };
+      })
+    : OFFERS;
+
   return (
     <section className="oppo-offers-section">
       <div className="oppo-offers-container">
-        <h2 className="oppo-offers-title">Offers made for you</h2>
+        <h2 className="oppo-offers-title">{heading}</h2>
 
         <div className="oppo-offers-grid">
-          {OFFERS.map((offer) => (
+          {offers.map((offer) => (
             <a key={offer.title} href={offer.href || '#'} className="oppo-offer-card">
               <div className="oppo-offer-card-image">
                 <img
@@ -61,4 +83,3 @@ export function OppoOffersSection() {
     </section>
   );
 }
-

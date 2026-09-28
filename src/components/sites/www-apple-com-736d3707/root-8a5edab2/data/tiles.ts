@@ -37,6 +37,7 @@ export interface Tile {
   ctas: TileCta[];
   image: PictureData | null;
   startFrame: PictureData | null;
+  infoTooltip?: string | null;
 }
 
 export interface InlineMediaClip {
@@ -52,20 +53,12 @@ export const HERO_TILES: Tile[] = [
     "index": 0,
     "theme": "light",
     "href": "/us/shop/goto/edu_store",
-    "headline": "College, sorted.",
+    "headline": "Semester, unlocked.",
     "headlineLogo": null,
     "subhead": [
       {
         "kind": "text",
-        "value": "Get a gift card from $100 to $150"
-      },
-      {
-        "kind": "footnoteGlyph",
-        "value": "*"
-      },
-      {
-        "kind": "text",
-        "value": " when you buy Mac or iPad with education savings."
+        "value": "Save more with exclusive student pricing on your favorite tech."
       }
     ],
     "subheadMaxWidth": {
@@ -75,9 +68,9 @@ export const HERO_TILES: Tile[] = [
     },
     "ctas": [
       {
-        "label": "Shop",
+        "label": "Verify Eligibility",
         "href": "/us/shop/goto/edu_store",
-        "ariaLabel": "Shop, Education Store",
+        "ariaLabel": "Verify Eligibility, Education Store",
         "variant": "primary"
       }
     ],
@@ -116,41 +109,8 @@ export const HERO_TILES: Tile[] = [
         "height": 692
       }
     },
-    "startFrame": {
-      "sources": [
-        {
-          "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_small.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_small_2x.png"
-        },
-        {
-          "media": "(max-width:1068px) and (min-height:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_mediumtall.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_mediumtall_2x.png"
-        },
-        {
-          "media": "(max-width:1068px) and (max-height:733px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_medium.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_medium_2x.png"
-        },
-        {
-          "media": "(min-width:0px) and (min-height:776px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_largetall.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_largetall_2x.png"
-        },
-        {
-          "media": "(min-width:0px) and (max-height:775px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_large.png",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_large_2x.png"
-        }
-      ],
-      "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_back_to_school_startframe__cd4vg5frm39e_largetall_2x.png",
-        "alt": "",
-        "width": 1222,
-        "height": 460
-      }
-    }
+    "startFrame": null,
+    "infoTooltip": "🎓 Student Discount: Verified students with a valid university email (.edu) and student ID can unlock exclusive pricing and special discounts on select products, plus free accessories with qualifying purchases."
   },
   {
     "group": "hero",
@@ -188,33 +148,33 @@ export const HERO_TILES: Tile[] = [
       "sources": [
         {
           "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_small.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_small_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (3).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (6).jpg"
         },
         {
           "media": "(max-width:1068px) and (min-height:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_mediumtall.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_mediumtall_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (8).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (8).jpg"
         },
         {
           "media": "(max-width:1068px) and (max-height:733px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_medium.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_medium_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (2).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg"
         },
         {
           "media": "(min-width:0px) and (min-height:776px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_largetall.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_largetall_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (4).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (9).jpg"
         },
         {
           "media": "(min-width:0px) and (max-height:775px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_large.jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_large_2x.jpg"
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (5).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (7).jpg"
         }
       ],
       "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_iphone_family__be5jkzxszb1e_largetall_2x.jpg",
-        "alt": "iPhone 17 Pro, back exterior, deep blue color, Pro Fusion camera system in top left corner, Apple logo in center, iPhone 17, back exterior, white color, Dual Fusion camera system in top left corner, Apple logo in center, iPhone 17e, back exterior, soft pink color, Fusion camera system in top left corner, Apple logo in center, iPhone Air, side, titanium frame profile, Fusion camera system in top left corner",
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (9).jpg",
+        "alt": "iPhone with AirPods Pro, Apple Watch, and accessories on marble table",
         "width": 3008,
         "height": 692
       }

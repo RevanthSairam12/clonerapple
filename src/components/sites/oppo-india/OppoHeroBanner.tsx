@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+import type { OppoSlideOverride } from './admin-overrides';
+
 interface HeroSlide {
   id: string;
   title: string;
@@ -42,17 +44,37 @@ const SLIDES: HeroSlide[] = [
   },
 ];
 
-export function OppoHeroBanner() {
+/** Merge admin overrides onto the hardcoded slides (per-slide, field by field). */
+function mergeSlides(overrides: OppoSlideOverride[] | undefined): HeroSlide[] {
+  if (!overrides) return SLIDES;
+  // Override array length wins — an added slide clones the last one (its
+  // gradient/links carry over; the editor changes title/image).
+  return overrides.map((o, i) => {
+    const slide = SLIDES[i] ?? SLIDES[SLIDES.length - 1];
+    return {
+      ...slide,
+      title: o.title ?? slide.title,
+      subtitle: o.subtitle ?? slide.subtitle,
+      image: o.image ?? slide.image,
+      bg: o.bg ?? slide.bg,
+      learnMoreHref: o.learnMoreHref ?? slide.learnMoreHref,
+      buyNowHref: o.buyNowHref ?? slide.buyNowHref,
+    };
+  });
+}
+
+export function OppoHeroBanner({ slides: slidesOverride }: { slides?: OppoSlideOverride[] } = {}) {
+  const slides = mergeSlides(slidesOverride);
   const [current, setCurrent] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
 
   const nextSlide = useCallback(() => {
-    setCurrent((prev) => (prev + 1) % SLIDES.length);
-  }, []);
+    setCurrent((prev) => (prev + 1) % slides.length);
+  }, [slides.length]);
 
   const prevSlide = useCallback(() => {
-    setCurrent((prev) => (prev - 1 + SLIDES.length) % SLIDES.length);
-  }, []);
+    setCurrent((prev) => (prev - 1 + slides.length) % slides.length);
+  }, [slides.length]);
 
   useEffect(() => {
     if (isPaused) return;
@@ -68,7 +90,7 @@ export function OppoHeroBanner() {
       aria-label="Hero Carousel"
     >
       <div className="oppo-hero-viewport">
-        {SLIDES.map((slide, index) => {
+        {slides.map((slide, index) => {
           const isActive = index === current;
           return (
             <div
@@ -130,7 +152,7 @@ export function OppoHeroBanner() {
 
       {/* Dot Indicators */}
       <div className="oppo-hero-pagination">
-        {SLIDES.map((slide, i) => (
+        {slides.map((slide, i) => (
           <button
             key={slide.id}
             type="button"
@@ -143,4 +165,3 @@ export function OppoHeroBanner() {
     </section>
   );
 }
-

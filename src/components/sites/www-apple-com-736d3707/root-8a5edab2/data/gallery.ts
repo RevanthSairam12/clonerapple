@@ -22,7 +22,7 @@ export interface GalleryItem {
 export const GALLERY_META = {
   "headline": null,
   "itemDurationMs": 4160,
-  "slideDurationMs": 1000,
+  "slideDurationMs": 650,
   "visibleDots": 7,
   "pauseLabel": "Pause endless entertainment gallery",
   "playLabel": "Play endless entertainment gallery"

@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { LOCALE_BANNER } from './data/locale-banner';
 import { LocaleCloseIcon } from './icons';
+import type { LocaleBannerOverride } from './admin-overrides';
 
 /**
  * `aside#ac-localeswitcher` — fixed banner above the nav (z 10000). Dismissing
@@ -13,8 +14,19 @@ import { LocaleCloseIcon } from './icons';
  * Geometry (measured): 70px tall and a centred 980px row at >=834px; 135px tall
  * with stacked copy/actions and 16px padding below that.
  */
-export function LocaleBanner({ onDismiss }: { onDismiss: () => void }) {
+export function LocaleBanner({
+  onDismiss,
+  content,
+}: {
+  onDismiss: () => void;
+  content?: LocaleBannerOverride;
+}) {
   const [expanded, setExpanded] = useState(false);
+
+  const copy = content?.copy ?? LOCALE_BANNER.copy;
+  const selectedLabel = content?.selectedLabel ?? LOCALE_BANNER.selectedLabel;
+  const continueLabel = content?.continueLabel ?? LOCALE_BANNER.continueLabel;
+  const continueHref = content?.continueHref ?? LOCALE_BANNER.continueHref;
 
   return (
     <aside
@@ -25,7 +37,7 @@ export function LocaleBanner({ onDismiss }: { onDismiss: () => void }) {
     >
       <div className="mx-auto w-full max-w-[980px] px-[16px] anav:flex anav:items-center anav:justify-between anav:px-[22px]">
         <div className="pt-[16px] pr-[42px] text-[12px] leading-[16.0005px] tracking-[-0.12px] text-[rgba(0,0,0,0.8)] anav:max-w-[430px] anav:p-0">
-          {LOCALE_BANNER.copy}
+          {copy}
         </div>
 
         <div className="mt-[14.5px] -ml-[2px] flex items-center justify-end anav:m-0 anav:pl-[29px]">
@@ -38,7 +50,7 @@ export function LocaleBanner({ onDismiss }: { onDismiss: () => void }) {
               onClick={() => setExpanded((v) => !v)}
               className="flex h-[42px] w-[255px] items-center rounded-[11px] border border-[rgba(0,0,0,0.16)] bg-[#fafafc] px-[14px] text-left text-[17px] text-[rgba(0,0,0,0.8)] anav:w-[349px]"
             >
-              <span className="grow">{LOCALE_BANNER.selectedLabel}</span>
+              <span className="grow">{selectedLabel}</span>
               <span aria-hidden="true" className="ml-[8px] text-[10px] leading-none opacity-60">
                 ▾
               </span>
@@ -60,11 +72,11 @@ export function LocaleBanner({ onDismiss }: { onDismiss: () => void }) {
           </div>
 
           <a
-            href={LOCALE_BANNER.continueHref}
+            href={continueHref}
             role="button"
             className="ml-[13px] max-w-[calc(50%-8px)] rounded-[8px] bg-[#1d1d1f] px-[15px] py-[8px] text-[14px] leading-[18.0008px] tracking-[-0.224px] text-white anav:max-w-none"
           >
-            {LOCALE_BANNER.continueLabel}
+            {continueLabel}
           </a>
 
           <button

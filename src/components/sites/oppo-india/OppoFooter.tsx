@@ -1,3 +1,5 @@
+import type { OppoFooterOverride } from './admin-overrides';
+
 const FOOTER_COLUMNS = [
   {
     title: 'Smartphones',
@@ -62,13 +64,26 @@ const FOOTER_COLUMNS = [
   },
 ];
 
-export function OppoFooter() {
+const DEFAULT_DISCLAIMERS = [
+  '*The product pictures are for reference only, please refer to the actual product.',
+  '*The UI is only for demonstration purposes, please refer to the UI design of actual product.',
+  '*The prices displayed are the official suggested retail Prices, the actual price may vary depending on the purchasing channel.',
+];
+
+export function OppoFooter({ content }: { content?: OppoFooterOverride } = {}) {
+  const disclaimers = [
+    content?.disclaimer1 ?? DEFAULT_DISCLAIMERS[0],
+    content?.disclaimer2 ?? DEFAULT_DISCLAIMERS[1],
+    content?.disclaimer3 ?? DEFAULT_DISCLAIMERS[2],
+  ];
+  const tagline = content?.tagline ?? 'Make Your Moment';
+
   return (
     <footer className="oppo-footer">
       <div className="oppo-footer-disclaimer">
-        <p>*The product pictures are for reference only, please refer to the actual product.</p>
-        <p>*The UI is only for demonstration purposes, please refer to the UI design of actual product.</p>
-        <p>*The prices displayed are the official suggested retail Prices, the actual price may vary depending on the purchasing channel.</p>
+        {disclaimers.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
       </div>
 
       <div className="oppo-footer-links">
@@ -83,7 +98,7 @@ export function OppoFooter() {
       </div>
 
       <div className="oppo-footer-bottom">
-        <span className="oppo-footer-tagline">Make Your Moment</span>
+        <span className="oppo-footer-tagline">{tagline}</span>
         <div className="oppo-footer-socials">
           {/* Facebook */}
           <a href="#" className="oppo-footer-social" aria-label="Facebook">
