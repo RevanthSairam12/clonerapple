@@ -1,12 +1,9 @@
 import "./globals.css";
 
 import { getThemeSettings } from "@/lib/content";
-
-const DEFAULT_FONT = "Inter";
-
-/** Fallback stack used when an editor picks a custom Google font. */
-const FONT_FALLBACK =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+import { CartProvider } from "@/lib/cart/CartContext";
+import { FONT_FALLBACK, FONT_LOADERS } from "@/lib/fontLoaders";
+import { resolveSiteFontName } from "@/lib/fonts";
 
 export default async function RootLayout({
   children,
@@ -15,11 +12,11 @@ export default async function RootLayout({
 }>) {
   const settings = await getThemeSettings();
 
-  // Font family — a custom value swaps the Google Fonts stylesheet and the
-  // body/OPPO font stacks; unset or "Inter" keeps the original link exactly.
-  const rawFont = settings.fontFamily?.trim() ?? "";
-  const fontFamily = rawFont.replace(/['"]/g, "");
-  const useCustomFont = fontFamily.length > 0 && fontFamily !== DEFAULT_FONT;
+  // Font family — resolved against the allow-list in src/lib/fonts.ts and
+  // loaded by next/font, which self-hosts every face. Nothing here can reach
+  // an external font host: the stored value only ever selects from the fixed
+  // set of loaders, and an unrecognised value falls back to the default.
+  const font = FONT_LOADERS[resolveSiteFontName(settings.fontFamily)];
 
   // CSS variable overrides — emitted only when an editor set a value, so the
   // untouched site ships byte-identical CSS. Doubled class for specificity
@@ -28,39 +25,22 @@ export default async function RootLayout({
   if (settings.oppoPrimaryColor) varOverrides.push(`--oppo-green: ${settings.oppoPrimaryColor}`);
   if (settings.oppoGreenDark) varOverrides.push(`--oppo-green-dark: ${settings.oppoGreenDark}`);
   if (settings.oppoGreenLight) varOverrides.push(`--oppo-green-light: ${settings.oppoGreenLight}`);
-  if (useCustomFont) varOverrides.push(`--oppo-font: '${fontFamily}', ${FONT_FALLBACK}`);
-
-  const googleFontHref = useCustomFont
-    ? `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fontFamily).replaceAll("%20", "+")}:wght@300;400;500;600;700;800;900&display=swap`
-    : "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap";
+  // Kept pointing at the self-hosted face rather than deleted: the token is set
+  // here but consumed by the OPPO stylesheet, which is not in this tree.
+  varOverrides.push(`--oppo-font: var(--font-site), ${FONT_FALLBACK}`);
 
   return (
-    <html lang="en-US">
+    // `font.variable` publishes the chosen face as `--font-site`. The global
+    // tokens (`--gz-font-text/display/footer` in gadzio.css, `--cp-font` in
+    // cases.css and accessory-category.css) read that property, so applying it
+    // here on <html> is what makes the setting reach every page.
+    <html lang="en-US" className={font.variable}>
       <head>
-        <link
-          rel="preconnect"
-          href="https://fonts.googleapis.com"
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `.oppo-root.oppo-root{${varOverrides.join(";")}}`,
+          }}
         />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href={googleFontHref}
-          rel="stylesheet"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Mona+Sans:ital,wght@0,200..900;1,200..900&display=swap"
-          rel="stylesheet"
-        />
-        {varOverrides.length > 0 && (
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `.oppo-root.oppo-root{${varOverrides.join(";")}}`,
-            }}
-          />
-        )}
       </head>
       <body
         // Browser extensions (e.g. ColorZilla's cz-shortcut-listen) inject
@@ -68,13 +48,10 @@ export default async function RootLayout({
         // hydration mismatch. Suppression only affects this element's
         // attributes — not its children — and is the standard mitigation.
         suppressHydrationWarning
-        style={
-          useCustomFont
-            ? { fontFamily: `'${fontFamily}', ${FONT_FALLBACK}` }
-            : undefined
-        }
       >
-        {children}
+        <CartProvider>
+          {children}
+        </CartProvider>
       </body>
     </html>
   );

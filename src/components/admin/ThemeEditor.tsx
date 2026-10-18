@@ -4,16 +4,21 @@ import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import type { FieldSchema } from '@/lib/admin/collections';
+import { FONT_LOADERS } from '@/lib/fontLoaders';
+import { DEFAULT_SITE_FONT, type SiteFontName } from '@/lib/fonts';
 
 /** Defaults for the site-wide settings (what the site uses when unset). */
 const THEME_DEFAULTS: Record<string, string> = {
-  fontFamily: 'Inter',
+  fontFamily: DEFAULT_SITE_FONT,
   logoText: 'OPPO',
-  appleCopyright: 'Copyright © 2026 Apple Inc. All rights reserved.',
+  appleCopyright: 'Copyright © 2026 Gadzio. All rights reserved.',
   oppoPrimaryColor: '#006D2E',
   oppoGreenDark: '#005524',
   oppoGreenLight: '#00a040',
 };
+
+/** Text the font previews are set in — shows x-height and digit shapes. */
+const FONT_PREVIEW_SAMPLE = 'Everyday tech, better choices — 0123456789 ₹';
 
 export function ThemeEditor({
   fields,
@@ -161,6 +166,53 @@ export function ThemeEditor({
                     className="admin-input"
                   />
                 </div>
+              ) : f.type === 'select' ? (
+                <>
+                  <select
+                    value={value}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [f.path]: e.target.value }))}
+                    className={`admin-input${!isDefault ? ' changed' : ''}`}
+                    aria-label={f.label}
+                  >
+                    {f.options?.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                  {/*
+                    Font preview: each allow-listed face rendered in its own
+                    typeface, with the current choice highlighted. Shown only
+                    for the font field — the option labels double as the sample,
+                    so this is a font-specific view rather than a generic one.
+                    Clicking a row selects it, which is why the dropdown above
+                    and this list write the same value.
+                  */}
+                  {f.path === 'fontFamily' ? (
+                    <div className="admin-font-preview">
+                      {f.options?.map((opt) => {
+                        const face = FONT_LOADERS[opt as SiteFontName];
+                        const active = opt === value;
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => setValues((prev) => ({ ...prev, [f.path]: opt }))}
+                            className={face?.className}
+                            aria-pressed={active}
+                            data-active={active ? 'true' : undefined}
+                          >
+                            <span className="admin-font-preview-name">
+                              {opt}
+                              {opt === DEFAULT_SITE_FONT ? ' · default' : ''}
+                            </span>
+                            <span className="admin-font-preview-sample">{FONT_PREVIEW_SAMPLE}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <input
                   type="text"

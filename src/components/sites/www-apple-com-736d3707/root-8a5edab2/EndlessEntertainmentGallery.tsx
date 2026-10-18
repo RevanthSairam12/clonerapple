@@ -2,10 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-/** Convert a relative Apple path to a full URL so links navigate correctly. */
-const appleUrl = (href: string) =>
-  href.startsWith('http') ? href : `https://www.apple.com${href}`;
-
 import { cn } from '@/lib/utils';
 
 import { ArtDirectedPicture } from './ArtDirectedPicture';
@@ -94,7 +90,7 @@ function CardShell({
       aria-hidden={!active}
       className={cn(
         'absolute inset-0 flex justify-center',
-        mounted && !isWrapJump && 'ac-gallery-track'
+        mounted && !isWrapJump && 'gz-gallery-track'
       )}
       style={{
         transform: `translateX(${offset * 100}%)`,
@@ -105,7 +101,7 @@ function CardShell({
       }}
     >
       <a
-        href={appleUrl(item.href)}
+        href={item.href}
         aria-label={active ? item.ariaLabel : `View ${item.caption || item.ariaLabel}`}
         tabIndex={active ? 0 : -1}
         target="_blank"
@@ -123,7 +119,7 @@ function CardShell({
   );
 }
 
-/** Large Apple TV card: art + radial scrim + pill and caption along the bottom. */
+/** Large media card: art + radial scrim + pill and caption along the bottom. */
 function TvCard({
   item,
   active,
@@ -153,8 +149,8 @@ function TvCard({
           imgClassName="absolute inset-0 h-full w-full max-w-none object-cover"
         />
       ) : null}
-      <div className="ac-gallery-scrim-large absolute inset-0 flex flex-col justify-end">
-        {/* below 735px the card stacks the Apple TV+ badge over the show's logo */}
+      <div className="gz-gallery-scrim-large absolute inset-0 flex flex-col justify-end">
+        {/* below 735px the card stacks the service badge over the show's logo */}
         <div className="absolute inset-x-0 top-0 flex flex-col items-center am:hidden">
           {item.atvLogo ? (
             <ArtDirectedPicture
@@ -172,12 +168,12 @@ function TvCard({
           ) : null}
         </div>
         {/* below 735px the caption and pill centre-stack; above it they sit in a row */}
-        <div className="ac-gallery-bottom-content mt-auto flex flex-col-reverse items-center justify-center px-[15px] pb-[30px] am:flex-row am:justify-start am:px-[43px] am:pb-[34px] al:px-[48px] al:pb-[40px]">
-          <div className="ac-button ac-button-neutral ac-button-small ac-button-gallery-tv mt-[13px] shrink-0 am:mt-0">
+        <div className="gz-gallery-bottom-content mt-auto flex flex-col-reverse items-center justify-center px-[15px] pb-[30px] am:flex-row am:justify-start am:px-[43px] am:pb-[34px] al:px-[48px] al:pb-[40px]">
+          <div className="gz-button gz-button-neutral gz-button-small gz-button-gallery-tv mt-[13px] shrink-0 am:mt-0">
             {item.buttonLabel}
           </div>
           <p className="text-center text-[17px] leading-[21.0012px] tracking-[-0.374px] text-[#f5f5f7] am:pl-[18px] am:text-left al:text-[21px] al:leading-[25px] al:tracking-[0.231px]">
-            {item.genre ? <span className="ac-gallery-genre font-bold">{item.genre}</span> : null}
+            {item.genre ? <span className="gz-gallery-genre font-bold">{item.genre}</span> : null}
             {item.caption}
           </p>
         </div>
@@ -241,14 +237,14 @@ function FamCard({
         />
       ) : null}
 
-      <div className="ac-gallery-scrim-small absolute inset-0 flex flex-col justify-end">
+      <div className="gz-gallery-scrim-small absolute inset-0 flex flex-col justify-end">
         <div className="absolute inset-x-0 top-0 mt-[13px] flex justify-center al:mt-0 al:justify-end al:pt-[15px] al:pr-[15px]">
           {logo ? (
             <span className="block h-[14px] [&>svg]:h-[14px] [&>svg]:w-auto [&>svg]:fill-white">{logo}</span>
           ) : null}
         </div>
-        <div className="ac-gallery-bottom-content flex flex-col-reverse items-center justify-center px-[30px] pb-[15px] am:px-[20px] al:flex-row-reverse al:justify-between al:pr-[15px] al:pb-[15px] al:pl-[19px]">
-          <div className="ac-button ac-button-neutral ac-button-xsmall ac-button-gallery-fam shrink-0">
+        <div className="gz-gallery-bottom-content flex flex-col-reverse items-center justify-center px-[30px] pb-[15px] am:px-[20px] al:flex-row-reverse al:justify-between al:pr-[15px] al:pb-[15px] al:pl-[19px]">
+          <div className="gz-button gz-button-neutral gz-button-xsmall gz-button-gallery-fam shrink-0">
             {item.buttonLabel}
           </div>
           <p
@@ -300,7 +296,7 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
   const goToNext = () => setIndex((i) => (i + 1) % count);
 
   useEffect(() => {
-    if (paused || hovered) return;
+    if (paused || hovered || count === 0) return;
     timer.current = setTimeout(() => setIndex((i) => (i + 1) % count), GALLERY_META.itemDurationMs);
     return () => {
       if (timer.current) clearTimeout(timer.current);
@@ -350,6 +346,14 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
     return raw <= Math.floor(count / 2) ? raw : raw - count;
   };
 
+  // Nothing to show. The captured item data is empty by the de-brand pass, and
+  // the CMS row may not supply items either. Rendering anyway would paint an
+  // empty band with a stranded play/pause control and drive `index` through
+  // `% 0` (NaN), so bail out. Items from either source restore the section
+  // exactly as before.
+  const famItems = secondRowEnabled ? FAM_GALLERY_ITEMS : [];
+  if (count === 0 && famItems.length === 0) return null;
+
   return (
     <section className={cn('bg-[#f5f5f7]', !GALLERY_META.headline && 'mt-[20px] al:mt-[30px]')}>
       <div className={cn('flex flex-col', GALLERY_META.headline && 'pt-[36px] al:pt-[53px]')}>
@@ -357,7 +361,7 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
           <div className="mb-[17px] al:mb-[26px]">
             <h2
               className="text-center text-[32px] leading-[36px] font-semibold tracking-[0.128px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]"
-              style={{ fontFamily: 'var(--ac-font-display)' }}
+              style={{ fontFamily: 'var(--gz-font-display)' }}
             >
               {GALLERY_META.headline}
             </h2>
@@ -414,7 +418,7 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
         </div>
 
         {/* #fam-media-gallery */}
-        {secondRowEnabled ? (
+        {famItems.length > 0 ? (
           <div
             className="relative box-content h-[254px] pt-[13px] al:h-[234px] overflow-hidden select-none"
             onMouseEnter={() => setHovered(true)}
@@ -423,7 +427,7 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
             onTouchEnd={handleTouchEnd}
           >
             <ul className="relative mx-auto h-full w-[201px] al:w-[430px]">
-              {FAM_GALLERY_ITEMS.map((item, i) => (
+              {famItems.map((item, i) => (
                 <FamCard
                   key={item.id}
                   item={item}
@@ -453,10 +457,10 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
                     onClick={() => setIndex(i)}
                     data-current={current}
                     data-paused={paused || hovered}
-                    className={cn('ac-dot', !visible && 'invisible')}
-                    style={{ '--ac-dot-duration': `${GALLERY_META.itemDurationMs}ms` } as React.CSSProperties}
+                    className={cn('gz-dot', !visible && 'invisible')}
+                    style={{ '--gz-dot-duration': `${GALLERY_META.itemDurationMs}ms` } as React.CSSProperties}
                   >
-                    <span className="ac-visuallyhidden">Item {i + 1}</span>
+                    <span className="gz-visuallyhidden">Item {i + 1}</span>
                   </button>
                 </li>
               );
@@ -466,7 +470,7 @@ export function EndlessEntertainmentGallery({ content }: { content?: GalleryOver
             type="button"
             aria-label={paused ? GALLERY_META.playLabel : GALLERY_META.pauseLabel}
             onClick={() => setPaused((p) => !p)}
-            className="ac-dotnav-control absolute top-0 right-[10px] flex cursor-pointer items-center justify-center am:right-[12px]"
+            className="gz-dotnav-control absolute top-0 right-[10px] flex cursor-pointer items-center justify-center am:right-[12px]"
           >
             {paused ? <GalleryPlayIcon /> : <GalleryPauseIcon />}
           </button>

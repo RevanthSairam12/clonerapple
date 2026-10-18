@@ -675,6 +675,58 @@
   height: 41px;
 }
 
+/* Font picker previews. Each row carries a next/font class from ThemeEditor,
+   so the row — its name and its sample alike — renders in the face it names.
+   Nothing here may set font-family, or the previews would all look identical. */
+.admin-font-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.admin-font-preview button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid #d2d2d7;
+  border-radius: 9px;
+  background: #fff;
+  color: #1d1d1f;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.admin-font-preview button:hover {
+  border-color: #86868b;
+}
+
+.admin-font-preview button[data-active='true'] {
+  border-color: #0071e3;
+  background: rgba(0, 113, 227, 0.06);
+  box-shadow: inset 0 0 0 1px #0071e3;
+}
+
+.admin-font-preview-name {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.admin-font-preview-sample {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: #6e6e73;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ------------------------------------------------- enable/disable toggle */
 
 .admin-toggle-card {

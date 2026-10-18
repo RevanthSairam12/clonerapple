@@ -9,7 +9,7 @@
  * corresponding page/component renders today.
  *
  * Sources of truth (do not invent values — copy from these):
- *   Apple homepage — data files under
+ *   Gadzio homepage (`/`) — data files under
  *     src/components/sites/www-apple-com-736d3707/root-8a5edab2/data/
  *     plus inline defaults in Ribbon.tsx / PromoSection.tsx.
  *   OPPO — inline DEFAULT_* constants in src/components/sites/oppo-india/*.tsx.
@@ -30,19 +30,17 @@ import { LOCALE_BANNER } from '@/components/sites/www-apple-com-736d3707/root-8a
 import { NAV_ITEMS, SEARCH_PANEL } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
 import { HERO_INLINE_MEDIA, HERO_TILES, PROMO_TILES, type Tile } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
 import {
-  BTS_OFFERS,
-  EDU_IN_ACTION,
   HERO as EDU_HERO,
-  HOW_TO_BUY_STEPS,
-  IPAD_PRODUCTS,
-  MAC_PRODUCTS,
-  SHOP_CATEGORIES,
+  PRODUCT_NAV as EDU_PRODUCT_NAV,
+  QUICK_LINKS as EDU_QUICK_LINKS,
+  SHELVES as EDU_SHELVES,
+  type EduCard,
 } from '@/components/sites/edu-store/data/content';
 import { PRODUCTS as CASES_PRODUCTS } from '@/components/sites/cases-protection/data/products';
 
 /* ------------------------------------------------------------- helpers */
 
-/** Apple tile → simplified editor shape (headline/subheadText/href/ctas + image size slots). */
+/** Homepage tile → simplified editor shape (headline/subheadText/href/ctas + image size slots). */
 function tileOverride(tile: Tile): Record<string, unknown> {
   return {
     headline: tile.headline ?? '',
@@ -119,7 +117,7 @@ function responsiveImageCurrentArt(image: Tile['image']): Record<string, string>
   };
 }
 
-/* ------------------------------------------------------ Apple homepage */
+/* ------------------------------------------------------ Gadzio homepage */
 
 const APPLE_HERO_TILES_DEFAULTS = {
   heroTiles: HERO_TILES.map(tileOverride),
@@ -131,10 +129,12 @@ const APPLE_PROMO_DEFAULTS = {
 };
 
 const APPLE_RIBBON_DEFAULTS = {
-  // Plain-text flattening of the hardcoded markup in Ribbon.tsx (the sup
-  // footnote markers * and ‡ render as plain characters).
-  text: 'Get up to 6 months of No Cost EMI* plus up to ₹15000 instant cashback‡ on selected products with eligible cards.',
-  shopHref: 'https://www.apple.com/in/shop/goto/store',
+  // The de-branded promo line the live `apple.ribbon` row already carries, and
+  // the fallback Ribbon.tsx renders. Replaces Apple India's own offer
+  // ("6 months of No Cost EMI … instant cashback … eligible cards"), which was
+  // Apple's promotional claim rather than a Gadzio one.
+  text: 'Unlock exclusive student pricing and massive savings this semester on all eligible device chargers, protective cases, and premium audio accessories.',
+  shopHref: '/shop/iphone/accessories/cases-protection',
 };
 
 const APPLE_LOCALE_BANNER_DEFAULTS = {
@@ -192,11 +192,14 @@ const APPLE_HERO_VIDEO_DEFAULTS = {
   })),
 };
 
+// Mirrors the hardcoded `metadata` in src/app/page.tsx — the values the
+// homepage actually renders when no `apple.seo` row exists. These are editor
+// prefills only; they are never rendered directly.
 const APPLE_SEO_DEFAULTS = {
-  title: 'Apple',
+  title: 'Gadzio',
   description:
-    'Discover the innovative world of Apple and shop everything iPhone, iPad, Apple Watch, Mac, and Apple TV, plus explore accessories, entertainment, and expert device support.',
-  ogTitle: 'Apple',
+    'Shop Gadzio mobile accessories, cases, chargers, cables, audio accessories and everyday tech essentials.',
+  ogTitle: 'Gadzio',
 };
 
 /* ---------------------------------------------------------- OPPO India */
@@ -419,142 +422,67 @@ const OPPO_SEO_DEFAULTS = {
 
 /* -------------------------------------------------------- Edu store */
 
+/** Store card → editor shape. Optional fields pre-fill as empty strings. */
+function eduCardOverride(card: EduCard): Record<string, unknown> {
+  return {
+    headline: card.headline,
+    tag: card.tag ?? '',
+    desc: card.desc ?? '',
+    price: card.price ?? '',
+    image: card.image,
+    href: card.href,
+    dark: card.dark ?? false,
+    savingsBadge: card.savingsBadge ?? false,
+  };
+}
+
 const EDU_HERO_DEFAULTS = {
-  badge: EDU_HERO.badge,
   headline: EDU_HERO.headline,
   subhead: EDU_HERO.subhead,
-  promoHeadline: EDU_HERO.promo.headline,
-  promoOffer: EDU_HERO.promo.offer,
-  promoDisclaimer: EDU_HERO.promo.disclaimer,
 };
 
-const EDU_BTS_OFFERS_DEFAULTS = {
-  // Flat CTA paths, matching the field schema (ctaPrimaryLabel etc.).
-  items: BTS_OFFERS.map((offer) => ({
-    kicker: offer.kicker,
-    headline: offer.headline,
-    offer: offer.offer,
-    upgradeNote: offer.upgradeNote,
-    image: offer.image,
-    ctaPrimaryLabel: offer.ctaPrimary.label,
-    ctaPrimaryHref: offer.ctaPrimary.href,
-    ctaSecondaryLabel: offer.ctaSecondary.label,
-    ctaSecondaryHref: offer.ctaSecondary.href,
-  })),
+const EDU_PRODUCT_NAV_DEFAULTS = {
+  // Every category — a shorter list would drop nav entries when saved.
+  items: EDU_PRODUCT_NAV.map(eduCardOverride),
 };
 
-const EDU_MAC_PRODUCTS_DEFAULTS = {
-  items: MAC_PRODUCTS.map((product) => ({
-    name: product.name,
-    descriptor: product.descriptor,
-    chip: product.chip,
-    price: product.price,
-    priceNote: product.priceNote,
-    image: product.image,
-    buyHref: product.buyHref,
-    learnHref: product.learnHref,
-  })),
+const EDU_QUICK_LINKS_DEFAULTS = {
+  items: EDU_QUICK_LINKS.map((link) => ({ label: link.label, href: link.href })),
 };
 
-const EDU_IPAD_PRODUCTS_DEFAULTS = {
-  items: IPAD_PRODUCTS.map((product) => ({
-    name: product.name,
-    descriptor: product.descriptor,
-    chip: product.chip,
-    price: product.price,
-    priceNote: product.priceNote,
-    image: product.image,
-    buyHref: product.buyHref,
-    learnHref: product.learnHref,
-  })),
-};
-
-const EDU_SECTIONS_DEFAULTS = {
-  mac: {
-    eyebrow: 'Mac for Education',
-    headline: 'Mac. Made for more.',
-    subhead: 'The power of Apple silicon takes students further, faster.',
-  },
-  ipad: {
-    eyebrow: 'iPad for Education',
-    headline: 'iPad. The ultimate learning tool.',
-    subhead: 'Versatile, powerful, and perfect with Apple Pencil.',
-  },
-  action: {
-    eyebrow: 'Apple Education in Action',
-    headline: 'Built for every kind of learner.',
-    subhead: 'See how students across disciplines use Mac and iPad to go further.',
-  },
-  categories: {
-    headline: 'Browse the Education Store.',
-  },
-};
-
-const EDU_IN_ACTION_DEFAULTS = {
-  items: EDU_IN_ACTION.map((item) => ({
-    field: item.field,
-    device: item.device,
-    headline: item.headline,
-    body: item.body,
-    app: item.app,
-  })),
-};
-
-const EDU_ELIGIBILITY_DEFAULTS = {
-  headline: 'Who can shop the Education Store?',
-  body: 'Apple Education Pricing is available to current and newly accepted college students, students’ parents, and teachers and staff at all grade levels.',
-  // One tag per line (EligibilityBanner splits on newlines).
-  tags: [
-    'College Students',
-    'Newly Accepted Students',
-    'Parents of Students',
-    'Teachers',
-    'Faculty & Staff',
-    'Homeschool Educators',
-  ].join('\n'),
-  ctaLabel: 'Verify my eligibility',
-  ctaHref: 'https://www.apple.com/in-edu/store',
-};
-
-const EDU_HOW_TO_BUY_DEFAULTS = {
-  eyebrow: 'Buying Guide',
-  headline: 'How to buy with education savings.',
-  // Flat link paths, matching the field schema (linkLabel / linkHref).
-  steps: HOW_TO_BUY_STEPS.map((step) => ({
-    step: step.step,
-    headline: step.headline,
-    body: step.body,
-    linkLabel: step.link.label,
-    linkHref: step.link.href,
-  })),
-};
-
-const EDU_CATEGORIES_DEFAULTS = {
-  items: SHOP_CATEGORIES.map((category) => ({
-    label: category.label,
-    icon: category.icon,
-    href: category.href,
-  })),
-};
+/** One DEFAULTS entry per shelf, keyed `edu.shelf_<id with underscores>`. */
+const EDU_SHELF_DEFAULTS: Record<string, Record<string, unknown>> = Object.fromEntries(
+  EDU_SHELVES.map((shelf) => [
+    `edu.shelf_${shelf.id.replace(/-/g, '_')}`,
+    {
+      headline: shelf.headline,
+      subhead: shelf.subhead,
+      enabled: true,
+      cards: shelf.cards.map(eduCardOverride),
+    },
+  ]),
+);
 
 const EDU_SEO_DEFAULTS = {
-  title: 'Apple Education Store India — Back to School 2026',
+  title: 'Education Pricing and Student Discounts — Gadzio Education Store (IN)',
   description:
-    'Shop Mac and iPad with Apple Education Pricing. Students, teachers, and educators get exclusive savings plus get AirPods with Mac and Apple Pencil Pro with iPad — for a limited time.',
+    'College, sorted. Buy Gadzio Book, Pad and more with education pricing. Students, parents and educators save on computers, tablets, watches and accessories.',
 };
 
 /* -------------------------------------------------- Cases & Protection */
 
 const CASES_CATEGORY_LINKS_DEFAULTS = {
+  // Mirrors CATEGORY_LINKS in CasesProtectionPage.tsx. Every destination is an
+  // in-app Gadzio route — the previous apple.com category URLs would each have
+  // sent an editor-saved rail straight to Apple's store.
   items: [
-    { label: 'All Accessories', href: 'https://www.apple.com/in/shop/iphone/accessories' },
-    { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
-    { label: 'MagSafe', href: 'https://www.apple.com/in/shop/iphone/accessories/magsafe' },
-    { label: 'Power & Cables', href: 'https://www.apple.com/in/shop/iphone/accessories/power-cables' },
-    { label: 'Audio', href: 'https://www.apple.com/in/shop/iphone/accessories/audio' },
-    { label: 'AirTag', href: 'https://www.apple.com/in/shop/iphone/accessories/airtag' },
-    { label: 'Stands & Mounts', href: 'https://www.apple.com/in/shop/iphone/accessories/stands-mounts' },
-    { label: 'Health & Fitness', href: 'https://www.apple.com/in/shop/iphone/accessories/health-fitness' },
+    { label: 'All Accessories', href: '/shop/iphone/accessories/cases-protection' },
+    { label: 'Cases & Protection', href: '/shop/iphone/accessories/cases-protection' },
+    { label: 'MagSafe Mounts', href: '/shop/iphone/accessories/cases-protection?filter=magsafe' },
+    { label: 'Power & Cables', href: '/checkout' },
+    { label: 'Audio & AirPods', href: '/' },
+    { label: 'Stands & Docks', href: '/' },
+    { label: 'Screen Protectors', href: '/shop/iphone/accessories/cases-protection' },
   ],
 };
 
@@ -576,16 +504,19 @@ const CASES_PRODUCTS_DEFAULTS = {
   })),
 };
 
+// Mirrors the hardcoded `metadata` in the cases-protection page. Apple product
+// terminology (iPhone, MagSafe) stays — Gadzio sells those cases — but the copy
+// no longer implies the store is Apple's or that the cases are Apple's.
 const CASES_SEO_DEFAULTS = {
-  title: 'Cases & Protection - iPhone Accessories - Apple (IN)',
+  title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
   description:
-    'Shop iPhone cases and protection from Apple. Find MagSafe cases, silicone cases, clear cases, FineWoven cases and more for iPhone 17, iPhone 17 Pro, iPhone 16 and more.',
+    'Shop Gadzio protective cases for iPhone. Find MagSafe liquid silicone cases, crystal clear cases, and AeroWeave technical textile cases with military-grade drop defense.',
 };
 
 /* -------------------------------------------------------------- build */
 
 const DEFAULTS: Record<string, Record<string, unknown>> = {
-  /* Apple homepage */
+  /* Gadzio homepage */
   'apple.hero_tiles': APPLE_HERO_TILES_DEFAULTS,
   'apple.hero_video': APPLE_HERO_VIDEO_DEFAULTS,
   'apple.promo_section': APPLE_PROMO_DEFAULTS,
@@ -611,14 +542,10 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
 
   /* Education store */
   'edu.hero': EDU_HERO_DEFAULTS,
-  'edu.bts_offers': EDU_BTS_OFFERS_DEFAULTS,
-  'edu.mac_products': EDU_MAC_PRODUCTS_DEFAULTS,
-  'edu.ipad_products': EDU_IPAD_PRODUCTS_DEFAULTS,
-  'edu.sections': EDU_SECTIONS_DEFAULTS,
-  'edu.in_action': EDU_IN_ACTION_DEFAULTS,
-  'edu.eligibility': EDU_ELIGIBILITY_DEFAULTS,
-  'edu.how_to_buy': EDU_HOW_TO_BUY_DEFAULTS,
-  'edu.categories': EDU_CATEGORIES_DEFAULTS,
+  'edu.product_nav': EDU_PRODUCT_NAV_DEFAULTS,
+  // One entry per shelf — ids must match SHELVES in data/content.ts.
+  ...EDU_SHELF_DEFAULTS,
+  'edu.quick_links': EDU_QUICK_LINKS_DEFAULTS,
   'edu.seo': EDU_SEO_DEFAULTS,
 
   /* Cases & Protection */

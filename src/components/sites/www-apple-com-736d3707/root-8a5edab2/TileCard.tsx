@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 
+import Link from 'next/link';
+
 import { cn } from '@/lib/utils';
 
 import { ArtDirectedPicture } from './ArtDirectedPicture';
@@ -9,9 +11,18 @@ import type { SubheadSegment, Tile } from './data/tiles';
 /** `none` keeps the cap unset at that breakpoint instead of inheriting a wider one. */
 const px = (value: number | null) => (value === null ? 'none' : `${value}px`);
 
-/** Convert a relative Apple path to a full URL so links navigate correctly. */
-const appleUrl = (href: string) =>
-  href.startsWith('http') ? href : `https://www.apple.com${href}`;
+/**
+ * True for URLs that leave the site: an absolute URL with a scheme
+ * (`https:`, `mailto:`, …) or a protocol-relative one (`//host/path`).
+ *
+ * Tile links are now used exactly as authored. Earlier revisions rewrote every
+ * non-absolute href to `https://www.apple.com<path>`, so a Gadzio-relative href
+ * silently became an Apple destination. That rewrite is gone: relative hrefs
+ * stay relative (and so stay a Gadzio route), and an external URL is only ever
+ * reached when one is explicitly authored — which the CMS can still do for a
+ * legitimate third-party destination.
+ */
+const isExternalHref = (href: string) => /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//');
 
 function Subhead({ segments }: { segments: SubheadSegment[] }) {
   return (
@@ -20,13 +31,13 @@ function Subhead({ segments }: { segments: SubheadSegment[] }) {
         if (segment.kind === 'text') return segment.value;
         if (segment.kind === 'footnoteNumber') {
           return (
-            <sup key={i} className="ac-footnote-number" aria-label={`Footnote ${segment.value}`}>
+            <sup key={i} className="gz-footnote-number" aria-label={`Footnote ${segment.value}`}>
               {segment.value}
             </sup>
           );
         }
         return (
-          <span key={i} className="ac-footnote-glyph" aria-label={`Footnote ${segment.value} symbol`}>
+          <span key={i} className="gz-footnote-glyph" aria-label={`Footnote ${segment.value} symbol`}>
             {segment.value}
           </span>
         );
@@ -60,7 +71,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
     <div
       className={cn(
         'relative flex justify-center overflow-clip rounded-[0.01rem]',
-        isDark ? 'ac-theme-dark bg-black' : (tile.index === 0 && isHero ? 'bg-white' : 'bg-[#f5f5f7]'),
+        isDark ? 'gz-theme-dark bg-black' : (tile.index === 0 && isHero ? 'bg-white' : 'bg-[#f5f5f7]'),
         isHero
           ? 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[650px] am:pt-[61px] am:pb-[69px] al:min-h-[692px] al:pt-[56px] al:pb-[63px]'
           : 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[490px] am:pt-[44px] am:pb-[48px] al:min-h-[580px] al:pt-[53px] al:pb-[60px]',
@@ -89,13 +100,27 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
         <div className={cn('relative z-2', isDark ? 'text-[#f5f5f7]' : 'text-[#1d1d1f]')}>
           <Headline
             className={cn(
-              'font-[family-name:var(--ac-font-display)] font-semibold',
+              'font-[family-name:var(--gz-font-display)] font-semibold',
               isHero
                 ? 'text-[32px] leading-[36px] tracking-[0.064px] am:text-[48px] am:leading-[52.0077px] am:tracking-[-0.096px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]'
                 : 'text-[32px] leading-[36px] tracking-[0.064px] al:text-[40px] al:leading-[44px] al:tracking-normal',
               // logo headlines carry the target's optical nudge at every width
               tile.headlineLogo ? 'mt-[4px] mb-[-5px]' : null,
             )}
+            // Promo card headlines only — hero tiles keep --gz-font-display from the
+            // class above. Adding this to the hero side is a one-line change (drop
+            // the isHero guard) once that's wanted.
+            style={
+              isHero
+                ? undefined
+                : {
+                    // DEACTIVATED (previous font) — kept for easy rollback:
+                    // fontFamily: 'var(--gz-font-display)',
+                    // ACTIVE — matches the hero headlines in GadzioHeroSection.tsx
+                    fontFamily:
+                      '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+                  }
+            }
           >
             {tile.headlineLogo ? (
               <ArtDirectedPicture
@@ -111,7 +136,13 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
 
           <p
             className={cn(
-              'ac-tile-subhead mx-auto font-[family-name:var(--ac-font-display)] font-normal',
+              'gz-tile-subhead mx-auto font-normal',
+              // Hero subheads keep --gz-font-display (Inter). Promo subheads use
+              // Tailwind's default font-sans — the same stack the hero's eyebrow
+              // labels inherit from GadzioHeroSection's root <section>.
+              // DEACTIVATED (previous font, for both) — kept for easy rollback:
+              //   'font-[family-name:var(--gz-font-display)]',
+              isHero ? 'font-[family-name:var(--gz-font-display)]' : 'font-sans',
               isHero
                 ? 'mt-[4px] text-[19px] leading-[23px] tracking-[0.228px] am:text-[24px] am:leading-[28px] am:tracking-[0.216px] al:mt-[6px] al:text-[28px] al:leading-[32px] al:tracking-[0.196px]'
                 : 'text-[19px] leading-[23px] tracking-[0.228px] al:text-[21px] al:leading-[25px] al:tracking-[0.231px]',
@@ -120,9 +151,9 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
             )}
             style={
               {
-                '--ac-subhead-sm': px(tile.subheadMaxWidth.sm),
-                '--ac-subhead-md': px(tile.subheadMaxWidth.md),
-                '--ac-subhead-lg': px(tile.subheadMaxWidth.lg),
+                '--gz-subhead-sm': px(tile.subheadMaxWidth.sm),
+                '--gz-subhead-md': px(tile.subheadMaxWidth.md),
+                '--gz-subhead-lg': px(tile.subheadMaxWidth.lg),
               } as CSSProperties
             }
           >
@@ -139,34 +170,65 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
               : 'mt-[11px] gap-x-[14px] am:mt-[12px]',
           )}
         >
-          {tile.ctas.map((cta, i) => (
-            <div key={`${cta.label}|${cta.href}`} className="relative inline-flex items-center">
-              <a
-                href={appleUrl(cta.href)}
-                aria-label={cta.ariaLabel ?? undefined}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  'ac-button relative z-4',
-                  cta.variant === 'secondary' && 'ac-button-secondary',
-                  // hero buttons are small below 735px; promo buttons are always small
-                  'ac-button-small',
-                  isHero && 'ac-button-hero',
+          {tile.ctas.map((cta, i) => {
+            const ctaClassName = cn(
+              'gz-button relative z-4',
+              cta.variant === 'secondary' && 'gz-button-secondary',
+              // hero buttons are small below 735px; promo buttons are always small
+              'gz-button-small',
+              isHero && 'gz-button-hero',
+            );
+            return (
+              <div key={`${cta.label}|${cta.href}`} className="relative inline-flex items-center">
+                {cta.internal ? (
+                  <Link
+                    href={cta.href}
+                    aria-label={cta.ariaLabel ?? undefined}
+                    className={ctaClassName}
+                  >
+                    {cta.label}
+                  </Link>
+                ) : (
+                  <a
+                    href={cta.href}
+                    aria-label={cta.ariaLabel ?? undefined}
+                    {...(isExternalHref(cta.href)
+                      ? { target: '_blank', rel: 'noopener noreferrer' }
+                      : null)}
+                    className={ctaClassName}
+                  >
+                    {cta.label}
+                  </a>
                 )}
-              >
-                {cta.label}
-              </a>
-              {/* Very small (i) icon nestled at the corner of the CTA button */}
-              {i === 0 && tile.infoTooltip ? (
-                <TileInfoTooltip text={tile.infoTooltip} />
-              ) : null}
-            </div>
-          ))}
+                {/* Very small (i) icon nestled at the corner of the CTA button */}
+                {i === 0 && tile.infoTooltip ? (
+                  <TileInfoTooltip text={tile.infoTooltip} />
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
 
       {/* a.tile-link — covers the tile; the CTAs sit above it */}
-      <a href={appleUrl(tile.href)} target="_blank" rel="noopener noreferrer" className="absolute inset-0 z-2" aria-hidden="true" tabIndex={-1} />
+      {tile.internal ? (
+        <Link
+          href={tile.href}
+          className="absolute inset-0 z-2"
+          aria-hidden="true"
+          tabIndex={-1}
+        />
+      ) : (
+        <a
+          href={tile.href}
+          {...(isExternalHref(tile.href)
+            ? { target: '_blank', rel: 'noopener noreferrer' }
+            : null)}
+          className="absolute inset-0 z-2"
+          aria-hidden="true"
+          tabIndex={-1}
+        />
+      )}
     </div>
   );
 }

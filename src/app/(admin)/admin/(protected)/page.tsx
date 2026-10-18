@@ -7,7 +7,7 @@ import { getSession } from '@/lib/admin/auth';
 export const dynamic = 'force-dynamic';
 
 const SITE_LABELS: Record<string, { label: string; icon: string }> = {
-  '/': { label: 'Apple Homepage', icon: '' },
+  '/': { label: 'Gadzio Homepage', icon: '' },
   '/android': { label: 'OPPO India', icon: '📱' },
   '/in-edu/store': { label: 'Education Store', icon: '🎓' },
   '/in/shop/iphone/accessories/cases-protection': { label: 'Cases & Protection', icon: '🛡️' },

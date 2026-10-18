@@ -36,7 +36,7 @@ export function AdminSidebar({
         <span>
           <span className="admin-sidebar-logo-text">Content Admin</span>
           <br />
-          <span className="admin-sidebar-logo-sub">Apple Clone Studio</span>
+          <span className="admin-sidebar-logo-sub">Gadzio Content Studio</span>
         </span>
       </Link>
 

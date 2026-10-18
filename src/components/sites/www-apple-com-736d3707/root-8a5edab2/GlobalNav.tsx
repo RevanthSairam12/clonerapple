@@ -4,12 +4,16 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
-import { APPLE_LOGO, NAV_ITEMS, NAV_MENUS, SEARCH_PANEL, type NavWordmark } from './data/nav';
-import { BagIcon, DrawerBackIcon, DrawerChevronIcon, SearchIcon } from './icons';
+import { NAV_ITEMS, NAV_MENUS, SEARCH_PANEL, type NavWordmark } from './data/nav';
+import { BagIcon, DrawerBackIcon, DrawerChevronIcon, SearchIcon, SearchSubmitIcon } from './icons';
 import { NavFlyoutGroups } from './NavFlyoutGroups';
 import { NavSearchPanel } from './NavSearchPanel';
+import { useCart } from '@/lib/cart/CartContext';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { mergeNavItems, type NavLabelsOverride } from './admin-overrides';
 import { FloatingBrandSwitcher } from '@/components/common/FloatingBrandSwitcher';
+import { GadzioHeader } from '@/components/header/GadzioHeader';
 
 const NAV_HEIGHT_DESKTOP = 44;
 const SEARCH_KEY = '__search__';
@@ -32,20 +36,31 @@ function Wordmark({ mark, className }: { mark: NavWordmark; className?: string }
 }
 
 /**
- * `nav#globalnav` — fixed translucent bar with click-driven flyouts.
+ * `nav#gz-globalnav` — fixed translucent bar with click-driven flyouts.
  *
  * INTERACTION MODEL: **click-driven**, verified against the live page — hovering
  * a product item (link or trigger button) never opens its flyout, even after a
- * 1.6s dwell; `button.globalnav-submenu-trigger-button.click()` does (nav gains
- * `globalnav-with-flyout-open globalnav-with-submenu-open`, panel height
+ * 1.6s dwell; clicking the submenu trigger button does (this nav gains
+ * flyout-open + submenu-open state, panel height
  * animates over 254ms, curtain fades in over 320ms). Below 834px the bar shows a
  * hamburger that expands the whole nav into a full-height drawer.
  */
-export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; labels?: NavLabelsOverride }) {
+export function GlobalNav({
+  bannerVisible,
+  labels,
+  currentBrand = 'gadzio',
+}: {
+  bannerVisible: boolean;
+  labels?: NavLabelsOverride;
+  /** Which storefront this nav is rendered on — drives the brand switcher. */
+  currentBrand?: 'gadzio' | 'android';
+}) {
   const NAV_ITEMS_RESOLVED = mergeNavItems(NAV_ITEMS, labels);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMenu, setDrawerMenu] = useState<string | null>(null);
+  const { totalCount, badgeBouncing } = useCart();
+  const router = useRouter();
 
   const closeAll = useCallback(() => {
     setActiveMenu(null);
@@ -64,7 +79,7 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
   const openMenu = activeMenu ? NAV_MENUS.find((menu) => menu.key === activeMenu) : undefined;
   const panelHeight =
     activeMenu === SEARCH_KEY
-      ? SEARCH_PANEL.heightPx - NAV_HEIGHT_DESKTOP
+      ? 480 - NAV_HEIGHT_DESKTOP
       : openMenu
         ? openMenu.heightPx - NAV_HEIGHT_DESKTOP
         : 0;
@@ -75,8 +90,23 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
 
   return (
     <>
+      {/* =========================================================================
+          STICKY GADZIO HEADER — promo bar, sticky nav, flyout panels, drawer
+          ========================================================================= */}
+      <GadzioHeader
+        bannerVisible={bannerVisible}
+        navItems={NAV_ITEMS_RESOLVED}
+        searchPlaceholder={labels?.searchPlaceholder ?? SEARCH_PANEL.placeholder}
+      />
+
+      {/* Floating side tab / sticky drawer linking to the other storefront */}
+      <FloatingBrandSwitcher currentBrand={currentBrand} />
+
+      {/* =========================================================================
+          PREVIOUS APPLE / GADZIO GLOBALNAV (KEPT COMMENTED AS REQUESTED - DO NOT REMOVE)
+          =========================================================================
       <nav
-        id="globalnav"
+        id="gz-globalnav"
         aria-label="Global"
         data-menu-open={drawerOpen}
         className={cn(
@@ -85,22 +115,20 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
           bannerVisible ? 'top-[135px] anav:top-[70px]' : 'top-0',
         )}
       >
-        {/* .globalnav-content — becomes the drawer surface below 834px */}
         <div
           className={cn(
-            'ac-drawer-content absolute inset-x-0 top-0 anav:static anav:mx-auto anav:max-w-[1024px] anav:px-[22px]',
+            'gz-drawer-content absolute inset-x-0 top-0 anav:static anav:mx-auto anav:max-w-[1024px] anav:px-[22px]',
             drawerOpen ? 'h-dvh overflow-y-auto bg-[#fafafc]' : 'h-[48px] bg-[rgba(255,255,255,0.8)]',
             'anav:h-[44px] anav:overflow-visible',
             flyoutOpen ? 'anav:bg-[#fafafc]' : 'anav:bg-transparent',
           )}
         >
-          {/* the bar itself */}
           <ul className="flex h-[48px] justify-between pr-[48px] anav:-mx-[8px] anav:h-[44px] anav:pr-0">
             <li className={cn('grow anav:grow-0', drawerOpen && 'invisible anav:visible')}>
               <a
                 href="/"
                 aria-label="Gadzio"
-                className="ac-nav-link flex h-[48px] items-center px-[16px] anav:h-[44px] anav:px-[8px] transition-opacity duration-200 hover:opacity-75"
+                className="gz-nav-link flex h-[48px] items-center px-[16px] anav:h-[44px] anav:px-[8px] transition-opacity duration-200 hover:opacity-75"
               >
                 <img
                   src="/gadzio_logo.png"
@@ -110,7 +138,6 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
               </a>
             </li>
 
-            {/* product items — desktop only */}
             {NAV_ITEMS_RESOLVED.map((item) => {
               const isOpen = activeMenu === item.key;
               return (
@@ -118,16 +145,22 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
                   <button
                     type="button"
                     aria-expanded={isOpen}
-                    aria-controls={`globalnav-submenu-${item.key}`}
+                    aria-controls={`gz-globalnav-submenu-${item.key}`}
                     aria-label={item.ariaLabel}
                     onClick={() => setActiveMenu(isOpen ? null : item.key)}
-                    className="ac-nav-link flex h-[44px] cursor-pointer items-center px-[8px]"
+                    className="gz-nav-link flex h-[44px] cursor-pointer items-center px-[8px]"
                   >
-                    {/* Items without a wordmark (added via the admin panel) show their label. */}
                     {item.wordmark.paths.length > 0 ? (
                       <Wordmark mark={item.wordmark} />
                     ) : (
-                      <span style={{ fontSize: 12, fontWeight: 400, opacity: 0.8 }}>
+                      <span
+                        className={cn(
+                          'text-[12px] tracking-[-0.01em] transition-all duration-200 select-none whitespace-nowrap px-0.5',
+                          isOpen
+                            ? 'text-[#0071e3] font-medium opacity-100'
+                            : 'text-[#1d1d1f] font-normal opacity-80 hover:opacity-100 hover:text-[#0071e3]'
+                        )}
+                      >
                         {item.label}
                       </span>
                     )}
@@ -136,33 +169,74 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
               );
             })}
 
-            <li className={cn('anav:shrink-0', drawerOpen && 'invisible anav:visible')}>
+            <li className={cn('flex items-center gap-0.5 anav:gap-1 anav:shrink-0', drawerOpen && 'invisible anav:visible')}>
               <button
                 type="button"
                 aria-label={SEARCH_PANEL.placeholder}
                 aria-expanded={activeMenu === SEARCH_KEY}
-                aria-controls="globalnav-submenu-search"
+                aria-controls="gz-globalnav-submenu-search"
                 onClick={() => setActiveMenu(activeMenu === SEARCH_KEY ? null : SEARCH_KEY)}
-                className="ac-nav-link flex h-[48px] w-[48px] cursor-pointer items-center justify-center anav:h-[44px] anav:w-auto anav:px-[8px]"
+                className="gz-nav-link flex h-[48px] w-[38px] cursor-pointer items-center justify-center anav:h-[44px] anav:w-auto anav:px-[8px]"
               >
                 <SearchIcon />
               </button>
-            </li>
 
-            <li className={cn('anav:shrink-0', drawerOpen && 'invisible anav:visible')}>
-              <a
-                href="/us/shop/goto/bag"
-                aria-label="Shopping Bag"
-                className="ac-nav-link flex h-[48px] w-[48px] items-center justify-center anav:h-[44px] anav:w-auto anav:px-[8px]"
+              <Link
+                href="/cart"
+                aria-label={totalCount > 0 ? `Shopping Bag with ${totalCount} items` : 'Shopping Bag'}
+                onClick={() => {
+                  setActiveMenu(null);
+                  setDrawerOpen(false);
+                }}
+                className="gz-nav-link relative flex h-[48px] w-[38px] cursor-pointer items-center justify-center anav:h-[44px] anav:w-auto anav:px-[8px]"
               >
                 <BagIcon />
-              </a>
+                {totalCount > 0 && (
+                  <span
+                    className={cn(
+                      'absolute top-[8px] right-[4px] anav:top-[6px] anav:right-[0px]',
+                      'min-w-[16px] h-[16px] px-1 rounded-full',
+                      'bg-[#1d1d1f] text-white text-[10px] font-bold leading-none',
+                      'flex items-center justify-center shadow-xs pointer-events-none',
+                      'transition-all duration-300',
+                      badgeBouncing ? 'scale-125 bg-[#0071e3]' : 'scale-100'
+                    )}
+                  >
+                    {totalCount}
+                  </span>
+                )}
+              </Link>
             </li>
           </ul>
 
-          {/* mobile drawer contents */}
           {drawerOpen ? (
             <div className="anav:hidden">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const formData = new FormData(e.currentTarget);
+                  const q = formData.get('q') as string;
+                  if (q?.trim()) {
+                    closeAll();
+                    router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+                  }
+                }}
+                className="px-[32px] pt-4 pb-2"
+              >
+                <div className="flex items-center h-[40px] bg-black/5 rounded-xl px-3 border border-black/5">
+                  <span className="text-[#86868b] mr-2">
+                    <SearchSubmitIcon />
+                  </span>
+                  <input
+                    name="q"
+                    type="text"
+                    placeholder="Search Gadzio, cases, adapters..."
+                    aria-label="Search"
+                    className="w-full bg-transparent text-[14px] text-[#1d1d1f] outline-none placeholder:text-[#86868b]"
+                  />
+                </div>
+              </form>
+
               {drawerSubmenu ? (
                 <div className="px-[48px] pt-[2px]">
                   {drawerSubmenu.groups.map((group, groupIndex) => (
@@ -177,12 +251,12 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
                               href={link.href}
                               aria-label={link.ariaLabel}
                               className={cn(
-                                'ac-submenu-link mb-[-6px] inline-block',
+                                'gz-submenu-link mb-[-6px] inline-block',
                                 link.elevated
                                   ? 'p-[11px] text-[28px] leading-[32px] font-semibold'
                                   : 'px-[11px] pt-[8px] pb-[7px] text-[17px] leading-[25px] font-semibold',
                               )}
-                              style={link.elevated ? { fontFamily: 'var(--ac-font-display)' } : undefined}
+                              style={link.elevated ? { fontFamily: 'var(--gz-font-display)' } : undefined}
                             >
                               {link.label}
                             </a>
@@ -199,7 +273,7 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
                       <button
                         type="button"
                         onClick={() => setDrawerMenu(item.key)}
-                        className="ac-drawer-row flex h-[46px] w-full cursor-pointer items-start justify-between px-[48px] pt-[3px] pb-[4px] text-left"
+                        className="gz-drawer-row flex h-[46px] w-full cursor-pointer items-start justify-between px-[48px] pt-[3px] pb-[4px] text-left"
                       >
                         {item.label}
                         <span className="-mr-[48px] flex h-[47px] w-[9px] scale-80 items-center pr-[19px] text-[#333336]">
@@ -208,12 +282,31 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
                       </button>
                     </li>
                   ))}
+                  <li className="block border-t border-black/5 pt-2 mt-2">
+                    <Link
+                      href="/cart"
+                      onClick={closeAll}
+                      className="gz-drawer-row flex h-[46px] w-full cursor-pointer items-center justify-between px-[48px] text-left text-[17px] font-semibold text-[#0071e3]"
+                    >
+                      <span>Shopping Bag {totalCount > 0 ? `(${totalCount})` : ''}</span>
+                      <span className="-mr-[48px] pr-[19px] text-sm">→</span>
+                    </Link>
+                  </li>
+                  <li className="block">
+                    <Link
+                      href="/auth"
+                      onClick={closeAll}
+                      className="gz-drawer-row flex h-[46px] w-full cursor-pointer items-center justify-between px-[48px] text-left text-[17px] font-normal text-[#1d1d1f]"
+                    >
+                      <span>Account / Sign In</span>
+                      <span className="-mr-[48px] pr-[19px] text-sm text-[#86868b]">→</span>
+                    </Link>
+                  </li>
                 </ul>
               )}
             </div>
           ) : null}
 
-          {/* hamburger / close */}
           <button
             type="button"
             aria-label={drawerOpen ? 'Close Menu' : 'Menu'}
@@ -224,17 +317,16 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
             }}
             className="absolute top-0 right-0 z-3 size-[48px] cursor-pointer anav:hidden"
           >
-            <span className="ac-menutrigger-bread ac-menutrigger-bread-top" />
-            <span className="ac-menutrigger-bread ac-menutrigger-bread-bottom" />
+            <span className="gz-menutrigger-bread gz-menutrigger-bread-top" />
+            <span className="gz-menutrigger-bread gz-menutrigger-bread-bottom" />
           </button>
 
-          {/* back chevron, shown while a mobile submenu is open */}
           <button
             type="button"
             aria-label="Main menu"
             onClick={() => setDrawerMenu(null)}
             className={cn(
-              'ac-drawer-back absolute top-0 left-0 z-3 flex size-[48px] cursor-pointer items-center justify-center text-[#333336] anav:hidden',
+              'gz-drawer-back absolute top-0 left-0 z-3 flex size-[48px] cursor-pointer items-center justify-center text-[#333336] anav:hidden',
               drawerMenu ? 'visible opacity-100' : 'invisible scale-80 opacity-0',
             )}
           >
@@ -242,33 +334,38 @@ export function GlobalNav({ bannerVisible, labels }: { bannerVisible: boolean; l
           </button>
         </div>
 
-        {/* desktop flyout panel */}
         <div
-          id={activeMenu === SEARCH_KEY ? 'globalnav-submenu-search' : `globalnav-submenu-${activeMenu ?? 'none'}`}
+          id={activeMenu === SEARCH_KEY ? 'gz-globalnav-submenu-search' : `gz-globalnav-submenu-${activeMenu ?? 'none'}`}
           className={cn(
-            'ac-flyout absolute inset-x-0 top-full hidden bg-[#fafafc] anav:block',
+            'gz-flyout absolute inset-x-0 top-full bg-[#fafafc] border-b border-black/10 shadow-2xl',
+            activeMenu === SEARCH_KEY ? 'block' : 'hidden anav:block',
             flyoutOpen ? 'visible' : 'invisible',
           )}
-          style={{ height: `${panelHeight}px` }}
+          style={{
+            height: activeMenu === SEARCH_KEY ? 'auto' : `${panelHeight}px`,
+            maxHeight: activeMenu === SEARCH_KEY ? '85vh' : undefined,
+            overflowY: activeMenu === SEARCH_KEY ? 'auto' : undefined,
+          }}
         >
-          {activeMenu === SEARCH_KEY ? <NavSearchPanel /> : openMenu ? <NavFlyoutGroups menu={openMenu} /> : null}
+          {activeMenu === SEARCH_KEY ? (
+            <NavSearchPanel onClose={() => setActiveMenu(null)} />
+          ) : openMenu ? (
+            <NavFlyoutGroups menu={openMenu} />
+          ) : null}
         </div>
       </nav>
 
-      {/* #globalnav-curtain */}
       <div
-        id="globalnav-curtain"
+        id="gz-globalnav-curtain"
         aria-hidden="true"
         data-open={curtainOpen}
         onClick={closeAll}
         className={cn(
-          'ac-curtain fixed inset-0 z-9998',
+          'gz-curtain fixed inset-0 z-9998',
           curtainOpen ? 'visible opacity-100' : 'invisible opacity-0',
         )}
       />
-
-      {/* Floating Side Tab / Sticky Drawer for OPPO Android */}
-      <FloatingBrandSwitcher currentBrand="apple" />
+      ========================================================================= */}
     </>
   );
 }

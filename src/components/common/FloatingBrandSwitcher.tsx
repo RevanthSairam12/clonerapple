@@ -6,9 +6,10 @@ import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 interface FloatingBrandSwitcherProps {
-  /** 'apple' means currently on Gadzio/Apple site (switcher links to Android).
-   *  'oppo' means currently on Android/OPPO site (switcher links to Gadzio). */
-  currentBrand?: 'apple' | 'oppo';
+  /** Which storefront the switcher is rendered on.
+   *  'gadzio' means currently on the Gadzio store (switcher links to Android).
+   *  'android' means currently on the Android store (switcher links to Gadzio). */
+  currentBrand?: 'gadzio' | 'android';
 }
 
 function AndroidLogo({ className }: { className?: string }) {
@@ -39,16 +40,25 @@ function GadzioLogo({ className }: { className?: string }) {
   );
 }
 
-export function FloatingBrandSwitcher({ currentBrand = 'apple' }: FloatingBrandSwitcherProps) {
+export function FloatingBrandSwitcher({ currentBrand = 'gadzio' }: FloatingBrandSwitcherProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const isApple = currentBrand === 'apple';
-  const targetHref = isApple ? '/android' : '/';
-  const targetName = isApple ? 'Android' : 'Gadzio';
-  const targetBadge = isApple ? 'Smartphones & Tech' : 'Apple Store';
-  const targetDesc = isApple
+  const onGadzio = currentBrand === 'gadzio';
+  const targetHref = onGadzio ? '/android' : '/';
+  const targetName = onGadzio ? 'Android' : 'Gadzio';
+  const targetBadge = onGadzio ? 'Smartphones & Tech' : 'Gadzio Accessories';
+  const targetDesc = onGadzio
     ? 'Explore flagship Android devices, high-res camera phones, tablets, and smart audio.'
-    : 'Shop Mac, iPad, iPhone, Apple Watch, AirPods, and student education pricing.';
+    : 'Shop Gadzio mobile accessories, cases, chargers, cables, audio accessories and everyday tech essentials.';
+
+  // Gadzio-side quick chips — every one links to a real category page.
+  const gadzioChips = [
+    { label: '🛡️ Cases', href: '/in/shop/iphone/accessories/cases-protection' },
+    { label: '🔌 Chargers', href: '/in/shop/iphone/accessories/power-adapter-cable' },
+    { label: '🔗 Cables', href: '/in/shop/iphone/accessories/cable-plug-case' },
+    { label: '🎧 Audio', href: '/in/shop/iphone/accessories/wired-earphones' },
+    { label: '✨ Accessories', href: '/search' },
+  ];
 
   return (
     <aside
@@ -105,17 +115,24 @@ export function FloatingBrandSwitcher({ currentBrand = 'apple' }: FloatingBrandS
               <span aria-hidden="true">&rarr;</span>
             </Link>
 
-            {isApple ? (
+            {onGadzio ? (
               <div className="flex items-center justify-between text-[11px] text-white/60 pt-1 px-1">
                 <span>📱 Smartphones</span>
                 <span>🎧 Audio</span>
                 <span>⚡ Fast Charge</span>
               </div>
             ) : (
-              <div className="flex items-center justify-between text-[11px] text-white/60 pt-1 px-1">
-                <span>💻 Mac</span>
-                <span>📱 iPhone</span>
-                <span>🎓 Student</span>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/60 pt-1 px-1">
+                {gadzioChips.map((chip) => (
+                  <Link
+                    key={chip.href}
+                    href={chip.href}
+                    onClick={() => setIsExpanded(false)}
+                    className="hover:text-white transition-colors"
+                  >
+                    {chip.label}
+                  </Link>
+                ))}
               </div>
             )}
           </div>
@@ -133,7 +150,7 @@ export function FloatingBrandSwitcher({ currentBrand = 'apple' }: FloatingBrandS
             'hover:scale-105 active:scale-95 transition-all duration-300 ease-out cursor-pointer',
           )}
         >
-          {isApple ? (
+          {onGadzio ? (
             <div className="flex flex-col items-center justify-center">
               <AndroidLogo className="size-7 sm:size-8 text-zinc-900 group-hover:scale-110 transition-transform" />
             </div>

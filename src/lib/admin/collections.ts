@@ -16,7 +16,9 @@
  * and index. The site consumes the stored value whole.
  */
 
-export type FieldType = 'text' | 'textarea' | 'image' | 'video' | 'url' | 'color' | 'boolean';
+import { SITE_FONT_NAMES } from '@/lib/fonts';
+
+export type FieldType = 'text' | 'textarea' | 'image' | 'video' | 'url' | 'color' | 'boolean' | 'select';
 
 export interface FieldSchema {
   /** JSON path into the collection value, e.g. "items[0].title" (or relative to a list item when part of ListSchema). */
@@ -25,6 +27,13 @@ export interface FieldSchema {
   type: FieldType;
   /** Optional helper text under the input. */
   hint?: string;
+  /**
+   * Allowed values for `type: 'select'`. The editor renders these as a
+   * dropdown, so a stored value can only ever be one of them — which is what
+   * keeps settings that drive build-time behaviour (e.g. the site font, whose
+   * faces are compiled in by `next/font`) from accepting free text.
+   */
+  options?: readonly string[];
 }
 
 /** A repeatable item list (tiles, products, slides…) the editor can grow/shrink. */
@@ -76,7 +85,7 @@ const RESPONSIVE_IMAGE_FIELDS = (prefix = ''): FieldSchema[] => [
   image(`${prefix}imageLarge2xSrc`, 'Large @2x (retina)'),
 ];
 
-/* ------------------------------------------------------------- Apple site */
+/* --------------------------------------------------------- Gadzio storefront */
 
 /** One hero/promo tile (relative paths — prefixed by the editor). */
 const TILE_ITEM_FIELDS: FieldSchema[] = [
@@ -124,21 +133,51 @@ const CARD_ITEM_FIELDS: FieldSchema[] = [
 
 /* ------------------------------------------------------------- Edu store */
 
-const EDU_PRODUCT_ITEM_FIELDS: FieldSchema[] = [
-  text('name', 'Name'),
-  text('descriptor', 'Descriptor'),
-  text('chip', 'Chip line'),
-  text('price', 'Price'),
-  text('priceNote', 'Price note'),
+/**
+ * One store card, shared by the product nav and every shelf rail.
+ * Cards override the hardcoded ones positionally, so leaving a field blank
+ * keeps the value the site renders today.
+ */
+const EDU_CARD_ITEM_FIELDS: FieldSchema[] = [
+  text('headline', 'Headline'),
+  text('tag', 'Messaging tag', 'The small pill in the card corner, e.g. "New".'),
+  area('desc', 'Description'),
+  text('price', 'Price line', 'Shown small under the description, e.g. "From ₹137900.00".'),
   image('image', 'Image'),
-  url('buyHref', 'Buy link'),
-  url('learnHref', 'Learn more link'),
+  url('href', 'Link'),
+  booleanField('dark', 'Dark card', 'Render the card on the dark background.'),
+  booleanField('savingsBadge', 'Education savings badge', 'Show the savings icon in the top-right corner.'),
 ];
+
+/** One shelf section: its headings plus the rail of cards inside it. */
+function eduShelfSchema(
+  key: string,
+  label: string,
+  description: string,
+  itemLabel: string,
+  maxItems: number,
+): CollectionSchema {
+  return {
+    key,
+    label,
+    sitePaths: ['/in-edu/store'],
+    description,
+    fields: [
+      text('headline', 'Section headline'),
+      text('subhead', 'Section subhead'),
+      booleanField('enabled', 'Show this section', 'Untick to hide the whole shelf from the page.'),
+    ],
+    lists: [
+      { path: 'cards', itemLabel, minItems: 1, maxItems, itemFields: EDU_CARD_ITEM_FIELDS },
+    ],
+    disablable: true,
+  };
+}
 
 /* ------------------------------------------------------------------ build */
 
 export const COLLECTIONS: CollectionSchema[] = [
-  /* — Apple homepage (route: /) — */
+  /* — Gadzio homepage (route: /) — */
   {
     key: 'apple.hero_tiles',
     label: 'Homepage — Hero Tiles',
@@ -208,9 +247,9 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.nav',
-    label: 'Global Nav (all Apple pages)',
+    label: 'Global Nav (all storefront pages)',
     sitePaths: ['/', '/in-edu/store', '/in/shop/iphone/accessories/cases-protection'],
-    description: 'Labels of the top navigation items (shared by every Apple-style page).',
+    description: 'Labels of the top navigation items (shared by every storefront page).',
     fields: [text('searchPlaceholder', 'Search placeholder')],
     lists: [
       { path: 'items', itemLabel: 'Nav item', minItems: 1, maxItems: 14, itemFields: LINK_ITEM_FIELDS },
@@ -218,7 +257,7 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.footer',
-    label: 'Global Footer (all Apple pages)',
+    label: 'Global Footer (all storefront pages)',
     sitePaths: ['/', '/in-edu/store', '/in/shop/iphone/accessories/cases-protection'],
     description: 'Footer directory headings/links and the bottom legal row.',
     fields: [
@@ -230,12 +269,12 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.gallery',
-    label: 'Homepage — Entertainment Gallery',
+    label: 'Homepage — Services Gallery',
     sitePaths: ['/'],
-    description: 'The Apple TV / Music gallery carousel copy and layout.',
+    description: 'The services gallery carousel copy and layout.',
     fields: [
       text('heading', 'Section heading', 'Not currently displayed by the site; kept for future use.'),
-      booleanField('secondRowEnabled', 'Second row (Music / Arcade / Fitness+)', 'Enable or disable the second row of smaller entertainment cards.'),
+      booleanField('secondRowEnabled', 'Second row (smaller cards)', 'Enable or disable the second row of smaller media cards.'),
     ],
     lists: [
       {
@@ -398,157 +437,86 @@ export const COLLECTIONS: CollectionSchema[] = [
     key: 'edu.hero',
     label: 'Edu Store — Hero',
     sitePaths: ['/in-edu/store'],
+    description: 'The headline over the animated header artwork.',
     fields: [
-      text('badge', 'Badge'),
-      text('headline', 'Headline'),
-      area('subhead', 'Subhead'),
-      text('promoHeadline', 'Promo box headline'),
-      area('promoOffer', 'Promo box offer'),
-      area('promoDisclaimer', 'Promo box disclaimer'),
+      text('headline', 'Headline', 'Rendered on the highlight pill.'),
+      text('subhead', 'Subhead', 'Always reads "College, …" — only the part after the comma is editable.'),
     ],
   },
   {
-    key: 'edu.bts_offers',
-    label: 'Edu Store — Back to School Offers',
+    key: 'edu.product_nav',
+    label: 'Edu Store — Product Nav',
     sitePaths: ['/in-edu/store'],
+    description: 'The row of product categories directly under the hero.',
+    fields: [],
+    lists: [
+      { path: 'items', itemLabel: 'Category', minItems: 1, maxItems: 14, itemFields: EDU_CARD_ITEM_FIELDS },
+    ],
+  },
+  eduShelfSchema(
+    'edu.shelf_savings',
+    'Edu Store — Education Savings',
+    '"Education savings." — the main rail of education-priced products.',
+    'Product',
+    20,
+  ),
+  eduShelfSchema(
+    'edu.shelf_ways_to_save',
+    'Edu Store — Additional Ways to Save',
+    '"Additional ways to save." — trade-in, financing and other saving routes.',
+    'Card',
+    8,
+  ),
+  eduShelfSchema(
+    'edu.shelf_difference',
+    'Edu Store — The Gadzio Store Difference',
+    '"The Gadzio Store difference." — the reasons-to-shop-with-us rail.',
+    'Card',
+    8,
+  ),
+  eduShelfSchema(
+    'edu.shelf_accessories',
+    'Edu Store — Accessories',
+    '"Accessories." — campus-ready essentials.',
+    'Accessory',
+    6,
+  ),
+  eduShelfSchema(
+    'edu.shelf_potential',
+    'Edu Store — Endless Potential',
+    '"Endless potential." — teaching and learning resources.',
+    'Card',
+    8,
+  ),
+  eduShelfSchema(
+    'edu.shelf_more_to_love',
+    'Edu Store — More to Love',
+    '"More to love." — further products at education pricing.',
+    'Product',
+    14,
+  ),
+  eduShelfSchema(
+    'edu.shelf_experience',
+    'Edu Store — The Gadzio Experience',
+    '"The Gadzio experience." — apps and services.',
+    'Card',
+    8,
+  ),
+  {
+    key: 'edu.quick_links',
+    label: 'Edu Store — Quick Links',
+    sitePaths: ['/in-edu/store'],
+    description: 'The pill buttons in the Quick Links strip at the foot of the page.',
     fields: [],
     lists: [
       {
         path: 'items',
-        itemLabel: 'Offer',
+        itemLabel: 'Link',
         minItems: 1,
-        maxItems: 6,
-        itemFields: [
-          text('kicker', 'Kicker'),
-          text('headline', 'Headline'),
-          area('offer', 'Offer text'),
-          area('upgradeNote', 'Upgrade note'),
-          image('image', 'Image'),
-          text('ctaPrimaryLabel', 'Primary CTA label'),
-          url('ctaPrimaryHref', 'Primary CTA link'),
-          text('ctaSecondaryLabel', 'Secondary CTA label'),
-          url('ctaSecondaryHref', 'Secondary CTA link'),
-        ],
+        maxItems: 10,
+        itemFields: [text('label', 'Label'), url('href', 'Link')],
       },
     ],
-    disablable: true,
-  },
-  {
-    key: 'edu.mac_products',
-    label: 'Edu Store — Mac Products',
-    sitePaths: ['/in-edu/store'],
-    fields: [],
-    lists: [
-      { path: 'items', itemLabel: 'Mac', minItems: 1, maxItems: 8, itemFields: EDU_PRODUCT_ITEM_FIELDS },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'edu.ipad_products',
-    label: 'Edu Store — iPad Products',
-    sitePaths: ['/in-edu/store'],
-    fields: [],
-    lists: [
-      { path: 'items', itemLabel: 'iPad', minItems: 1, maxItems: 8, itemFields: EDU_PRODUCT_ITEM_FIELDS },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'edu.sections',
-    label: 'Edu Store — Section Headings',
-    sitePaths: ['/in-edu/store'],
-    fields: [
-      text('mac.eyebrow', 'Mac section eyebrow'),
-      text('mac.headline', 'Mac section headline'),
-      area('mac.subhead', 'Mac section subhead'),
-      text('ipad.eyebrow', 'iPad section eyebrow'),
-      text('ipad.headline', 'iPad section headline'),
-      area('ipad.subhead', 'iPad section subhead'),
-      text('action.eyebrow', 'Education in Action eyebrow'),
-      text('action.headline', 'Education in Action headline'),
-      area('action.subhead', 'Education in Action subhead'),
-      text('categories.headline', 'Browse categories headline'),
-    ],
-  },
-  {
-    key: 'edu.in_action',
-    label: 'Edu Store — Education in Action',
-    sitePaths: ['/in-edu/store'],
-    fields: [],
-    lists: [
-      {
-        path: 'items',
-        itemLabel: 'Card',
-        minItems: 1,
-        maxItems: 8,
-        itemFields: [
-          text('field', 'Field'),
-          text('device', 'Device'),
-          text('headline', 'Headline'),
-          area('body', 'Body'),
-          text('app', 'App pill'),
-        ],
-      },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'edu.eligibility',
-    label: 'Edu Store — Eligibility Banner',
-    sitePaths: ['/in-edu/store'],
-    fields: [
-      text('headline', 'Headline'),
-      area('body', 'Body copy'),
-      area('tags', 'Eligibility tags (one per line)'),
-      text('ctaLabel', 'CTA label'),
-      url('ctaHref', 'CTA link'),
-    ],
-    disablable: true,
-  },
-  {
-    key: 'edu.how_to_buy',
-    label: 'Edu Store — How to Buy Steps',
-    sitePaths: ['/in-edu/store'],
-    fields: [
-      text('eyebrow', 'Eyebrow'),
-      text('headline', 'Headline'),
-    ],
-    lists: [
-      {
-        path: 'steps',
-        itemLabel: 'Step',
-        minItems: 1,
-        maxItems: 6,
-        itemFields: [
-          text('step', 'Step number'),
-          text('headline', 'Headline'),
-          area('body', 'Body'),
-          text('linkLabel', 'Link label'),
-          url('linkHref', 'Link URL'),
-        ],
-      },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'edu.categories',
-    label: 'Edu Store — Shop Categories',
-    sitePaths: ['/in-edu/store'],
-    fields: [],
-    lists: [
-      {
-        path: 'items',
-        itemLabel: 'Category',
-        minItems: 1,
-        maxItems: 14,
-        itemFields: [
-          text('label', 'Label'),
-          text('icon', 'Icon (emoji)'),
-          url('href', 'Link'),
-        ],
-      },
-    ],
-    disablable: true,
   },
   {
     key: 'edu.seo',
@@ -616,9 +584,19 @@ export const COLLECTIONS: CollectionSchema[] = [
 
 /** Site-wide settings edited on the Theme page (site_settings table). */
 export const THEME_FIELDS: FieldSchema[] = [
-  { path: 'fontFamily', label: 'Font family', type: 'text', hint: 'CSS font-family value, e.g. "Inter" or "Poppins". Loaded from Google Fonts automatically.' },
+  {
+    path: 'fontFamily',
+    label: 'Font family',
+    type: 'select',
+    // The allow-list is the whole point: these faces are compiled in by
+    // `next/font` at build time and self-hosted, so an arbitrary family name
+    // has nothing to resolve to. The editor is a dropdown rather than a text
+    // box so a value that cannot be loaded can't be entered.
+    options: SITE_FONT_NAMES,
+    hint: 'Site-wide typeface. Self-hosted — no external font requests are made, and any other value falls back to the default.',
+  },
   { path: 'logoText', label: 'Logo text (OPPO nav)', type: 'text', hint: 'Text shown as the OPPO nav logo.' },
-  { path: 'appleCopyright', label: 'Apple footer copyright', type: 'text' },
+  { path: 'appleCopyright', label: 'Storefront footer copyright', type: 'text' },
   { path: 'oppoPrimaryColor', label: 'OPPO primary color', type: 'color' },
   { path: 'oppoGreenDark', label: 'OPPO dark green', type: 'color' },
   { path: 'oppoGreenLight', label: 'OPPO light green', type: 'color' },

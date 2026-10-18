@@ -10,19 +10,19 @@ import './cases.css';
 export const dynamic = 'force-dynamic';
 
 const metadata: Metadata = {
-  title: 'Cases & Protection - iPhone Accessories - Apple (IN)',
+  title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
   description:
-    'Shop iPhone cases and protection from Apple. Find MagSafe cases, silicone cases, clear cases, FineWoven cases and more for iPhone 17, iPhone 17 Pro, iPhone 16 and more.',
+    'Shop Gadzio protective cases for iPhone. Find MagSafe liquid silicone cases, crystal clear cases, and AeroWeave technical textile cases with military-grade drop defense.',
   openGraph: {
-    title: 'Cases & Protection - iPhone Accessories - Apple (IN)',
-    description: 'Shop iPhone cases from Apple India.',
-    url: 'https://www.apple.com/in/shop/iphone/accessories/cases-protection',
-    siteName: 'Apple',
+    title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
+    description: 'Shop Gadzio drop-tested protective cases for iPhone.',
+    url: 'https://gadzio.in/in/shop/iphone/accessories/cases-protection',
+    siteName: 'Gadzio',
     locale: 'en_IN',
     type: 'website',
   },
   icons: {
-    icon: '/sites/www-apple-com-736d3707/root-8a5edab2/seo/favicon.ico',
+    icon: '/gadzio_logo.png',
   },
 };
 
@@ -34,7 +34,7 @@ export async function generateMetadata(): Promise<Metadata> {
     description: seo.description ?? metadata.description,
     openGraph: {
       ...metadata.openGraph,
-      title: seo.title ?? 'Cases & Protection - iPhone Accessories - Apple (IN)',
+      title: seo.title ?? 'Cases & Protection - iPhone Accessories | Gadzio Store',
       description: seo.description ?? metadata.openGraph?.description,
     },
   };

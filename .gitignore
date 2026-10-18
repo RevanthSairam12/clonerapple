@@ -7,3 +7,4 @@ tsconfig.tsbuildinfo
 .env*
 .DS_Store
 *.log
+.claude/

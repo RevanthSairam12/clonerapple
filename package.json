@@ -1,8 +1,8 @@
 {
-  "name": "apple-clone",
+  "name": "gadzio",
   "version": "1.0.0",
   "private": true,
-  "description": "Pixel-perfect clone of the apple.com homepage",
+  "description": "Gadzio storefront — mobile accessories, cases, chargers, cables and everyday tech essentials.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "node scripts/migrate.mjs",
     "db:create-editor": "node scripts/create-editor.mjs",
+    "db:create-store-admin": "node scripts/create-store-admin.mjs",
+    "check:store-admin-routes": "node scripts/check-store-admin-routes.mjs",
     "placeholders": "python scripts/generate_all_placeholders.py"
   },
   "dependencies": {

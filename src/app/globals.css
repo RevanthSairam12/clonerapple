@@ -1,3 +1,3 @@
 @import "tailwindcss";
-@import "./apple-clone.css";
-@import "./oppo.css";
+@import "./gadzio.css";
+@import "../components/collection/collection.css";

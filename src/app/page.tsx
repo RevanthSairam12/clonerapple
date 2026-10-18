@@ -1,30 +1,30 @@
 import type { Metadata } from 'next';
 
-import { AppleHomePage } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/AppleHomePage';
-import type { HomePageOverrides } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/AppleHomePage';
+import { GadzioHomePage } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
+import type { HomePageOverrides } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import { getContent, getContentMany, getThemeSettings } from '@/lib/content';
 
 /** Admin edits must appear without a rebuild, so render per-request. */
 export const dynamic = 'force-dynamic';
 
 const DESCRIPTION =
-  'Discover the innovative world of Apple and shop everything iPhone, iPad, Apple Watch, Mac, and Apple TV, plus explore accessories, entertainment, and expert device support.';
+  'Shop Gadzio mobile accessories, cases, chargers, cables, audio accessories and everyday tech essentials.';
 
 const metadata: Metadata = {
-  metadataBase: new URL('http://localhost:3000'),
-  title: 'Apple',
+  metadataBase: new URL('https://gadzio.in'),
+  title: 'Gadzio',
   description: DESCRIPTION,
   openGraph: {
-    title: 'Apple',
+    title: 'Gadzio',
     description: DESCRIPTION,
-    url: 'https://www.apple.com/',
-    siteName: 'Apple',
+    url: 'https://gadzio.in/',
+    siteName: 'Gadzio',
     locale: 'en_US',
     type: 'website',
     images: ['/sites/www-apple-com-736d3707/root-8a5edab2/seo/open_graph_logo.png'],
   },
   icons: {
-    icon: '/sites/www-apple-com-736d3707/root-8a5edab2/seo/favicon.ico',
+    icon: '/gadzio_logo.png',
   },
 };
 
@@ -40,7 +40,7 @@ async function buildMetadata(): Promise<Metadata> {
     description: seo.description ?? DESCRIPTION,
     openGraph: {
       ...metadata.openGraph,
-      title: seo.ogTitle ?? seo.title ?? 'Apple',
+      title: seo.ogTitle ?? seo.title ?? 'Gadzio',
       description: seo.description ?? DESCRIPTION,
     },
   };
@@ -60,7 +60,12 @@ export default async function Home() {
     localeBanner: ['apple.locale_banner', {}],
     nav: ['apple.nav', {}],
     footer: ['apple.footer', {}],
-    gallery: ['apple.gallery', {}],
+    // No row = hidden. The gallery is the one block with no Gadzio content to
+    // fall back to: its captured items were all Apple-owned destinations, so
+    // the code data is empty and rendering it with nothing to show would paint
+    // an empty band. Show it again by saving a row with enabled: true AND
+    // Gadzio items from the admin panel.
+    gallery: ['apple.gallery', { enabled: false }],
   });
 
   // Site-wide theme settings (Theme page in the admin panel) win over the
@@ -86,5 +91,5 @@ export default async function Home() {
     galleryEnabled: (c.gallery as { enabled?: boolean }).enabled !== false,
   };
 
-  return <AppleHomePage overrides={overrides} />;
+  return <GadzioHomePage overrides={overrides} />;
 }

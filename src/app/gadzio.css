@@ -1,17 +1,18 @@
 /* ==========================================================================
-   www.apple.com/ clone — site/page scoped foundation
+   Gadzio storefront — site/page scoped foundation
    site: www-apple-com-736d3707 · page: root-8a5edab2
 
-   Everything here is either (a) a design token extracted from the target,
-   (b) an @font-face for the target's own SF Pro files, or (c) a rule that
-   Tailwind utilities cannot express (pseudo-element pills, SMIL-driven
-   chevrons, the dotnav progress animation).
+   Everything here is either (a) a design token extracted from the original
+   target, or (b) a rule that Tailwind utilities cannot express (pseudo-element
+   pills, SMIL-driven chevrons, the dotnav progress animation).
 
-   All page rules are scoped under `.ac-root` so other routes are untouched.
+   All page rules are scoped under `.gz-root` so other routes are untouched.
+   The site/page directory names (`www-apple-com-736d3707`, `root-8a5edab2`)
+   are clone-era identifiers still kept for public asset-path compatibility.
    ========================================================================== */
 
 @theme {
-  /* Apple's three hard breakpoints (see BEHAVIORS.md §7).
+  /* The layout's three hard breakpoints, measured on the original layout.
      `am:` >=735px · `anav:` >=834px · `al:` >=1069px, plus max-* variants. */
   --breakpoint-am: 735px;
   --breakpoint-anav: 834px;
@@ -19,124 +20,114 @@
 }
 
 /* ------------------------------------------------------------------ fonts */
-/* SF Pro Text / SF Pro Display — © Apple Inc., downloaded from the target
-   (public/sites/www-apple-com-736d3707/root-8a5edab2/fonts). Only the five
-   weights the homepage actually renders. */
-
-@font-face {
-  font-family: "SF Pro Text";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-text_regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "SF Pro Text";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-text_semibold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "SF Pro Display";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-display_regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "SF Pro Display";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-display_semibold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "SF Pro Display";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/sites/www-apple-com-736d3707/root-8a5edab2/fonts/sf-pro-display_bold.woff2") format("woff2");
-}
+/* The faces are self-hosted by next/font in src/lib/fontLoaders.ts and
+   published as `--font-site` on <html>. No webfont file is fetched from a
+   third party and no Apple-owned font file is loaded or served; the platform
+   UI font stays in the stack as the fallback. See the tokens below. */
 
 /* ------------------------------------------------------------------ tokens */
 
-.ac-root {
-  /* colour */
-  --ac-text: rgb(29, 29, 31);
-  --ac-text-secondary: rgb(51, 51, 54);
-  --ac-text-grey: rgb(110, 110, 115);
-  --ac-text-invert: rgb(245, 245, 247);
-  --ac-text-muted-56: rgba(0, 0, 0, 0.56);
-  --ac-text-muted-72: rgba(0, 0, 0, 0.72);
-  --ac-text-muted-88: rgba(0, 0, 0, 0.88);
-  --ac-nav-link: rgba(0, 0, 0, 0.8);
-  --ac-link: rgb(0, 102, 204);
-  --ac-link-dark: rgb(41, 151, 255);
-  --ac-blue: rgb(0, 113, 227);
-  --ac-blue-hover: rgb(0, 118, 223);
-  --ac-bg-tile: rgb(245, 245, 247);
-  --ac-bg-flyout: rgb(250, 250, 252);
-  --ac-nav-bg: rgba(255, 255, 255, 0.8);
-  --ac-curtain: rgba(232, 232, 237, 0.4);
-  --ac-dotnav-control: rgba(210, 210, 215, 0.64);
-  --ac-dotnav-control-hover: rgba(223, 223, 227, 0.698);
+/* `--gz-bar-bottom` is the drop-down panels' hang point: the 8px top gap plus
+   the 48px bar, so the panels sit flush with the bar's lower edge rather than
+   `top-full` (which would also clear the secondary strip). It is the same at
+   every breakpoint, so it lives on `:root` — the header also renders outside
+   `.gz-root` (cart, search, product detail, edu store), where a
+   `.gz-root`-scoped value does not resolve and `top-(--gz-bar-bottom)` would
+   be an invalid declaration that silently drops the panel's offset. */
+:root {
+  --gz-bar-bottom: 56px;
+}
 
-  /* type */
-  --ac-font-text: "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --ac-font-display: "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --ac-font-footer: "SF Pro Text", "Myriad Set Pro", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+.gz-root {
+  /* colour */
+  --gz-text: rgb(29, 29, 31);
+  --gz-text-secondary: rgb(51, 51, 54);
+  --gz-text-grey: rgb(110, 110, 115);
+  --gz-text-invert: rgb(245, 245, 247);
+  --gz-text-muted-56: rgba(0, 0, 0, 0.56);
+  --gz-text-muted-72: rgba(0, 0, 0, 0.72);
+  --gz-text-muted-88: rgba(0, 0, 0, 0.88);
+  --gz-nav-link: rgba(0, 0, 0, 0.8);
+  --gz-link: rgb(0, 102, 204);
+  --gz-link-dark: rgb(41, 151, 255);
+  --gz-blue: rgb(0, 113, 227);
+  --gz-blue-hover: rgb(0, 118, 223);
+  --gz-bg-tile: rgb(245, 245, 247);
+  --gz-bg-flyout: rgb(250, 250, 252);
+  --gz-nav-bg: rgba(255, 255, 255, 0.8);
+  --gz-curtain: rgba(232, 232, 237, 0.4);
+  --gz-dotnav-control: rgba(210, 210, 215, 0.64);
+  --gz-dotnav-control-hover: rgba(223, 223, 227, 0.698);
+
+  /* type — `--font-site` is set on <html> by the root layout and resolves to
+     whichever allow-listed face the editor picked (Inter by default). The
+     literal fallback that used to sit here lives on in
+     FONT_FALLBACK in src/lib/fontLoaders.ts, appended after the loaded face. */
+  --gz-font-text: var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gz-font-display: var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gz-font-footer: var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
 
   /* motion */
-  --ac-ease: cubic-bezier(0.4, 0, 0.6, 1);
-  --ac-gallery-duration: 650ms;
-  --ac-gallery-ease: cubic-bezier(0.25, 1, 0.5, 1);
+  --gz-ease: cubic-bezier(0.4, 0, 0.6, 1);
+  --gz-gallery-duration: 650ms;
+  --gz-gallery-ease: cubic-bezier(0.25, 1, 0.5, 1);
 
-  /* layout */
-  --ac-content-max: 1024px;
-  --ac-nav-height: 48px;
-  --ac-banner-height: 70px;
+  /* layout — header geometry.
+     `--gz-bar-bottom` (the panels' hang point) is breakpoint-independent and
+     lives on `:root` above, because the header also renders outside `.gz-root`.
+     `--gz-nav-height` is the full sticky header: 56px on mobile, plus the
+     40px secondary link strip from `anav` up (see the media query below).
+     --cp-nav-height in the accessory CSS pins a sticky sidebar to the
+     header's lower edge, so it must track --gz-nav-height, not the bar.
 
-  font-family: var(--ac-font-text);
+     The header's own palette (accent #00acd4, hover fill #e8eaee, badge
+     #ffe100, the 2px flat shadow) is NOT tokenised here on purpose: the header
+     also renders outside `.gz-root` (cart, search, product detail, edu store),
+     where these custom properties would not resolve. Those values live inline
+     in src/components/header/GadzioHeader.tsx. */
+  --gz-content-max: 1024px;
+  --gz-nav-height: 56px;
+  --gz-banner-height: 30px;
+
+  font-family: var(--gz-font-text);
   font-size: 17px;
   line-height: 25px;
   letter-spacing: -0.374px;
-  color: var(--ac-text);
+  color: var(--gz-text);
   background: #fff;
   /* the target renders with default smoothing, not -webkit-font-smoothing: antialiased */
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
 }
 
+/* From `anav` up the header also carries the secondary link strip (40px), so
+   the sticky sidebar's offset has to grow with it. Keep in sync with
+   --cp-nav-height in cases.css and accessory-category.css. */
 @media (min-width: 834px) {
-  .ac-root {
-    --ac-nav-height: 44px;
+  .gz-root {
+    --gz-nav-height: 96px;
   }
 }
 
 /* Element resets live in the base layer so Tailwind utilities still win. */
 @layer base {
-  .ac-root :where(h1, h2, h3, h4, p, ul, ol, li, figure) {
+  .gz-root :where(h1, h2, h3, h4, p, ul, ol, li, figure) {
     margin: 0;
     padding: 0;
   }
 
-  .ac-root :where(ul, ol) {
+  .gz-root :where(ul, ol) {
     list-style: none;
   }
 
-  .ac-root :where(a) {
+  .gz-root :where(a) {
     color: inherit;
     text-decoration: none;
   }
 }
 
 /* Screen-reader-only, matching the target's .visuallyhidden */
-.ac-visuallyhidden {
+.gz-visuallyhidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -150,17 +141,17 @@
 
 /* ------------------------------------------------------------------ buttons */
 
-.ac-button {
+.gz-button {
   display: inline-block;
   border-radius: 980px;
   border: 1px solid transparent;
   min-width: 26px;
-  font-family: var(--ac-font-text);
+  font-family: var(--gz-font-text);
   font-size: 17px;
   line-height: 20.0002px;
   letter-spacing: -0.374px;
   padding: 11px 21px;
-  background: var(--ac-blue);
+  background: var(--gz-blue);
   color: #fff;
   cursor: pointer;
   transition:
@@ -169,34 +160,34 @@
     color 0.2s ease;
 }
 
-.ac-button:hover {
-  background: var(--ac-blue-hover);
+.gz-button:hover {
+  background: var(--gz-blue-hover);
 }
 
-.ac-button-secondary {
+.gz-button-secondary {
   background: transparent;
-  border-color: var(--ac-link);
-  color: var(--ac-link);
+  border-color: var(--gz-link);
+  color: var(--gz-link);
 }
 
-.ac-button-secondary:hover {
-  background: var(--ac-blue-hover);
+.gz-button-secondary:hover {
+  background: var(--gz-blue-hover);
   border-color: transparent;
   color: #fff;
 }
 
-.ac-theme-dark .ac-button-secondary {
-  border-color: var(--ac-link-dark);
-  color: var(--ac-link-dark);
+.gz-theme-dark .gz-button-secondary {
+  border-color: var(--gz-link-dark);
+  color: var(--gz-link-dark);
 }
 
-.ac-theme-dark .ac-button-secondary:hover {
+.gz-theme-dark .gz-button-secondary:hover {
   border-color: transparent;
   color: #fff;
 }
 
 /* small variant used by the promo tiles */
-.ac-button-small {
+.gz-button-small {
   font-size: 14px;
   line-height: 18.0008px;
   letter-spacing: -0.224px;
@@ -206,7 +197,7 @@
 
 /* hero CTAs are small below 735px and full size above it */
 @media (min-width: 735px) {
-  .ac-button-hero {
+  .gz-button-hero {
     font-size: 17px;
     line-height: 20.0002px;
     letter-spacing: -0.374px;
@@ -216,18 +207,18 @@
 }
 
 /* neutral pill on the entertainment cards */
-.ac-button-neutral {
-  background: var(--ac-bg-tile);
+.gz-button-neutral {
+  background: var(--gz-bg-tile);
   color: #000;
   border-color: transparent;
 }
 
-.ac-button-neutral:hover {
+.gz-button-neutral:hover {
   background: #fff;
 }
 
 /* extra-small pill used by the small entertainment cards below 1069px */
-.ac-button-xsmall {
+.gz-button-xsmall {
   font-size: 12px;
   line-height: 16.0005px;
   letter-spacing: -0.12px;
@@ -236,8 +227,9 @@
 }
 
 @media (min-width: 1069px) {
+
   /* large TV card pill grows to the full button size */
-  .ac-button-gallery-tv {
+  .gz-button-gallery-tv {
     font-size: 17px;
     line-height: 20.0002px;
     letter-spacing: -0.374px;
@@ -246,7 +238,7 @@
   }
 
   /* small card pill grows to the small button size */
-  .ac-button-gallery-fam {
+  .gz-button-gallery-fam {
     font-size: 14px;
     line-height: 18.0008px;
     letter-spacing: -0.224px;
@@ -255,18 +247,18 @@
 }
 
 /* the genre prefix is separated from the description by a bullet */
-.ac-gallery-genre::after {
+.gz-gallery-genre::after {
   content: "•";
   padding: 0 5.25px;
 }
 
 /* below 735px the genre takes its own centred line and drops the bullet */
 @media (max-width: 734px) {
-  .ac-gallery-genre {
+  .gz-gallery-genre {
     display: block;
   }
 
-  .ac-gallery-genre::after {
+  .gz-gallery-genre::after {
     content: none;
   }
 }
@@ -275,25 +267,25 @@
 
 /* Several tile subheads are capped so the copy wraps at a designed width, and
    the cap changes per breakpoint (see data/tiles.ts subheadMaxWidth). */
-.ac-tile-subhead {
-  max-width: var(--ac-subhead-sm, none);
+.gz-tile-subhead {
+  max-width: var(--gz-subhead-sm, none);
 }
 
 @media (min-width: 735px) {
-  .ac-tile-subhead {
-    max-width: var(--ac-subhead-md, none);
+  .gz-tile-subhead {
+    max-width: var(--gz-subhead-md, none);
   }
 }
 
 @media (min-width: 1069px) {
-  .ac-tile-subhead {
-    max-width: var(--ac-subhead-lg, none);
+  .gz-tile-subhead {
+    max-width: var(--gz-subhead-lg, none);
   }
 }
 
 /* The asterisk is a fixed 14px glyph on the baseline (not a superscript); the
    numbered footnote is a real <sup> that inherits the subhead's size. */
-.ac-footnote-glyph {
+.gz-footnote-glyph {
   position: relative;
   font-size: 14px;
   line-height: 20.0003px;
@@ -304,7 +296,7 @@
    inherited 21px/19px font-size but rendering a small raised glyph */
 /* the target draws the numeral with OpenType numerator figures, keeping the
    inherited 21px/19px font-size but rendering a small raised glyph */
-.ac-footnote-number {
+.gz-footnote-number {
   position: relative;
   font-size: inherit;
   line-height: inherit;
@@ -314,119 +306,144 @@
 
 /* --------------------------------------------------------------- nav flyout */
 
-.ac-flyout {
+.gz-flyout {
   overflow: hidden;
   max-height: 812px;
-  transition: height 0.254s var(--ac-ease);
+  transition: height 0.254s var(--gz-ease);
 }
 
-.ac-nav-link {
-  color: var(--ac-nav-link);
-  transition: color 0.32s var(--ac-ease);
+/* --------------------------------------------------- sticky header panels */
+/* Mount animation for the header's drop-down panels (flyout, search, mobile
+   drawer). `both` holds the panel at the `from` state until the animation
+   starts, so it never flashes un-positioned on the frame it mounts. */
+@keyframes gz-nav-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.ac-nav-link:hover {
+.gz-nav-panel {
+  animation: gz-nav-panel-in 180ms cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gz-nav-panel {
+    animation: none;
+  }
+}
+
+.gz-nav-link {
+  color: var(--gz-nav-link);
+  transition: color 0.32s var(--gz-ease);
+}
+
+.gz-nav-link:hover {
   color: #000;
 }
 
-.ac-submenu-link {
-  color: var(--ac-text-secondary);
-  transition: color 0.32s var(--ac-ease);
+.gz-submenu-link {
+  color: var(--gz-text-secondary);
+  transition: color 0.32s var(--gz-ease);
 }
 
 /* elevated (24px) links do not change on hover; small ones go to black */
-.ac-submenu-link-small:hover {
+.gz-submenu-link-small:hover {
   color: #000;
 }
 
-.ac-curtain {
-  background: var(--ac-curtain);
+.gz-curtain {
+  background: var(--gz-curtain);
   backdrop-filter: blur(20px);
   transition:
-    opacity 0.32s var(--ac-ease),
+    opacity 0.32s var(--gz-ease),
     visibility 0.32s steps(1);
 }
 
-.ac-curtain[data-open="true"] {
+.gz-curtain[data-open="true"] {
   transition:
-    opacity 0.32s var(--ac-ease),
+    opacity 0.32s var(--gz-ease),
     visibility 0.32s steps(1, start);
 }
 
 /* search quick links */
-.ac-search-quicklink {
+.gz-search-quicklink {
   border-radius: 5px;
   padding: 4px 8px;
-  color: var(--ac-text-secondary);
+  color: var(--gz-text-secondary);
   transition:
-    color 0.02s var(--ac-ease),
-    background-color 0.02s var(--ac-ease),
-    fill 0.02s var(--ac-ease);
+    color 0.02s var(--gz-ease),
+    background-color 0.02s var(--gz-ease),
+    fill 0.02s var(--gz-ease);
 }
 
-.ac-search-quicklink:hover {
+.gz-search-quicklink:hover {
   color: #000;
-  background-color: var(--ac-bg-tile);
+  background-color: var(--gz-bg-tile);
 }
 
 /* --------------------------------------------------------- mobile drawer */
 
-.ac-drawer-content {
+.gz-drawer-content {
   transition:
-    height 0.422s var(--ac-ease),
-    background 0.422s var(--ac-ease);
+    height 0.422s var(--gz-ease),
+    background 0.422s var(--gz-ease);
 }
 
-.ac-drawer-row {
-  font-family: var(--ac-font-display);
+.gz-drawer-row {
+  font-family: var(--gz-font-display);
   font-size: 28px;
   font-weight: 600;
   line-height: 28px;
   letter-spacing: 0px;
-  color: var(--ac-text-secondary);
+  color: var(--gz-text-secondary);
 }
 
-.ac-menutrigger-bread {
+.gz-menutrigger-bread {
   position: absolute;
   left: 50%;
   width: 17px;
   height: 1px;
-  background: var(--ac-nav-link);
+  background: var(--gz-nav-link);
   transform: translateX(-50%);
   transition:
-    transform 0.24s var(--ac-ease),
-    top 0.24s var(--ac-ease);
+    transform 0.24s var(--gz-ease),
+    top 0.24s var(--gz-ease);
 }
 
-.ac-menutrigger-bread-top {
+.gz-menutrigger-bread-top {
   top: 21px;
 }
 
-.ac-menutrigger-bread-bottom {
+.gz-menutrigger-bread-bottom {
   top: 26px;
 }
 
-[data-menu-open="true"] .ac-menutrigger-bread-top {
+[data-menu-open="true"] .gz-menutrigger-bread-top {
   top: 23.5px;
   transform: translateX(-50%) rotate(45deg);
 }
 
-[data-menu-open="true"] .ac-menutrigger-bread-bottom {
+[data-menu-open="true"] .gz-menutrigger-bread-bottom {
   top: 23.5px;
   transform: translateX(-50%) rotate(-45deg);
 }
 
-.ac-drawer-back {
+.gz-drawer-back {
   transition:
-    opacity 0.24s var(--ac-ease),
-    transform 0.24s var(--ac-ease),
+    opacity 0.24s var(--gz-ease),
+    transform 0.24s var(--gz-ease),
     visibility 0.24s steps(1);
 }
 
 /* ------------------------------------------------------------------ dotnav */
 /* 8x8 pill that stretches to 32x8 when current; ::after fills over the dwell. */
 
-.ac-dot {
+.gz-dot {
   position: relative;
   display: block;
   width: 8px;
@@ -436,8 +453,8 @@
   cursor: pointer;
 }
 
-.ac-dot::before,
-.ac-dot::after {
+.gz-dot::before,
+.gz-dot::after {
   content: "";
   position: absolute;
   top: 8px;
@@ -447,113 +464,112 @@
   transition: width 0.25s linear;
 }
 
-.ac-dot::before {
+.gz-dot::before {
   width: 8px;
   background: rgba(0, 0, 0, 0.48);
 }
 
-.ac-dot::after {
+.gz-dot::after {
   width: 0;
   background: #000;
   opacity: 0;
 }
 
-.ac-dot:hover::before {
+.gz-dot:hover::before {
   background: rgba(0, 0, 0, 0.72);
 }
 
-.ac-dot[data-current="true"] {
+.gz-dot[data-current="true"] {
   width: 32px;
   cursor: default;
 }
 
-.ac-dot[data-current="true"]::before {
+.gz-dot[data-current="true"]::before {
   width: 32px;
 }
 
-.ac-dot[data-current="true"]::after {
+.gz-dot[data-current="true"]::after {
   opacity: 1;
-  animation: ac-dot-progress var(--ac-dot-duration, 4160ms) linear forwards;
+  animation: gz-dot-progress var(--gz-dot-duration, 4160ms) linear forwards;
 }
 
-.ac-dot[data-current="true"][data-paused="true"]::after {
+.gz-dot[data-current="true"][data-paused="true"]::after {
   animation-play-state: paused;
 }
 
-@keyframes ac-dot-progress {
+@keyframes gz-dot-progress {
   from {
     width: 0;
   }
+
   to {
     width: 32px;
   }
 }
 
-.ac-dotnav-control {
+.gz-dotnav-control {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--ac-dotnav-control);
+  background: var(--gz-dotnav-control);
   color: rgba(0, 0, 0, 0.48);
   transition: background-color 0.1s linear;
 }
 
-.ac-dotnav-control:hover {
-  background: var(--ac-dotnav-control-hover);
+.gz-dotnav-control:hover {
+  background: var(--gz-dotnav-control-hover);
   color: rgba(0, 0, 0, 0.72);
 }
 
 /* --------------------------------------------------------- gallery scrims */
 
-.ac-gallery-scrim-large {
+.gz-gallery-scrim-large {
   background-image: radial-gradient(100% 33% at 0% 100%, rgba(0, 0, 0, 0.5) 0%, rgba(255, 255, 255, 0));
 }
 
-.ac-gallery-scrim-small {
-  background-image: linear-gradient(
-    rgba(29, 29, 31, 0.4) 0%,
-    rgba(29, 29, 31, 0) 70px,
-    rgba(29, 29, 31, 0) calc(100% - 70px),
-    rgba(29, 29, 31, 0.4) 100%
-  );
+.gz-gallery-scrim-small {
+  background-image: linear-gradient(rgba(29, 29, 31, 0.4) 0%,
+      rgba(29, 29, 31, 0) 70px,
+      rgba(29, 29, 31, 0) calc(100% - 70px),
+      rgba(29, 29, 31, 0.4) 100%);
 }
 
-.ac-gallery-track {
-  transition: transform var(--ac-gallery-duration, 650ms) var(--ac-gallery-ease, cubic-bezier(0.25, 1, 0.5, 1)),
-              opacity var(--ac-gallery-duration, 650ms) var(--ac-gallery-ease, cubic-bezier(0.25, 1, 0.5, 1));
+.gz-gallery-track {
+  transition: transform var(--gz-gallery-duration, 650ms) var(--gz-gallery-ease, cubic-bezier(0.25, 1, 0.5, 1)),
+    opacity var(--gz-gallery-duration, 650ms) var(--gz-gallery-ease, cubic-bezier(0.25, 1, 0.5, 1));
   will-change: transform, opacity;
 }
 
-.ac-gallery-bottom-content {
+.gz-gallery-bottom-content {
   transition: opacity 0.4s;
 }
 
 /* ------------------------------------------------------------------ footer */
 
-.ac-footer-link {
-  color: var(--ac-text-muted-56);
+.gz-footer-link {
+  color: var(--gz-text-muted-56);
 }
 
-.ac-footer-link:hover {
+.gz-footer-link:hover {
   text-decoration: underline;
 }
 
-.ac-footer-legal-link,
-.ac-footer-locale-link {
-  color: var(--ac-text-muted-72);
+.gz-footer-legal-link,
+.gz-footer-locale-link {
+  color: var(--gz-text-muted-72);
 }
 
-.ac-footer-legal-link:hover,
-.ac-footer-locale-link:hover {
+.gz-footer-legal-link:hover,
+.gz-footer-locale-link:hover {
   text-decoration: underline;
 }
 
 /* 1x10 divider between the legal links; the last item has none */
-.ac-footer-legal-item {
+.gz-footer-legal-item {
   position: relative;
 }
 
-.ac-footer-legal-item::after {
+.gz-footer-legal-item::after {
   content: "";
   position: absolute;
   top: 0;
@@ -564,58 +580,58 @@
   background: rgba(0, 0, 0, 0.48);
 }
 
-.ac-footer-legal-item:last-child::after {
+.gz-footer-legal-item:last-child::after {
   display: none;
 }
 
 /* the footnote block keeps the target's own markup: style it as a whole */
-.ac-sosumi {
-  color: var(--ac-text-muted-56);
+.gz-sosumi {
+  color: var(--gz-text-muted-56);
   font-size: 12px;
   line-height: 16.0005px;
   letter-spacing: -0.12px;
 }
 
-.ac-sosumi ul {
+.gz-sosumi ul {
   list-style: none;
   padding: 0;
 }
 
 /* the numbered footnote keeps the target's decimal marker in a 17px gutter */
-.ac-sosumi ol {
+.gz-sosumi ol {
   list-style: decimal;
   padding: 0 17px;
 }
 
-.ac-sosumi li {
+.gz-sosumi li {
   padding-bottom: 9.6px;
 }
 
-.ac-sosumi small {
+.gz-sosumi small {
   font-size: inherit;
 }
 
-.ac-sosumi a {
-  color: var(--ac-text-muted-72);
+.gz-sosumi a {
+  color: var(--gz-text-muted-72);
   text-decoration: underline;
 }
 
-.ac-footer-shop a {
-  color: var(--ac-link);
+.gz-footer-shop a {
+  color: var(--gz-link);
   text-decoration: underline;
 }
 
-.ac-footer-shop .nowrap {
+.gz-footer-shop .nowrap {
   white-space: nowrap;
 }
 
 /* Each accordion row carries a 1px hairline under its title below 834px. */
 @media (max-width: 833px) {
-  .ac-footer-section {
+  .gz-footer-section {
     position: relative;
   }
 
-  .ac-footer-section::after {
+  .gz-footer-section::after {
     content: "";
     position: absolute;
     top: 36px;
@@ -627,28 +643,76 @@
 }
 
 /* accordion chevron only rotates/animates below the nav breakpoint */
-.ac-footer-accordion-icon {
+.gz-footer-accordion-icon {
   display: none;
 }
 
 @media (max-width: 833px) {
-  .ac-footer-accordion-icon {
+  .gz-footer-accordion-icon {
     display: inline-flex;
   }
 }
 
-/* -------------------------------------------------- promo marquee animation */
-@keyframes promo-marquee {
-  0% {
-    transform: translate3d(0, 0, 0);
+/* -------------------------------------------------- smooth stationary float */
+@keyframes smooth-float-in-place {
+  0%, 100% {
+    transform: translate3d(0, 0px, 0) rotate(0deg);
   }
-  100% {
-    transform: translate3d(-50%, 0, 0);
+  35% {
+    transform: translate3d(0, -7px, 0) rotate(-0.6deg);
+  }
+  70% {
+    transform: translate3d(0, 5px, 0) rotate(0.6deg);
   }
 }
 
-.animate-promo-marquee {
-  animation: promo-marquee 32s linear infinite;
+.animate-smooth-float {
+  animation: smooth-float-in-place 5.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   will-change: transform;
 }
 
+@keyframes smooth-float-in-place-alt {
+  0%, 100% {
+    transform: translate3d(0, 0px, 0) rotate(0deg);
+  }
+  35% {
+    transform: translate3d(0, 6px, 0) rotate(0.6deg);
+  }
+  70% {
+    transform: translate3d(0, -6px, 0) rotate(-0.6deg);
+  }
+}
+
+.animate-smooth-float-alt {
+  animation: smooth-float-in-place-alt 5.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform;
+}
+
+/* -------------------------------------------------- playful doodle animations */
+@keyframes doodle-float-1 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(2px, -8px, 0) rotate(6deg);
+  }
+}
+
+@keyframes doodle-float-2 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+  50% {
+    transform: translate3d(-3px, -6px, 0) rotate(-8deg) scale(1.08);
+  }
+}
+
+.animate-doodle-1 {
+  animation: doodle-float-1 4.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-doodle-2 {
+  animation: doodle-float-2 5.5s ease-in-out infinite 0.7s;
+  will-change: transform;
+}

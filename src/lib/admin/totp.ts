@@ -22,7 +22,12 @@ import { getSession } from './auth';
  * recording the last used counter.
  */
 
-const ISSUER = 'Apple Clone Admin';
+/**
+ * Shown as the account/issuer name in authenticator apps. Branding only — it is
+ * not part of the secret and changing it does not invalidate existing
+ * enrollments (the TOTP codes are derived from the secret alone).
+ */
+const ISSUER = 'Gadzio Admin';
 
 /** A random base32 secret for a new enrollment. */
 export function newTotpSecret(): string {

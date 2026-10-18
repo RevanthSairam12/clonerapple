@@ -16,8 +16,9 @@ interface HeroInlineMediaProps {
  *
  * A 1222x460 stage sits 232px below the tile's top edge, centred and clipped by
  * the tile. The start-frame PNG is the poster; three clips play over it at the
- * measured offsets. The target's fourth (composite) video renders at opacity 0
- * and is intentionally omitted — see BEHAVIORS.md §3.
+ * measured offsets. The original layout's fourth (composite) video renders at
+ * opacity 0, so it is intentionally omitted — shipping it would add weight for
+ * nothing visible.
  *
  * Admin overrides replace the poster (per breakpoint size) and each clip's
  * video/position; an unset field keeps the original value, so an unedited

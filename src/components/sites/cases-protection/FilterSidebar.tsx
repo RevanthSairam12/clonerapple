@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import {
   FILTER_BRANDS,
@@ -30,16 +30,23 @@ function FilterGroup({
   onToggle: (v: string) => void;
 }) {
   const [open, setOpen] = useState(true);
+  const listId = useId();
 
   return (
     <div className="cp-filter-group">
-      <div className="cp-filter-group-header" onClick={() => setOpen((o) => !o)}>
+      <button
+        type="button"
+        className="cp-filter-group-header"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((o) => !o)}
+      >
         <span className="cp-filter-group-label">{label}</span>
         <span className={`cp-filter-chevron ${open ? 'open' : ''}`} />
-      </div>
+      </button>
 
       {open && (
-        <ul className="cp-filter-list">
+        <ul className="cp-filter-list" id={listId}>
           {options.map((opt) => {
             const checked = selected.includes(opt);
             return (

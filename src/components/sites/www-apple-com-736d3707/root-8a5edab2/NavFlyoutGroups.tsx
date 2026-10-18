@@ -42,12 +42,12 @@ export function NavFlyoutGroups({ menu }: { menu: FlyoutMenu }) {
                       href={link.href}
                       aria-label={link.ariaLabel}
                       className={cn(
-                        'ac-submenu-link mb-[-6px] inline-block whitespace-nowrap',
+                        'gz-submenu-link mb-[-6px] inline-block whitespace-nowrap',
                         link.elevated
                           ? 'px-[11px] pt-[9px] pb-[7px] text-[24px] leading-[28px] font-semibold tracking-[0.216px]'
-                          : 'ac-submenu-link-small px-[11px] py-[7px] text-[12px] leading-[16.0005px] font-semibold tracking-[-0.12px]',
+                          : 'gz-submenu-link-small px-[11px] py-[7px] text-[12px] leading-[16.0005px] font-semibold tracking-[-0.12px]',
                       )}
-                      style={link.elevated ? { fontFamily: 'var(--ac-font-display)' } : undefined}
+                      style={link.elevated ? { fontFamily: 'var(--gz-font-display)' } : undefined}
                     >
                       {link.label}
                     </a>

@@ -7,7 +7,7 @@ import { LocaleCloseIcon } from './icons';
 import type { LocaleBannerOverride } from './admin-overrides';
 
 /**
- * `aside#ac-localeswitcher` — fixed banner above the nav (z 10000). Dismissing
+ * `aside#gz-localeswitcher` — fixed banner above the nav (z 10000). Dismissing
  * it removes the banner and lets the nav slide to top: 0, which is why the
  * parent owns the open state.
  *
@@ -41,7 +41,7 @@ export function LocaleBanner({
         </div>
 
         <div className="mt-[14.5px] -ml-[2px] flex items-center justify-end anav:m-0 anav:pl-[29px]">
-          {/* .ac-ls-dropdown — a button that reveals the region list */}
+          {/* .gz-ls-dropdown — a button that reveals the region list */}
           <div className="relative">
             <button
               type="button"

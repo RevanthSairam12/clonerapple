@@ -2,12 +2,11 @@
 
 import { useState } from 'react';
 
-import { cn } from '@/lib/utils';
-
 import { EndlessEntertainmentGallery } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/EndlessEntertainmentGallery';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { HeroSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection';
+import { GadzioHeroSection } from '@/components/hero/GadzioHeroSection';
 import { LocaleBanner } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/LocaleBanner';
 import { PromoSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/PromoSection';
 import { Ribbon } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/Ribbon';
@@ -22,12 +21,11 @@ import type {
 } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/admin-overrides';
 
 /**
- * Page shell for the www.apple.com/ clone.
+ * Page shell for the Gadzio storefront homepage.
  *
- * The locale banner and nav are both fixed, so the flow content carries their
- * combined height as padding: 70 + 44 = 114px at >=834px and 135 + 48 = 183px
- * below it. Dismissing the banner drops that to just the nav height (44 / 48),
- * exactly as measured on the target.
+ * The header is `sticky`, so it stays in the document flow and already
+ * reserves its own height (promo bar + nav). Flow content below therefore
+ * needs no nav-height padding — it starts directly under the header.
  *
  * All props are admin-panel overrides; each defaults to the original
  * hardcoded content so an unedited page renders identically.
@@ -53,25 +51,28 @@ export interface HomePageOverrides {
   galleryEnabled?: boolean;
 }
 
-export function AppleHomePage({ overrides }: { overrides?: HomePageOverrides } = {}) {
+export function GadzioHomePage({ overrides }: { overrides?: HomePageOverrides } = {}) {
   const [bannerVisible, setBannerVisible] = useState(false);
 
   return (
-    <div className="ac-root">
+    <div className="gz-root">
       {bannerVisible && overrides?.localeBannerEnabled !== false ? (
         <LocaleBanner onDismiss={() => setBannerVisible(false)} content={overrides?.localeBanner} />
       ) : null}
       <GlobalNav bannerVisible={bannerVisible} labels={overrides?.navLabels} />
 
-      <h1 className="ac-visuallyhidden">Apple</h1>
+      <h1 className="gz-visuallyhidden">Gadzio</h1>
 
-      <main
-        className={cn(
-          bannerVisible ? 'pt-[183px] anav:pt-[114px]' : 'pt-[48px] anav:pt-[44px]',
-        )}
-      >
+      <main>
         {overrides?.ribbonEnabled !== false ? <Ribbon content={overrides?.ribbon} /> : null}
-        <HeroSection tiles={overrides?.heroTiles} video={overrides?.heroVideo} />
+
+        {/* =========================================================================
+            PREVIOUS HERO SECTION (KEPT COMMENTED AS REQUESTED - DO NOT REMOVE)
+            ========================================================================= */}
+        {/* <HeroSection tiles={overrides?.heroTiles} video={overrides?.heroVideo} /> */}
+
+        {/* ACTIVE GADZIO HERO SECTION */}
+        <GadzioHeroSection />
         {overrides?.promoEnabled !== false ? (
           <PromoSection heading={overrides?.promoHeading} tiles={overrides?.promoTiles} />
         ) : null}

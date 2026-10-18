@@ -12,12 +12,23 @@ export interface RibbonProps {
  * `.homepage-section[data-module-template="ribbon"]` — ribbon headline strip
  * placed immediately below the global navigation bar.
  *
- * Matches Apple India (apple.com/in) promotional copy:
- * "Get up to 6 months of No Cost EMI* plus up to ₹15000 instant cashback‡ on selected products with eligible cards. Shop ›"
+ * The fallback text is the de-branded promo Gadzio ships in its `apple.ribbon`
+ * content row, so a missing/cleared row renders exactly what the live site
+ * renders today. It replaces the previous hardcoded Apple India offer
+ * ("6 months of No Cost EMI … instant cashback … eligible cards"), which was
+ * Apple's own promotional claim and carried `*`/`‡` footnote markers pointing at
+ * `#footnote-*` anchors that exist nowhere on the site.
  */
+const DEFAULT_TEXT =
+  'Unlock exclusive student pricing and massive savings this semester on all eligible device chargers, protective cases, and premium audio accessories.';
+
+/** Gadzio's Cases & Protection listing — where the live ribbon row points. */
+const DEFAULT_SHOP_HREF = '/shop/iphone/accessories/cases-protection';
+
 export function Ribbon({ className, content }: RibbonProps) {
-  const text = content?.text;
-  const shopHref = content?.shopHref ?? 'https://www.apple.com/in/shop/goto/store';
+  // `||` (not `??`) so an override saved as an empty string still falls back.
+  const text = content?.text || DEFAULT_TEXT;
+  const shopHref = content?.shopHref || DEFAULT_SHOP_HREF;
 
   return (
     <section
@@ -29,53 +40,18 @@ export function Ribbon({ className, content }: RibbonProps) {
       )}
     >
       <div className="mx-auto flex items-center justify-center px-[16px] py-[12px] anav:py-[14px]">
-        {text ? (
-          <p className="text-[14px] leading-[1.42857] tracking-[-0.016em] text-[#1d1d1f]">
-            {text}{' '}
-            <a
-              href={shopHref}
-              className="text-[#0071e3] hover:underline whitespace-nowrap inline-flex items-center gap-[2px]"
-            >
-              <span>Shop</span>
-              <span aria-hidden="true" className="text-[13px] leading-none select-none">
-                &rsaquo;
-              </span>
-            </a>
-          </p>
-        ) : (
-          <p className="text-[14px] leading-[1.42857] tracking-[-0.016em] text-[#1d1d1f]">
-            Get up to 6 months of No Cost EMI
-            <sup className="ml-[1px] text-[10px] leading-none align-super font-normal">
-              <a
-                href="#footnote-*"
-                aria-label="Footnote *"
-                className="text-[#1d1d1f] hover:text-[#0071e3] transition-colors"
-              >
-                *
-              </a>
-            </sup>{' '}
-            plus up to ₹15000 instant cashback
-            <sup className="ml-[1px] text-[10px] leading-none align-super font-normal">
-              <a
-                href="#footnote-‡"
-                aria-label="Footnote ‡"
-                className="text-[#1d1d1f] hover:text-[#0071e3] transition-colors"
-              >
-                ‡
-              </a>
-            </sup>{' '}
-            on selected products with eligible cards.{' '}
-            <a
-              href={shopHref}
-              className="text-[#0071e3] hover:underline whitespace-nowrap inline-flex items-center gap-[2px]"
-            >
-              <span>Shop</span>
-              <span aria-hidden="true" className="text-[13px] leading-none select-none">
-                &rsaquo;
-              </span>
-            </a>
-          </p>
-        )}
+        <p className="text-[14px] leading-[1.42857] tracking-[-0.016em] text-[#1d1d1f]">
+          {text}{' '}
+          <a
+            href={shopHref}
+            className="text-[#0071e3] hover:underline whitespace-nowrap inline-flex items-center gap-[2px]"
+          >
+            <span>Shop</span>
+            <span aria-hidden="true" className="text-[13px] leading-none select-none">
+              &rsaquo;
+            </span>
+          </a>
+        </p>
       </div>
     </section>
   );

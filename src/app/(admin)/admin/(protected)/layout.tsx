@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 const SITE_META: { label: string; icon: string; prefix: string }[] = [
-  { label: 'Apple Homepage', icon: '', prefix: '/' },
+  { label: 'Gadzio Homepage', icon: '', prefix: '/' },
   { label: 'OPPO India', icon: '📱', prefix: '/android' },
   { label: 'Education Store', icon: '🎓', prefix: '/in-edu/store' },
   { label: 'Cases & Protection', icon: '🛡️', prefix: '/in/shop/iphone/accessories/cases-protection' },

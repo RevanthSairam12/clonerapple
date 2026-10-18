@@ -1,9 +1,24 @@
-// Products data for Apple iPhone Cases & Protection page
-// Prices in INR (₹) — reflecting Apple India store pricing
+// Gadzio Cases & Protection Product Catalog
+// Premium engineered accessories designed for iPhone compatibility.
+// Prices in INR (₹). Authoritative records for store and PayU checkout.
 
 export interface ColorSwatch {
   name: string;
   hex: string;
+}
+
+export interface ProductSpecs {
+  material: string;
+  weight: string;
+  thickness: string;
+  magneticHold: string;
+  dropProtection: string;
+  warranty: string;
+}
+
+export interface ProductHighlight {
+  title: string;
+  desc: string;
 }
 
 export interface Product {
@@ -16,357 +31,219 @@ export interface Product {
   hoverImage?: string;
   colors: ColorSwatch[];
   compatibility: string[];
-  material: string;
-  brand: 'Apple' | 'Spigen' | 'OtterBox' | 'Belkin' | 'Casetify' | 'Nomad';
+  material: 'Liquid Silicone' | 'Crystal Clear' | 'AeroWeave Textile' | 'Heavy-Duty Armor' | 'MagSafe Compatible';
+  brand: 'Gadzio Signature' | 'Gadzio Pro' | 'Spigen' | 'OtterBox' | 'Nomad' | 'Belkin';
+  features: string[];
+  description: string;
+  highlights: ProductHighlight[];
+  specs: ProductSpecs;
+  inTheBox: string[];
+  /** Corner pill on the grid card, e.g. "New". Declared by the admin schema. */
   badge?: string;
   href: string;
 }
 
+// Filter options are limited to values carried by at least one remaining
+// product in PRODUCTS. The full pre-trim lists (13 models / 5 materials /
+// 6 brands) are preserved in ../removed-products/cases-protection.ts
+// (relative to the repo root; that folder is outside the repo).
 export const FILTER_MODELS = [
-  'iPhone 17 Pro Max',
-  'iPhone 17 Pro',
-  'iPhone 17 Plus',
+  'iPhone 18 Pro Max',
+  'iPhone 18 Pro',
   'iPhone 17',
-  'iPhone 16 Pro Max',
-  'iPhone 16 Pro',
-  'iPhone 16 Plus',
-  'iPhone 16',
-  'iPhone 15 Pro Max',
-  'iPhone 15 Pro',
 ];
 
 export const FILTER_MATERIALS = [
-  'Silicone',
-  'Clear',
-  'FineWoven',
-  'Leather',
-  'MagSafe Compatible',
-  'Rugged',
+  'Liquid Silicone',
+  'Crystal Clear',
 ];
 
-export const FILTER_BRANDS = ['Apple', 'Spigen', 'OtterBox', 'Belkin', 'Casetify', 'Nomad'];
+export const FILTER_BRANDS = [
+  'Gadzio Signature',
+  'Gadzio Pro',
+];
 
 export const SORT_OPTIONS = [
   { label: 'Featured', value: 'featured' },
   { label: 'Price: Low to High', value: 'price-asc' },
   { label: 'Price: High to Low', value: 'price-desc' },
-  { label: 'Newest', value: 'newest' },
+  { label: 'Newest Arrivals', value: 'newest' },
 ];
 
+function buildProductDetails(
+  id: string,
+  name: string,
+  subtitle: string,
+  price: number,
+  image: string,
+  colors: ColorSwatch[],
+  compatibility: string[],
+  material: Product['material'],
+  brand: Product['brand']
+): Product {
+  let description = '';
+  let highlights: ProductHighlight[] = [];
+  let specs: ProductSpecs;
+
+  if (material === 'Liquid Silicone') {
+    description =
+      `Engineered by Gadzio specifically for ${compatibility[0]}, the MagPulse Liquid Silicone Case offers exceptional tactile comfort and military-grade impact defense. The velvety soft-touch silicone exterior feels natural and secure in hand, while an inner micro-fiber cushion preserves your device's pristine finish. Integrated high-gauss N52 neodymium magnets align instantly with MagSafe wireless chargers, car mounts, and magnetic wallets.`;
+    highlights = [
+      {
+        title: 'N52 Magnetic Array',
+        desc: 'Precision aligned neodymium magnets ensure instant wireless charging alignment and a rock-solid 1,200g magnetic hold.',
+      },
+      {
+        title: '10ft Impact Armor',
+        desc: 'Triple-layer composite shell disperses severe drop shocks away from vulnerable glass edges and camera assemblies.',
+      },
+      {
+        title: 'Microfiber Inner Bedding',
+        desc: 'Ultra-fine soft lining cradles the titanium or aluminum frame to prevent micro-scratches and dust abrasion.',
+      },
+      {
+        title: 'Sculpted Camera Defense',
+        desc: 'A 1.6mm raised perimeter ring ensures lenses never make contact when placed flat on tables or rough terrain.',
+      },
+    ];
+    specs = {
+      material: 'Silky Liquid Silicone, Impact Polycarbonate Frame, Microfiber Lining',
+      weight: '36g',
+      thickness: '1.8mm',
+      magneticHold: '1,200g Hold Force',
+      dropProtection: 'MIL-STD-810H 10ft Drop Tested',
+      warranty: '1-Year Gadzio Replacement Guarantee',
+    };
+  } else if (material === 'Crystal Clear') {
+    description =
+      `Showcase the sleek industrial geometry and vivid color of your ${compatibility[0]} with crystal clarity. The Gadzio CrystalArmor Case is molded from premium German Bayer polycarbonate infused with advanced anti-UV chemistry, resisting yellowing and oxidation for years. Designed with precision corner shock-airbags and high-transparency magnetic rings for uncompromised MagSafe utility.`;
+    highlights = [
+      {
+        title: 'Bayer Anti-Yellowing Shield',
+        desc: 'Advanced optical-grade polymer formulated with UV-absorbing inhibitors prevents discoloration over extended sunlight exposure.',
+      },
+      {
+        title: 'Dual 4H Scratch Armor',
+        desc: 'Hardened dual-sided hydrophobic coating resists keys, coins, and everyday pocket friction.',
+      },
+      {
+        title: 'MagSafe Fast Charge Ring',
+        desc: 'Optimized 36-magnet embedded core enables full 15W Qi2/MagSafe inductive energy transfer without heat buildup.',
+      },
+      {
+        title: 'Air-Damped Corners',
+        desc: 'Internal perimeter air pockets absorb and redistribute shock forces upon corner impacts.',
+      },
+    ];
+    specs = {
+      material: 'German Bayer Anti-Yellowing Polycarbonate & Flexible TPU',
+      weight: '32g',
+      thickness: '1.5mm',
+      magneticHold: '1,150g Hold Force',
+      dropProtection: '10ft Certified Drop Absorption',
+      warranty: '1-Year Gadzio Clarity & Protection Warranty',
+    };
+  } else {
+    // AeroWeave Textile
+    description =
+      `Crafted from precision micro-twill, the Gadzio AeroWeave Case delivers a distinctive suede-like hand feel and refined executive aesthetic for ${compatibility[0]}. Woven from high-durability technical yarns with 68% recycled fiber content, it provides robust drop shielding without unnecessary bulk, complemented by tactile machined aluminum button accents.`;
+    highlights = [
+      {
+        title: 'High-Density Micro-Twill',
+        desc: 'Technical woven fabric provides an ultra-comfortable non-slip tactile texture that resists pilling and fraying.',
+      },
+      {
+        title: 'Machined Aluminum Buttons',
+        desc: 'Independent anodized metal buttons deliver satisfying, tactile click feedback identical to the native device buttons.',
+      },
+      {
+        title: 'Eco-Forward Engineering',
+        desc: 'Engineered with 68% post-consumer recycled technical fibers, reducing environmental impact while boosting durability.',
+      },
+      {
+        title: 'Embedded MagSafe Alignment',
+        desc: 'Rare-earth magnetic core embedded beneath the fabric layer ensures secure attachment to all MagSafe chargers and stands.',
+      },
+    ];
+    specs = {
+      material: '68% Recycled Technical Micro-Twill, Anodized Aluminum, Polycarbonate Core',
+      weight: '38g',
+      thickness: '1.9mm',
+      magneticHold: '1,250g Hold Force',
+      dropProtection: '10ft Certified Drop Absorption',
+      warranty: '1-Year Gadzio Craftsmanship Warranty',
+    };
+  }
+
+  return {
+    id,
+    name,
+    subtitle,
+    price,
+    priceDisplay: `₹${price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    image,
+    colors,
+    compatibility,
+    material,
+    brand,
+    features: highlights.map((h) => h.title),
+    description,
+    highlights,
+    specs,
+    inTheBox: [
+      `1x ${name} (${subtitle})`,
+      '1x Quick Start & Maintenance Guide',
+      '1x 1-Year Authenticity & Warranty Card',
+    ],
+    href: `/shop/product/${id}`,
+  };
+}
+
 export const PRODUCTS: Product[] = [
-  {
-    id: 'iphone17-silicone-black',
-    name: 'iPhone 17 Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 5900,
-    priceDisplay: '₹5,900.00',
-    image: '/sites/cases-protection/images/iphone17-silicone-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
+  buildProductDetails(
+    'iphone18pro-max-clear-magsafe',
+    'Gadzio CrystalArmor Clear Case with MagSafe',
+    'Clear',
+    3499,
+    '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
+    [
+      { name: 'Diamond Clear', hex: '#e8e8ed' },
+    ],
+    ['iPhone 18 Pro Max', 'iPhone 18 Pro'],
+    'Crystal Clear',
+    'Gadzio Pro'
+  ),
+  buildProductDetails(
+    'iphone17-silicone-black',
+    'Gadzio MagPulse Liquid Silicone Case',
+    'Midnight Black',
+    3499,
+    '/sites/cases-protection/images/iphone17-silicone-black.jpg',
+    [
+      { name: 'Midnight Black', hex: '#1d1d1f' },
       { name: 'Storm Blue', hex: '#6b7f9e' },
-      { name: 'Plum', hex: '#6b4f6a' },
+      { name: 'Plum Violet', hex: '#6b4f6a' },
       { name: 'Soft Mint', hex: '#b5cec9' },
-      { name: 'Denim', hex: '#4f6f8f' },
-      { name: 'Light Pink', hex: '#f2c4ce' },
+      { name: 'Indigo Denim', hex: '#4f6f8f' },
+      { name: 'Blush Pink', hex: '#f2c4ce' },
       { name: 'Stone Gray', hex: '#8e8e93' },
     ],
-    compatibility: ['iPhone 17'],
-    material: 'Silicone',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MXYK3/iphone-17-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone17pro-silicone-black',
-    name: 'iPhone 17 Pro Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 5900,
-    priceDisplay: '₹5,900.00',
-    image: '/sites/cases-protection/images/iphone17pro-silicone-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Deep Blue', hex: '#2c4b6e' },
-      { name: 'Slate Gray', hex: '#6e6e73' },
-      { name: 'Plum', hex: '#6b4f6a' },
-      { name: 'Natural', hex: '#d5c4b0' },
-    ],
-    compatibility: ['iPhone 17 Pro'],
-    material: 'Silicone',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MYFD3/iphone-17-pro-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone17-clear-magsafe',
-    name: 'iPhone 17 Clear Case with MagSafe',
-    subtitle: 'Clear',
-    price: 4900,
-    priceDisplay: '₹4,900.00',
-    image: '/sites/cases-protection/images/iphone17-clear-magsafe.jpg',
-    colors: [
-      { name: 'Clear', hex: '#e8e8ed' },
-    ],
-    compatibility: ['iPhone 17'],
-    material: 'Clear',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MXYM3/iphone-17-clear-case-with-magsafe',
-  },
-  {
-    id: 'iphone17pro-clear-magsafe',
-    name: 'iPhone 17 Pro Clear Case with MagSafe',
-    subtitle: 'Clear',
-    price: 4900,
-    priceDisplay: '₹4,900.00',
-    image: '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
-    colors: [
-      { name: 'Clear', hex: '#e8e8ed' },
-    ],
-    compatibility: ['iPhone 17 Pro'],
-    material: 'Clear',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MYFE3/iphone-17-pro-clear-case-with-magsafe',
-  },
-  {
-    id: 'iphone17-finewoven-black',
-    name: 'iPhone 17 FineWoven Case with MagSafe',
-    subtitle: 'Black',
-    price: 7900,
-    priceDisplay: '₹7,900.00',
-    image: '/sites/cases-protection/images/iphone17-finewoven-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Taupe', hex: '#8e7f6e' },
-      { name: 'Pacific Blue', hex: '#3d6fa0' },
-      { name: 'Mulberry', hex: '#7e3b5e' },
-    ],
-    compatibility: ['iPhone 17'],
-    material: 'FineWoven',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MXYN3/iphone-17-finewoven-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone17pro-finewoven-black',
-    name: 'iPhone 17 Pro FineWoven Case with MagSafe',
-    subtitle: 'Black',
-    price: 7900,
-    priceDisplay: '₹7,900.00',
-    image: '/sites/cases-protection/images/iphone17pro-finewoven-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Taupe', hex: '#8e7f6e' },
-      { name: 'Pacific Blue', hex: '#3d6fa0' },
-    ],
-    compatibility: ['iPhone 17 Pro'],
-    material: 'FineWoven',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MYFG3/iphone-17-pro-finewoven-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone16-silicone-black',
-    name: 'iPhone 16 Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 5400,
-    priceDisplay: '₹5,400.00',
-    image: '/sites/cases-protection/images/iphone16-silicone-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Lake Green', hex: '#4a7c6a' },
-      { name: 'Denim', hex: '#4f6f8f' },
-      { name: 'Light Pink', hex: '#f2c4ce' },
-      { name: 'Plum', hex: '#6b4f6a' },
-      { name: 'Sky Blue', hex: '#85b4d4' },
-    ],
-    compatibility: ['iPhone 16'],
-    material: 'Silicone',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1Q3/iphone-16-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone16pro-silicone-black',
-    name: 'iPhone 16 Pro Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 5400,
-    priceDisplay: '₹5,400.00',
-    image: '/sites/cases-protection/images/iphone16pro-silicone-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Plum', hex: '#6b4f6a' },
-      { name: 'Denim', hex: '#4f6f8f' },
-      { name: 'Natural', hex: '#d5c4b0' },
-      { name: 'Lake Green', hex: '#4a7c6a' },
-    ],
-    compatibility: ['iPhone 16 Pro'],
-    material: 'Silicone',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1C3/iphone-16-pro-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone16-clear-magsafe',
-    name: 'iPhone 16 Clear Case with MagSafe',
-    subtitle: 'Clear',
-    price: 4400,
-    priceDisplay: '₹4,400.00',
-    image: '/sites/cases-protection/images/iphone16-clear-magsafe.jpg',
-    colors: [
-      { name: 'Clear', hex: '#e8e8ed' },
-    ],
-    compatibility: ['iPhone 16'],
-    material: 'Clear',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1T3/iphone-16-clear-case-with-magsafe',
-  },
-  {
-    id: 'iphone16pro-clear-magsafe',
-    name: 'iPhone 16 Pro Clear Case with MagSafe',
-    subtitle: 'Clear',
-    price: 4400,
-    priceDisplay: '₹4,400.00',
-    image: '/sites/cases-protection/images/iphone16pro-clear-magsafe.jpg',
-    colors: [
-      { name: 'Clear', hex: '#e8e8ed' },
-    ],
-    compatibility: ['iPhone 16 Pro'],
-    material: 'Clear',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1G3/iphone-16-pro-clear-case-with-magsafe',
-  },
-  {
-    id: 'iphone16-finewoven-black',
-    name: 'iPhone 16 FineWoven Case with MagSafe',
-    subtitle: 'Black',
-    price: 6900,
-    priceDisplay: '₹6,900.00',
-    image: '/sites/cases-protection/images/iphone16-finewoven-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Taupe', hex: '#8e7f6e' },
-      { name: 'Pacific Blue', hex: '#3d6fa0' },
-      { name: 'Mulberry', hex: '#7e3b5e' },
-      { name: 'Denim', hex: '#4f6f8f' },
-    ],
-    compatibility: ['iPhone 16'],
-    material: 'FineWoven',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1R3/iphone-16-finewoven-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone17pro-max-silicone',
-    name: 'iPhone 17 Pro Max Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 5900,
-    priceDisplay: '₹5,900.00',
-    image: '/sites/cases-protection/images/iphone17pro-max-silicone.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Deep Blue', hex: '#2c4b6e' },
-      { name: 'Natural', hex: '#d5c4b0' },
-      { name: 'Slate Gray', hex: '#6e6e73' },
-      { name: 'Plum', hex: '#6b4f6a' },
-    ],
-    compatibility: ['iPhone 17 Pro Max'],
-    material: 'Silicone',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MYFF3/iphone-17-pro-max-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone17plus-silicone',
-    name: 'iPhone 17 Plus Silicone Case with MagSafe',
-    subtitle: 'Storm Blue',
-    price: 5900,
-    priceDisplay: '₹5,900.00',
-    image: '/sites/cases-protection/images/iphone17plus-silicone.jpg',
-    colors: [
-      { name: 'Storm Blue', hex: '#6b7f9e' },
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Soft Mint', hex: '#b5cec9' },
-      { name: 'Light Pink', hex: '#f2c4ce' },
-      { name: 'Plum', hex: '#6b4f6a' },
-    ],
-    compatibility: ['iPhone 17 Plus'],
-    material: 'Silicone',
-    brand: 'Apple',
-    badge: 'New',
-    href: 'https://www.apple.com/in/shop/product/MXYL3/iphone-17-plus-silicone-case-with-magsafe-storm-blue',
-  },
-  {
-    id: 'iphone16pro-max-silicone',
-    name: 'iPhone 16 Pro Max Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 5400,
-    priceDisplay: '₹5,400.00',
-    image: '/sites/cases-protection/images/iphone16pro-max-silicone.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Plum', hex: '#6b4f6a' },
-      { name: 'Denim', hex: '#4f6f8f' },
-      { name: 'Natural', hex: '#d5c4b0' },
-    ],
-    compatibility: ['iPhone 16 Pro Max'],
-    material: 'Silicone',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1D3/iphone-16-pro-max-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone16plus-silicone-denim',
-    name: 'iPhone 16 Plus Silicone Case with MagSafe',
-    subtitle: 'Denim',
-    price: 5400,
-    priceDisplay: '₹5,400.00',
-    image: '/sites/cases-protection/images/iphone16plus-silicone-denim.jpg',
-    colors: [
-      { name: 'Denim', hex: '#4f6f8f' },
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Lake Green', hex: '#4a7c6a' },
-      { name: 'Light Pink', hex: '#f2c4ce' },
-      { name: 'Sky Blue', hex: '#85b4d4' },
-      { name: 'Plum', hex: '#6b4f6a' },
-    ],
-    compatibility: ['iPhone 16 Plus'],
-    material: 'Silicone',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MY1S3/iphone-16-plus-silicone-case-with-magsafe-denim',
-  },
-  {
-    id: 'iphone15pro-silicone-black',
-    name: 'iPhone 15 Pro Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 4900,
-    priceDisplay: '₹4,900.00',
-    image: '/sites/cases-protection/images/iphone15pro-silicone-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Winter Blue', hex: '#7fa8c0' },
-      { name: 'Light Pink', hex: '#f2c4ce' },
-      { name: 'Clay', hex: '#c9a990' },
-      { name: 'Cypress', hex: '#4d6d56' },
-      { name: 'Guava', hex: '#e8836e' },
-    ],
-    compatibility: ['iPhone 15 Pro'],
-    material: 'Silicone',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MT0X3/iphone-15-pro-silicone-case-with-magsafe-black',
-  },
-  {
-    id: 'iphone15pro-max-silicone-black',
-    name: 'iPhone 15 Pro Max Silicone Case with MagSafe',
-    subtitle: 'Black',
-    price: 4900,
-    priceDisplay: '₹4,900.00',
-    image: '/sites/cases-protection/images/iphone15pro-max-silicone-black.jpg',
-    colors: [
-      { name: 'Black', hex: '#1d1d1f' },
-      { name: 'Winter Blue', hex: '#7fa8c0' },
-      { name: 'Light Pink', hex: '#f2c4ce' },
-      { name: 'Cypress', hex: '#4d6d56' },
-    ],
-    compatibility: ['iPhone 15 Pro Max'],
-    material: 'Silicone',
-    brand: 'Apple',
-    href: 'https://www.apple.com/in/shop/product/MT1K3/iphone-15-pro-max-silicone-case-with-magsafe-black',
-  },
+    ['iPhone 17'],
+    'Liquid Silicone',
+    'Gadzio Signature'
+  ),
 ];
+
+/**
+ * Returns a product by ID from the catalog.
+ */
+export function getProductById(id: string): Product | undefined {
+  return PRODUCTS.find((p) => p.id === id);
+}
+
+/**
+ * Returns all product IDs.
+ */
+export function getAllProductIds(): string[] {
+  return PRODUCTS.map((p) => p.id);
+}
