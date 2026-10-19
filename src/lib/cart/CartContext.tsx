@@ -34,6 +34,8 @@ interface CartContextValue {
   toggleBag: () => void;
   lastAddedItem: CartItem | null;
   badgeBouncing: boolean;
+  /** True once the cart has been read from localStorage on the client. */
+  isHydrated: boolean;
 }
 
 /**
@@ -270,6 +272,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       toggleBag,
       lastAddedItem,
       badgeBouncing,
+      isHydrated: hasHydrated,
     }),
     [
       items,
@@ -283,6 +286,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       toggleBag,
       lastAddedItem,
       badgeBouncing,
+      hasHydrated,
     ]
   );
 

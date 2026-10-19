@@ -40,6 +40,8 @@ export interface CollectionProduct {
   subtitle: string;
   price: number;
   priceDisplay: string;
+  /** True when the source item has no real price, so the card shows "Unavailable". */
+  priceUnavailable?: boolean;
   image: string;
   hoverImage?: string;
   images: string[];

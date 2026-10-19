@@ -4,6 +4,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
+import { getProductFromCatalog } from '@/lib/payu/catalog';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface Props {
@@ -12,10 +13,21 @@ interface Props {
 }
 
 export function BagFlyout({ isOpen, onClose }: Props) {
-  const { items, totalCount, totalAmount, removeItem, updateQuantity, addItem } = useCart();
+  const { items, totalCount, removeItem, updateQuantity, addItem } = useCart();
   const flyoutRef = useRef<HTMLDivElement>(null);
   const [suggestedProducts, setSuggestedProducts] = useState<SearchResultItem[]>([]);
   const [addedIds, setAddedIds] = useState<Record<string, boolean>>({});
+
+  // Only catalog-backed lines are payable; stale ids render as unavailable and
+  // do not contribute to the displayed total.
+  const availableItems = items.filter((item) =>
+    Boolean(getProductFromCatalog(item.productId || item.id))
+  );
+  const hasUnavailable = availableItems.length !== items.length;
+  const payableAmount = availableItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
 
   // Close when clicking outside
   useEffect(() => {
@@ -58,11 +70,16 @@ export function BagFlyout({ isOpen, onClose }: Props) {
     e.preventDefault();
     e.stopPropagation();
 
+    // Never invent a price. Anything without a real catalog price stays
+    // unaddable.
+    const price = item.price;
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
+
     addItem({
       productId: item.id,
       name: item.name,
       subtitle: item.subtitle,
-      price: item.price || 3499,
+      price,
       priceDisplay: item.priceDisplay,
       // Existing Gadzio case art. The previous path
       // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
@@ -150,7 +167,11 @@ export function BagFlyout({ isOpen, onClose }: Props) {
         <div className="flex flex-col">
           {/* Items list */}
           <div className="max-h-[240px] overflow-y-auto py-2 divide-y divide-black/5 pr-1 -mr-1">
-            {items.map((item) => (
+            {items.map((item) => {
+              const isAvailable = Boolean(
+                getProductFromCatalog(item.productId || item.id)
+              );
+              return (
               <div key={item.id} className="py-3 flex gap-3 items-center group">
                 {/* Thumbnail */}
                 <div className="w-12 h-12 shrink-0 rounded-xl bg-[#f5f5f7] p-1 flex items-center justify-center overflow-hidden border border-black/5">
@@ -172,34 +193,38 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                       {[item.color, item.model].filter(Boolean).join(' • ')}
                     </p>
                   )}
-                  <p className="text-[12px] font-semibold text-[#1d1d1f] mt-1">
-                    ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+                  <p className={`text-[12px] font-semibold mt-1 ${isAvailable ? 'text-[#1d1d1f]' : 'text-[#e30000]'}`}>
+                    {isAvailable
+                      ? `₹${(item.price * item.quantity).toLocaleString('en-IN')}`
+                      : 'Unavailable'}
                   </p>
                 </div>
 
                 {/* Quantity Controls & Remove */}
                 <div className="flex flex-col items-end gap-1 shrink-0">
-                  <div className="flex items-center border border-black/10 rounded-lg bg-white overflow-hidden shadow-2xs">
-                    <button
-                      type="button"
-                      aria-label="Decrease quantity"
-                      onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                      className="w-5 h-5 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-[#f5f5f7] transition cursor-pointer text-xs"
-                    >
-                      –
-                    </button>
-                    <span className="w-5 text-center text-[11px] font-semibold text-[#1d1d1f]">
-                      {item.quantity}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Increase quantity"
-                      onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                      className="w-5 h-5 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-[#f5f5f7] transition cursor-pointer text-xs"
-                    >
-                      +
-                    </button>
-                  </div>
+                  {isAvailable && (
+                    <div className="flex items-center border border-black/10 rounded-lg bg-white overflow-hidden shadow-2xs">
+                      <button
+                        type="button"
+                        aria-label="Decrease quantity"
+                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                        className="w-5 h-5 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-[#f5f5f7] transition cursor-pointer text-xs"
+                      >
+                        –
+                      </button>
+                      <span className="w-5 text-center text-[11px] font-semibold text-[#1d1d1f]">
+                        {item.quantity}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Increase quantity"
+                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                        className="w-5 h-5 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-[#f5f5f7] transition cursor-pointer text-xs"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={() => removeItem(item.id)}
@@ -209,7 +234,8 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Subtotal & Actions */}
@@ -217,9 +243,15 @@ export function BagFlyout({ isOpen, onClose }: Props) {
             <div className="flex justify-between items-center text-sm">
               <span className="text-[#86868b] text-[13px]">Total</span>
               <span className="font-bold text-[16px] text-[#1d1d1f]">
-                ₹{totalAmount.toLocaleString('en-IN')}
+                ₹{payableAmount.toLocaleString('en-IN')}
               </span>
             </div>
+
+            {hasUnavailable && (
+              <p className="text-[10px] text-[#e30000] leading-snug">
+                Remove unavailable items to check out.
+              </p>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               <Link
@@ -229,14 +261,20 @@ export function BagFlyout({ isOpen, onClose }: Props) {
               >
                 Review Bag
               </Link>
-              <Link
-                href="/checkout"
-                onClick={onClose}
-                className="w-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-[13px] font-semibold py-2.5 rounded-xl text-center transition active:scale-[0.98] shadow-xs flex items-center justify-center gap-1"
-              >
-                <span>Check Out</span>
-                <span>→</span>
-              </Link>
+              {hasUnavailable ? (
+                <div className="w-full bg-[#e8e8ed] text-[#86868b] text-[13px] font-semibold py-2.5 rounded-xl text-center cursor-not-allowed">
+                  Remove items
+                </div>
+              ) : (
+                <Link
+                  href="/checkout"
+                  onClick={onClose}
+                  className="w-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-[13px] font-semibold py-2.5 rounded-xl text-center transition active:scale-[0.98] shadow-xs flex items-center justify-center gap-1"
+                >
+                  <span>Check Out</span>
+                  <span>→</span>
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -260,6 +298,11 @@ export function BagFlyout({ isOpen, onClose }: Props) {
           <div className="space-y-2">
             {suggestedProducts.map((p) => {
               const isAdded = !!addedIds[p.id];
+              const canAdd =
+                typeof p.price === 'number' &&
+                Number.isFinite(p.price) &&
+                p.price > 0 &&
+                Boolean(getProductFromCatalog(p.id));
               return (
                 <div
                   key={p.id}
@@ -279,23 +322,27 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                       <p className="text-[11px] font-semibold text-[#1d1d1f] truncate leading-tight">
                         {p.name}
                       </p>
-                      <p className="text-[10px] text-[#86868b]">
-                        {p.priceDisplay || `₹${p.price?.toLocaleString('en-IN')}`}
+                      <p className={`text-[10px] ${canAdd ? 'text-[#86868b]' : 'text-[#e30000]'}`}>
+                        {canAdd
+                          ? p.priceDisplay || `₹${(p.price as number).toLocaleString('en-IN')}`
+                          : 'Unavailable'}
                       </p>
                     </div>
                   </Link>
 
-                  <button
-                    type="button"
-                    onClick={(e) => handleQuickAdd(p, e)}
-                    className={`text-[10px] font-semibold px-2 py-1 rounded-lg shrink-0 transition-all cursor-pointer ${
-                      isAdded
-                        ? 'bg-[#34c759] text-white'
-                        : 'bg-white hover:bg-[#0071e3] text-[#1d1d1f] hover:text-white border border-black/10'
-                    }`}
-                  >
-                    {isAdded ? 'Added ✓' : '+ Add'}
-                  </button>
+                  {canAdd && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleQuickAdd(p, e)}
+                      className={`text-[10px] font-semibold px-2 py-1 rounded-lg shrink-0 transition-all cursor-pointer ${
+                        isAdded
+                          ? 'bg-[#34c759] text-white'
+                          : 'bg-white hover:bg-[#0071e3] text-[#1d1d1f] hover:text-white border border-black/10'
+                      }`}
+                    >
+                      {isAdded ? 'Added ✓' : '+ Add'}
+                    </button>
+                  )}
                 </div>
               );
             })}

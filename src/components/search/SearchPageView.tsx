@@ -27,12 +27,21 @@ const CATEGORIES = [
 ];
 
 function toCollectionProduct(item: SearchResultItem): CollectionProduct {
+  // Editorial/page results and any other item without a numeric price must not
+  // be turned into a ₹0 product. They render as "Unavailable" and cannot be
+  // added to the bag.
+  const price =
+    typeof item.price === 'number' && Number.isFinite(item.price) && item.price > 0
+      ? item.price
+      : null;
+
   return {
     id: item.id,
     name: item.name,
     subtitle: item.subtitle,
-    price: item.price || 0,
-    priceDisplay: item.priceDisplay || formatINR(item.price || 0),
+    price: price ?? 0,
+    priceDisplay: price !== null ? item.priceDisplay || formatINR(price) : 'Unavailable',
+    priceUnavailable: price === null,
     image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
     images: [item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg'],
     colors: (item as any).colors || [],

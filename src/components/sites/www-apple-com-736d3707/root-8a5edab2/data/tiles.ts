@@ -60,72 +60,6 @@ export interface InlineMediaClip {
 export const HERO_TILES: Tile[] = [
   {
     "group": "hero",
-    "index": 0,
-    "theme": "light",
-    "href": "/in-edu/store",
-    "internal": true,
-    "headline": "Semester, unlocked.",
-    "headlineLogo": null,
-    "subhead": [
-      {
-        "kind": "text",
-        "value": "Save more with exclusive student pricing on your favorite tech."
-      }
-    ],
-    "subheadMaxWidth": {
-      "sm": 320,
-      "md": 490,
-      "lg": 570
-    },
-    "ctas": [
-      {
-        "label": "Verify Eligibility",
-        "href": "/in-edu/store",
-        "ariaLabel": "Verify Eligibility, Education Store",
-        "variant": "primary",
-        "internal": true
-      }
-    ],
-    "image": {
-      "sources": [
-        {
-          "media": "(max-width:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (9).jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (10).jpg"
-        },
-        {
-          "media": "(max-width:1068px) and (min-height:734px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (10).jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (8).jpg"
-        },
-        {
-          "media": "(max-width:1068px) and (max-height:733px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (5).jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (6).jpg"
-        },
-        {
-          "media": "(min-width:0px) and (min-height:776px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (3).jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (4).jpg"
-        },
-        {
-          "media": "(min-width:0px) and (max-height:775px)",
-          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (1).jpg",
-          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (2).jpg"
-        }
-      ],
-      "img": {
-        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/hero_banner1 (4).jpg",
-        "alt": "Students carrying various MacBook and iPad models, along with dorm room essentials in rectangular containers",
-        "width": 3008,
-        "height": 692
-      }
-    },
-    "startFrame": null,
-    "infoTooltip": "🎓 Student Discount: Verified students with a valid university email (.edu) and student ID can unlock exclusive pricing and special discounts on select products, plus free accessories with qualifying purchases."
-  },
-  {
-    "group": "hero",
     "index": 1,
     "theme": "light",
     "href": "/shop/iphone/accessories/cases-protection",
@@ -189,7 +123,7 @@ export const HERO_TILES: Tile[] = [
       ],
       "img": {
         "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (9).jpg",
-        "alt": "iPhone with AirPods Pro, Apple Watch, and accessories on marble table",
+        "alt": "Dark blue smartphone with white wireless earbuds in a charging case, a smartwatch with a woven band, a coiled charging cable and a power adapter on a light marble surface",
         "width": 3008,
         "height": 692
       }

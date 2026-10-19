@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { useCart } from '@/lib/cart/CartContext';
+import { getProductFromCatalog } from '@/lib/payu/catalog';
 
 interface CartItem {
   id: string;
@@ -19,33 +21,17 @@ interface Props {
     firstName: string;
     lastName: string;
   } | null;
+  /** True when the URL named a productId that is not in the PayU catalog. */
+  productUnavailable?: boolean;
 }
 
-export function CheckoutForm({ initialItems, userSession }: Props) {
-  const { items: bagItems, removeItem, clearCart } = useCart();
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false }: Props) {
+  const { items: bagItems, removeItem, clearCart, isHydrated } = useCart();
 
-  const [fallbackItems] = useState<CartItem[]>(
-    initialItems && initialItems.length > 0
-      ? initialItems
-      : [
-          // Only rendered when the bag is empty. Id, name and price mirror the
-          // real catalog record in
-          // src/components/sites/cases-protection/data/products.ts
-          // (`iphone17-silicone-black`), so the placeholder line carries a
-          // product Gadzio actually sells. It previously named an Apple SKU
-          // ("iPhone 17 Silicone Case with MagSafe - Black") at a price that
-          // matched nothing in the catalog.
-          {
-            id: 'iphone17-silicone-black',
-            productId: 'iphone17-silicone-black',
-            name: 'Gadzio MagPulse Liquid Silicone Case (Midnight Black)',
-            price: 3499,
-            quantity: 1,
-          },
-        ]
-  );
-
-  // If items exist in the shopping bag, use the live bag!
+  // If items exist in the shopping bag, use the live bag. Only an empty bag
+  // falls back to the product resolved from ?productId= on the server. There is
+  // deliberately no placeholder line: a checkout with nothing real to buy is
+  // an "unavailable" state.
   const items: CartItem[] =
     bagItems.length > 0
       ? bagItems.map((b) => ({
@@ -56,7 +42,18 @@ export function CheckoutForm({ initialItems, userSession }: Props) {
           quantity: b.quantity,
           image: b.image,
         }))
-      : fallbackItems;
+      : initialItems ?? [];
+
+  // A line is only payable when its id exists in the authoritative PayU
+  // catalog. Stale/education ids and anything else are marked unavailable and
+  // excluded from the amount sent to the gateway.
+  const unavailableIds = new Set(
+    items
+      .filter((item) => !getProductFromCatalog(item.productId || item.id))
+      .map((item) => item.id)
+  );
+  const hasUnavailable = unavailableIds.size > 0;
+  const payableItems = items.filter((item) => !unavailableIds.has(item.id));
 
   const [firstName, setFirstName] = useState(userSession?.firstName || '');
   const [email, setEmail] = useState(userSession?.email || '');
@@ -64,13 +61,22 @@ export function CheckoutForm({ initialItems, userSession }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const totalAmount = items.reduce((acc, i) => acc + i.price * i.quantity, 0);
+  const totalAmount = payableItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
     setErrorMessage(null);
+
+    if (items.length === 0) {
+      setErrorMessage('Your bag is empty.');
+      return;
+    }
+    if (hasUnavailable) {
+      setErrorMessage('Remove unavailable items from your order before paying.');
+      return;
+    }
 
     // Basic client validation
     if (!firstName.trim() || firstName.trim().length < 2) {
@@ -144,6 +150,43 @@ export function CheckoutForm({ initialItems, userSession }: Props) {
     }
   };
 
+  // An unknown ?productId=, or a checkout with nothing real in it, is an
+  // explicit unavailable state — never a placeholder product.
+  if (productUnavailable || (isHydrated && items.length === 0)) {
+    return (
+      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
+        <h1 className="text-3xl font-semibold tracking-tight">This item is unavailable</h1>
+        <p className="text-sm text-[#86868b] mt-3 max-w-md mx-auto">
+          The item you tried to buy isn&apos;t in our catalog. It may have been
+          removed, or the link may be out of date.
+        </p>
+        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link
+            href="/shop/iphone/accessories/cases-protection"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-sm font-semibold transition"
+          >
+            Back to the shop
+          </Link>
+          <Link
+            href="/cart"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full border border-[#d2d2d7] text-[#1d1d1f] text-sm font-semibold hover:bg-[#f5f5f7] transition"
+          >
+            Review Bag
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Wait for the cart to hydrate before concluding that the bag is empty.
+  if (!isHydrated && items.length === 0) {
+    return (
+      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-center text-sm text-[#86868b]">
+        Loading your bag…
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f]">
       <div className="mb-8">
@@ -167,39 +210,51 @@ export function CheckoutForm({ initialItems, userSession }: Props) {
           )}
         </div>
         <div className="divide-y divide-[#e5e5ea]">
-          {items.map((item) => (
-            <div key={item.id} className="py-3 flex justify-between items-center text-sm gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                {item.image && (
-                  <div className="w-12 h-12 rounded-lg bg-white p-1 border border-black/5 flex items-center justify-center shrink-0">
-                    <img src={item.image} alt={item.name} className="w-full h-full object-contain" />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="font-medium text-[#1d1d1f] line-clamp-1">{item.name}</div>
-                  <div className="text-xs text-[#86868b] flex items-center gap-2 mt-0.5">
-                    <span>Qty: {item.quantity}</span>
-                    {bagItems.length > 0 && (
-                      <>
-                        <span>•</span>
-                        <button
-                          type="button"
-                          onClick={() => removeItem(item.id)}
-                          className="text-red-600 hover:underline cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      </>
-                    )}
+          {items.map((item) => {
+            const isAvailable = !unavailableIds.has(item.id);
+            return (
+              <div key={item.id} className="py-3 flex justify-between items-center text-sm gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  {item.image && (
+                    <div className="w-12 h-12 rounded-lg bg-white p-1 border border-black/5 flex items-center justify-center shrink-0">
+                      <img src={item.image} alt={item.name} className="w-full h-full object-contain" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="font-medium text-[#1d1d1f] line-clamp-1">{item.name}</div>
+                    <div className="text-xs text-[#86868b] flex items-center gap-2 mt-0.5">
+                      <span>Qty: {item.quantity}</span>
+                      {bagItems.length > 0 && (
+                        <>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() => removeItem(item.id)}
+                            className="text-red-600 hover:underline cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
+                {isAvailable ? (
+                  <div className="font-semibold text-[#1d1d1f] shrink-0">
+                    ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+                  </div>
+                ) : (
+                  <div className="font-semibold text-[#e30000] shrink-0">Unavailable</div>
+                )}
               </div>
-              <div className="font-semibold text-[#1d1d1f] shrink-0">
-                ₹{(item.price * item.quantity).toLocaleString('en-IN')}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+        {hasUnavailable && (
+          <div className="mt-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
+            Some items are no longer in our catalog. Remove them to continue to payment.
+          </div>
+        )}
         <div className="border-t border-[#e5e5ea] mt-4 pt-4 flex justify-between items-baseline font-semibold">
           <span>Total Payable</span>
           <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
@@ -266,9 +321,9 @@ export function CheckoutForm({ initialItems, userSession }: Props) {
           <button
             type="submit"
             id="payu-pay-now-btn"
-            disabled={isSubmitting}
+            disabled={isSubmitting || hasUnavailable}
             className={`w-full py-4 rounded-full text-base font-semibold text-white transition flex items-center justify-center space-x-2 ${
-              isSubmitting
+              isSubmitting || hasUnavailable
                 ? 'bg-[#86868b] cursor-not-allowed'
                 : 'bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.99] shadow-sm'
             }`}
@@ -281,6 +336,8 @@ export function CheckoutForm({ initialItems, userSession }: Props) {
                 </svg>
                 <span>Redirecting to PayU Secure Gateway...</span>
               </>
+            ) : hasUnavailable ? (
+              <span>Remove unavailable items to continue</span>
             ) : (
               <span>Pay Now with PayU • ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
             )}

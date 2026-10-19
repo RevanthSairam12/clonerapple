@@ -22,20 +22,21 @@ export default async function CheckoutPage({ searchParams }: Props) {
   }
 
   const parsedQty = Math.max(1, parseInt(qty || '1', 10));
+  const requestedProduct = productId ? getProductFromCatalog(productId) : null;
+  // A productId in the URL that resolves to nothing must never fall through to
+  // the live bag or a placeholder line — the checkout shows "unavailable".
+  const productUnavailable = Boolean(productId) && requestedProduct === null;
   let items = undefined;
 
-  if (productId) {
-    const product = getProductFromCatalog(productId);
-    if (product) {
-      items = [
-        {
-          id: product.id,
-          name: product.name,
-          price: product.price,
-          quantity: parsedQty,
-        },
-      ];
-    }
+  if (requestedProduct) {
+    items = [
+      {
+        id: requestedProduct.id,
+        name: requestedProduct.name,
+        price: requestedProduct.price,
+        quantity: parsedQty,
+      },
+    ];
   }
 
   return (
@@ -61,7 +62,11 @@ export default async function CheckoutPage({ searchParams }: Props) {
         )}
       </div>
 
-      <CheckoutForm initialItems={items} userSession={session} />
+      <CheckoutForm
+        initialItems={items}
+        userSession={session}
+        productUnavailable={productUnavailable}
+      />
     </div>
   );
 }

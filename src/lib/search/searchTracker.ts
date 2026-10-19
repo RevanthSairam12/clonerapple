@@ -106,6 +106,10 @@ export function getSuggestedProducts(options?: {
     for (const term of topTerms) {
       const searchRes = searchProducts(term, { limit: 6 });
       for (const item of searchRes.items) {
+        // Only suggest items the store actually sells. Education Store hardware
+        // has no PayU catalog record, so quick-adding it produced an unpayable
+        // bag line; editorial "page" results are navigation, not products.
+        if (item.type !== 'product' && item.type !== 'accessory') continue;
         if (!excludeSet.has(item.id) && !seenIds.has(item.id)) {
           seenIds.add(item.id);
           matchedProducts.push(item);
@@ -119,7 +123,7 @@ export function getSuggestedProducts(options?: {
   // 2. If fewer than limit, fill with trending products from the store
   if (matchedProducts.length < limit) {
     const trendingFallback = allSearchItems.filter(
-      (item) => item.type === 'product' || item.type === 'hardware'
+      (item) => item.type === 'product' || item.type === 'accessory'
     );
 
     for (const item of trendingFallback) {

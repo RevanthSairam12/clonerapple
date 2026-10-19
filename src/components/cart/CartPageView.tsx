@@ -6,6 +6,7 @@ import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5eda
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
+import { getProductFromCatalog } from '@/lib/payu/catalog';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface UserAuth {
@@ -16,12 +17,24 @@ interface UserAuth {
 }
 
 export function CartPageView() {
-  const { items, totalCount, totalAmount, updateQuantity, removeItem, addItem } = useCart();
+  const { items, totalCount, updateQuantity, removeItem, addItem } = useCart();
   const [suggestedProducts, setSuggestedProducts] = useState<SearchResultItem[]>([]);
   const [recommendationReason, setRecommendationReason] = useState<string>('Trending & Popular Products');
   const [topSearchTerms, setTopSearchTerms] = useState<string[]>([]);
   const [addedItemIds, setAddedItemIds] = useState<Record<string, boolean>>({});
   const [user, setUser] = useState<UserAuth | null>(null);
+
+  // Only lines the PayU catalog knows are payable. A stale/education id is
+  // shown as unavailable and excluded from the displayed totals.
+  const availableItems = items.filter((item) =>
+    Boolean(getProductFromCatalog(item.productId || item.id))
+  );
+  const hasUnavailable = availableItems.length !== items.length;
+  const payableCount = availableItems.reduce((sum, item) => sum + item.quantity, 0);
+  const payableAmount = availableItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
 
   // Check user session
   useEffect(() => {
@@ -62,11 +75,16 @@ export function CartPageView() {
     e.preventDefault();
     e.stopPropagation();
 
+    // Never invent a price for a suggestion. Without a real one it is not
+    // addable — the card renders an "Unavailable" label instead.
+    const price = item.price;
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
+
     addItem({
       productId: item.id,
       name: item.name,
       subtitle: item.subtitle,
-      price: item.price || 3499,
+      price,
       priceDisplay: item.priceDisplay,
       // Existing Gadzio case art. The previous path
       // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
@@ -190,7 +208,11 @@ export function CartPageView() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 mb-16 items-start">
               {/* Left Column: Line Items */}
               <div className="lg:col-span-8 divide-y divide-[#e5e5ea] border-y border-[#e5e5ea]">
-                {items.map((item) => (
+                {items.map((item) => {
+                  const isAvailable = Boolean(
+                    getProductFromCatalog(item.productId || item.id)
+                  );
+                  return (
                   <div key={item.id} className="py-6 flex flex-col sm:flex-row gap-5 items-start">
                     {/* Thumbnail Image */}
                     <div className="w-24 h-24 sm:w-28 sm:h-28 shrink-0 rounded-2xl bg-[#f5f5f7] p-3 border border-black/5 flex items-center justify-center overflow-hidden">
@@ -221,42 +243,58 @@ export function CartPageView() {
                           )}
                         </div>
                         <div className="text-right sm:text-right font-bold text-base sm:text-lg text-[#1d1d1f] mt-1 sm:mt-0">
-                          ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+                          {isAvailable ? (
+                            <>₹{(item.price * item.quantity).toLocaleString('en-IN')}</>
+                          ) : (
+                            <span className="text-sm font-semibold text-[#e30000]">Unavailable</span>
+                          )}
                         </div>
                       </div>
 
                       {/* Stock note */}
-                      <p className="text-xs text-[#34c759] font-medium mt-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#34c759]" />
-                        In stock and ready to ship
-                      </p>
+                      {isAvailable ? (
+                        <p className="text-xs text-[#34c759] font-medium mt-2 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#34c759]" />
+                          In stock and ready to ship
+                        </p>
+                      ) : (
+                        <p className="text-xs text-[#e30000] font-medium mt-2">
+                          This item is no longer in our catalog. Remove it to continue.
+                        </p>
+                      )}
 
                       {/* Quantity Stepper & Remove */}
                       <div className="flex items-center justify-between mt-4 pt-3 border-t border-black/5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-[#86868b] font-medium">Quantity:</span>
-                          <div className="flex items-center border border-black/10 rounded-xl bg-[#f5f5f7] overflow-hidden">
-                            <button
-                              type="button"
-                              aria-label="Decrease quantity"
-                              onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                              className="w-8 h-8 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-black/5 transition cursor-pointer text-sm"
-                            >
-                              –
-                            </button>
-                            <span className="w-8 text-center text-xs font-bold text-[#1d1d1f]">
-                              {item.quantity}
-                            </span>
-                            <button
-                              type="button"
-                              aria-label="Increase quantity"
-                              onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                              className="w-8 h-8 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-black/5 transition cursor-pointer text-sm"
-                            >
-                              +
-                            </button>
+                        {isAvailable ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[#86868b] font-medium">Quantity:</span>
+                            <div className="flex items-center border border-black/10 rounded-xl bg-[#f5f5f7] overflow-hidden">
+                              <button
+                                type="button"
+                                aria-label="Decrease quantity"
+                                onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                                className="w-8 h-8 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-black/5 transition cursor-pointer text-sm"
+                              >
+                                –
+                              </button>
+                              <span className="w-8 text-center text-xs font-bold text-[#1d1d1f]">
+                                {item.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label="Increase quantity"
+                                onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                                className="w-8 h-8 flex items-center justify-center text-[#86868b] hover:text-[#1d1d1f] hover:bg-black/5 transition cursor-pointer text-sm"
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <span className="text-xs text-[#86868b]">
+                            Remove this unavailable item to check out.
+                          </span>
+                        )}
 
                         <button
                           type="button"
@@ -271,7 +309,8 @@ export function CartPageView() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Right Column: Order Summary (Sticky) */}
@@ -283,8 +322,8 @@ export function CartPageView() {
 
                   <div className="space-y-3 text-sm border-b border-[#e5e5ea] pb-4 mb-4">
                     <div className="flex justify-between text-[#86868b]">
-                      <span>Subtotal ({totalCount} items)</span>
-                      <span className="text-[#1d1d1f] font-medium">₹{totalAmount.toLocaleString('en-IN')}</span>
+                      <span>Subtotal ({payableCount} items)</span>
+                      <span className="text-[#1d1d1f] font-medium">₹{payableAmount.toLocaleString('en-IN')}</span>
                     </div>
                     <div className="flex justify-between text-[#86868b]">
                       <span>Shipping</span>
@@ -299,9 +338,15 @@ export function CartPageView() {
                   <div className="flex justify-between items-baseline mb-6">
                     <span className="font-semibold text-base text-[#1d1d1f]">Total Payable</span>
                     <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
-                      ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{payableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
+
+                  {hasUnavailable && (
+                    <div className="mb-4 p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700">
+                      Remove the unavailable item{items.length - availableItems.length === 1 ? '' : 's'} above to check out.
+                    </div>
+                  )}
 
                   {user ? (
                     <>
@@ -319,15 +364,21 @@ export function CartPageView() {
                         </div>
                       </div>
 
-                      <Link
-                        href="/checkout"
-                        className="w-full bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white text-[15px] font-semibold py-3.5 rounded-2xl text-center transition-all active:scale-[0.99] shadow-sm flex items-center justify-center gap-2"
-                      >
-                        <span>Check Out with PayU</span>
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                        </svg>
-                      </Link>
+                      {hasUnavailable ? (
+                        <div className="w-full bg-[#e8e8ed] text-[#86868b] text-[15px] font-semibold py-3.5 rounded-2xl text-center cursor-not-allowed">
+                          Remove unavailable items to check out
+                        </div>
+                      ) : (
+                        <Link
+                          href="/checkout"
+                          className="w-full bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white text-[15px] font-semibold py-3.5 rounded-2xl text-center transition-all active:scale-[0.99] shadow-sm flex items-center justify-center gap-2"
+                        >
+                          <span>Check Out with PayU</span>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                          </svg>
+                        </Link>
+                      )}
                     </>
                   ) : (
                     <>
@@ -417,6 +468,11 @@ export function CartPageView() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {suggestedProducts.map((item) => {
                 const isAdded = !!addedItemIds[item.id];
+                const canAdd =
+                  item.type === 'product' &&
+                  typeof item.price === 'number' &&
+                  Number.isFinite(item.price) &&
+                  item.price > 0;
                 return (
                   <div
                     key={item.id}
@@ -464,12 +520,14 @@ export function CartPageView() {
                             <span className="text-[15px] font-bold text-[#1d1d1f]">
                               {item.priceDisplay}
                             </span>
+                          ) : item.type === 'product' ? (
+                            <span className="text-xs font-semibold text-[#e30000]">Unavailable</span>
                           ) : (
                             <span className="text-xs text-[#86868b]">Explore</span>
                           )}
                         </div>
 
-                        {item.type === 'product' ? (
+                        {canAdd ? (
                           <button
                             type="button"
                             onClick={(e) => handleAddSuggested(item, e)}
@@ -481,6 +539,8 @@ export function CartPageView() {
                           >
                             {isAdded ? 'Added ✓' : 'Add to Bag'}
                           </button>
+                        ) : item.type === 'product' ? (
+                          <span className="text-xs font-semibold text-[#e30000]">Unavailable</span>
                         ) : (
                           <Link
                             href={item.href}

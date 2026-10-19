@@ -1,5 +1,4 @@
 import { PRODUCTS } from '@/components/sites/cases-protection/data/products';
-import { EDU_PRODUCTS, priceToNumber } from '@/components/sites/edu-store/data/content';
 import { ALL_ACCESSORY_PRODUCTS } from '@/lib/products/registry';
 
 export interface CatalogItem {
@@ -26,19 +25,6 @@ for (const a of ALL_ACCESSORY_PRODUCTS) {
     id: a.id,
     name: `${a.name} - ${a.subtitle || ''}`.trim(),
     price: a.price,
-  });
-}
-
-// Education Store hardware (Mac, iPad, Watch, AirPods…) at education pricing.
-// Cards without a usable price are editorial entries, not purchasable products,
-// so they are skipped rather than priced by guesswork.
-for (const p of EDU_PRODUCTS) {
-  const price = priceToNumber(p.price);
-  if (!price) continue;
-  catalogMap.set(p.id, {
-    id: p.id,
-    name: p.desc ? `${p.headline} - ${p.desc}` : p.headline,
-    price,
   });
 }
 

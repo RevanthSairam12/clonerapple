@@ -23,11 +23,15 @@ export function CollectionProductCard({ product }: CollectionProductCardProps) {
 
   // Truthful badges only
   const isOutOfStock = product.inStock === false;
+  const isPriceUnavailable = product.priceUnavailable === true;
+  const isUnavailable = isOutOfStock || isPriceUnavailable;
   const isNew = Boolean(product.isNew || product.badge === 'New');
 
   const handleQuickAdd = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+
+    if (isPriceUnavailable) return;
 
     addItem({
       productId: product.id,
@@ -129,16 +133,28 @@ export function CollectionProductCard({ product }: CollectionProductCardProps) {
 
         {/* Price & Quick Add Button */}
         <div className="gz-collection-card-bottom">
-          <span className="gz-collection-card-price">{formatINR(product.price)}</span>
+          <span className="gz-collection-card-price">
+            {isPriceUnavailable ? 'Unavailable' : formatINR(product.price)}
+          </span>
 
           <button
             type="button"
             className={`gz-collection-quick-add-btn ${isAdded ? 'added' : ''}`}
             onClick={handleQuickAdd}
-            disabled={isOutOfStock}
-            aria-label={`Add ${product.name} to bag`}
+            disabled={isUnavailable}
+            aria-label={
+              isPriceUnavailable
+                ? `${product.name} is unavailable`
+                : `Add ${product.name} to bag`
+            }
           >
-            {isOutOfStock ? 'Sold Out' : isAdded ? 'Added ✓' : 'Add to bag'}
+            {isOutOfStock
+              ? 'Sold Out'
+              : isPriceUnavailable
+              ? 'Unavailable'
+              : isAdded
+              ? 'Added ✓'
+              : 'Add to bag'}
           </button>
         </div>
       </div>
