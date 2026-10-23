@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { buildCartLineId, normalizeCartLineId } from './cart-id';
 
 export interface CartItem {
   id: string; // Composite key: `${productId}::${color || ''}::${model || ''}`
@@ -70,6 +71,24 @@ function retireLegacyCart(value: string): void {
 
 type CartStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
+function migrateStoredItems(value: unknown): CartItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is CartItem => item && typeof item === 'object')
+    .map((item) => {
+      const normalized = normalizeCartLineId(item.id || item.productId);
+      return {
+        ...item,
+        id: item.id || normalized.baseId || '',
+        productId: item.productId || normalized.baseId || '',
+        color: item.color || normalized.color,
+        model: item.model || normalized.model,
+        subtitle: item.subtitle || normalized.variantLabel,
+      };
+    })
+    .filter((item) => item.id && item.productId);
+}
+
 /**
  * The cart JSON to restore on mount, migrating a pre-rename cart forward when
  * the current key is empty. Returns null when there is nothing usable.
@@ -127,7 +146,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (raw === null) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        setItems(parsed);
+        setItems(migrateStoredItems(parsed));
       }
     } catch {
       // ignore JSON errors
@@ -162,7 +181,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) {
-          setItems(parsed);
+           setItems(migrateStoredItems(parsed));
         }
       } catch {
         // ignore
@@ -179,7 +198,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const addItem = useCallback(
     (input: CartItemInput) => {
-      const lineId = input.id || `${input.productId}::${input.color || ''}::${input.model || ''}`;
+      const normalizedProductId = normalizeCartLineId(input.productId).baseId;
+      if (!normalizedProductId) return;
+      const lineId = input.id || buildCartLineId({
+        productId: normalizedProductId,
+        color: input.color,
+        model: input.model,
+      });
       const qtyToAdd = input.quantity && input.quantity > 0 ? input.quantity : 1;
 
       setItems((prev) => {
@@ -198,7 +223,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
         const newItem: CartItem = {
           id: lineId,
-          productId: input.productId,
+           productId: normalizedProductId,
           name: input.name,
           subtitle: input.subtitle,
           price: input.price,
@@ -207,7 +232,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           color: input.color,
           model: input.model,
           quantity: qtyToAdd,
-          href: input.href || `/shop/product/${encodeURIComponent(input.productId)}`,
+           href: input.href || `/shop/product/${encodeURIComponent(normalizedProductId)}`,
         };
 
         setLastAddedItem(newItem);

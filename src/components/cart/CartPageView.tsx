@@ -7,6 +7,7 @@ import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface UserAuth {
@@ -27,7 +28,7 @@ export function CartPageView() {
   // Only lines the PayU catalog knows are payable. A stale/education id is
   // shown as unavailable and excluded from the displayed totals.
   const availableItems = items.filter((item) =>
-    Boolean(getProductFromCatalog(item.productId || item.id))
+    Boolean(getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || ''))
   );
   const hasUnavailable = availableItems.length !== items.length;
   const payableCount = availableItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -210,7 +211,7 @@ export function CartPageView() {
               <div className="lg:col-span-8 divide-y divide-[#e5e5ea] border-y border-[#e5e5ea]">
                 {items.map((item) => {
                   const isAvailable = Boolean(
-                    getProductFromCatalog(item.productId || item.id)
+                    getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || '')
                   );
                   return (
                   <div key={item.id} className="py-6 flex flex-col sm:flex-row gap-5 items-start">
@@ -291,7 +292,7 @@ export function CartPageView() {
                             </div>
                           </div>
                         ) : (
-                          <span className="text-xs text-[#86868b]">
+                          <span className="text-xs text-[#6e6e73]">
                             Remove this unavailable item to check out.
                           </span>
                         )}
@@ -329,10 +330,6 @@ export function CartPageView() {
                       <span>Shipping</span>
                       <span className="text-[#34c759] font-semibold">FREE</span>
                     </div>
-                    <div className="flex justify-between text-[#86868b]">
-                      <span>Estimated Tax</span>
-                      <span className="text-[#1d1d1f] font-medium">Included</span>
-                    </div>
                   </div>
 
                   <div className="flex justify-between items-baseline mb-6">
@@ -343,7 +340,11 @@ export function CartPageView() {
                   </div>
 
                   {hasUnavailable && (
-                    <div className="mb-4 p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700">
+                    <div
+                      id="cart-unavailable-note"
+                      role="alert"
+                      className="mb-4 p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700"
+                    >
                       Remove the unavailable item{items.length - availableItems.length === 1 ? '' : 's'} above to check out.
                     </div>
                   )}
@@ -365,9 +366,14 @@ export function CartPageView() {
                       </div>
 
                       {hasUnavailable ? (
-                        <div className="w-full bg-[#e8e8ed] text-[#86868b] text-[15px] font-semibold py-3.5 rounded-2xl text-center cursor-not-allowed">
+                        <button
+                          type="button"
+                          disabled
+                          aria-describedby="cart-unavailable-note"
+                          className="w-full bg-[#e8e8ed] text-[#6e6e73] text-[15px] font-semibold py-3.5 rounded-2xl text-center cursor-not-allowed"
+                        >
                           Remove unavailable items to check out
-                        </div>
+                        </button>
                       ) : (
                         <Link
                           href="/checkout"
@@ -469,10 +475,11 @@ export function CartPageView() {
               {suggestedProducts.map((item) => {
                 const isAdded = !!addedItemIds[item.id];
                 const canAdd =
-                  item.type === 'product' &&
-                  typeof item.price === 'number' &&
-                  Number.isFinite(item.price) &&
-                  item.price > 0;
+                      (item.type === 'product' || item.type === 'accessory') &&
+                      typeof item.price === 'number' &&
+                      Number.isFinite(item.price) &&
+                      item.price > 0 &&
+                      Boolean(getProductFromCatalog(getCartLineBaseId(item.id) || ''));
                 return (
                   <div
                     key={item.id}
@@ -520,7 +527,7 @@ export function CartPageView() {
                             <span className="text-[15px] font-bold text-[#1d1d1f]">
                               {item.priceDisplay}
                             </span>
-                          ) : item.type === 'product' ? (
+                         ) : item.type === 'product' || item.type === 'accessory' ? (
                             <span className="text-xs font-semibold text-[#e30000]">Unavailable</span>
                           ) : (
                             <span className="text-xs text-[#86868b]">Explore</span>

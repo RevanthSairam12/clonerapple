@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useCart } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface Props {
@@ -21,7 +22,7 @@ export function BagFlyout({ isOpen, onClose }: Props) {
   // Only catalog-backed lines are payable; stale ids render as unavailable and
   // do not contribute to the displayed total.
   const availableItems = items.filter((item) =>
-    Boolean(getProductFromCatalog(item.productId || item.id))
+    Boolean(getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || ''))
   );
   const hasUnavailable = availableItems.length !== items.length;
   const payableAmount = availableItems.reduce(
@@ -169,7 +170,7 @@ export function BagFlyout({ isOpen, onClose }: Props) {
           <div className="max-h-[240px] overflow-y-auto py-2 divide-y divide-black/5 pr-1 -mr-1">
             {items.map((item) => {
               const isAvailable = Boolean(
-                getProductFromCatalog(item.productId || item.id)
+                getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || '')
               );
               return (
               <div key={item.id} className="py-3 flex gap-3 items-center group">
@@ -248,8 +249,15 @@ export function BagFlyout({ isOpen, onClose }: Props) {
             </div>
 
             {hasUnavailable && (
-              <p className="text-[10px] text-[#e30000] leading-snug">
-                Remove unavailable items to check out.
+              <p
+                id="bag-flyout-unavailable-note"
+                role="alert"
+                className="text-[10px] text-[#e30000] leading-snug"
+              >
+                 {items
+                   .filter((item) => !getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || ''))
+                   .map((item) => item.name)
+                   .join(', ')} is unavailable. Remove it to check out.
               </p>
             )}
 
@@ -262,9 +270,14 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                 Review Bag
               </Link>
               {hasUnavailable ? (
-                <div className="w-full bg-[#e8e8ed] text-[#86868b] text-[13px] font-semibold py-2.5 rounded-xl text-center cursor-not-allowed">
+                <button
+                  type="button"
+                  disabled
+                  aria-describedby="bag-flyout-unavailable-note"
+                  className="w-full bg-[#e8e8ed] text-[#6e6e73] text-[13px] font-semibold py-2.5 rounded-xl text-center cursor-not-allowed"
+                >
                   Remove items
-                </div>
+                </button>
               ) : (
                 <Link
                   href="/checkout"
@@ -302,7 +315,7 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                 typeof p.price === 'number' &&
                 Number.isFinite(p.price) &&
                 p.price > 0 &&
-                Boolean(getProductFromCatalog(p.id));
+                Boolean(getProductFromCatalog(getCartLineBaseId(p.id) || ''));
               return (
                 <div
                   key={p.id}

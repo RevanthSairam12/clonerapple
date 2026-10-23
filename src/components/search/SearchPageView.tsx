@@ -12,6 +12,7 @@ import { WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
 import { ACCESSORY_NAV } from '@/components/sites/accessories/data/types';
 import { CollectionProductCard } from '@/components/collection/CollectionProductCard';
 import type { CollectionProduct } from '@/components/collection/types';
+import { getProductFromCatalog } from '@/lib/payu/catalog';
 import { formatINR } from '@/lib/utils';
 
 import '@/components/collection/collection.css';
@@ -34,14 +35,19 @@ function toCollectionProduct(item: SearchResultItem): CollectionProduct {
     typeof item.price === 'number' && Number.isFinite(item.price) && item.price > 0
       ? item.price
       : null;
+  // A price is only meaningful if the PayU catalog can actually charge it.
+  // Education Store hardware and anything else missing from the catalog has no
+  // payable entry, so the card must never offer an enabled "Add to bag".
+  const inCatalog = Boolean(getProductFromCatalog(item.id));
+  const available = price !== null && inCatalog;
 
   return {
     id: item.id,
     name: item.name,
     subtitle: item.subtitle,
     price: price ?? 0,
-    priceDisplay: price !== null ? item.priceDisplay || formatINR(price) : 'Unavailable',
-    priceUnavailable: price === null,
+    priceDisplay: available ? item.priceDisplay || formatINR(price) : 'Unavailable',
+    priceUnavailable: !available,
     image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
     images: [item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg'],
     colors: (item as any).colors || [],
@@ -83,10 +89,20 @@ export function SearchPageView({ initialQuery = '' }: Props) {
       ? 'Case for AirPods'
       : activeCategory;
 
-  const { items, totalMatches } = searchProducts(query, {
+  const { items: rawItems } = searchProducts(query, {
     category: mappedCategory,
     limit: 40,
   });
+
+  // Education Store hardware (type 'hardware') has no PayU catalog entry, so it
+  // can never be paid for. Keeping it out of the store's search grid avoids an
+  // "Add to bag" that only ever produces an unpayable line.
+  const results = rawItems.filter((item) => item.type !== 'hardware');
+  // Editorial 'page' results are navigation, not products: they render as plain
+  // links, never as priced cards or "Unavailable" badges.
+  const productResults = results.filter((item) => item.type !== 'page');
+  const pageResults = results.filter((item) => item.type === 'page');
+  const totalMatches = results.length;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -219,15 +235,39 @@ export function SearchPageView({ initialQuery = '' }: Props) {
           </div>
 
           {/* Product Results Grid using shared CollectionProductCard */}
-          {items.length > 0 ? (
-            <div className="gz-collection-grid" role="region" aria-label="Search results">
-              {items.map((item) => (
-                <CollectionProductCard
-                  key={item.id}
-                  product={toCollectionProduct(item)}
-                />
-              ))}
-            </div>
+          {productResults.length > 0 || pageResults.length > 0 ? (
+            <>
+              {productResults.length > 0 && (
+                <div className="gz-collection-grid" role="region" aria-label="Search results">
+                  {productResults.map((item) => (
+                    <CollectionProductCard
+                      key={item.id}
+                      product={toCollectionProduct(item)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {pageResults.length > 0 && (
+                <nav aria-label="Related pages" className="mt-10">
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73] mb-3">
+                    Related pages
+                  </h2>
+                  <ul className="flex flex-col gap-1">
+                    {pageResults.map((item) => (
+                      <li key={item.id}>
+                        <Link
+                          href={item.href}
+                          className="inline-flex items-center min-h-[44px] text-sm text-[#0071e3] hover:underline"
+                        >
+                          {item.name}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              )}
+            </>
           ) : (
             <div className="gz-collection-empty">
               <h3 className="gz-collection-empty-title">

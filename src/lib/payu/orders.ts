@@ -1,9 +1,10 @@
 import { getSql } from '@/lib/admin/db';
+import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { randomBytes } from 'node:crypto';
 
 /**
  * Order Model and Database Access Layer
- * 
+ *
  * Manages orders, items snapshot, and idempotent status transitions.
  * Uses PostgreSQL transactions with row locking (SELECT ... FOR UPDATE) to prevent race conditions.
  */
@@ -20,6 +21,45 @@ export interface OrderItemSnapshot {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+}
+
+/** A single `order_items` row derived from a resolved cart line. */
+export interface OrderItemLine {
+  lineNumber: number;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPricePaise: number;
+  lineTotalPaise: number;
+  currency: string;
+}
+
+/**
+ * Build the `order_items` rows for an order from the resolved cart snapshot.
+ *
+ * Each product id is passed through the shared cart-id normaliser so a
+ * composite line id (`base::colour::model`) is reduced to its catalog base id
+ * before it is persisted — `order_items.product_id` only ever holds base ids.
+ * Prices are the resolved (server-authoritative) rupee values; the paise
+ * conversion is rounding-free integer math. Exported for unit tests.
+ */
+export function buildOrderItemLines(
+  items: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }>,
+  knownBaseIds: readonly string[] = [],
+  currency = 'INR',
+): OrderItemLine[] {
+  return items.map((item, index) => {
+    const baseId = normalizeCartLineId(item.id, knownBaseIds).baseId || item.id;
+    return {
+      lineNumber: index + 1,
+      productId: baseId,
+      productName: item.name,
+      quantity: item.quantity,
+      unitPricePaise: Math.round(item.unitPrice * 100),
+      lineTotalPaise: Math.round(item.totalPrice * 100),
+      currency,
+    };
+  });
 }
 
 export interface Order {
@@ -112,6 +152,15 @@ export interface CreateOrderParams {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  shippingAddress: {
+    name: string;
+    phone: string;
+    line1: string;
+    line2?: string | null;
+    city: string;
+    state: string;
+    pincode: string;
+  };
 }
 
 /**
@@ -124,38 +173,81 @@ export async function createOrder(params: CreateOrderParams): Promise<Order> {
   const id = `ord_${randomBytes(12).toString('hex')}`;
   const currency = params.currency || 'INR';
 
-  const rows = await sql<RawOrderRow[]>`
-    INSERT INTO orders (
-      id,
-      txnid,
-      user_id,
-      items,
-      amount,
-      currency,
-      status,
-      customer_name,
-      customer_email,
-      customer_phone,
-      created_at,
-      updated_at
-    ) VALUES (
-      ${id},
-      ${params.txnid},
-      ${params.userId ?? null},
-      ${sql.json(params.items as any)},
-      ${params.amount},
-      ${currency},
-      'CREATED',
-      ${params.customerName},
-      ${params.customerEmail},
-      ${params.customerPhone},
-      now(),
-      now()
-    )
-    RETURNING *
-  `;
+  return await sql.begin(async (tx) => {
+    const rows = await tx<RawOrderRow[]>`
+      INSERT INTO orders (
+        id,
+        txnid,
+        user_id,
+        items,
+        amount,
+        currency,
+        status,
+        customer_name,
+        customer_email,
+        customer_phone,
+        created_at,
+        updated_at
+      ) VALUES (
+        ${id},
+        ${params.txnid},
+        ${params.userId ?? null},
+        ${tx.json(params.items as any)},
+        ${params.amount},
+        ${currency},
+        'CREATED',
+        ${params.customerName},
+        ${params.customerEmail},
+        ${params.customerPhone},
+        now(),
+        now()
+      )
+      RETURNING *
+    `;
 
-  return mapRowToOrder(rows[0]);
+    await tx`
+      INSERT INTO order_status_history (
+        order_id,
+        domain,
+        actor,
+        from_status,
+        to_status
+      ) VALUES (
+        ${rows[0].id},
+        'payment',
+        'system',
+        ${null},
+        'CREATED'
+      )
+    `;
+
+    await tx`
+      INSERT INTO order_addresses (
+        order_id, address_type, full_name, phone, line1, line2, city, state, postal_code, country
+      ) VALUES (
+        ${rows[0].id}, 'shipping', ${params.shippingAddress.name}, ${params.shippingAddress.phone},
+        ${params.shippingAddress.line1}, ${params.shippingAddress.line2 || null}, ${params.shippingAddress.city},
+        ${params.shippingAddress.state}, ${params.shippingAddress.pincode}, 'IN'
+      )
+    `;
+
+    // Normalised order_items rows: composite cart ids are reduced to catalog
+    // base ids here, so every later lookup by product id works.
+    const itemLines = buildOrderItemLines(params.items);
+    for (const line of itemLines) {
+      await tx`
+        INSERT INTO order_items (
+          order_id, line_number, product_id, product_name, quantity,
+          unit_price_paise, line_total_paise, currency
+        ) VALUES (
+          ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
+          ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise}, ${line.currency}
+        )
+      `;
+    }
+
+    return mapRowToOrder(rows[0]);
+  });
 }
 
 /**
@@ -261,6 +353,26 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
     `;
 
     const updated = mapRowToOrder(updatedRows[0]);
+
+    await tx`
+      INSERT INTO order_status_history (
+        order_id,
+        domain,
+        actor,
+        from_status,
+        to_status,
+        payu_mihpayid,
+        payu_mode
+      ) VALUES (
+        ${updated.id},
+        'payment',
+        'payu',
+        ${previousStatus},
+        ${params.targetStatus},
+        ${params.mihpayid ?? null},
+        ${params.mode ?? null}
+      )
+    `;
 
     return {
       transitioned: true,

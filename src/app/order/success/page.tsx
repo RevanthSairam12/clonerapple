@@ -158,6 +158,12 @@ export default async function OrderSuccessPage({ searchParams }: Props) {
           >
             Continue Shopping
           </Link>
+          <Link
+            href={`/order/status?txnid=${encodeURIComponent(order.txnid)}`}
+            className="flex-1 text-center bg-[#f5f5f7] text-[#1d1d1f] py-3.5 rounded-full text-sm font-medium hover:bg-[#e8e8ed] transition"
+          >
+            Track Order
+          </Link>
         </div>
       </div>
     </div>

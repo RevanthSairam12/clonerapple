@@ -6,6 +6,9 @@ import { createOrder } from '@/lib/payu/orders';
 import { resolveCartItems } from '@/lib/payu/catalog';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { getCustomerAddress } from '@/lib/account/addresses';
+import { validateAddressInput } from '@/lib/account/rules';
+import { assertSameOrigin } from '@/lib/admin/api-guard';
 
 export const runtime = 'nodejs';
 
@@ -55,6 +58,8 @@ function generateTxnId(): string {
 
 export async function POST(req: NextRequest) {
   try {
+    const originViolation = assertSameOrigin(req);
+    if (originViolation) return originViolation;
     const ip = getClientIp(req);
 
     // Rate limit per IP: max 20 initiate requests per 5 minutes
@@ -127,6 +132,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const addressId = typeof body.shippingAddressId === 'string' ? body.shippingAddressId.trim() : '';
+    let shippingAddress;
+    if (addressId) {
+      const savedAddress = await getCustomerAddress(userId, addressId);
+      if (!savedAddress) {
+        return NextResponse.json({ error: 'The selected shipping address is unavailable.' }, { status: 400 });
+      }
+      shippingAddress = savedAddress;
+    } else {
+      const addressValidation = validateAddressInput(body.shippingAddress);
+      if (!addressValidation.ok) {
+        return NextResponse.json({ error: addressValidation.error }, { status: 400 });
+      }
+      shippingAddress = addressValidation.value;
+    }
+
     // 3. Prepare PayU Config
     const config = getPayUConfig();
     assertPayUConfigured(config);
@@ -145,10 +166,12 @@ export async function POST(req: NextRequest) {
       customerName: firstname,
       customerEmail: rawEmail,
       customerPhone: phone,
+      shippingAddress,
     });
 
-    // 6. Generate request hash
-    const { hash, hashStringForLog } = generateRequestHash({
+    // 6. Generate request hash. Never log the hash string or any customer
+    //    detail from this route.
+    const { hash } = generateRequestHash({
       key: config.key,
       txnid,
       amount: amountStr,
@@ -157,11 +180,6 @@ export async function POST(req: NextRequest) {
       email: rawEmail,
       salt: config.salt,
     });
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[PayU Initiate] Dev Hash String: ${hashStringForLog}`);
-      console.log(`[PayU Initiate] txnid=${txnid} amount=${amountStr}`);
-    }
 
     // 7. Form parameters (public URLs over HTTPS)
     const surl = `${config.appBaseUrl}/api/payu/success`;

@@ -1,10 +1,12 @@
 import { PRODUCTS } from '@/components/sites/cases-protection/data/products';
 import { ALL_ACCESSORY_PRODUCTS } from '@/lib/products/registry';
+import { normalizeCartLineId } from '@/lib/cart/cart-id';
 
 export interface CatalogItem {
   id: string;
   name: string;
   price: number;
+  image?: string;
 }
 
 // Fallback/standard items map for quick O(1) lookup
@@ -15,6 +17,7 @@ for (const p of PRODUCTS) {
     id: p.id,
     name: `${p.name} - ${p.subtitle || ''}`.trim(),
     price: p.price,
+    image: p.image,
   });
 }
 
@@ -25,7 +28,13 @@ for (const a of ALL_ACCESSORY_PRODUCTS) {
     id: a.id,
     name: `${a.name} - ${a.subtitle || ''}`.trim(),
     price: a.price,
+    image: a.image,
   });
+}
+
+export function getProductImage(id: string): string | null {
+  const normalized = normalizeCartLineId(id, [...catalogMap.keys()]);
+  return normalized.baseId ? catalogMap.get(normalized.baseId)?.image || null : null;
 }
 
 /**
@@ -33,8 +42,8 @@ for (const a of ALL_ACCESSORY_PRODUCTS) {
  * NEVER trusts prices supplied from the client.
  */
 export function getProductFromCatalog(id: string): CatalogItem | null {
-  const baseId = id.split('::')[0];
-  const item = catalogMap.get(id) || catalogMap.get(baseId);
+  const normalized = normalizeCartLineId(id, [...catalogMap.keys()]);
+  const item = normalized.baseId ? catalogMap.get(normalized.baseId) : null;
   if (!item) return null;
   return { ...item };
 }
@@ -63,7 +72,8 @@ export function resolveCartItems(cartItems: Array<{ id: string; quantity: number
       throw new Error(`Invalid quantity for item '${cItem.id}'. Must be between 1 and 50.`);
     }
 
-    const catalogItem = getProductFromCatalog(cItem.id);
+    const normalized = normalizeCartLineId(cItem.id, [...catalogMap.keys()]);
+    const catalogItem = normalized.baseId ? getProductFromCatalog(normalized.baseId) : null;
     if (!catalogItem) {
       throw new Error(`Product '${cItem.id}' not found in catalog.`);
     }

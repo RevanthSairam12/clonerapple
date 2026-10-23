@@ -2,6 +2,12 @@
 
 import { useState, useCallback, useMemo } from 'react';
 
+import { safeRedirectPath } from '@/lib/auth/redirect';
+import {
+  passwordByteLength,
+  PASSWORD_MAX_BYTES,
+} from '@/lib/auth/validation';
+
 export interface AuthFormProps {
   initialMode?: 'signin' | 'signup';
   redirectTo?: string;
@@ -31,6 +37,7 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
   ], [password]);
 
   const allRulesValid = passwordRules.every(r => r.valid);
+  const passwordTooLong = passwordByteLength(password) > PASSWORD_MAX_BYTES;
 
   const switchMode = useCallback(() => {
     setMode(m => m === 'signin' ? 'signup' : 'signin');
@@ -46,7 +53,8 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
     setBusy(true);
     setError('');
 
-    const targetUrl = redirectTo.startsWith('/') && !redirectTo.startsWith('//') ? redirectTo : '/';
+    // Only a same-origin, relative path is ever used as the destination.
+    const targetUrl = safeRedirectPath(redirectTo);
 
     try {
       if (mode === 'signin') {
@@ -170,6 +178,9 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
         {mode === 'signup' && (
           <div className="auth-field-row">
             <div className="auth-field">
+              <label className="auth-label" htmlFor="auth-firstName">
+                First name
+              </label>
               <input
                 id="auth-firstName"
                 name="firstName"
@@ -181,6 +192,9 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
               />
             </div>
             <div className="auth-field">
+              <label className="auth-label" htmlFor="auth-lastName">
+                Last name
+              </label>
               <input
                 id="auth-lastName"
                 name="lastName"
@@ -197,30 +211,44 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
         {/* Email or Phone input */}
         <div className="auth-field">
           {mode === 'signin' && inputMode === 'phone' ? (
-            <input
-              id="auth-phone"
-              name="email"
-              type="tel"
-              autoComplete="tel"
-              required
-              className="auth-input"
-              placeholder="Phone number"
-            />
+            <>
+              <label className="auth-label" htmlFor="auth-phone">
+                Phone number
+              </label>
+              <input
+                id="auth-phone"
+                name="email"
+                type="tel"
+                autoComplete="tel"
+                required
+                className="auth-input"
+                placeholder="Phone number"
+              />
+            </>
           ) : (
-            <input
-              id="auth-email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              className="auth-input"
-              placeholder="Email"
-            />
+            <>
+              <label className="auth-label" htmlFor="auth-email">
+                Email
+              </label>
+              <input
+                id="auth-email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                required
+                className="auth-input"
+                placeholder="Email"
+              />
+            </>
           )}
         </div>
 
         {/* Password field */}
         <div className="auth-field">
+          <label className="auth-label" htmlFor="auth-password">
+            Password
+          </label>
           <div className="auth-password-wrapper">
             <input
               id="auth-password"
@@ -228,6 +256,13 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
               type={showPassword ? 'text' : 'password'}
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
               required
+              minLength={8}
+              aria-invalid={passwordTooLong || undefined}
+              aria-describedby={
+                mode === 'signup' && (password.length > 0 || passwordTooLong)
+                  ? 'auth-password-rules'
+                  : undefined
+              }
               className="auth-input"
               placeholder="Password"
               value={mode === 'signup' ? password : undefined}
@@ -253,14 +288,18 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
               )}
             </button>
           </div>
-          {mode === 'signup' && password.length > 0 && (
-            <div className="auth-password-rules">
+          {mode === 'signup' && (password.length > 0 || passwordTooLong) && (
+            <div className="auth-password-rules" id="auth-password-rules">
               {passwordRules.map((rule) => (
                 <div key={rule.label} className={`auth-password-rule ${rule.valid ? 'valid' : ''}`}>
                   <span className="auth-password-rule-dot" />
                   {rule.label}
                 </div>
               ))}
+              <div className={`auth-password-rule ${passwordTooLong ? 'invalid' : 'valid'}`}>
+                <span className="auth-password-rule-dot" />
+                At most {PASSWORD_MAX_BYTES} bytes
+              </div>
             </div>
           )}
         </div>
@@ -268,7 +307,8 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
         <button
           type="submit"
           className="auth-submit"
-          disabled={busy || (mode === 'signup' && !allRulesValid && password.length > 0)}
+          disabled={busy || (mode === 'signup' && password.length > 0 && (!allRulesValid || passwordTooLong))}
+          aria-busy={busy}
         >
           {busy && <span className="auth-submit-spinner" />}
           {busy ? 'Please wait…' : 'Continue'}

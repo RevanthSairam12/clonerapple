@@ -574,7 +574,7 @@ const CURRENT_ART: Record<string, Record<string, unknown>> = {
     heroTiles: HERO_TILES.map((tile) => responsiveImageCurrentArt(tile.image)),
   },
   'apple.hero_video': {
-    ...responsiveImageCurrentArt(HERO_TILES[0].startFrame ?? null),
+    ...responsiveImageCurrentArt(HERO_TILES[0]?.startFrame ?? null),
   },
   'apple.promo_section': {
     promoTiles: PROMO_TILES.map((tile) => responsiveImageCurrentArt(tile.image)),

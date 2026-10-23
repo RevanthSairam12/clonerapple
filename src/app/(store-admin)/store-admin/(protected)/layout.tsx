@@ -44,6 +44,21 @@ export default async function ProtectedStoreAdminLayout({
           <Link className="sa-nav-link" href="/store-admin/products">
             Products
           </Link>
+          <Link className="sa-nav-link" href="/store-admin/customers">
+            Customers
+          </Link>
+          <Link className="sa-nav-link" href="/store-admin/orders">
+            Orders
+          </Link>
+          <Link className="sa-nav-link" href="/store-admin/requests">
+            Requests
+          </Link>
+          <Link className="sa-nav-link" href="/store-admin/pos">
+            Point of sale
+          </Link>
+          <Link className="sa-nav-link" href="/store-admin/settings">
+            Settings
+          </Link>
         </nav>
         <div className="sa-identity">
           <span>{session.name || 'Store staff'}</span>

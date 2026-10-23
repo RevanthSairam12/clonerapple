@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
 import { getUserSession } from '@/lib/user-auth';
+import { safeRedirectPath } from '@/lib/auth/redirect';
 import { AuthForm } from '@/components/auth/AuthForm';
 
 import './auth.css';
@@ -21,16 +22,17 @@ interface AuthPageProps {
 export default async function AuthPage({ searchParams }: AuthPageProps) {
   const session = await getUserSession();
   const { redirect: redirectUrl, mode } = (await searchParams) || {};
-  const destination =
-    redirectUrl && redirectUrl.startsWith('/') && !redirectUrl.startsWith('//')
-      ? redirectUrl
-      : '/';
+  // Same-origin relative paths only; anything else falls back to the home page.
+  const destination = safeRedirectPath(redirectUrl, '/');
 
   if (session) redirect(destination);
 
   return (
     <div className="auth-page">
       <div className="auth-wrapper">
+        <a className="auth-home" href="/" aria-label="Gadzio home">
+          Gadzio
+        </a>
         <div className="auth-container">
           {/* Left — form */}
           <div className="auth-panel-left">

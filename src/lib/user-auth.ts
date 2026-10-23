@@ -2,6 +2,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import { cookies, headers } from 'next/headers';
 import bcrypt from 'bcryptjs';
 import { getSql } from './admin/db';
+import {
+  isValidEmail,
+  normalizeEmail,
+  normalizeName,
+  passwordByteLength,
+  PASSWORD_MAX_BYTES,
+} from './auth/validation';
+import { checkRateLimit } from './payu/rate-limit';
 
 /**
  * Consumer-facing authentication for Apple ID-style sign-in/sign-up.
@@ -26,6 +34,7 @@ export interface UserSession {
   email: string;
   firstName: string;
   lastName: string;
+  phone?: string | null;
 }
 
 /* ------------------------------------------------------- rate limiting */
@@ -74,8 +83,43 @@ async function clientIp(): Promise<string> {
   return (
     h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     h.get('x-real-ip') ||
-    ''
+    'unknown'
   );
+}
+
+/**
+ * Request rate limits, applied per client IP and per email address.
+ *
+ * `checkRateLimit` is the same in-memory sliding-window limiter used by the
+ * PayU routes. It is per-process: a restart clears the counters and a
+ * multi-instance deploy needs a shared store for a hard guarantee. The
+ * failure lockout below (`MAX_FAILURES`) stays in place as a second layer.
+ */
+const SIGNUP_IP_LIMIT = { limit: 10, windowMs: 10 * 60 * 1000 };
+const SIGNUP_EMAIL_LIMIT = { limit: 5, windowMs: 10 * 60 * 1000 };
+const SIGNIN_IP_LIMIT = { limit: 60, windowMs: 5 * 60 * 1000 };
+const SIGNIN_EMAIL_LIMIT = { limit: 20, windowMs: 5 * 60 * 1000 };
+
+function tooManyRequests(
+  email: string,
+  ip: string,
+  scope: 'signup' | 'signin',
+): number | null {
+  const ipLimit =
+    scope === 'signup' ? SIGNUP_IP_LIMIT : SIGNIN_IP_LIMIT;
+  const emailLimit =
+    scope === 'signup' ? SIGNUP_EMAIL_LIMIT : SIGNIN_EMAIL_LIMIT;
+
+  const ipResult = checkRateLimit(`user-${scope}-ip:${ip}`, ipLimit);
+  if (!ipResult.allowed) return Math.max(1, ipResult.retryAfterSec);
+
+  const emailResult = checkRateLimit(
+    `user-${scope}-email:${email}`,
+    emailLimit,
+  );
+  if (!emailResult.allowed) return Math.max(1, emailResult.retryAfterSec);
+
+  return null;
 }
 
 /* ---------------------------------------------------------- helpers */
@@ -93,12 +137,22 @@ export async function signUp(
   lastName: string,
 ): Promise<
   | { ok: true; token: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; retryAfterSec?: number }
 > {
   const sql = getSql();
   if (!sql) return { ok: false, error: 'Database is not configured.' };
 
-  const normalized = email.toLowerCase().trim();
+  const normalized = normalizeEmail(email);
+  const ip = await clientIp();
+
+  const limited = tooManyRequests(normalized, ip, 'signup');
+  if (limited !== null) {
+    return {
+      ok: false,
+      error: 'Too many sign-up attempts. Please try again later.',
+      retryAfterSec: limited,
+    };
+  }
 
   // Check for existing user
   const existing = await sql`select id from users where email = ${normalized}`;
@@ -114,7 +168,7 @@ export async function signUp(
 
   await sql`
     insert into users (id, email, password_hash, first_name, last_name)
-    values (${userId}, ${normalized}, ${passwordHash}, ${firstName.trim()}, ${lastName.trim()})
+    values (${userId}, ${normalized}, ${passwordHash}, ${normalizeName(firstName)}, ${normalizeName(lastName)})
   `;
 
   await sql`
@@ -137,8 +191,17 @@ export async function signIn(
   const sql = getSql();
   if (!sql) return { ok: false, error: 'Database is not configured.' };
 
-  const normalized = email.toLowerCase().trim();
+  const normalized = normalizeEmail(email);
   const ip = await clientIp();
+
+  const limited = tooManyRequests(normalized, ip, 'signin');
+  if (limited !== null) {
+    return {
+      ok: false,
+      error: 'Too many sign-in attempts. Please try again shortly.',
+      retryAfterSec: limited,
+    };
+  }
 
   if (isLocked(normalized, ip)) {
     return {
@@ -146,6 +209,18 @@ export async function signIn(
       error: 'Too many failed attempts. Please try again in 10 minutes.',
       retryAfterSec: LOCKOUT_MS / 1000,
     };
+  }
+
+  // An address that cannot be an account, or a password bcrypt would truncate,
+  // can never match. Still pay for one bcrypt compare so the response time does
+  // not distinguish "impossible input" from "unknown account".
+  if (
+    !isValidEmail(normalized) ||
+    passwordByteLength(password) > PASSWORD_MAX_BYTES
+  ) {
+    await bcrypt.compare(password, DUMMY_HASH);
+    recordFailure(normalized, ip);
+    return { ok: false, error: 'Invalid email or password.' };
   }
 
   const rows = await sql`
@@ -186,7 +261,7 @@ export async function getUserSession(): Promise<UserSession | null> {
   if (!token) return null;
 
   const rows = await sql`
-    select u.id, u.email, u.first_name, u.last_name
+    select u.id, u.email, u.first_name, u.last_name, u.phone
     from user_sessions s
     join users u on u.id = s.user_id
     where s.token_hash = ${hashToken(token)} and s.expires_at > now()
@@ -198,7 +273,52 @@ export async function getUserSession(): Promise<UserSession | null> {
     email: row.email,
     firstName: row.first_name,
     lastName: row.last_name,
+    phone: row.phone || null,
   };
+}
+
+export async function updateUserProfile(
+  userId: string,
+  input: { firstName: string; lastName: string; phone: string },
+): Promise<UserSession | null> {
+  const sql = getSql();
+  if (!sql) return null;
+  const rows = await sql<Array<{ id: string; email: string; first_name: string; last_name: string; phone: string | null }>>`
+    update users
+    set first_name = ${normalizeName(input.firstName)}, last_name = ${normalizeName(input.lastName)},
+      phone = ${input.phone || null}, updated_at = now()
+    where id = ${userId}
+    returning id, email, first_name, last_name, phone
+  `;
+  const row = rows[0];
+  return row
+    ? { userId: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, phone: row.phone }
+    : null;
+}
+
+export async function changeUserPassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sql = getSql();
+  if (!sql) return { ok: false, error: 'Database is not configured.' };
+  const store = await cookies();
+  const currentToken = store.get(COOKIE_NAME)?.value;
+  if (!currentToken) return { ok: false, error: 'Authentication required.' };
+  const rows = await sql<Array<{ password_hash: string }>>`
+    select password_hash from users where id = ${userId} limit 1
+  `;
+  if (!rows[0] || !(await bcrypt.compare(currentPassword, rows[0].password_hash))) {
+    return { ok: false, error: 'Current password is incorrect.' };
+  }
+  if (passwordByteLength(newPassword) < 8 || passwordByteLength(newPassword) > PASSWORD_MAX_BYTES) {
+    return { ok: false, error: 'New password must be 8 to 72 UTF-8 bytes.' };
+  }
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  await sql`update users set password_hash = ${passwordHash}, updated_at = now() where id = ${userId}`;
+  await sql`delete from user_sessions where user_id = ${userId} and token_hash <> ${hashToken(currentToken)}`;
+  return { ok: true };
 }
 
 export async function userLogout(): Promise<void> {

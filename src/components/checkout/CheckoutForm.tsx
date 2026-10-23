@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart/CartContext';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { getCartLineBaseId } from '@/lib/cart/cart-id';
 
 interface CartItem {
   id: string;
@@ -12,6 +13,18 @@ interface CartItem {
   price: number;
   quantity: number;
   image?: string;
+}
+
+interface SavedAddress {
+  id: string;
+  name: string;
+  phone: string;
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  isDefault: boolean;
 }
 
 interface Props {
@@ -49,8 +62,8 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   // excluded from the amount sent to the gateway.
   const unavailableIds = new Set(
     items
-      .filter((item) => !getProductFromCatalog(item.productId || item.id))
-      .map((item) => item.id)
+       .filter((item) => !getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || ''))
+       .map((item) => item.id)
   );
   const hasUnavailable = unavailableIds.size > 0;
   const payableItems = items.filter((item) => !unavailableIds.has(item.id));
@@ -58,8 +71,66 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   const [firstName, setFirstName] = useState(userSession?.firstName || '');
   const [email, setEmail] = useState(userSession?.email || '');
   const [phone, setPhone] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState('');
+  const [saveNewAddress, setSaveNewAddress] = useState(true);
+  const [shippingAddress, setShippingAddress] = useState({
+    name: `${userSession?.firstName || ''} ${userSession?.lastName || ''}`.trim(),
+    phone: '',
+    line1: '',
+    line2: '',
+    city: '',
+    state: '',
+    pincode: '',
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    fetch('/api/account/addresses')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const addresses = Array.isArray(data?.addresses) ? data.addresses : [];
+        setSavedAddresses(addresses);
+        const preferred = addresses.find((address: SavedAddress) => address.isDefault) || addresses[0];
+        if (preferred) {
+          setSelectedAddressId(preferred.id);
+          setShippingAddress({
+            name: preferred.name,
+            phone: preferred.phone,
+            line1: preferred.line1,
+            line2: preferred.line2 || '',
+            city: preferred.city,
+            state: preferred.state,
+            pincode: preferred.pincode,
+          });
+          setPhone(preferred.phone);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const updateShippingAddress = (field: keyof typeof shippingAddress, value: string) => {
+    setSelectedAddressId('');
+    setShippingAddress((current) => ({ ...current, [field]: value }));
+    if (field === 'phone') setPhone(value);
+  };
+
+  const selectSavedAddress = (id: string) => {
+    setSelectedAddressId(id);
+    const selected = savedAddresses.find((address) => address.id === id);
+    if (!selected) return;
+    setShippingAddress({
+      name: selected.name,
+      phone: selected.phone,
+      line1: selected.line1,
+      line2: selected.line2 || '',
+      city: selected.city,
+      state: selected.state,
+      pincode: selected.pincode,
+    });
+    setPhone(selected.phone);
+  };
 
   const totalAmount = payableItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
 
@@ -74,7 +145,11 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       return;
     }
     if (hasUnavailable) {
-      setErrorMessage('Remove unavailable items from your order before paying.');
+      const unavailableNames = items
+        .filter((item) => unavailableIds.has(item.id))
+        .map((item) => item.name)
+        .join(', ');
+      setErrorMessage(`Remove ${unavailableNames || 'the unavailable item'} from your order before paying.`);
       return;
     }
 
@@ -92,11 +167,30 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       setErrorMessage('Please enter a valid 10-digit Indian mobile number (starting with 6, 7, 8, or 9).');
       return;
     }
+    if (!selectedAddressId) {
+      const addressPhone = shippingAddress.phone.replace(/\D/g, '');
+      if (shippingAddress.name.trim().length < 2 || !/^\d{10}$/.test(addressPhone) || !shippingAddress.line1.trim() || !shippingAddress.state.trim() || !/^\d{6}$/.test(shippingAddress.pincode)) {
+        setErrorMessage('Enter a valid shipping name, 10-digit phone, address line 1, state, and 6-digit pincode.');
+        return;
+      }
+    }
 
     // Disable the button to prevent double submission
     setIsSubmitting(true);
 
     try {
+      let shippingAddressId = selectedAddressId;
+      if (!shippingAddressId && saveNewAddress) {
+        const saveResponse = await fetch('/api/account/addresses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...shippingAddress, isDefault: savedAddresses.length === 0 }),
+        });
+        const saveData = await saveResponse.json();
+        if (!saveResponse.ok) throw new Error(saveData.error || 'Could not save shipping address.');
+        shippingAddressId = saveData.address.id;
+      }
+
       // 1. Call server initiate endpoint (never passing prices/amounts)
       const res = await fetch('/api/payu/initiate', {
         method: 'POST',
@@ -110,6 +204,8 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
             email: email.trim().toLowerCase(),
             phone: cleanPhone,
           },
+          shippingAddressId: shippingAddressId || undefined,
+          shippingAddress: shippingAddressId ? undefined : shippingAddress,
         }),
       });
 
@@ -195,7 +291,10 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       </div>
 
       {errorMessage && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-2xl flex items-start space-x-2">
+        <div
+          role="alert"
+          className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-2xl flex items-start space-x-2"
+        >
           <span className="font-bold">Error:</span>
           <span>{errorMessage}</span>
         </div>
@@ -251,8 +350,15 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           })}
         </div>
         {hasUnavailable && (
-          <div className="mt-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-            Some items are no longer in our catalog. Remove them to continue to payment.
+          <div
+            id="checkout-unavailable-note"
+            role="alert"
+            className="mt-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700"
+          >
+             {items
+               .filter((item) => unavailableIds.has(item.id))
+               .map((item) => item.name)
+               .join(', ')} is unavailable. Remove it to continue to payment.
           </div>
         )}
         <div className="border-t border-[#e5e5ea] mt-4 pt-4 flex justify-between items-baseline font-semibold">
@@ -314,14 +420,71 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
               disabled={isSubmitting}
             />
           </div>
-          <p className="text-xs text-[#86868b] mt-1">PayU will send SMS payment notifications to this number.</p>
+          <p className="text-xs text-[#6e6e73] mt-1">PayU will send SMS payment notifications to this number.</p>
         </div>
 
         <div className="pt-4">
+          <fieldset className="space-y-4 rounded-2xl border border-[#e5e5ea] bg-[#fbfbfd] p-5">
+            <legend className="px-1 text-sm font-semibold text-[#1d1d1f]">Shipping address</legend>
+            {savedAddresses.length > 0 && (
+              <div>
+                <label htmlFor="saved-address" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#86868b]">Choose a saved address</label>
+                <select
+                  id="saved-address"
+                  value={selectedAddressId}
+                  onChange={(event) => selectSavedAddress(event.target.value)}
+                  className="w-full rounded-xl border border-[#d2d2d7] bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+                  disabled={isSubmitting}
+                >
+                  <option value="">Enter a new address</option>
+                  {savedAddresses.map((address) => (
+                    <option key={address.id} value={address.id}>{address.name} · {address.line1}, {address.city}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {!selectedAddressId && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {([
+                  ['name', 'Full name'],
+                  ['phone', '10-digit phone'],
+                  ['line1', 'Address line 1'],
+                  ['line2', 'Address line 2 (optional)'],
+                  ['city', 'City'],
+                  ['state', 'State'],
+                  ['pincode', '6-digit pincode'],
+                ] as const).map(([field, label]) => (
+                  <div key={field} className={field === 'line1' || field === 'line2' ? 'sm:col-span-2' : ''}>
+                    <label htmlFor={`shipping-${field}`} className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#86868b]">{label}</label>
+                    <input
+                      id={`shipping-${field}`}
+                      type={field === 'phone' || field === 'pincode' ? 'tel' : 'text'}
+                      value={shippingAddress[field]}
+                      onChange={(event) => updateShippingAddress(field, event.target.value)}
+                      maxLength={field === 'phone' ? 10 : field === 'pincode' ? 6 : undefined}
+                      className="w-full rounded-xl border border-[#d2d2d7] bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+                      disabled={isSubmitting}
+                      required={field !== 'line2'}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {!selectedAddressId && (
+              <label className="flex items-center gap-2 text-xs text-[#6e6e73]">
+                <input type="checkbox" checked={saveNewAddress} onChange={(event) => setSaveNewAddress(event.target.checked)} disabled={isSubmitting} />
+                Save this address to my account
+              </label>
+            )}
+          </fieldset>
+
+          <div className="pt-4">
           <button
             type="submit"
             id="payu-pay-now-btn"
-            disabled={isSubmitting || hasUnavailable}
+            disabled={isSubmitting}
+            aria-disabled={isSubmitting || hasUnavailable}
+            aria-describedby={hasUnavailable ? 'checkout-unavailable-note' : undefined}
             className={`w-full py-4 rounded-full text-base font-semibold text-white transition flex items-center justify-center space-x-2 ${
               isSubmitting || hasUnavailable
                 ? 'bg-[#86868b] cursor-not-allowed'
@@ -344,8 +507,9 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           </button>
         </div>
 
-        <div className="text-center text-xs text-[#86868b] pt-2">
+        <div className="text-center text-xs text-[#6e6e73] pt-2">
           <span>🔒 256-bit SSL Encrypted • Card, UPI, NetBanking & Wallets via PayU</span>
+        </div>
         </div>
       </form>
     </div>

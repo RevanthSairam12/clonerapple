@@ -1,4 +1,21 @@
 import { getStoreSession } from '@/lib/store-admin/auth';
+import Link from 'next/link';
+import { getOrderDashboardCounts, type SaleState } from '@/lib/store-admin/orders';
+import { getPosDashboard } from '@/lib/store-admin/pos';
+import { formatPaise } from '@/lib/store-admin/amount';
+import { getOpenOrderRequestCount } from '@/lib/store-admin/order-requests';
+
+const SALE_STATE_LABELS: Record<SaleState, string> = {
+  REFUNDED: 'Refunded',
+  PAYMENT_FAILED: 'Payment failed',
+  CANCELED: 'Canceled',
+  DELIVERED: 'Delivered',
+  ON_THE_WAY: 'On the way',
+  PROCESSING: 'Processing',
+  SCHEDULED: 'Scheduled',
+  ACCEPTED: 'Accepted',
+  PENDING: 'Pending',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +39,14 @@ const AREAS = [
 
 export default async function StoreAdminDashboard() {
   const session = await getStoreSession();
+  const orderResult = await getOrderDashboardCounts();
+  const openRequestResult = await getOpenOrderRequestCount();
+  const openRequests = openRequestResult.ok ? openRequestResult.data.count : null;
+  const orderCounts = orderResult.ok ? orderResult.data.counts : null;
+
+  const posResult = await getPosDashboard();
+  const todayPosTotalPaise = posResult.ok ? posResult.data.todayPosTotalPaise : null;
+  const openShift = posResult.ok ? posResult.data.openShiftId : null;
 
   return (
     <div>
@@ -36,6 +61,33 @@ export default async function StoreAdminDashboard() {
         Catalogue editing is not enabled yet, and price editing stays disabled until
         payments read prices from the database.
       </p>
+
+      <div className="sa-grid sa-dashboard-counts">
+        {(['PENDING', 'PROCESSING', 'ON_THE_WAY'] as const).map((state) => (
+          <Link className="sa-card sa-count-card" href="/store-admin/orders" key={state}>
+            <span className="sa-card-kicker">Orders</span>
+            <strong className="sa-count-value">{orderCounts ? orderCounts[state] : '—'}</strong>
+            <span className="sa-count-label">{SALE_STATE_LABELS[state]}</span>
+          </Link>
+        ))}
+        <Link className="sa-card sa-count-card" href="/store-admin/requests">
+          <span className="sa-card-kicker">Inbox</span>
+          <strong className="sa-count-value">{openRequests ?? '—'}</strong>
+          <span className="sa-count-label">Open requests</span>
+        </Link>
+        <Link className="sa-card sa-count-card" href="/store-admin/pos">
+          <span className="sa-card-kicker">POS</span>
+          <strong className="sa-count-value">
+            {todayPosTotalPaise !== null ? formatPaise(todayPosTotalPaise) : '—'}
+          </strong>
+          <span className="sa-count-label">Today’s point-of-sale</span>
+        </Link>
+        <Link className="sa-card sa-count-card" href="/store-admin/pos/end-of-day">
+          <span className="sa-card-kicker">Shift</span>
+          <strong className="sa-count-value">{openShift !== null ? `${openShift}` : '—'}</strong>
+          <span className="sa-count-label">Open shifts</span>
+        </Link>
+      </div>
 
       <div className="sa-grid">
         {AREAS.map((area) => (
