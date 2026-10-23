@@ -39,7 +39,7 @@ interface Props {
 }
 
 export function CheckoutForm({ initialItems, userSession, productUnavailable = false }: Props) {
-  const { items: bagItems, removeItem, clearCart, isHydrated } = useCart();
+  const { items: bagItems, removeItem, isHydrated } = useCart();
 
   // If items exist in the shopping bag, use the live bag. Only an empty bag
   // falls back to the product resolved from ?productId= on the server. There is
@@ -235,10 +235,12 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
 
       document.body.appendChild(form);
 
-      // Clear bag before redirecting to payment
-      clearCart();
-
-      // 4. Auto-submit form to redirect browser to PayU Hosted Checkout
+      // 4. Auto-submit form to redirect browser to PayU Hosted Checkout.
+      //    The bag is deliberately NOT cleared here: the customer has not paid
+      //    yet. Clearing before the gateway answers meant a blocked, failed or
+      //    abandoned redirect left an empty bag behind, and the next checkout
+      //    showed "This item is unavailable". The bag is cleared on the
+      //    confirmed-payment page instead.
       form.submit();
     } catch (err: unknown) {
       setIsSubmitting(false);
@@ -246,9 +248,38 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     }
   };
 
-  // An unknown ?productId=, or a checkout with nothing real in it, is an
-  // explicit unavailable state — never a placeholder product.
-  if (productUnavailable || (isHydrated && items.length === 0)) {
+  // An empty bag and an unknown ?productId= are different states with different
+  // fixes. Saying "this item is unavailable" to someone whose bag is simply
+  // empty sent them to "Review Bag" to look for an item that was never there.
+  if (isHydrated && items.length === 0 && !productUnavailable) {
+    return (
+      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
+        <h1 className="text-3xl font-semibold tracking-tight">Your bag is empty</h1>
+        <p className="text-sm text-[#86868b] mt-3 max-w-md mx-auto">
+          Add something to your bag before checking out. If you were part-way
+          through a payment, your bag is still here — nothing was lost.
+        </p>
+        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link
+            href="/shop/iphone/accessories/cases-protection"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-sm font-semibold transition"
+          >
+            Back to the shop
+          </Link>
+          <Link
+            href="/cart"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full border border-[#d2d2d7] text-[#1d1d1f] text-sm font-semibold hover:bg-[#f5f5f7] transition"
+          >
+            Review Bag
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // An unknown ?productId= is an explicit unavailable state — never a
+  // placeholder product.
+  if (productUnavailable) {
     return (
       <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
         <h1 className="text-3xl font-semibold tracking-tight">This item is unavailable</h1>

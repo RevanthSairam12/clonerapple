@@ -1,5 +1,6 @@
 import { getOrderByTxnid } from '@/lib/payu/orders';
 import { getUserSession } from '@/lib/user-auth';
+import { ClearCartOnSuccess } from '@/components/checkout/ClearCartOnSuccess';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -81,6 +82,7 @@ export default async function OrderSuccessPage({ searchParams }: Props) {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f]">
+      <ClearCartOnSuccess />
       <div className="max-w-2xl mx-auto bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-[#e5e5ea]">
         {/* Success Icon */}
         <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 text-2xl font-bold">
