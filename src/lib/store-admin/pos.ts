@@ -530,7 +530,7 @@ export async function createPosSale(input: {
         }
         await tx`
           insert into stock_movements (product_id, delta, reason, order_id, created_by)
-          values (${line.productId}, -${line.quantity}, 'sale', ${createdId}, ${input.staffId})
+          values (${line.productId}, ${-line.quantity}, 'sale', ${createdId}, ${input.staffId})
         `;
       }
 
@@ -654,20 +654,30 @@ export async function voidPosSale(input: {
         where order_id = ${orderId} and channel = 'pos'
       `;
 
-      // Restock: a tracked product increments on_hand; the movement row is
-      // written either way so the ledger stays complete.
+      // Restock mirrors the sale: only a tracked product's on_hand moves. The
+      // movement row is written either way so the ledger stays complete.
+      // Incrementing an untracked product would drift its stock upward,
+      // because createPosSale never decremented it.
       for (const item of itemRows) {
         const productId = text(item.product_id);
         if (!productId) continue;
-        await tx`
-          update stock
-          set on_hand = on_hand + ${integer(item.quantity)},
-              updated_at = now(), updated_by = ${input.staffId}
+        const quantity = integer(item.quantity);
+        const stockRows = (await tx`
+          select track_inventory from stock
           where product_id = ${productId} and variant_id is null
-        `;
+          for update
+        `) as Row[];
+        if (stockRows[0] && Boolean(stockRows[0].track_inventory)) {
+          await tx`
+            update stock
+            set on_hand = on_hand + ${quantity},
+                updated_at = now(), updated_by = ${input.staffId}
+            where product_id = ${productId} and variant_id is null
+          `;
+        }
         await tx`
           insert into stock_movements (product_id, delta, reason, order_id, created_by)
-          values (${productId}, ${integer(item.quantity)}, 'return', ${orderId}, ${input.staffId})
+          values (${productId}, ${quantity}, 'return', ${orderId}, ${input.staffId})
         `;
       }
 
