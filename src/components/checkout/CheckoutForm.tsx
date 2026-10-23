@@ -241,6 +241,16 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       //    abandoned redirect left an empty bag behind, and the next checkout
       //    showed "This item is unavailable". The bag is cleared on the
       //    confirmed-payment page instead.
+      //
+      //    A blocked submission (CSP, extension, offline) leaves this page
+      //    loaded, so a watchdog puts the button back and says what happened
+      //    instead of spinning forever.
+      window.setTimeout(() => {
+        setIsSubmitting(false);
+        setErrorMessage(
+          'We could not reach the payment gateway. Your bag is saved — please try again.',
+        );
+      }, 4000);
       form.submit();
     } catch (err: unknown) {
       setIsSubmitting(false);
