@@ -199,7 +199,9 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
   } else if (targetStatus === 'CANCELLED') {
     redirectUrl = `/order/cancelled?txnid=${encodeURIComponent(txnid)}`;
   } else if (targetStatus === 'PENDING') {
-    redirectUrl = `/order/pending?txnid=${encodeURIComponent(txnid)}`;
+    // There is no /order/pending route; /order/status is the page that renders
+    // a pending payment and its timeline.
+    redirectUrl = `/order/status?txnid=${encodeURIComponent(txnid)}`;
   } else {
     redirectUrl = `/order/failed?txnid=${encodeURIComponent(txnid)}`;
   }
