@@ -1285,3 +1285,125 @@ th.sa-num {
     padding: 0;
   }
 }
+
+/* --------------------------------------------------- catalogue editing */
+
+.sa-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sa-form-grid .sa-field {
+  margin: 0;
+}
+
+.sa-field-wide {
+  grid-column: 1 / -1;
+}
+
+.sa-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.sa-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.sa-table td .sa-inline-actions {
+  margin: 0;
+}
+
+.sa-input-small {
+  max-width: 160px;
+}
+
+.sa-image-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sa-image-edit {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sa-image-card-off img {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+.sa-image-add {
+  margin-top: 16px;
+}
+
+.sa-attr-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.sa-attr-row {
+  padding: 12px 14px;
+  background: var(--sa-card);
+  border: 1px solid var(--sa-line);
+  border-radius: 5px;
+}
+
+.sa-attr-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sa-attr-head .sa-inline-actions {
+  margin: 0;
+}
+
+.sa-attr-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.sa-attr-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sa-chip-x {
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.sa-chip-x:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+@media (max-width: 720px) {
+  .sa-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

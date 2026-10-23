@@ -6,10 +6,9 @@
  * New routes are picked up automatically; no list to maintain.
  *
  * Two stricter shapes are also enforced:
- * - read-only routes (catalogue and customer list/detail) must not export a
- *   mutating handler (POST/PUT/PATCH/DELETE);
- * - the customer reveal route must require `store_owner` and call
- *   `assertSameOrigin()`;
+ * - read-only routes (catalogue list, low stock, customer list/detail) must not
+ *   export a mutating handler (POST/PUT/PATCH/DELETE);
+ * - owner-only routes must require `store_owner` and call `assertSameOrigin()`;
  * - all other mutating routes must call `assertSameOrigin()`.
  *
  * Usage: node scripts/check-store-admin-routes.mjs
@@ -30,9 +29,8 @@ const OWNER_GUARD_CALL =
 const SAME_ORIGIN_CALL = /\bassertSameOrigin\s*\(/;
 
 /**
- * Read-only routes in this release. Catalogue and customer views must stay
- * GET-only. Price and stock writes stay disabled until checkout reads prices
- * from the database.
+ * Read-only routes in this release. The catalogue list, the low-stock report
+ * and the customer views stay GET-only.
  *
  * Phase 2 additions:
  * - `orders/[txnid]/void` is owner-only (voiding a POS sale moves money and
@@ -42,10 +40,21 @@ const SAME_ORIGIN_CALL = /\bassertSameOrigin\s*\(/;
  * - `settings` also gates writes to `store_owner` inside the handler (the
  *   script checks the same-origin call; the role gate is enforced by
  *   `requireStoreRole('store_owner')` in the PUT handler).
+ *
+ * Phase 3 additions:
+ * - `catalog/products/[id]` gained a PATCH (copy and organisation only — the
+ *   price write path stays closed until checkout reads the database), so it
+ *   moved out of the read-only list;
+ * - gallery and product-attribute routes mutate and are guarded by
+ *   `store_admin`;
+ * - brands, units, attributes and their options are reference data and are
+ *   owner-only, because changing them re-shapes the catalogue for every
+ *   product;
+ * - `catalog/low-stock` is a read-only report.
  */
 const EXPECTED_READ_ONLY_ROUTES = [
   'catalog/products/route.ts',
-  'catalog/products/[id]/route.ts',
+  'catalog/low-stock/route.ts',
   'customers/route.ts',
   'customers/[id]/route.ts',
   'requests/route.ts',
@@ -57,6 +66,13 @@ const EXPECTED_OWNER_ROUTES = ['customers/[id]/reveal/route.ts'];
 EXPECTED_OWNER_ROUTES.push('orders/[txnid]/reveal/route.ts');
 // Voiding a POS sale is owner-only.
 EXPECTED_OWNER_ROUTES.push('orders/[txnid]/void/route.ts');
+// Reference data shapes every product, so it is owner-only.
+EXPECTED_OWNER_ROUTES.push('catalog/brands/route.ts');
+EXPECTED_OWNER_ROUTES.push('catalog/brands/[id]/route.ts');
+EXPECTED_OWNER_ROUTES.push('catalog/units/route.ts');
+EXPECTED_OWNER_ROUTES.push('catalog/attributes/route.ts');
+EXPECTED_OWNER_ROUTES.push('catalog/attributes/[id]/route.ts');
+EXPECTED_OWNER_ROUTES.push('catalog/attributes/[id]/options/route.ts');
 
 const EXPECTED_MUTATING_ROUTES = [
   'orders/[txnid]/fulfilment/route.ts',
@@ -66,6 +82,10 @@ const EXPECTED_MUTATING_ROUTES = [
   'pos/sales/route.ts',
   'pos/shift/route.ts',
   'settings/route.ts',
+  'catalog/products/[id]/route.ts',
+  'catalog/products/[id]/images/route.ts',
+  'catalog/products/[id]/images/[imageId]/route.ts',
+  'catalog/products/[id]/attributes/route.ts',
 ];
 
 const EXPECTED_ROUTES = [

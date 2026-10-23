@@ -44,6 +44,12 @@ export default async function ProtectedStoreAdminLayout({
           <Link className="sa-nav-link" href="/store-admin/products">
             Products
           </Link>
+          <Link className="sa-nav-link" href="/store-admin/low-stock">
+            Low stock
+          </Link>
+          <Link className="sa-nav-link" href="/store-admin/catalog">
+            Catalogue data
+          </Link>
           <Link className="sa-nav-link" href="/store-admin/customers">
             Customers
           </Link>

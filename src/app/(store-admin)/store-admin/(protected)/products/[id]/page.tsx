@@ -1,10 +1,17 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { ProductAttributes } from '@/components/store-admin/ProductAttributes';
+import { ProductEditor } from '@/components/store-admin/ProductEditor';
+import { ProductGallery } from '@/components/store-admin/ProductGallery';
+import { getStoreSession } from '@/lib/store-admin/auth';
 import {
   formatDate,
   formatINR,
   getCatalogProduct,
+  listAttributes,
+  listBrands,
+  listCategoryOptions,
 } from '@/lib/store-admin/catalog';
 
 export const dynamic = 'force-dynamic';
@@ -35,6 +42,20 @@ export default async function StoreAdminProductDetailPage({
   }
 
   const product = result.data;
+  const session = await getStoreSession();
+
+  // Editing copy is an admin-level action; reference data is owner-only.
+  const canEdit = session !== null && session.role !== 'store_viewer';
+
+  const [categoriesResult, brandsResult, attributesResult] = await Promise.all([
+    listCategoryOptions(),
+    listBrands(),
+    listAttributes(),
+  ]);
+
+  const categories = categoriesResult.ok ? categoriesResult.data : [];
+  const brands = brandsResult.ok ? brandsResult.data : [];
+  const attributes = attributesResult.ok ? attributesResult.data : [];
 
   const facetGroups = new Map<string, string[]>();
   for (const facet of product.facets) {
@@ -134,10 +155,12 @@ export default async function StoreAdminProductDetailPage({
         </section>
       </div>
 
-      <section className="sa-detail-section">
-        <h2 className="sa-section-title">Description</h2>
-        <p className="sa-copy">{product.description || 'No description.'}</p>
-      </section>
+      <ProductEditor
+        product={product}
+        categories={categories}
+        brands={brands}
+        canEdit={canEdit}
+      />
 
       {product.highlights.length > 0 ? (
         <section className="sa-detail-section">
@@ -195,25 +218,19 @@ export default async function StoreAdminProductDetailPage({
         )}
       </section>
 
-      <section className="sa-detail-section">
-        <h2 className="sa-section-title">Images</h2>
-        {product.images.length === 0 ? (
-          <p className="sa-empty">No images recorded.</p>
-        ) : (
-          <div className="sa-image-grid">
-            {product.images.map((image) => (
-              <figure key={image.id} className="sa-image-card">
-                {/* Local static asset; no remote image optimisation needed. */}
-                <img src={image.url} alt={image.alt || product.name} />
-                <figcaption>
-                  <span className="sa-chip">{image.role}</span>
-                  <span className="sa-mono sa-break">{image.url}</span>
-                </figcaption>
-              </figure>
-            ))}
-          </div>
-        )}
-      </section>
+      <ProductGallery
+        productId={product.id}
+        productName={product.name}
+        initialImages={product.images}
+        canEdit={canEdit}
+      />
+
+      <ProductAttributes
+        productId={product.id}
+        attributes={attributes}
+        values={product.attributeValues}
+        canEdit={canEdit}
+      />
 
       <section className="sa-detail-section">
         <h2 className="sa-section-title">Colours / variants</h2>
@@ -328,8 +345,9 @@ export default async function StoreAdminProductDetailPage({
       </section>
 
       <p className="sa-readonly-foot">
-        This page is read-only. Search, filters and editing are not enabled in
-        this release.
+        Copy, images and attributes can be edited here. The price stays locked
+        until checkout reads prices from the database. Stock changes come from
+        receipts, sales and voids so every quantity has a movement behind it.
       </p>
     </div>
   );

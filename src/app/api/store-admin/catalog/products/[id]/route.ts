@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
 
+import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
+import { writeAudit } from '@/lib/store-admin/audit';
 import { getCatalogProduct } from '@/lib/store-admin/catalog';
+import { validateProductPatch } from '@/lib/store-admin/catalog-rules';
+import { catalogFailureStatus, updateProduct } from '@/lib/store-admin/catalog-writes';
 
 /**
- * Read-only catalogue detail for the store admin.
+ * Catalogue detail for the store admin.
  *
- * GET only. The price is returned for display; no write path exists.
+ * GET returns the full record. PATCH edits copy and organisation only.
+ * There is deliberately no price write path: checkout still prices from the
+ * code catalogue, so a price saved here would be a price the customer is never
+ * charged. `validateProductPatch()` refuses price fields outright.
  */
 
 export const dynamic = 'force-dynamic';
@@ -32,4 +39,62 @@ export async function GET(
   }
 
   return NextResponse.json({ product: result.data });
+}
+
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const originViolation = assertSameOrigin(request);
+  if (originViolation) return originViolation;
+
+  const guard = await requireStoreRole('store_admin');
+  if (!guard.ok) return guard.response;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
+  }
+
+  const validation = validateProductPatch(body);
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+
+  const { id } = await context.params;
+  const result = await updateProduct(id, validation.value, guard.session.adminId);
+
+  if (!result.ok) {
+    await writeAudit({
+      actorId: guard.session.adminId,
+      actorEmail: guard.session.email,
+      action: 'catalog.product.update',
+      entity: 'product',
+      entityId: id,
+      status: 'denied',
+      reason: result.reason,
+      after: validation.value,
+      request,
+    });
+    return NextResponse.json(
+      { error: result.error },
+      { status: catalogFailureStatus(result.reason) },
+    );
+  }
+
+  await writeAudit({
+    actorId: guard.session.adminId,
+    actorEmail: guard.session.email,
+    action: 'catalog.product.update',
+    entity: 'product',
+    entityId: id,
+    before: result.data.before,
+    after: result.data.after,
+    reason: 'product_details_updated',
+    request,
+  });
+
+  return NextResponse.json({ ok: true, product: result.data.after });
 }
