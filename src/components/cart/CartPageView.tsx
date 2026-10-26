@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
-import { getProductFromCatalog } from '@/lib/payu/catalog';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
+import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface UserAuth {
@@ -17,25 +17,56 @@ interface UserAuth {
   lastName: string;
 }
 
-export function CartPageView() {
+interface Props {
+  /**
+   * The server's catalogue (database rows, or the static bundle when the
+   * database is unreachable). Line prices and availability come from here.
+   */
+  initialProducts: StorefrontProductRef[];
+}
+
+export function CartPageView({ initialProducts }: Props) {
   const { items, totalCount, updateQuantity, removeItem, addItem } = useCart();
+
+  const productsById = useMemo(() => {
+    const map = new Map<string, StorefrontProductRef>();
+    for (const product of initialProducts) {
+      map.set(product.id.trim().toLowerCase(), product);
+    }
+    return map;
+  }, [initialProducts]);
+
+  const findRef = useCallback(
+    (id: string | null | undefined) => {
+      if (!id) return null;
+      return productsById.get(id.trim().toLowerCase()) ?? null;
+    },
+    [productsById],
+  );
   const [suggestedProducts, setSuggestedProducts] = useState<SearchResultItem[]>([]);
   const [recommendationReason, setRecommendationReason] = useState<string>('Trending & Popular Products');
   const [topSearchTerms, setTopSearchTerms] = useState<string[]>([]);
   const [addedItemIds, setAddedItemIds] = useState<Record<string, boolean>>({});
   const [user, setUser] = useState<UserAuth | null>(null);
 
-  // Only lines the PayU catalog knows are payable. A stale/education id is
-  // shown as unavailable and excluded from the displayed totals.
-  const availableItems = items.filter((item) =>
-    Boolean(getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || ''))
+  // Only lines the live catalogue still sells are payable. An unknown,
+  // archived or out-of-stock id is shown as unavailable and excluded from the
+  // displayed totals; the amount uses the catalogue price, not the stored one.
+  const refFor = useCallback(
+    (item: CartItem) =>
+      findRef(getCartLineBaseId(item.productId || item.id) || ''),
+    [findRef],
   );
+  const availableItems = items.filter((item) => {
+    const ref = refFor(item);
+    return Boolean(ref && ref.inStock);
+  });
   const hasUnavailable = availableItems.length !== items.length;
   const payableCount = availableItems.reduce((sum, item) => sum + item.quantity, 0);
-  const payableAmount = availableItems.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
+  const payableAmount = availableItems.reduce((sum, item) => {
+    const ref = refFor(item);
+    return sum + (ref ? ref.pricePaise / 100 : item.price) * item.quantity;
+  }, 0);
 
   // Check user session
   useEffect(() => {
@@ -76,9 +107,11 @@ export function CartPageView() {
     e.preventDefault();
     e.stopPropagation();
 
-    // Never invent a price for a suggestion. Without a real one it is not
-    // addable — the card renders an "Unavailable" label instead.
-    const price = item.price;
+    // Never invent a price for a suggestion. Without a live catalogue row it
+    // is not addable — the card renders an "Unavailable" label instead.
+    const ref = findRef(getCartLineBaseId(item.id) || '');
+    const price = ref ? ref.pricePaise / 100 : item.price;
+    if (!ref || !ref.inStock) return;
     if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
 
     addItem({
@@ -86,7 +119,7 @@ export function CartPageView() {
       name: item.name,
       subtitle: item.subtitle,
       price,
-      priceDisplay: item.priceDisplay,
+      priceDisplay: ref.priceDisplay ?? item.priceDisplay,
       // Existing Gadzio case art. The previous path
       // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
       // so a suggested item without its own image added a 404 to the bag.
@@ -210,9 +243,9 @@ export function CartPageView() {
               {/* Left Column: Line Items */}
               <div className="lg:col-span-8 divide-y divide-[#e5e5ea] border-y border-[#e5e5ea]">
                 {items.map((item) => {
-                  const isAvailable = Boolean(
-                    getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || '')
-                  );
+                  const ref = refFor(item);
+                  const isAvailable = Boolean(ref && ref.inStock);
+                  const linePrice = ref ? ref.pricePaise / 100 : item.price;
                   return (
                   <div key={item.id} className="py-6 flex flex-col sm:flex-row gap-5 items-start">
                     {/* Thumbnail Image */}
@@ -245,7 +278,7 @@ export function CartPageView() {
                         </div>
                         <div className="text-right sm:text-right font-bold text-base sm:text-lg text-[#1d1d1f] mt-1 sm:mt-0">
                           {isAvailable ? (
-                            <>₹{(item.price * item.quantity).toLocaleString('en-IN')}</>
+                            <>₹{(linePrice * item.quantity).toLocaleString('en-IN')}</>
                           ) : (
                             <span className="text-sm font-semibold text-[#e30000]">Unavailable</span>
                           )}
@@ -474,12 +507,13 @@ export function CartPageView() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {suggestedProducts.map((item) => {
                 const isAdded = !!addedItemIds[item.id];
+                const suggestedRef = findRef(getCartLineBaseId(item.id) || '');
                 const canAdd =
                       (item.type === 'product' || item.type === 'accessory') &&
                       typeof item.price === 'number' &&
                       Number.isFinite(item.price) &&
                       item.price > 0 &&
-                      Boolean(getProductFromCatalog(getCartLineBaseId(item.id) || ''));
+                      Boolean(suggestedRef?.inStock);
                 return (
                   <div
                     key={item.id}

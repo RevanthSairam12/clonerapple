@@ -40,12 +40,22 @@ function loadCatalog(): Promise<StorefrontProductRef[]> {
   return cachedPromise;
 }
 
-/** Live product refs; `ready` is false until the first successful fetch. */
-export function useLiveCatalog(): { products: StorefrontProductRef[]; ready: boolean } {
-  const [products, setProducts] = useState<StorefrontProductRef[]>([]);
-  const [ready, setReady] = useState(false);
+/**
+ * Live product refs; `ready` is false until the first successful fetch.
+ *
+ * Pass `initialProducts` from a server page to render the catalogue on the
+ * first paint with no client fetch (search, the cart). Omitting the argument
+ * keeps the fetch-backed behaviour for the nav panel and other client widgets.
+ */
+export function useLiveCatalog(
+  initialProducts?: StorefrontProductRef[] | null,
+): { products: StorefrontProductRef[]; ready: boolean } {
+  const hasInitial = Array.isArray(initialProducts);
+  const [products, setProducts] = useState<StorefrontProductRef[]>(initialProducts ?? []);
+  const [ready, setReady] = useState(hasInitial);
 
   useEffect(() => {
+    if (hasInitial) return;
     let cancelled = false;
     loadCatalog().then((list) => {
       if (cancelled) return;
@@ -55,7 +65,7 @@ export function useLiveCatalog(): { products: StorefrontProductRef[]; ready: boo
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hasInitial]);
 
   return { products, ready };
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { SearchPageView } from '@/components/search/SearchPageView';
+import { getStorefrontRefs } from '@/lib/storefront/catalog';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,5 +18,6 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 
 export default async function SearchPage({ searchParams }: Props) {
   const { q } = await searchParams;
-  return <SearchPageView initialQuery={q || ''} />;
+  const { products } = await getStorefrontRefs();
+  return <SearchPageView initialQuery={q || ''} initialProducts={products} />;
 }

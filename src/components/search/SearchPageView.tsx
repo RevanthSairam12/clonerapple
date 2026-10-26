@@ -16,7 +16,7 @@ import { SearchResetIcon, SearchSubmitIcon } from '@/components/sites/www-apple-
 import { WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
 import { CollectionProductCard } from '@/components/collection/CollectionProductCard';
 import type { CollectionProduct } from '@/components/collection/types';
-import { toSearchCandidates, useLiveCatalog } from '@/lib/catalog/client-catalog';
+import { toSearchCandidates, useLiveCatalog, type StorefrontProductRef } from '@/lib/catalog/client-catalog';
 import { formatINR } from '@/lib/utils';
 
 import '@/components/collection/collection.css';
@@ -76,9 +76,11 @@ function toCollectionProduct(item: SearchResultItem): CollectionProduct {
 
 interface Props {
   initialQuery?: string;
+  /** Server-fetched catalogue rows; avoids a client fetch on first paint. */
+  initialProducts?: StorefrontProductRef[];
 }
 
-export function SearchPageView({ initialQuery = '' }: Props) {
+export function SearchPageView({ initialQuery = '', initialProducts }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [activeCategory, setActiveCategory] = useState('All');
   const router = useRouter();
@@ -101,7 +103,7 @@ export function SearchPageView({ initialQuery = '' }: Props) {
       ? 'Case for AirPods'
       : activeCategory;
 
-  const { products: liveProducts, ready } = useLiveCatalog();
+  const { products: liveProducts, ready } = useLiveCatalog(initialProducts);
 
   // Products come from the live catalogue; the fixed page entries are
   // navigation and are scored through the same function.
