@@ -281,7 +281,8 @@ separate validation code.
       per minute per IP). `/api/payu/reconcile` re-checks stale pending orders and cancels
       unpaid ones older than `auto_cancel_unpaid_hours` (0 or empty keeps the 2-hour
       abandoned-checkout rule), releasing stock once and writing an `order.auto_cancel`
-      audit row.
+      audit row. The production scheduler must POST this endpoint every 10 minutes with
+      `CRON_SECRET`; it fails closed (503) when the secret is unset (§2.14).
 - **No other payment method exists.** There is no cash-on-delivery path, no manual bank
   transfer path and no wallet. `payment_methods` in settings is not consulted, and
   `cod_enabled` ships off because checkout has no payment-method selector.
@@ -432,15 +433,42 @@ transaction rolls back and initiate returns 409 through the existing alert — n
 no claim are left behind. A verified failure/cancel, an admin cancellation of an unpaid
 order and auto-cancel each release the outstanding claim once, guarded by the movement
 ledger (`sale` minus `release`), so duplicate callbacks or reconcile runs cannot release
-twice. Paid orders keep their stock; a return restocks through the existing return flow.
+twice. Paid orders keep their stock.
+
+Returns and POS voids restock through the same ledger. `restoreSoldStock` gives back at
+most `sale` minus earlier `return`/`release` movements for that order and product, so a
+partial or repeated receive cannot over-restock. An order created **before Phase 2** has
+no `sale` movement, so cancelling, voiding or returning it restores nothing — legacy
+orders can never invent stock. Cancelling a paid order still restocks nothing; the return
+flow does that when the goods come back.
+
+**Reconciliation scheduling (required in production).** The deployment scheduler must
+`POST /api/payu/reconcile` **every 10 minutes** with
+`Authorization: Bearer $CRON_SECRET`. The optional `?staleMinutes=` (default 15) controls
+how old a pending order must be before PayU is asked about it. Each run re-verifies stale
+payments and cancels unpaid orders older than `auto_cancel_unpaid_hours` (0 or empty keeps
+2 hours), releasing their stock once and writing an `order.auto_cancel` audit row. Without
+the schedule, abandoned orders keep holding stock forever.
+
+- Host cron: `*/10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" https://<store-host>/api/payu/reconcile`
+- GitHub Actions `on: schedule` (`*/10 * * * *`) running the same `curl`.
+- Any scheduler that can send a POST. The route accepts POST only, so a GET-only cron
+  service needs a POST-capable alternative (or a wrapper).
+- Prefer the header over `?secret=`, which can end up in access logs.
+
+When `CRON_SECRET` is unset the route returns **503 in production** (fail closed) and
+remains callable in development for manual runs.
 
 **Evidence**
 
 | Rule | Proof |
 |---|---|
-| Two buyers of the last unit → exactly one order | `tests/checkout-stock.test.mjs` last-unit simulation of the lock + guarded-decrement contract |
+| Two buyers of the last unit → exactly one order | `tests/order-stock-integration.test.mjs` — two real connections race in a throwaway schema; one order, one `InsufficientStockError` |
 | Insufficient / unknown / archived rejected before any order row | `checkout-stock.test.mjs` plan tests; `createOrder` plans and throws before the insert |
 | Claim released once on failure/cancel/void/auto-cancel, never twice | ledger idempotence tests in `checkout-stock.test.mjs` + `tests/auto-cancel.test.mjs` |
+| Legacy order (no `sale` movement) never restocks | `tests/stock-restore.test.mjs` ledger-cap tests + source guard that only `stock.ts` adds `on_hand` |
+| Reconcile fails closed without `CRON_SECRET` | `tests/cron-auth.test.mjs` (503 in production, open in development) |
+| Revenue definition consistent | `tests/revenue-definition.test.mjs` (total-with-fallback in Overview and reports; item revenue excludes shipping) |
 | Shipping threshold matrix (below/above/no method/pickup/disabled) | `tests/checkout-shipping.test.mjs` (disabled, no method, inactive method, at/above threshold, method free-over, zero rate) |
 | Client-sent shipping/total ignored | initiate reads only `price_paise` plus `quoteShipping`; no request field feeds the amount |
 | Numbering unique, padded, fallback, old ids kept | `tests/order-numbering.test.mjs` (25 concurrent allocations, start number, sanitisation, invoice fallbacks) |
@@ -644,6 +672,11 @@ things deliberately left unwired because they have no existing UI.
   Order, Item-wise, Day-wise, Transaction statement, Payment reconciliation, Expense,
   Stock, Low-stock, Customer, Category & brand. Each supports date range, channel,
   status, category and brand filters where relevant, plus CSV export.
+- **Revenue definition:** order-level revenue — Overview, Sales list Amount, and the
+  Order, Day-wise and Customer reports — is the order total as charged
+  (items − discount + shipping), with the rupee `amount` fallback for orders created
+  before migration `0014`. The Item-wise and Category & brand reports sum line totals,
+  which are product revenue and exclude shipping by construction; their notes say so.
 - **Expenses:** `/expenses`, `/expenses/new`, `/expenses/[id]`, with
   `/api/store-admin/expenses/categories`. Expenses feed the expense report and the
   profit view. Currently 0 rows.
@@ -838,12 +871,11 @@ These are deliberate gaps, not bugs.
 | Payment integrity | Reverse-hash verification plus a server-side PayU verification call before an order becomes paid; atomic idempotent transition prevents double capture. |
 | Order documents | Invoice/packing slip pages are behind the store-admin session and role check. |
 
-**Open issue to fix before a public launch:** `CRON_SECRET` is unset. In
-`src/app/api/payu/reconcile/route.ts`, the secret check is skipped entirely when the
-variable is empty, so anyone who knows the URL can trigger a reconciliation run. The run
-only re-checks stale pending orders and cannot mark a fake payment paid (PayU’s
-verification still applies), but the endpoint should be closed. Set `CRON_SECRET` in the
-deployment environment — the check activates automatically once the variable exists.
+**Reconciliation must be scheduled.** `CRON_SECRET` is now required in production: with
+it unset, `/api/payu/reconcile` returns 503 instead of running unauthenticated, because a
+run now releases stock held by stale unpaid orders. Set the secret and call the endpoint
+over POST every 10 minutes (§2.14). In development an unset secret still allows a manual
+run.
 
 ---
 
