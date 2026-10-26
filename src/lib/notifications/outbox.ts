@@ -5,6 +5,8 @@ import type { StoreSettings } from '@/lib/store-admin/settings-rules';
 
 import {
   MAX_NOTIFICATION_ATTEMPTS,
+  notificationRetentionDays,
+  retentionCutoff,
   retryDelaySeconds,
 } from './rules';
 import {
@@ -376,5 +378,50 @@ export async function getNotificationDeliveryLog(options: {
   } catch {
     console.warn('[notifications] could not read the delivery log');
     return { ok: false, reason: 'unavailable' };
+  }
+}
+
+export interface RetentionResult {
+  /** False when the optional job is not switched on. */
+  enabled: boolean;
+  /** The window actually used, or null when disabled. */
+  days: number | null;
+  scrubbed: number;
+}
+
+/**
+ * Optional retention: drop the body and recipient from old, finished rows.
+ *
+ * Off unless `NOTIFICATION_RETENTION_ENABLED` is set. The event, status,
+ * masked recipient and every timestamp stay so the delivery log remains
+ * auditable. Rows still QUEUED or SENDING are never touched, and a row that
+ * already has no body or recipient is not counted. Best-effort: a failure is
+ * logged without content and never breaks reconciliation.
+ */
+export async function scrubOldNotifications(options: {
+  sql?: Sql;
+  env?: Readonly<Record<string, string | undefined>>;
+  now?: Date;
+} = {}): Promise<RetentionResult> {
+  const days = notificationRetentionDays(options.env ?? process.env);
+  if (days === null) return { enabled: false, days: null, scrubbed: 0 };
+
+  const sql = options.sql ?? getSql();
+  if (!sql) return { enabled: true, days, scrubbed: 0 };
+
+  try {
+    const cutoff = retentionCutoff(days, options.now);
+    const rows = (await sql`
+      update notification_outbox
+      set body = '', recipient = ''
+      where created_at < ${cutoff}
+        and status in ('SENT', 'FAILED', 'SKIPPED')
+        and (body <> '' or recipient <> '')
+      returning id
+    `) as Row[];
+    return { enabled: true, days, scrubbed: rows.length };
+  } catch {
+    console.warn('[notifications] could not scrub expired outbox rows');
+    return { enabled: true, days, scrubbed: 0 };
   }
 }

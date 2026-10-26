@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  DEFAULT_NOTIFICATION_RETENTION_DAYS,
   MAX_NOTIFICATION_ATTEMPTS,
   cleanPhone,
   dedupeKey,
   normalizeEmail,
   normalizePhone,
+  notificationRetentionDays,
+  retentionCutoff,
   retryDelaySeconds,
   uniqueRecipients,
 } from '../src/lib/notifications/rules.ts';
@@ -86,4 +89,51 @@ test('retry delay doubles and is capped', () => {
   assert.equal(retryDelaySeconds(5), 960);
   assert.equal(retryDelaySeconds(99), 3600);
   assert.equal(MAX_NOTIFICATION_ATTEMPTS, 5);
+});
+
+test('retention is off unless switched on, and defaults to 90 days', () => {
+  assert.equal(notificationRetentionDays({}), null);
+  assert.equal(notificationRetentionDays({ NOTIFICATION_RETENTION_ENABLED: 'off' }), null);
+  assert.equal(notificationRetentionDays({ NOTIFICATION_RETENTION_ENABLED: 'no' }), null);
+  assert.equal(
+    notificationRetentionDays({ NOTIFICATION_RETENTION_ENABLED: 'on' }),
+    DEFAULT_NOTIFICATION_RETENTION_DAYS,
+  );
+  assert.equal(
+    notificationRetentionDays({
+      NOTIFICATION_RETENTION_ENABLED: 'true',
+      NOTIFICATION_RETENTION_DAYS: '30',
+    }),
+    30,
+  );
+  // Junk or a zero does not make the job clear today's messages.
+  assert.equal(
+    notificationRetentionDays({
+      NOTIFICATION_RETENTION_ENABLED: '1',
+      NOTIFICATION_RETENTION_DAYS: 'abc',
+    }),
+    DEFAULT_NOTIFICATION_RETENTION_DAYS,
+  );
+  assert.equal(
+    notificationRetentionDays({
+      NOTIFICATION_RETENTION_ENABLED: '1',
+      NOTIFICATION_RETENTION_DAYS: '0',
+    }),
+    DEFAULT_NOTIFICATION_RETENTION_DAYS,
+  );
+  // A huge value is clamped rather than trusted.
+  assert.equal(
+    notificationRetentionDays({
+      NOTIFICATION_RETENTION_ENABLED: '1',
+      NOTIFICATION_RETENTION_DAYS: '999999',
+    }),
+    3650,
+  );
+});
+
+test('the retention cutoff is exactly N days back and never today', () => {
+  const now = new Date('2026-10-26T12:00:00.000Z');
+  assert.equal(retentionCutoff(90, now).toISOString(), '2026-07-28T12:00:00.000Z');
+  assert.equal(retentionCutoff(1, now).toISOString(), '2026-10-25T12:00:00.000Z');
+  assert.equal(retentionCutoff(0, now).toISOString(), '2026-10-25T12:00:00.000Z');
 });

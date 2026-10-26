@@ -73,6 +73,34 @@ export function retryDelaySeconds(attempts: number): number {
   return Math.min(3600, 60 * 2 ** (safe - 1));
 }
 
+/** Retention is opt-in; when enabled without a number, keep 90 days. */
+export const DEFAULT_NOTIFICATION_RETENTION_DAYS = 90;
+
+/**
+ * Read the optional retention window.
+ *
+ * `NOTIFICATION_RETENTION_ENABLED` is the switch; without it nothing is ever
+ * scrubbed. `NOTIFICATION_RETENTION_DAYS` defaults to 90 and is clamped to a
+ * sane range so a typo cannot clear today's messages.
+ */
+export function notificationRetentionDays(
+  env: Readonly<Record<string, string | undefined>>,
+): number | null {
+  const enabled = String(env.NOTIFICATION_RETENTION_ENABLED ?? '').trim().toLowerCase();
+  if (!['1', 'true', 'on', 'yes'].includes(enabled)) return null;
+  const raw = Number(String(env.NOTIFICATION_RETENTION_DAYS ?? '').trim());
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_NOTIFICATION_RETENTION_DAYS;
+  return Math.min(Math.trunc(raw), 3650);
+}
+
+/** The oldest row a retention run may scrub. */
+export function retentionCutoff(days: number, now: Date = new Date()): Date {
+  const safe = Number.isFinite(days)
+    ? Math.max(1, Math.trunc(days))
+    : DEFAULT_NOTIFICATION_RETENTION_DAYS;
+  return new Date(now.getTime() - safe * 86_400_000);
+}
+
 /** Deduplicate cleaned recipients while preserving their sending form. */
 export function uniqueRecipients(
   rawValues: readonly unknown[],

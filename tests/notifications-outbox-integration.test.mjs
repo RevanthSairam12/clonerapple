@@ -63,6 +63,7 @@ const {
   getNotificationDeliveryLog,
   processNotificationOutbox,
   retryNotification,
+  scrubOldNotifications,
 } = await jiti.import(
   path.join(here, '..', 'src', 'lib', 'notifications', 'outbox.ts'),
 );
@@ -318,5 +319,75 @@ test('the outbox worker claims exclusively, retries with backoff, and stops', { 
     }
     await a.end({ timeout: 5 });
     await b.end({ timeout: 5 });
+  }
+});
+
+test('retention clears old finished bodies but keeps the audit trail', { skip }, async () => {
+  const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
+  const schema = `itest_retention_${suffix}`;
+  const a = client();
+
+  try {
+    await a.unsafe(`create schema "${schema}"`);
+    await a.unsafe(`create table "${schema}".notification_outbox (like public.notification_outbox including all)`);
+    await a.unsafe(`set search_path to "${schema}"`);
+    const pinned = await a`show search_path`;
+    assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
+
+    const now = new Date('2026-10-26T12:00:00.000Z');
+    const oldSent = await insertRow(a, { status: 'SENT', sent_at: new Date('2026-05-01T00:00:00.000Z') });
+    const oldFailed = await insertRow(a, { status: 'FAILED', reason: 'mail server rejected the message' });
+    const oldQueued = await insertRow(a, { status: 'QUEUED', next_attempt_at: new Date('2026-05-01T00:00:00.000Z') });
+    const recentSent = await insertRow(a, { status: 'SENT', sent_at: new Date('2026-10-20T00:00:00.000Z') });
+
+    await a`update notification_outbox set created_at = '2026-05-01T00:00:00Z' where id in (${oldSent.id}, ${oldFailed.id}, ${oldQueued.id})`;
+    await a`update notification_outbox set created_at = '2026-10-20T00:00:00Z' where id = ${recentSent.id}`;
+
+    // Off by default: nothing is touched without the switch.
+    const disabled = await scrubOldNotifications({ sql: a, env: {}, now });
+    assert.deepEqual(disabled, { enabled: false, days: null, scrubbed: 0 });
+
+    const result = await scrubOldNotifications({
+      sql: a,
+      env: { NOTIFICATION_RETENTION_ENABLED: 'on', NOTIFICATION_RETENTION_DAYS: '90' },
+      now,
+    });
+    assert.deepEqual(result, { enabled: true, days: 90, scrubbed: 2 });
+
+    const rows = await a`
+      select id, recipient, recipient_masked, subject, body, status, reason, created_at
+      from notification_outbox order by id
+    `;
+    const byId = new Map(rows.map((row) => [String(row.id), row]));
+
+    for (const id of [oldSent.id, oldFailed.id]) {
+      const row = byId.get(id);
+      assert.equal(String(row.body), '', 'old finished body is cleared');
+      assert.equal(String(row.recipient), '', 'old finished recipient is cleared');
+      assert.ok(String(row.recipient_masked).includes('@'), 'the masked recipient stays');
+      assert.equal(String(row.subject), 'Subject', 'the subject stays');
+      assert.ok(row.created_at instanceof Date, 'the timestamp stays');
+    }
+    assert.equal(String(byId.get(oldFailed.id).status), 'FAILED');
+    assert.equal(String(byId.get(oldFailed.id).reason), 'mail server rejected the message');
+
+    // A row still waiting to send is never stripped, and a recent row is kept.
+    for (const id of [oldQueued.id, recentSent.id]) {
+      const row = byId.get(id);
+      assert.equal(String(row.body), '<p>Body</p>');
+      assert.equal(String(row.recipient), 'buyer@example.test');
+    }
+
+    // Running again changes nothing.
+    const again = await scrubOldNotifications({
+      sql: a,
+      env: { NOTIFICATION_RETENTION_ENABLED: 'on', NOTIFICATION_RETENTION_DAYS: '90' },
+      now,
+    });
+    assert.equal(again.scrubbed, 0);
+  } finally {
+    await a.unsafe('set search_path to public');
+    await a.unsafe(`drop schema if exists "${schema}" cascade`);
+    await a.end();
   }
 });

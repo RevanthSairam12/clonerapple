@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { processNotificationOutbox } from '@/lib/notifications/outbox';
+import { processNotificationOutbox, scrubOldNotifications } from '@/lib/notifications/outbox';
 import { authorizeCronRequest } from '@/lib/payu/cron-auth';
 import { reconcilePendingOrders } from '@/lib/payu/reconcile';
 
@@ -40,12 +40,16 @@ export async function POST(req: NextRequest) {
     // Best-effort and bounded: a mail outage must not look like a failed
     // reconciliation. processNotificationOutbox() never throws.
     const notifications = await processNotificationOutbox(10);
+    // Optional and off by default. When NOTIFICATION_RETENTION_ENABLED is set,
+    // old finished rows lose their body and recipient but keep their history.
+    const retention = await scrubOldNotifications();
 
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       summary,
       notifications,
+      retention,
     });
   } catch (err: unknown) {
     console.error('[Reconciliation Endpoint Error]:', (err as Error).message);
