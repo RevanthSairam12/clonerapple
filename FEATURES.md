@@ -221,8 +221,13 @@ separate validation code.
   out-of-stock lines keep the existing **Unavailable** state, are excluded from the
   displayed subtotal and disable checkout. Checkout re-prices from the database again
   (§2.7), so the bag total is a display value only.
-- **Caveat:** stock is not held while an item sits in a bag. A line keeps the name and
-  image it had when added; only price and availability are refreshed.
+- **Shipping:** the existing Shipping row shows the same quote checkout charges (§2.7):
+  a method rate, a method's own free-over threshold, the store-wide free-shipping
+  threshold, or `FREE` when shipping is disabled or no method is configured. It is a
+  display value — initiate recomputes it server-side.
+- **Caveat:** stock is not held while an item sits in a bag. It is claimed when checkout
+  creates the order (§2.7). A line keeps the name and image it had when added; only price
+  and availability are refreshed.
 
 ### 2.7 Checkout and PayU — 🟢 Live (PayU only)
 
@@ -238,19 +243,48 @@ separate validation code.
      cases, search and bag surfaces now read the same `price_paise`, so the amount the
      customer saw is the amount PayU is asked to charge.
   3. `CheckoutForm` posts the cart to `/api/payu/initiate`, which validates and rate-limits
-     the request, creates the order (`PENDING`), builds the PayU request hash and returns a
-     hidden form. The browser auto-submits it to PayU.
-  4. If the customer ticked the offer box **and** `checkout_marketing_optin` is on, the
+     the request. Settings gate it first: if the store settings cannot be read the route
+     returns 503 and creates nothing; if `payu_enabled` is off it refuses through the
+     existing error alert. No client-sent price, shipping amount or total is ever read.
+  4. The amount is recomputed on the server: the re-priced subtotal plus a shipping quote
+     from `shipping_methods` / `free_shipping_over` / `shipping_enabled` (§2.14). The
+     subtotal, shipping and total are stored as paise on the order; `orders.amount` and the
+     PayU request both use that total. The checkout Total row and Pay Now button show the
+     same figure.
+  5. The order number comes from `order_prefix` + `order_start_number` through the
+     `order_number_counters` row (migration `0034`), and the formatted number is the
+     `txnid` (`GDZ001001`). An empty prefix keeps the previous `GDZ{time}{rand}` id and
+     leaves `orders.order_number` NULL.
+  6. The order and its stock claim are created in **one transaction**. Tracked `stock` rows
+     are locked `for update`, re-checked against `on_hand - reserved` and decremented; each
+     decrement writes a `stock_movements` row with reason `sale`. If any line no longer
+     fits, everything rolls back — no order row, no claim — and the customer sees the
+     existing error alert. Two buyers of the last unit serialise on the row lock, so only
+     one order is created. The order is written with payment status `CREATED` and fulfilment
+     status `PENDING` (the sale-state view already shows it as pending); PayU’s request hash is built
+     and a hidden form returned. The browser auto-submits it to PayU.
+  7. If the customer ticked the offer box **and** `checkout_marketing_optin` is on, the
      email is also inserted into `newsletter_subscribers`. Failure to record it never
      blocks the payment.
-  5. PayU calls back to `/api/payu/success`, `/api/payu/failure`, `/api/payu/cancel`.
+  8. PayU calls back to `/api/payu/success`, `/api/payu/failure`, `/api/payu/cancel`.
      `src/lib/payu/process-response.ts` verifies the reverse hash, calls PayU’s
      verification API for the transaction, then performs an **atomic, idempotent** status
-     transition. A duplicate callback cannot double-mark an order paid.
-  6. `/api/payu/webhook` accepts the same payloads server to server (rate limited to 100
-     per minute per IP). `/api/payu/reconcile` re-checks stale pending orders.
+     transition. A duplicate callback cannot double-mark an order paid. On the first
+     verified PAID transition, `auto_confirm` and `default_fulfilment_status` are applied
+     as legal `order-rules.ts` steps, each recorded in `order_status_history` with actor
+     `system`.
+  9. A verified failure or cancellation releases the stock claim once, through the movement
+     ledger (`sale` minus `release`), so duplicate callbacks and reconcile runs cannot
+     release twice. An admin cancelling an unpaid order releases too; a paid order keeps
+     its stock until the return flow restocks it.
+  10. `/api/payu/webhook` accepts the same payloads server to server (rate limited to 100
+      per minute per IP). `/api/payu/reconcile` re-checks stale pending orders and cancels
+      unpaid ones older than `auto_cancel_unpaid_hours` (0 or empty keeps the 2-hour
+      abandoned-checkout rule), releasing stock once and writing an `order.auto_cancel`
+      audit row.
 - **No other payment method exists.** There is no cash-on-delivery path, no manual bank
-  transfer path and no wallet. `payment_methods` in settings is not consulted.
+  transfer path and no wallet. `payment_methods` in settings is not consulted, and
+  `cod_enabled` ships off because checkout has no payment-method selector.
 
 ### 2.8 Order result pages — 🟢 Live
 
@@ -284,7 +318,8 @@ access is through `DATABASE_URL` — the publishable key is never used on those 
 - **What it does:** lets a customer ask to cancel, return or get help on an order.
 - **Rules (`src/lib/account/request-rules.ts`):**
   - cancel: only while the order is `PENDING` or `ACCEPTED`;
-  - return: only after `DELIVERED`, within **7 days** of delivery;
+  - return: only after `DELIVERED`, within the configured return window
+    (`return_window_days`, 7 days by default);
   - help: always allowed.
   - Status flow: `OPEN → IN_PROGRESS → RESOLVED | REJECTED`.
 - **Guardrails:** same-origin check, signed-in session required, 10 requests per 15
@@ -369,8 +404,71 @@ page layout.
   Price and availability are refreshed from the database; the historical name/image is
   not rewritten.
 
-**No migration was needed.** Phase 1 added no table or column; the next number remains
-`0034`.
+### 2.14 Checkout and order settings wiring (Phase 2) — 🟢 Live
+
+**Goal:** shipping, numbering, payment availability, paid-order automation, unpaid-order
+expiry and the return window come from Store Admin; checkout can never sell stock that
+does not exist.
+
+**Settings → behaviour (before → now)**
+
+| Setting (Settings → …) | Before | Now |
+|---|---|---|
+| `order_prefix` + `order_start_number` (Orders) | ignored; ids were `GDZ{time}{rand}` | new online orders get the prefix plus a 6-digit number from `order_number_counters` (migration `0034`), and that number **is** the `txnid`. Empty prefix keeps the old random id and leaves `order_number` NULL. Existing orders are untouched and never renumbered. |
+| `invoice_prefix` (Orders) | invoice printed the `txnid` | invoices print `invoice_prefix` + the padded order number; legacy orders still print `txnid`. |
+| `auto_confirm` + `default_fulfilment_status` (Orders) | ignored; a paid order stayed `PENDING` | on the first verified PAID transition the order walks legal `order-rules.ts` steps up to the configured status (auto-confirm lifts `PENDING` to at least `ACCEPTED`). Each step writes `order_status_history` with actor `system`. Invalid or `CANCELED` defaults mean “stay `PENDING`”. |
+| `auto_cancel_unpaid_hours` (Orders) | reconcile used a hard-coded 2-hour cutoff and wrote no audit row | reconcile cancels unpaid orders older than the configured hours with a system reason, releases their stock claim once and writes an `order.auto_cancel` audit row. `0` or empty keeps the 2-hour abandoned-checkout rule. |
+| `return_window_days` (Orders) | hard-coded 7 | the account return window and its error message use the configured value; 7 when unset, empty or invalid. |
+| `shipping_enabled`, `free_shipping_over`, `shipping_methods` (Shipping) | ignored; PayU charged the cart subtotal | initiate quotes shipping server-side: disabled → free; store-wide free-over reached → free; otherwise the first active method (sort order, then name), using its own free-over or rate. The quote is stored as `orders.shipping_paise` and charged by PayU. The cart’s existing Shipping row shows the same figure. |
+| `payu_enabled` (Payments) | ignored | off refuses initiate through the existing error alert; nothing is created. |
+| `payment_note` (Payments) | ignored | rendered in the checkout form’s existing PayU helper area. |
+| `cod_enabled` (Payments) | defaulted on and unused | default is now **off**. Checkout has no payment-method selector, so COD stays unwired. |
+| `pickup_enabled` (Orders) | ignored | not wireable — checkout has no delivery/pickup control (see below). |
+
+**Stock safety.** Order creation runs in one transaction: tracked `stock` rows are locked
+`for update`, re-checked against `on_hand - reserved`, then decremented; every decrement
+writes a `stock_movements` row with reason `sale`. If any line no longer fits, the whole
+transaction rolls back and initiate returns 409 through the existing alert — no order and
+no claim are left behind. A verified failure/cancel, an admin cancellation of an unpaid
+order and auto-cancel each release the outstanding claim once, guarded by the movement
+ledger (`sale` minus `release`), so duplicate callbacks or reconcile runs cannot release
+twice. Paid orders keep their stock; a return restocks through the existing return flow.
+
+**Evidence**
+
+| Rule | Proof |
+|---|---|
+| Two buyers of the last unit → exactly one order | `tests/checkout-stock.test.mjs` last-unit simulation of the lock + guarded-decrement contract |
+| Insufficient / unknown / archived rejected before any order row | `checkout-stock.test.mjs` plan tests; `createOrder` plans and throws before the insert |
+| Claim released once on failure/cancel/void/auto-cancel, never twice | ledger idempotence tests in `checkout-stock.test.mjs` + `tests/auto-cancel.test.mjs` |
+| Shipping threshold matrix (below/above/no method/pickup/disabled) | `tests/checkout-shipping.test.mjs` (disabled, no method, inactive method, at/above threshold, method free-over, zero rate) |
+| Client-sent shipping/total ignored | initiate reads only `price_paise` plus `quoteShipping`; no request field feeds the amount |
+| Numbering unique, padded, fallback, old ids kept | `tests/order-numbering.test.mjs` (25 concurrent allocations, start number, sanitisation, invoice fallbacks) |
+| Automation only through legal transitions | `tests/fulfilment-automation.test.mjs` full matrix |
+| Auto-cancel hours + idempotence | `tests/auto-cancel.test.mjs`; reconcile transitions idempotently and audits only on a real transition |
+| PayU off / COD default off | `tests/settings-rules.test.mjs` |
+| Return window default and configured | `tests/request-rules.test.mjs` |
+
+**Not wireable without a UI change (left alone deliberately)**
+
+- Pickup at checkout: `pickup_enabled` exists but the form has no delivery/pickup
+  selector, so there is nothing to gate.
+- Cash on delivery: no payment-method selector exists, so an honest COD path cannot be
+  reached from the UI; the setting ships off.
+- A shipping line on checkout: the checkout form has only Subtotal and Total rows. The
+  server charges the quote and the Total row includes it, but no new row was invented. The
+  cart page already has a Shipping row and now shows the quote.
+- Itemised revenue in reports: reports stay item-wise and continue to exclude shipping; the
+  shipping figure is available on order detail and in the orders CSV export.
+- A separate order-number column in the admin list: the `txnid` **is** the formatted number
+  for new orders, so the existing Transaction column already shows it. The export gains
+  explicit Order number and Shipping columns.
+- Maintenance mode, manual payments and PayU mode remain stored-only.
+
+**Migration `0034`** adds `orders.order_number`, the `order_number_counters` table (RLS
+enabled, reset-blocking trigger), a partial unique index on `order_number`, an index on
+`stock_movements.order_id`, and adds `release` to the movement-reason check. Phase 1 needed
+no migration; Phase 2 used `0034`, so the next free number is `0035` (notifications).
 
 ---
 
@@ -559,11 +657,11 @@ the server would reject. Every write is audited.
 | Page | Route | What it edits | Downstream status |
 |---|---|---|---|
 | Business | `/settings` | Trade/legal name, support email/phone, address, country, timezone, time format, footer text, receipt footer, cookie notice, logo/favicon media ids | 🟡 Only `trade_name`, `address`, `phone`, `email`, `receipt_footer` are consumed (by `DocumentHeader`, the invoice/packing-slip footer and the POS receipt). The rest are stored only. |
-| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, default fulfilment status, processing/cut-off text | 🔵 None consumed. Order ids are hard-coded `GDZ{time}{rand}`; invoice references use the `txnid`; POS receipts use a separate `receipt_counters` table formatted `RCP-0000007`. |
-| Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🔵 None consumed. Checkout is PayU-only; nothing reads `cod_enabled`, `manual_payments_enabled`, `payu_mode` or `payment_note`. |
+| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, default fulfilment status, return window, processing/cut-off text | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
+| Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🟡 `payu_enabled` gates initiate and `payment_note` renders under the checkout PayU helper. `cod_enabled` (default off), `manual_payments_enabled`, `payu_mode` and `payment_methods` are stored only — checkout has no method selector. |
 | Storefront | `/settings/storefront` | Login heading/subheading, login background media, support link, reCAPTCHA site key + status | 🔵 None consumed by the storefront. The store-admin login page renders its own copy. |
 | Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id | ⚪ Status only — no mail/SMS sender code exists. |
-| Shipping | `/settings/shipping` | Couriers + tracking templates, shipping methods and rates, live link tester | 🟢 Couriers + tracking templates used at delivery save; 🔵 rates |
+| Shipping | `/settings/shipping` | Couriers + tracking templates, shipping methods and rates, live link tester | 🟢 Couriers + tracking templates used at delivery save; rates and free-over thresholds consumed by the checkout quote and the cart Shipping row |
 | Notifications | `/settings/notifications` | 72 toggles (12 events × 3 channels × 2 audiences), automated messages, email templates | 🔵 Stored only |
 | Content | `/settings/content` | Store pages (8) and fixed SEO rows (14) | 🔵 Stored only — no route renders `store_pages`, no metadata reads `seo_pages` |
 | Analytics | `/settings/analytics` | Social links, analytics script IDs, integrations (storage/mail/payment/webhook) | 🔵 Stored only |
@@ -571,15 +669,17 @@ the server would reject. Every write is audited.
 | Staff | `/settings/staff` | See §3.7 | 🟢 |
 | Audit log | `/audit-log` | Filter and export the audit trail | 🟢 |
 
-> **No cancellation-window or return-window setting exists.** The customer return
-> window is the hard-coded constant `RETURN_WINDOW_DAYS = 7` in
-> `src/lib/account/request-rules.ts`; cancellation eligibility is decided from the
-> order’s fulfilment status, not a configured duration.
+> **Return window; no cancellation window.** The customer return window is the
+> `return_window_days` setting (7 when unset, empty or invalid), and its error message
+> changes with it. There is still no configurable cancellation window: cancellation
+> eligibility is decided from the order’s fulfilment status.
 
-#### Shipping methods — 🔵 Stored only
+#### Shipping methods — 🟢 Live at checkout
 `shipping_methods` supports name, rate, free-over threshold, ETA range and active flag.
-No code reads it. Checkout has **no shipping calculation at all**; the PayU amount is the
-cart subtotal.
+Checkout quotes the first active method (sort order, then name); `shipping_enabled` off or
+a store-wide `free_shipping_over` threshold short-circuits to free. The quote is stored as
+`orders.shipping_paise` and charged by PayU; the cart page shows the same figure in its
+existing Shipping row.
 
 #### Notifications — 🔵 Stored only
 The matrix and message templates persist, but there is no dispatcher, no outbox table and
@@ -665,15 +765,18 @@ A single view of every Phase 9 setting.
 | `trade_name`, `address`, `phone`, `email` | Settings → Business | `DocumentHeader` (invoice, packing slip), POS receipt | 🟢 |
 | `receipt_footer` | Settings → Business | Invoice, packing slip, POS receipt footers | 🟢 |
 | `legal_name`, `country`, `timezone`, `time_format`, `footer_text`, `cookie_notice`, `logo_media_id`, `favicon_media_id` | Settings → Business | — | 🔵 |
-| Order/invoice prefixes and numbering | Settings → Orders | — (ids are hard-coded `GDZ{time}{rand}`; POS uses `RCP-######`) | 🔵 |
-| `auto_confirm`, `shipping_enabled`, `pickup_enabled`, `free_shipping_over`, `auto_cancel_unpaid_hours`, `default_fulfilment_status`, `processing_time_text`, `cutoff_text` | Settings → Orders | — | 🔵 |
+| `order_prefix`, `order_start_number`, `invoice_prefix` | Settings → Orders | Order creation (`txnid` + `orders.order_number`), invoice references; POS keeps `RCP-######` | 🟢 |
+| `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`, `return_window_days` | Settings → Orders | Paid-order automation (`transitionOrderStatus`), reconcile, account return requests | 🟢 |
+| `shipping_enabled`, `free_shipping_over` | Settings → Orders / Shipping | Checkout shipping quote, cart Shipping row | 🟢 |
+| `pickup_enabled`, `processing_time_text`, `cutoff_text` | Settings → Orders | — (no checkout pickup control; text is copy only) | 🔵 |
 | `guest_checkout` | Customers → Settings | Checkout page + PayU initiate | 🟢 |
 | `checkout_marketing_optin` | Customers → Settings | Checkout UI + newsletter insert | 🟢 |
 | `default_customer_group` | Customers → Settings | Sign-up | 🟢 |
 | `fulfilment_providers` + tracking template | Settings → Shipping | Delivery save | 🟢 |
 | `cancellation_reasons` | Settings → Reasons | Returns/cancel flows | 🟢 |
-| `shipping_methods` (rates, free-over, ETA) | Settings → Shipping | — | 🔵 |
-| `payment_methods`, `cod_enabled`, `payu_enabled`, `manual_payments_enabled`, `payu_mode`, `payment_note` | Settings → Payments | — | 🔵 |
+| `shipping_methods` (rates, free-over, ETA) | Settings → Shipping | Checkout shipping quote, cart Shipping row | 🟢 |
+| `payu_enabled`, `payment_note` | Settings → Payments | PayU initiate gate, checkout helper text | 🟢 |
+| `payment_methods`, `cod_enabled`, `manual_payments_enabled`, `payu_mode` | Settings → Payments | — (no payment-method selector; COD ships off) | 🔵 |
 | `refund_reasons`, `return_reasons` | Settings → Reasons | — | 🔵 |
 | `login_heading`, `login_subheading`, `login_background_media_id`, `login_support_link`, `recaptcha_site_key`, `recaptcha_status` | Settings → Storefront | — | 🔵 |
 | `maintenance_enabled`, `maintenance_message`, `maintenance_starts_at`, `maintenance_ends_at` | Settings → Storefront (owner only) | — | 🔵 |
@@ -688,10 +791,12 @@ A single view of every Phase 9 setting.
 | Integrations (storage/mail/webhooks) | Settings → Analytics | — | 🔵 |
 | SMTP password, MSG91/Twilio token, reCAPTCHA secret, PayU key/salt | Environment only | Secret-presence badges | ⚪ |
 
-Summary: of the **50 keys** in `store_settings`, **5 are consumed** (`trade_name`,
-`address`, `phone`, `email`, `receipt_footer`), plus the three customer settings which
-live in `customer_settings`. The remaining 45 are persisted and audited but read by
-nothing.
+Summary: of the **51 keys** in `store_settings`, **16 are consumed** — `trade_name`,
+`address`, `phone`, `email`, `receipt_footer`, `order_prefix`, `order_start_number`,
+`invoice_prefix`, `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`,
+`return_window_days`, `shipping_enabled`, `free_shipping_over`, `payu_enabled` and
+`payment_note` — plus the `shipping_methods` table and the three `customer_settings` keys.
+The remaining 35 are persisted and audited but read by nothing.
 
 `store_settings` currently holds **1 row** — the smoke run from Phase 9 set `trade_name` to
 “Gadzio”. Every other key still shows its coded default.
@@ -704,14 +809,14 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migrations `0034`–`0035` | Reserved for notifications/outbox, background jobs and search indexes. Not written yet. (`0033` is now `product_collections` + `content_blocks.archived_at`.) |
+| Migration `0035` | Reserved for notifications/outbox, background jobs and search indexes. Not written yet. (`0033` is `product_collections` + `content_blocks.archived_at`; `0034` is Phase 2 order numbering + stock release.) |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Email and SMS delivery | No provider client, no outbox, no worker. The settings exist so the configuration has a home when the sender is built. |
 | PayU refund API | Manual refunds by design. The admin records the refund and the owner moves money in the PayU dashboard. |
 | Courier API integration | Third-party courier; the owner supplies a tracking URL template. |
 | Wallet, loyalty, serial/IMEI tracking, vendor/marketplace modules | Out of scope for a single store. |
 | Education Store admin | Deferred to the end; do not touch. |
-| Storefront consuming shipping rates / COD / maintenance mode | Not implemented. Checkout is PayU-only and free of shipping charges. |
+| Pickup, COD and maintenance mode at checkout | Shipping rates **are** charged now (§2.14). There is no delivery/pickup control and no payment-method selector, so `pickup_enabled` and `cod_enabled` stay unwired (COD off). Maintenance mode is still not enforced. |
 | Storefront reading `store_pages` / `seo_pages` | Not implemented. |
 | reCAPTCHA enforcement | Secret not configured and no verification call exists. |
 | Public deployment pipeline | No Vercel/CI config in the repo. |
@@ -723,7 +828,7 @@ These are deliberate gaps, not bugs.
 | Area | Implementation |
 |---|---|
 | Database access | Server-side only, `DATABASE_URL`, `postgres` tagged templates. The Supabase publishable key is used **only** for read-only `content_blocks`. |
-| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`) and `product_collections` (`0033`). Every table created since ships with RLS enabled in its own migration file. |
+| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`) and `order_number_counters` (`0034`). Every table created since ships with RLS enabled in its own migration file. |
 | Admin identities | Three completely separate stores: customer (`users`), store staff (`store_admins`), legacy CMS (`admin_users`). No cookie or session table is shared. |
 | Role checks | Every store-admin API route calls `requireStoreRole(...)`; verified by `scripts/check-store-admin-routes.mjs`. |
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
@@ -779,6 +884,9 @@ exhaust it; keep script connection pools at `max: 1`.
 | Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
+| Stock claim/release | `src/lib/payu/stock.ts` |
+| Checkout rules (pure) | `src/lib/checkout/shipping-rules.ts`, `stock-rules.ts`, `settings.ts` |
+| Order numbering + automation | `src/lib/orders/numbering.ts`, `fulfilment-automation.ts`, `auto-cancel-rules.ts` |
 | Cart | `src/lib/cart/*` |
 | Customer account | `src/lib/account/*`, `src/app/api/account/*` |
 | Store-admin auth | `src/lib/store-admin/auth.ts`, `src/app/api/store-admin/auth/*` |
