@@ -24,8 +24,6 @@ export const NOTIFICATION_EVENTS = [
   'low_stock',
   'payment_processing',
   'payment_failed',
-  'waitlist_joined',
-  'waitlist_invite',
   'reservation_expired',
   'refund_pending',
   'payment_review',
@@ -78,10 +76,6 @@ export interface NotificationContext {
   itemCount?: number | null;
   productName?: string | null;
   stockAvailable?: number | null;
-  /** Pre-formatted deadline for a waiting-list claim, e.g. "today at 4:30 pm". */
-  claimDeadline?: string | null;
-  /** How long the claim window lasts, in whole minutes. */
-  claimWindowMinutes?: number | null;
   /** Where a customer message should link, e.g. /order/status?txnid=GDZ1001. */
   customerLink?: string | null;
   /** Where a staff message should link, e.g. /store-admin/orders/GDZ1001. */

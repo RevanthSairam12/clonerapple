@@ -30,8 +30,6 @@ test('defaults: a 10-minute checkout hold, 120s failure grace, 60min unresolved 
   assert.equal(DEFAULT_RESERVATION_POLICY.reservationSeconds, 600);
   assert.equal(DEFAULT_RESERVATION_POLICY.failureGraceSeconds, 120);
   assert.equal(DEFAULT_RESERVATION_POLICY.unresolvedMinutes, 60);
-  assert.equal(DEFAULT_RESERVATION_POLICY.waitlistClaimMinutes, 15);
-  assert.equal(DEFAULT_RESERVATION_POLICY.waitlistEnabled, true);
 
   const parsed = parseReservationPolicy({});
   assert.deepEqual(parsed, DEFAULT_RESERVATION_POLICY);
@@ -47,25 +45,31 @@ test('a configured policy is clamped to safe bounds', () => {
     reservation_seconds: '60',
     payment_failure_grace_seconds: '0',
     payment_unresolved_minutes: '15',
-    waitlist_enabled: 'off',
-    waitlist_claim_minutes: '10',
-    waitlist_retry_minutes: '45',
   });
   assert.equal(parsed.reservationSeconds, 60);
   assert.equal(parsed.failureGraceSeconds, 0);
   assert.equal(parsed.unresolvedMinutes, 15);
-  assert.equal(parsed.waitlistEnabled, false);
-  assert.equal(parsed.waitlistClaimMinutes, 10);
-  assert.equal(parsed.waitlistRetryMinutes, 45);
 
   const junk = parseReservationPolicy({
     reservation_seconds: 'abc',
     payment_failure_grace_seconds: '-5',
-    waitlist_claim_minutes: '99999',
+    payment_unresolved_minutes: '99999',
   });
   assert.equal(junk.reservationSeconds, 600, 'junk falls back to the default');
   assert.equal(junk.failureGraceSeconds, 0, 'a negative grace floors at zero');
-  assert.equal(junk.waitlistClaimMinutes, 1440, 'an absurd claim window is capped');
+  assert.equal(junk.unresolvedMinutes, 1440, 'an absurd recovery window is capped');
+});
+
+test('removed waiting-list settings are ignored rather than resurrected', () => {
+  const parsed = parseReservationPolicy({
+    waitlist_enabled: 'on',
+    waitlist_claim_minutes: '15',
+    waitlist_retry_minutes: '30',
+  });
+  assert.deepEqual(parsed, DEFAULT_RESERVATION_POLICY);
+  assert.equal('waitlistEnabled' in parsed, false);
+  assert.equal('waitlistClaimMinutes' in parsed, false);
+  assert.equal('waitlistRetryMinutes' in parsed, false);
 });
 
 test('only a verified capture is a paid payment', () => {

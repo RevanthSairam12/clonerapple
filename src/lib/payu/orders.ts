@@ -19,19 +19,16 @@ import { planFulfilmentAutomation } from '@/lib/orders/fulfilment-automation';
 import type { FulfilmentStatus } from '@/lib/store-admin/order-rules';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { DEFAULT_SETTINGS } from '@/lib/store-admin/settings-rules';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { createRefundObligationInTx } from './refund-obligations';
 import {
   claimPlannedStock,
-  consumeStockHold,
   InsufficientStockError,
   reclaimReleasedStock,
   releasedClaimLines,
   releaseClaimedStock,
-  releaseReservedStock,
-  ReservationUnavailableError,
 } from './stock';
 
 /**
@@ -259,11 +256,6 @@ export interface CreateOrderParams {
    * no reservation: stock is still claimed, but no timed hold is recorded.
    */
   reservationSeconds?: number;
-  /**
-   * Raw waiting-list invitation token. Already hashed by the caller; the
-   * matching HELD row is consumed in this same transaction.
-   */
-  reservationToken?: string | null;
   shippingAddress: {
     name: string;
     phone: string;
@@ -459,10 +451,6 @@ export async function createOrderUsing(
   }
 
   const reservationSeconds = Math.max(0, Math.trunc(params.reservationSeconds ?? 0));
-  const rawToken = (params.reservationToken ?? '').trim();
-  const tokenHash = rawToken
-    ? createHash('sha256').update(rawToken).digest('hex')
-    : null;
 
   return await sql.begin(async (tx) => {
     const productIds = [...new Set(itemLines.map((line) => line.productId))];
@@ -472,7 +460,7 @@ export async function createOrderUsing(
     // hold back first; otherwise a one-unit product would look sold out to the
     // very customer it is being held for. Only this customer's own failed or
     // cancelled holds are touched, and only under the row lock.
-    if (params.userId && !tokenHash && productIds.length > 0) {
+    if (params.userId && productIds.length > 0) {
       const superseded = await tx<Array<{ id: string }>>`
         select id from orders
         where user_id = ${params.userId}
@@ -510,60 +498,7 @@ export async function createOrderUsing(
           for update
         `;
 
-    // A waiting-list invitation is exclusive stock. Validate it under the same
-    // lock as the stock row, and refuse rather than silently reserving a
-    // different unit when it has expired, been used, or belongs to someone
-    // else. The checkout then starts a fresh reservation, which is exactly
-    // what the customer is told to do.
-    type HeldReservation = {
-      id: string;
-      product_id: string;
-      user_id: string;
-      waiting_list_entry_id: string | null;
-      quantity: number;
-      status: string;
-      expires_at: string | Date;
-    };
-    let hold: HeldReservation | null = null;
-    let heldQuantity = 0;
-    if (tokenHash) {
-      const holdRows = await tx<HeldReservation[]>`
-        select id, product_id, user_id, waiting_list_entry_id, quantity, status, expires_at
-        from stock_reservations
-        where token_hash = ${tokenHash}
-        for update
-      `;
-      const row = holdRows[0];
-      if (!row) throw new ReservationUnavailableError();
-      const expires = dateOrNull(row.expires_at);
-      if (
-        row.status !== 'HELD'
-        || !expires
-        || expires.getTime() <= Date.now()
-        || !params.userId
-        || row.user_id !== params.userId
-        || !productIds.includes(row.product_id)
-      ) {
-        throw new ReservationUnavailableError();
-      }
-      hold = row;
-      const ordered = itemLines
-        .filter((line) => line.productId === row.product_id)
-        .reduce((sum, line) => sum + line.quantity, 0);
-      heldQuantity = Math.min(Math.max(1, Number(row.quantity) || 1), ordered);
-      if (heldQuantity <= 0) throw new ReservationUnavailableError();
-    }
-
-    // The held unit is already excluded from availability (`reserved`); the
-    // remaining lines are planned against the same snapshot.
-    const remainingLines = heldQuantity > 0 && hold
-      ? itemLines.flatMap((line) => {
-          if (line.productId !== hold!.product_id) return [line];
-          const quantity = line.quantity - heldQuantity;
-          return quantity > 0 ? [{ ...line, quantity }] : [];
-        })
-      : itemLines;
-    let plan = planStockClaim(remainingLines, stockRows);
+    let plan = planStockClaim(itemLines, stockRows);
     let expiredReservations: LazilyExpiredReservation[] = [];
     if (!plan.ok && productIds.length > 0) {
       // The checkout must not depend on the cron having run: an expired
@@ -578,7 +513,7 @@ export async function createOrderUsing(
           where variant_id is null and product_id = any(${productIds}::text[])
           for update
         `;
-        plan = planStockClaim(remainingLines, refreshed);
+        plan = planStockClaim(itemLines, refreshed);
       }
     }
     if (!plan.ok) throw new InsufficientStockError(plan.error);
@@ -689,33 +624,11 @@ export async function createOrderUsing(
       `;
     }
 
-    // 4. Consume the invitation first, then apply the rest of the claim. Both
-    //    write `sale` movements under the same locked stock rows, so the
-    //    ledger always equals the units the order holds.
-    let stockClaimed = false;
-    if (hold && heldQuantity > 0) {
-      await consumeStockHold(tx, {
-        reservationId: hold.id,
-        orderId: rows[0].id,
-        productId: hold.product_id,
-        quantity: heldQuantity,
-      });
-      const remainder = Math.max(0, Math.trunc(Number(hold.quantity) || 0) - heldQuantity);
-      if (remainder > 0) {
-        await releaseReservedStock(tx, hold.product_id, remainder);
-      }
-      if (hold.waiting_list_entry_id) {
-        await tx`
-          update waiting_list_entries
-          set status = 'PURCHASED', last_purchase_at = now(), updated_at = now()
-          where id = ${hold.waiting_list_entry_id} and status = 'INVITED'
-        `;
-      }
-      stockClaimed = true;
-    }
-
+    // 4. Claim the planned units. The guarded updates write `sale` movements
+    //    under the same locked stock rows, so the ledger always equals the
+    //    units the order holds.
     await claimPlannedStock(tx, rows[0].id, plan.claims);
-    if (plan.claims.length > 0) stockClaimed = true;
+    const stockClaimed = plan.claims.length > 0;
 
     return { order: mapRowToOrder(rows[0]), stockClaimed, expiredReservations };
   });

@@ -21,10 +21,6 @@ import {
 } from '@/lib/orders/auto-cancel-rules';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
-import {
-  allocateWaitlistInvitations,
-  expireWaitlistInvitations,
-} from '@/lib/waitlist/store';
 
 import {
   claimDueOrders,
@@ -55,11 +51,6 @@ export interface ReconcileSummary {
   flagged: number;
   unchanged: number;
   errors: Array<{ txnid: string; error: string }>;
-  waitingList: {
-    invitationsExpired: number;
-    invitationsSent: number;
-    unitsHeld: number;
-  };
   pendingRefundObligations: number;
 }
 
@@ -73,8 +64,6 @@ export interface ReconcileOptions {
   verifier?: PaymentVerifier;
   /** Fixed clock for tests; the coded default is the database's now(). */
   now?: Date;
-  /** Set false in a unit test that only exercises order reconciliation. */
-  runWaitlist?: boolean;
   /**
    * Connection the worker runs on. Defaults to the application pool; an
    * integration test passes a connection pinned to a throwaway schema.
@@ -99,7 +88,6 @@ function emptySummary(): ReconcileSummary {
     flagged: 0,
     unchanged: 0,
     errors: [],
-    waitingList: { invitationsExpired: 0, invitationsSent: 0, unitsHeld: 0 },
     pendingRefundObligations: 0,
   };
 }
@@ -193,22 +181,6 @@ export async function reconcilePendingOrders(
         },
         sql,
       ).catch(() => {});
-    }
-  }
-
-  if (options.runWaitlist !== false && policy.waitlistEnabled) {
-    try {
-      summary.waitingList.invitationsExpired = await expireWaitlistInvitations({
-        policy,
-        now,
-      });
-      const allocation = await allocateWaitlistInvitations({ policy, now });
-      summary.waitingList.invitationsSent = allocation.invited;
-      summary.waitingList.unitsHeld = allocation.unitsHeld;
-    } catch (error: unknown) {
-      const message = (error as Error).message;
-      console.error('[Waitlist] allocation tick failed:', message);
-      summary.errors.push({ txnid: '', error: `waitlist: ${message}` });
     }
   }
 

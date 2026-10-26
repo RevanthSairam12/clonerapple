@@ -9,11 +9,9 @@ import type { AccessoryProduct, ColorSwatch } from './data/types';
 
 interface Props {
   product: AccessoryProduct;
-  /** Server-rendered waiting-list panel, shown only when the item is unavailable. */
-  waitlistSlot?: React.ReactNode;
 }
 
-export function AccessoryDetailPage({ product, waitlistSlot }: Props) {
+export function AccessoryDetailPage({ product }: Props) {
   const { addItem } = useCart();
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
   const [activeImage, setActiveImage] = useState(0);
@@ -359,8 +357,6 @@ export function AccessoryDetailPage({ product, waitlistSlot }: Props) {
                 <span>Add to Bag</span>
               )}
             </button>
-
-            {waitlistSlot}
 
             {/* Added Confirmation Banner */}
             {isAdded && (

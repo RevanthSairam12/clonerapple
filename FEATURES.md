@@ -546,7 +546,7 @@ review flag used `0036`, so the next free number is `0037`.
 `orders.payment_reviewed_by` (references `store_admins(id)`), plus a partial index on the
 unreviewed flag. `orders` already has RLS; no new table is created.
 
-### 2.15 Flash-sale reservations, waiting list and payment reconciliation — 🟢 Live
+### 2.15 Flash-sale reservations and payment reconciliation — 🟢 Live
 
 **Goal:** one unit cannot be sold twice, an abandoned checkout cannot hold stock forever,
 a payment that may have left the bank is never reported as failed, and a late capture after
@@ -559,9 +559,6 @@ the unit was re-sold produces a tracked refund rather than an untracked charge.
 | `reservation_seconds` | **600** | 30–1800 | How long a checkout holds its claimed units. Shown as a countdown at checkout. A repeat request never extends it. |
 | `payment_failure_grace_seconds` | **120** | 0–900 | After a **definitive** failure/cancel, stock stays held this long so a quick retry on the same order can still succeed. Then it is released once and the order stays FAILED. |
 | `payment_unresolved_minutes` | 60 | 5–1440 | How long an ambiguous payment may keep its claim before the stock is released and the order is flagged for operations. The worker keeps checking afterwards. |
-| `waitlist_enabled` | on | toggle | Turns the product-page waiting list, invitations and allocation on/off. |
-| `waitlist_claim_minutes` | 15 | 5–1440 | How long one invited customer exclusively holds one unit. |
-| `waitlist_retry_minutes` | 30 | 0–10080 | Cooldown after a customer buys through an invitation before they can be re-invited. |
 
 Unknown, empty or junk values fall back to the default; out-of-band numbers are clamped
 (`src/lib/checkout/reservation-rules.ts`). All timing uses the **database's** `now()` (or a
@@ -661,40 +658,24 @@ received.”* Its only action is a GET refresh that re-reads the order (never a 
 needed; `/order/success` appears only after the trusted transition; unresolved stays
 processing.
 
-**Waiting list (`waiting_list_entries`, `stock_reservations`)**
+**Waiting list — removed.** The product-page waiting list, `/api/waitlist`, the
+`/waitlist/claim` page, the `WaitlistPanel`, the invite/allocation worker and the
+`waitlist_*` settings and notification topics are all gone; the reconcile tick now only
+reconciles orders. The `waiting_list_entries` and `stock_reservations` tables stay in
+place (migrations are additive) but nothing in the application reads or writes them.
+`scripts/release-waitlist-holds.mjs` runs
+`releaseWaitingListHoldsUsing` (`src/lib/payu/waitlist-cleanup.ts`) once: it returns every
+unit still held by a `HELD` reservation to availability inside one transaction, cancels
+the hold and its invitation, and writes one `catalog.waitlist.release_holds` audit row
+when anything moved. It is idempotent; the production run reported **0 held reservations
+and 0 units returned**.
 
-- Product detail shows a **Join the waiting list** panel when `waitlist_enabled` is on and
-  the product is sold out or fully reserved (`/api/waitlist`, signed-in only,
-  same-origin mutations, 20 joins / 10 min / user). One `ACTIVE`/`INVITED` entry per
-  customer and product, enforced by a partial unique index; rejoining returns the existing
-  entry (`alreadyOnList`).
-- Allocation is deterministic FIFO by `(created_at, id)`. One tick offers at most one unit
-  per product: it raises `stock.reserved` by the quantity (so availability drops without
-  touching `on_hand`, which only a sale moves) and writes a `HELD` `stock_reservations` row
-  with a **SHA-256 token hash** and `expires_at = now + waitlist_claim_minutes`. A partial
-  unique index allows only one `HELD` row per product, so two concurrent workers cannot
-  offer the same unit. Entries blocked by a live checkout, still inside their cooldown, or
-  not first in line are skipped, not removed.
-- The invitation email/SMS contains `/waitlist/claim?token=…`. Opening it requires the
-  signed-in owner, re-validates the invitation, and shows the claim deadline and held
-  quantity; it never promises that stock is guaranteed. The claim link starts a single
-  product checkout with `reservationToken`. `createOrder` re-checks ownership, expiry and
-  the hold under the stock row lock, consumes the hold (`CLAIMED`) and marks the entry
-  `PURCHASED`. A replayed, expired or someone-else's token fails closed
-  (`reservation_unavailable`); if the unit is gone, the claim cannot buy it.
-- `expireWaitlistInvitations` returns expired holds (`stock.reserved` −1, floored at zero,
-  guarded by the `HELD` status so a row is refunded once), marks the reservation `EXPIRED`
-  and the entry `EXPIRED` (or `CANCELLED` when the customer gave up), and the next tick
-  offers the unit to the next customer.
-
-**Notifications (reuses the outbox/matrix/templates).** New topics:
-`payment_processing`, `payment_failed`, `waitlist_joined`, `waitlist_invite`,
-`reservation_expired`, `refund_pending`, `payment_review` — added to
-`notification_channel_settings` by migration `0037` with the same conservative default
-(only staff in-app on), except customer email for `waitlist_invite`, which is on because
-an unheard invitation cannot be claimed. Every queue carries a `dedupe_key`, so a retried
-callback, reconcile tick or allocation pass never duplicates a message. Templates carry no
-card data, no raw gateway response and no full PII; the delivery-log masking and retention
+**Notifications (reuses the outbox/matrix/templates).** Topics added for this feature:
+`payment_processing`, `payment_failed`, `reservation_expired`, `refund_pending`,
+`payment_review` — added to `notification_channel_settings` by migration `0037` with the
+same conservative default (only staff in-app on). Every queue carries a `dedupe_key`, so a
+retried callback or reconcile tick never duplicates a message. Templates carry no card
+data, no raw gateway response and no full PII; the delivery-log masking and retention
 scrub of §3.6 still apply.
 
 **Migrations.** `0037_flash_sale_reservations.sql` adds the reservation/lease columns and
@@ -717,11 +698,10 @@ rewritten or removed.
 | Duplicate PAID callbacks make one ledger row | same #4 |
 | Verified capture racing expiry ends `PAID`/`CONSUMED` exactly once | same #5 |
 | The queue is durable across a restart (lease reclaim, attempts increment) | same #6 |
-| Waiting list: duplicate entry rejected, FIFO, one allocation, expiry returns stock and offers the next | same #7 |
-| A stale/expired invitation cannot buy a unit taken by someone else | same #8 |
+| Waiting list is gone: files/routes/panel/settings/topics/reconcile wiring absent | `tests/waitlist-removal.test.mjs` |
+| A leftover HELD reservation returns its unit once; a second run moves nothing | `tests/flash-sale-reservation-integration.test.mjs` (removed waiting list) |
 | Late capture after release creates exactly one pending refund obligation | `tests/late-payment-stock-integration.test.mjs` |
 | Pure decision rules (defaults, clamping, classification, backoff, phases) | `tests/reservation-rules.test.mjs` |
-| Waiting-list eligibility/FIFO/token/expiry rules | `tests/waitlist-rules.test.mjs` |
 | Signature/cron/auth surfaces unchanged | `tests/cron-auth.test.mjs`, existing PayU tests |
 
 **Deployment requirements.** Run `POST /api/payu/reconcile` every minute with
@@ -731,8 +711,8 @@ least one must be running). Apply migrations `0037` and `0038`. Alert on: orders
 `PROCESSING` beyond `payment_unresolved_minutes`, `payment_review_required` rows,
 `refund_obligations` that stay `PENDING`, and consecutive reconcile failures
 (`consecutive_reconcile_failures >= 5`). The endpoint returns counts
-(`processed`, `markedPaid`, `released`, `flagged`, `waitingList`, `pendingRefundObligations`)
-for a scheduler-side check.
+(`processed`, `markedPaid`, `released`, `flagged`, `pendingRefundObligations`) for a
+scheduler-side check.
 
 ---
 

@@ -10,7 +10,7 @@
  * Skipped when DATABASE_URL is unset, or on a transaction pooler (6543) where a
  * session-level `search_path` is not stable.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,7 +71,7 @@ export async function loadModule(relativePath) {
 
 const { DEFAULT_RESERVATION_POLICY } = await loadModule('src/lib/checkout/reservation-rules.ts');
 
-export const POLICY = { ...DEFAULT_RESERVATION_POLICY, waitlistEnabled: true };
+export const POLICY = { ...DEFAULT_RESERVATION_POLICY };
 
 export const TABLES = [
   'categories',
@@ -138,7 +138,6 @@ export function orderParams({
   userId = null,
   quantity = 1,
   reservationSeconds = 120,
-  token = null,
 }) {
   return {
     txnid,
@@ -152,7 +151,6 @@ export function orderParams({
     currency: 'INR',
     paymentMethod: 'payu',
     reservationSeconds,
-    reservationToken: token,
     customerName: 'Integration Buyer',
     customerEmail: 'integration@example.test',
     customerPhone: '9000000000',
@@ -183,21 +181,6 @@ export async function movementCount(a, orderId) {
     select count(*)::int as count from stock_movements where order_id = ${orderId}
   `;
   return Number(rows[0].count);
-}
-
-export async function insertHeldInvitation(a, { productId, userId, entryId, rawToken, minutes = 15 }) {
-  await a`
-    update stock set reserved = reserved + 1 where product_id = ${productId}
-  `;
-  await a`
-    insert into stock_reservations (
-      id, product_id, user_id, waiting_list_entry_id, quantity, status, token_hash, expires_at
-    ) values (
-      ${`srv_${randomBytes(6).toString('hex')}`}, ${productId}, ${userId}, ${entryId}, 1, 'HELD',
-      ${createHash('sha256').update(rawToken).digest('hex')},
-      now() + ${`${minutes} minutes`}::interval
-    )
-  `;
 }
 
 /** Verifier answers shaped like `verifyPaymentWithPayU`'s result. */
@@ -247,7 +230,6 @@ export function reconcileSummary() {
     flagged: 0,
     unchanged: 0,
     errors: [],
-    waitingList: { invitationsExpired: 0, invitationsSent: 0, unitsHeld: 0 },
     pendingRefundObligations: 0,
   };
 }

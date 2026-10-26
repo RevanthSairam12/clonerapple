@@ -45,8 +45,6 @@ export const TEMPLATE_VARIABLES = [
   'item_count',
   'product_name',
   'stock_available',
-  'claim_deadline',
-  'claim_window_minutes',
   'admin_link',
 ] as const;
 
@@ -161,8 +159,6 @@ export function templateValues(input: {
   itemCount?: number | null;
   productName?: string | null;
   stockAvailable?: number | null;
-  claimDeadline?: string | null;
-  claimWindowMinutes?: number | null;
   storeName?: string | null;
   supportPhone?: string | null;
   supportEmail?: string | null;
@@ -196,8 +192,6 @@ export function templateValues(input: {
     item_count: numberText(input.itemCount),
     product_name: text(input.productName),
     stock_available: numberText(input.stockAvailable),
-    claim_deadline: text(input.claimDeadline),
-    claim_window_minutes: numberText(input.claimWindowMinutes),
     admin_link: adminLink,
   };
 }
@@ -539,40 +533,6 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
       heading: 'Payment failed',
       body: 'Order {{order_number}} for {{order_total}} has a definitive failed payment. The stock claim is released after the grace window.',
       sms: '{{order_number}}: payment failed.',
-      buttonLabel: 'Open in Store Admin',
-      buttonUrl: '{{admin_link}}',
-    },
-  },
-  waitlist_joined: {
-    [CUSTOMER]: {
-      subject: 'You are on the waiting list for {{product_name}}',
-      heading: 'You are on the waiting list',
-      body: 'Hi {{customer_name}},\n\nYou are on the waiting list for {{product_name}}. We will email you when a unit becomes available. Being on the waiting list does not reserve stock, so a unit is only yours once you complete checkout from an invitation.',
-      sms: '{{store_name}}: you joined the waiting list for {{product_name}}. We will email you when a unit is available.',
-    },
-    [STAFF]: {
-      subject: 'Waiting-list entry: {{product_name}}',
-      heading: 'New waiting-list entry',
-      body: 'A customer joined the waiting list for {{product_name}}.',
-      sms: '{{product_name}}: new waiting-list entry.',
-      buttonLabel: 'Open in Store Admin',
-      buttonUrl: '{{admin_link}}',
-    },
-  },
-  waitlist_invite: {
-    [CUSTOMER]: {
-      subject: 'A unit of {{product_name}} is being held for you',
-      heading: 'Your unit is ready to claim',
-      body: 'Hi {{customer_name}},\n\nA unit of {{product_name}} is now being held for you until {{claim_deadline}} (about {{claim_window_minutes}} minutes).\n\nComplete checkout before then. If the window passes, the unit is offered to the next customer and you can join the waiting list again.',
-      sms: '{{store_name}}: {{product_name}} is held for you until {{claim_deadline}}. Complete checkout before then.',
-      buttonLabel: 'Claim your unit',
-      buttonUrl: '{{admin_link}}',
-    },
-    [STAFF]: {
-      subject: 'Waiting-list unit offered: {{product_name}}',
-      heading: 'Unit offered to a customer',
-      body: 'A unit of {{product_name}} was offered to the next waiting-list customer until {{claim_deadline}}.',
-      sms: '{{product_name}}: unit offered until {{claim_deadline}}.',
       buttonLabel: 'Open in Store Admin',
       buttonUrl: '{{admin_link}}',
     },

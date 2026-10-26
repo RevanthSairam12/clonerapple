@@ -348,8 +348,6 @@ export async function enqueueNotification(
         itemCount: context.itemCount,
         productName: context.productName,
         stockAvailable: context.stockAvailable,
-        claimDeadline: context.claimDeadline,
-        claimWindowMinutes: context.claimWindowMinutes,
         storeName: settings.trade_name,
         supportPhone: settings.phone,
         supportEmail: settings.email,

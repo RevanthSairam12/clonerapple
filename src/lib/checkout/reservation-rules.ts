@@ -18,20 +18,12 @@ export interface ReservationPolicy {
   failureGraceSeconds: number;
   /** How long an ambiguous payment may keep its claim before ops review. */
   unresolvedMinutes: number;
-  /** How long a waiting-list invitation holds one unit. */
-  waitlistClaimMinutes: number;
-  /** A customer is not re-invited sooner than this after an expiry. */
-  waitlistRetryMinutes: number;
-  waitlistEnabled: boolean;
 }
 
 export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
   reservationSeconds: 600,
   failureGraceSeconds: 120,
   unresolvedMinutes: 60,
-  waitlistClaimMinutes: 15,
-  waitlistRetryMinutes: 30,
-  waitlistEnabled: true,
 };
 
 function wholeNumber(value: unknown, fallback: number): number {
@@ -42,11 +34,6 @@ function wholeNumber(value: unknown, fallback: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function isOn(value: unknown): boolean {
-  const raw = String(value ?? '').trim().toLowerCase();
-  return raw === 'on' || raw === '1' || raw === 'true' || raw === 'yes';
 }
 
 /**
@@ -63,9 +50,6 @@ export function parseReservationPolicy(
     : DEFAULT_RESERVATION_POLICY.reservationSeconds;
   const graceRaw = String(settings.payment_failure_grace_seconds ?? '').trim();
   const unresolvedRaw = String(settings.payment_unresolved_minutes ?? '').trim();
-  const claimRaw = String(settings.waitlist_claim_minutes ?? '').trim();
-  const retryRaw = String(settings.waitlist_retry_minutes ?? '').trim();
-  const waitlistRaw = String(settings.waitlist_enabled ?? '').trim();
 
   return {
     reservationSeconds: clamp(reservation, 30, 1800),
@@ -75,15 +59,6 @@ export function parseReservationPolicy(
     unresolvedMinutes: unresolvedRaw === ''
       ? DEFAULT_RESERVATION_POLICY.unresolvedMinutes
       : clamp(wholeNumber(unresolvedRaw, DEFAULT_RESERVATION_POLICY.unresolvedMinutes), 5, 1440),
-    waitlistClaimMinutes: claimRaw === ''
-      ? DEFAULT_RESERVATION_POLICY.waitlistClaimMinutes
-      : clamp(wholeNumber(claimRaw, DEFAULT_RESERVATION_POLICY.waitlistClaimMinutes), 5, 1440),
-    waitlistRetryMinutes: retryRaw === ''
-      ? DEFAULT_RESERVATION_POLICY.waitlistRetryMinutes
-      : clamp(wholeNumber(retryRaw, DEFAULT_RESERVATION_POLICY.waitlistRetryMinutes), 0, 10080),
-    waitlistEnabled: waitlistRaw === ''
-      ? DEFAULT_RESERVATION_POLICY.waitlistEnabled
-      : isOn(waitlistRaw),
   };
 }
 

@@ -1,5 +1,5 @@
 /**
- * Live flash-sale reservation, reconciliation and waiting-list proof.
+ * Live flash-sale reservation and reconciliation proof.
  *
  * Every test opens a throwaway schema cloned from the public tables and
  * exercises the real SQL. See tests/helpers/flash-sale-schema.mjs for the
@@ -7,7 +7,6 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
 
 import {
   POLICY,
@@ -15,7 +14,6 @@ import {
   addUser,
   client,
   closeSchema,
-  insertHeldInvitation,
   loadModule,
   movementCount,
   openSchema,
@@ -33,12 +31,6 @@ const {
   releaseOrderReservation,
   transitionOrderStatusUsing,
 } = await loadModule('src/lib/payu/orders.ts');
-const {
-  allocateWaitlistInvitations,
-  expireWaitlistInvitations,
-  joinWaitingList,
-} = await loadModule('src/lib/waitlist/store.ts');
-
 test('one unit: a fresh checkout claims it, expiry releases it, and stock is re-checked', { skip }, async () => {
   const s = suffix();
   const schema = `fs_one_${s}`;
@@ -344,155 +336,6 @@ test('the reconcile queue is a durable lease, not an in-memory timer', { skip },
   }
 });
 
-test('waiting list: duplicate joins prevented, one invitation per unit, FIFO, expiry returns stock', { skip }, async () => {
-  const s = suffix();
-  const schema = `fs_wl_${s}`;
-  const productId = `fswl${s}`;
-  const u1 = `fswl1${s}`;
-  const u2 = `fswl2${s}`;
-  const u3 = `fswl3${s}`;
-  const a = client();
-
-  try {
-    await openSchema(a, schema);
-    // Sold out when the customers join; a unit arrives before allocation.
-    await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 0 });
-    await addUser(a, u1);
-    await addUser(a, u2);
-    await addUser(a, u3);
-
-    const first = await joinWaitingList({ userId: u1, productId, sql: a, policy: POLICY, sendNotifications: false });
-    assert.equal(first.ok, true);
-    assert.equal(first.alreadyOnList, false);
-    const duplicate = await joinWaitingList({ userId: u1, productId, sql: a, policy: POLICY, sendNotifications: false });
-    assert.equal(duplicate.ok, true);
-    assert.equal(duplicate.alreadyOnList, true);
-    const entryCount = await a`select count(*)::int as count from waiting_list_entries`;
-    assert.equal(Number(entryCount[0].count), 1, 'a double click cannot create a second place');
-    await joinWaitingList({ userId: u2, productId, sql: a, policy: POLICY, sendNotifications: false });
-    await joinWaitingList({ userId: u3, productId, sql: a, policy: POLICY, sendNotifications: false });
-
-    await a`update stock set on_hand = 1 where product_id = ${productId}`;
-    const allocated = await allocateWaitlistInvitations({
-      policy: POLICY,
-      now: new Date(),
-      sql: a,
-      sendNotifications: false,
-    });
-    assert.equal(allocated.invited, 1);
-    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 1 });
-    const invited = await a`
-      select user_id, status from waiting_list_entries where status = 'INVITED'
-    `;
-    assert.equal(invited.length, 1);
-    assert.equal(String(invited[0].user_id), u1, 'the oldest entry is offered the unit');
-
-    const secondTick = await allocateWaitlistInvitations({
-      policy: POLICY,
-      now: new Date(),
-      sql: a,
-      sendNotifications: false,
-    });
-    assert.equal(secondTick.invited, 0, 'one live invitation per product');
-    assert.equal(
-      Number((await a`select count(*)::int as count from stock_reservations where status = 'HELD'`)[0].count),
-      1,
-    );
-
-    await a`update stock_reservations set expires_at = now() - interval '1 second' where status = 'HELD'`;
-    const expired = await expireWaitlistInvitations({
-      policy: POLICY,
-      now: new Date(),
-      sql: a,
-      sendNotifications: false,
-    });
-    assert.equal(expired, 1);
-    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 0 }, 'the held unit returns');
-    const entry = await a`select status from waiting_list_entries where user_id = ${u1}`;
-    assert.equal(String(entry[0].status), 'EXPIRED');
-
-    const nextTick = await allocateWaitlistInvitations({
-      policy: POLICY,
-      now: new Date(),
-      sql: a,
-      sendNotifications: false,
-    });
-    assert.equal(nextTick.invited, 1, 'the next entry is offered the returned unit');
-    const nextInvited = await a`
-      select user_id from waiting_list_entries where status = 'INVITED'
-    `;
-    assert.equal(String(nextInvited[0].user_id), u2);
-  } finally {
-    await closeSchema(a, schema);
-  }
-});
-
-test('a live invitation is consumed once and a stale one cannot buy a sold-out unit', { skip }, async () => {
-  const s = suffix();
-  const schema = `fs_token_${s}`;
-  const productId = `fstok${s}`;
-  const user = `fstokuser${s}`;
-  const other = `fstokother${s}`;
-  const a = client();
-
-  try {
-    await openSchema(a, schema);
-    await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 1 });
-    await addUser(a, user);
-    await addUser(a, other);
-
-    const entryId = `wl_${randomBytes(8).toString('hex')}`;
-    await a`
-      insert into waiting_list_entries (id, product_id, user_id, status, invited_at)
-      values (${entryId}, ${productId}, ${user}, 'INVITED', now())
-    `;
-    const rawToken = randomBytes(32).toString('hex');
-    await insertHeldInvitation(a, { productId, userId: user, entryId, rawToken });
-    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 1 });
-
-    const created = await createOrderUsing(
-      a,
-      orderParams({ productId, txnid: `FSTOK${s}`, userId: user, token: rawToken }),
-    );
-    assert.equal(created.stockClaimed, true);
-    assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
-    const hold = await a`select status, claimed_order_id from stock_reservations`;
-    assert.equal(String(hold[0].status), 'CLAIMED');
-    assert.equal(String(hold[0].claimed_order_id), created.order.id);
-    const entry = await a`select status from waiting_list_entries where id = ${entryId}`;
-    assert.equal(String(entry[0].status), 'PURCHASED');
-
-    // Replaying the same claim link starts no second order.
-    await assert.rejects(
-      () => createOrderUsing(a, orderParams({ productId, txnid: `FSTOK2${s}`, userId: user, token: rawToken })),
-      (error) => error?.code === 'reservation_unavailable',
-    );
-
-    // A stale hold is released; the same token then buys nothing.
-    const staleRaw = randomBytes(32).toString('hex');
-    const staleEntry = `wl_${randomBytes(8).toString('hex')}`;
-    await a`
-      insert into waiting_list_entries (id, product_id, user_id, status, invited_at)
-      values (${staleEntry}, ${productId}, ${other}, 'INVITED', now())
-    `;
-    await a`update stock set on_hand = 1 where product_id = ${productId}`;
-    await insertHeldInvitation(a, { productId, userId: other, entryId: staleEntry, rawToken: staleRaw });
-    await a`update stock_reservations set expires_at = now() - interval '1 second' where status = 'HELD'`;
-    await expireWaitlistInvitations({ policy: POLICY, now: new Date(), sql: a, sendNotifications: false });
-    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 0 });
-
-    // Another customer takes the unit first.
-    await createOrderUsing(a, orderParams({ productId, txnid: `FSTOK3${s}`, userId: user }));
-    await assert.rejects(
-      () => createOrderUsing(a, orderParams({ productId, txnid: `FSTOK4${s}`, userId: other, token: staleRaw })),
-      (error) => error?.code === 'reservation_unavailable',
-    );
-    const ordersForOther = await a`select count(*)::int as count from orders where user_id = ${other}`;
-    assert.equal(Number(ordersForOther[0].count), 0);
-  } finally {
-    await closeSchema(a, schema);
-  }
-});
 
 test('high concurrency: many buyers, one unit, exactly one order', { skip }, async () => {
   const s = suffix();
@@ -534,6 +377,58 @@ test('high concurrency: many buyers, one unit, exactly one order', { skip }, asy
     assert.equal(Number(count[0].count), 1);
   } finally {
     for (const connection of buyers) await connection.end();
+    await closeSchema(a, schema);
+  }
+});
+
+test('removed waiting list: held units are returned once and the release is idempotent', { skip }, async () => {
+  const s = suffix();
+  const schema = `fs_wlclean_${s}`;
+  const productId = `fswlc${s}`;
+  const user = `fswlcu${s}`;
+  const a = client();
+
+  try {
+    await openSchema(a, schema);
+    await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 1 });
+    await addUser(a, user);
+
+    // A leftover invitation from the removed feature: one unit held and one
+    // entry still INVITED. Nothing in the app expires or allocates it any more.
+    const entryId = `wl_${s}`;
+    await a`
+      insert into waiting_list_entries (id, product_id, user_id, status, invited_at)
+      values (${entryId}, ${productId}, ${user}, 'INVITED', now())
+    `;
+    await a`update stock set reserved = reserved + 1 where product_id = ${productId}`;
+    await a`
+      insert into stock_reservations (
+        id, product_id, user_id, waiting_list_entry_id, quantity, status, token_hash, expires_at
+      ) values (
+        ${`srv_${s}`}, ${productId}, ${user}, ${entryId}, 1, 'HELD',
+        ${'a'.repeat(64)}, now() + interval '15 minutes'
+      )
+    `;
+    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 1 });
+
+    const { releaseWaitingListHoldsUsing } = await loadModule('src/lib/payu/waitlist-cleanup.ts');
+    const first = await releaseWaitingListHoldsUsing(a);
+    assert.deepEqual(first, { holdsReleased: 1, unitsReleased: 1, products: [productId] });
+    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 0 });
+    const hold = await a`select status from stock_reservations where id = ${`srv_${s}`}`;
+    assert.equal(String(hold[0].status), 'CANCELLED');
+    const entry = await a`select status from waiting_list_entries where id = ${entryId}`;
+    assert.equal(String(entry[0].status), 'CANCELLED');
+
+    const second = await releaseWaitingListHoldsUsing(a);
+    assert.deepEqual(second, { holdsReleased: 0, unitsReleased: 0, products: [] });
+    assert.deepEqual(await stockState(a, productId), { onHand: 1, reserved: 0 }, 'never released twice');
+
+    // The freed unit is buyable again through the normal checkout.
+    const created = await createOrderUsing(a, orderParams({ productId, txnid: `FSWLC${s}`, userId: user }));
+    assert.equal(created.stockClaimed, true);
+    assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
+  } finally {
     await closeSchema(a, schema);
   }
 });

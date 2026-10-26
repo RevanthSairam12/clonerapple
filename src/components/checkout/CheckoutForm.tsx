@@ -6,7 +6,6 @@ import { useCart } from '@/lib/cart/CartContext';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { decideCheckoutView } from '@/lib/checkout/checkout-decision';
-import { ReservationCountdown } from '@/components/checkout/ReservationCountdown';
 import {
   EMPTY_SHIPPING_POLICY,
   quoteShipping,
@@ -51,15 +50,10 @@ interface Props {
   shippingPolicy?: ShippingPolicy;
   /** Payments → "Checkout payment note". Empty by default. */
   paymentNote?: string;
-  /** A raw waiting-list invitation token; the server re-validates it. */
-  reservationToken?: string;
-  /** Whole seconds left on the invitation, computed by the server. */
-  reservationSeconds?: number;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '', reservationToken = '', reservationSeconds = 0 }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '' }: Props) {
   const { items: bagItems, removeItem, isHydrated } = useCart();
-  const claimMode = Boolean(reservationToken);
 
   const decision = decideCheckoutView({
     isHydrated,
@@ -78,24 +72,19 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     window.history.replaceState(window.history.state, '', '/checkout');
   }, [decision.clearProductQueryFromUrl]);
 
-  // A claimed invitation is a single held unit. The bag is deliberately not
-  // merged in: the token covers exactly one product, and adding other lines
-  // would make the reservation ambiguous. Other bag items stay in the bag.
   const items: CartItem[] =
-    claimMode
-      ? initialItems ?? []
-      : decision.view === 'bag'
-        ? bagItems.map((b) => ({
-            id: b.id,
-            productId: b.productId,
-            name: b.name + (b.subtitle ? ` (${b.subtitle})` : ''),
-            price: b.price,
-            quantity: b.quantity,
-            image: b.image,
-          }))
-        : decision.view === 'product'
-          ? initialItems ?? []
-          : [];
+    decision.view === 'bag'
+      ? bagItems.map((b) => ({
+          id: b.id,
+          productId: b.productId,
+          name: b.name + (b.subtitle ? ` (${b.subtitle})` : ''),
+          price: b.price,
+          quantity: b.quantity,
+          image: b.image,
+        }))
+      : decision.view === 'product'
+        ? initialItems ?? []
+        : [];
 
   // A line is only payable when its id exists in the authoritative PayU
   // catalog. Stale/education ids and anything else are marked unavailable and
@@ -252,7 +241,6 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           shippingAddressId: shippingAddressId || undefined,
           shippingAddress: shippingAddressId ? undefined : shippingAddress,
           marketingOptIn: marketingOptInEnabled && marketingOptIn,
-          reservationToken: reservationToken || undefined,
         }),
       });
 
@@ -378,21 +366,9 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   return (
     <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f]">
       <div className="mb-8">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          {claimMode ? 'Claim your reserved unit' : 'Express Checkout'}
-        </h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Express Checkout</h1>
         <p className="text-sm text-[#86868b] mt-1">Complete your order with PayU Hosted Checkout.</p>
       </div>
-
-      {claimMode ? (
-        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
-          <ReservationCountdown seconds={reservationSeconds} label="This unit is held for you" />
-          <p className="mt-2 text-xs text-amber-900">
-            Complete payment before the countdown ends. If the reservation expires, the unit is
-            offered to the next customer and this link cannot reserve it again.
-          </p>
-        </div>
-      ) : null}
 
       {errorMessage && (
         <div
@@ -427,7 +403,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                     <div className="font-medium text-[#1d1d1f] line-clamp-1">{item.name}</div>
                     <div className="text-xs text-[#86868b] flex items-center gap-2 mt-0.5">
                       <span>Qty: {item.quantity}</span>
-                      {bagItems.length > 0 && !claimMode && (
+                      {bagItems.length > 0 && (
                         <>
                           <span>•</span>
                           <button

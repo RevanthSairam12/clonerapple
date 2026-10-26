@@ -38,8 +38,6 @@ export const NOTIFICATION_TOPICS = [
   { value: 'low_stock', label: 'Low stock' },
   { value: 'payment_processing', label: 'Payment processing' },
   { value: 'payment_failed', label: 'Payment failed' },
-  { value: 'waitlist_joined', label: 'Waiting list joined' },
-  { value: 'waitlist_invite', label: 'Waiting-list invitation' },
   { value: 'reservation_expired', label: 'Reservation expired' },
   { value: 'refund_pending', label: 'Refund pending' },
   { value: 'payment_review', label: 'Payment review' },

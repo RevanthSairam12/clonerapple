@@ -6,14 +6,12 @@ import { reconcilePendingOrders } from '@/lib/payu/reconcile';
 export const runtime = 'nodejs';
 
 /**
- * Scheduled job endpoint for reservations, payment reconciliation and the
- * waiting list.
+ * Scheduled job endpoint for reservations and payment reconciliation.
  *
  * Call every minute from the deployment's scheduler with
  * `Authorization: Bearer $CRON_SECRET`. Each tick claims due order rows with a
  * database lease, verifies them against PayU, releases reservations whose
- * window or failure grace ended, flags payments that stay unresolved, expires
- * waiting-list invitations and offers newly free units to the next customer.
+ * window or failure grace ended and flags payments that stay unresolved.
  * Missing `CRON_SECRET` fails closed in production (503) because abandoned
  * checkouts hold stock and would otherwise never be released.
  *
