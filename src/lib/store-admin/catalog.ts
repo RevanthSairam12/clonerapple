@@ -31,6 +31,8 @@ export interface CatalogProductSummary {
   name: string;
   subtitle: string;
   pricePaise: number;
+  /** Stored sale price. Applies only while sale mode is live. */
+  salePricePaise: number | null;
   currency: string;
   isActive: boolean;
   inStock: boolean;
@@ -81,6 +83,8 @@ export interface CatalogPriceHistoryRow {
   id: number;
   oldPricePaise: number | null;
   newPricePaise: number;
+  /** `regular`, `sale` or `sale_cleared` — which price the row records. */
+  priceKind: string;
   currency: string;
   source: string;
   reason: string;
@@ -263,6 +267,7 @@ function mapSummary(row: Row): CatalogProductSummary {
     name: text(row.name),
     subtitle: text(row.subtitle),
     pricePaise: number(row.price_paise),
+    salePricePaise: nullableNumber(row.sale_price_paise),
     currency: text(row.currency) || 'INR',
     isActive: Boolean(row.is_active),
     inStock: Boolean(row.in_stock),
@@ -316,8 +321,8 @@ export async function listCatalogOverview(): Promise<CatalogLoad<CatalogOverview
         order by c.sort_order, c.name
       `,
       sql`
-        select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.currency,
-               p.is_active, p.in_stock, p.sort_order, p.updated_at,
+        select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
+               p.currency, p.is_active, p.in_stock, p.sort_order, p.updated_at,
                s.track_inventory,
                c.id as category_id, c.slug as category_slug, c.name as category_name
         from products p
@@ -355,7 +360,7 @@ export async function getCatalogProduct(
 
   try {
     const productRows = await sql`
-      select p.id, p.slug, p.name, p.subtitle, p.price_paise,
+      select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
              p.compare_at_paise, p.cost_paise, p.currency, p.material, p.brand, p.brand_id,
              p.condition_id, cond.label as condition_label, p.description,
              p.badge, p.highlights, p.in_the_box, p.seo_title,
@@ -412,7 +417,7 @@ export async function getCatalogProduct(
           order by a.sort_order, a.label
         `,
         sql`
-          select id, old_price_paise, new_price_paise, currency, source,
+          select id, old_price_paise, new_price_paise, price_kind, currency, source,
                  reason, changed_by, changed_at
           from price_history
           where product_id = ${id}
@@ -481,6 +486,7 @@ export async function getCatalogProduct(
         id: number(row.id),
         oldPricePaise: nullableNumber(row.old_price_paise),
         newPricePaise: number(row.new_price_paise),
+        priceKind: text(row.price_kind) || 'regular',
         currency: text(row.currency) || 'INR',
         source: text(row.source),
         reason: text(row.reason),

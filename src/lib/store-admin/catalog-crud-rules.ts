@@ -297,6 +297,8 @@ export function checkPricePair(pricePaise: number, compareAtPaise: number | null
 export interface PricePatch {
   pricePaise?: number;
   compareAtPaise?: number | null;
+  /** `null` clears the sale price; omitted leaves it unchanged. */
+  salePricePaise?: number | null;
 }
 
 export function validatePricePatch(input: unknown): FieldResult<PricePatch> {
@@ -322,10 +324,51 @@ export function validatePricePatch(input: unknown): FieldResult<PricePatch> {
     }
   }
 
-  if (value.pricePaise === undefined && value.compareAtPaise === undefined) {
-    return { ok: false, error: 'Send a selling price, a compare-at price, or both.' };
+  if (body.salePricePaise !== undefined) {
+    if (body.salePricePaise === null || body.salePricePaise === '') {
+      value.salePricePaise = null;
+    } else {
+      const sale = boundedInt(body.salePricePaise, 1, PRICE_MAX_PAISE, 'The sale price');
+      if (!sale.ok) return sale;
+      value.salePricePaise = sale.value;
+    }
+  }
+
+  if (
+    value.pricePaise === undefined
+    && value.compareAtPaise === undefined
+    && value.salePricePaise === undefined
+  ) {
+    return { ok: false, error: 'Send a selling price, a compare-at price, a sale price, or a combination.' };
   }
   return { ok: true, value };
+}
+
+/**
+ * Sale-specific checks that need the whole price pair. Returns an error when
+ * the sale price cannot be stored, or a warning when it is allowed but risky
+ * (below cost). A warning never blocks the write.
+ */
+export function checkSalePrice(args: {
+  salePaise: number | null;
+  regularPaise: number;
+  costPaise: number | null;
+}): { error: string | null; warning: string | null } {
+  const { salePaise, regularPaise, costPaise } = args;
+  if (salePaise === null) return { error: null, warning: null };
+  if (!Number.isInteger(salePaise) || salePaise <= 0) {
+    return { error: 'The sale price must be a positive whole number of paise.', warning: null };
+  }
+  if (salePaise >= regularPaise) {
+    return { error: 'The sale price must be lower than the selling price.', warning: null };
+  }
+  if (costPaise !== null && salePaise < costPaise) {
+    return {
+      error: null,
+      warning: 'The sale price is below cost. It will still be saved.',
+    };
+  }
+  return { error: null, warning: null };
 }
 
 /* -------------------------------------------------------------- variants */

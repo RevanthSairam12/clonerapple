@@ -82,5 +82,10 @@ export async function PATCH(
 
   revalidateCatalog(id);
 
-  return NextResponse.json({ ok: true, changed: result.data.changed, price: result.data.after });
+  return NextResponse.json({
+    ok: true,
+    changed: result.data.changed,
+    price: result.data.after,
+    warnings: result.data.warnings,
+  });
 }

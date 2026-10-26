@@ -188,8 +188,10 @@ separate validation code.
   An unreachable database (or no `DATABASE_URL`) → the static record renders exactly as
   before, so an outage cannot blank the page. `/shop/product/…` still 404s when no static
   record exists either.
-- **Prices:** the displayed amount is `price_paise / 100`, the same column checkout reads,
-  so the page price and the PayU amount cannot drift.
+- **Prices:** the displayed amount is the effective price from
+  `resolveEffectivePrice` (§2.16) divided by 100 — the same resolver checkout uses, so the
+  page price and the PayU amount cannot drift. While a sale is live the regular price is
+  shown struck through beside the sale price.
 - **Not read:** reviews/ratings (there is no rating UI on the page), `cost_paise`, internal
   notes, audit rows or customer data. Compare-at is carried in the read model but no
   component renders it yet.
@@ -714,6 +716,51 @@ least one must be running). Apply migrations `0037` and `0038`. Alert on: orders
 (`processed`, `markedPaid`, `released`, `flagged`, `pendingRefundObligations`) for a
 scheduler-side check.
 
+### 2.16 Sale pricing — 🟢 Live (storage, resolver and every price surface)
+
+- **Storage.** `products.sale_price_paise` (integer paise, nullable; migration `0039`)
+  holds an optional sale price. It is stored all year and **applies only while sale mode
+  is live**. `product_variants.sale_price_paise` exists for schema parity, but variants
+  have no customer-facing price surface (checkout and the storefront price the product
+  row), so no variant sale-price path is wired.
+- **One resolver.** `src/lib/storefront/pricing.ts` →
+  `resolveEffectivePrice({ pricePaise, salePricePaise }, saleLive)`. A sale price applies
+  only when sale mode is live **and** it is a positive amount genuinely below the regular
+  price. Anything else returns the regular price. `discountPercent()` is the one
+  percentage helper (floored whole percent).
+- **Every surface.** The resolver feeds the storefront read model
+  (`src/lib/catalog/storefront.ts` → detail pages, accessory/cases pages, collection
+  grids, search refs and the bag), the PayU path (`src/lib/payu/db-catalog.ts` →
+  `/api/payu/initiate`, checkout display, direct-buy checkout) and POS
+  (`src/lib/store-admin/pos.ts`). Order lines, receipts, invoices and notifications store
+  and render the charged amount, so they never re-price later. Display components show
+  the sale price with the regular struck through only while a sale is live; with sale
+  mode off they render the regular price alone.
+- **The clock.** `src/lib/storefront/sale.ts` → `saleStatusAt(window, databaseNow)`.
+  `starts_at` is inclusive, `ends_at` exclusive; the switch alone decides when there is
+  no window. `src/lib/storefront/sale-state.ts` reads the one-row `sale_settings` table
+  (migration `0039`, RLS enabled) together with `now()` from PostgreSQL. The browser
+  clock is never consulted. If the table or connection cannot be read,
+  `readSaleState()` returns `SALE_OFF` — regular prices and normal mode — rather than
+  throwing or guessing a sale.
+- **Admin editing.** The product page's **Price** card stores a sale price beside the
+  selling price; blank clears it. Validation: positive and lower than the regular price
+  (blocked); below `cost_paise` (warned, still saved). Every sale price write appends a
+  `price_history` row with `price_kind = 'sale'`; a clear records `'sale_cleared'` with
+  the `new_price_paise` sentinel `0`. Regular changes record `'regular'` (also the column
+  default). The products list shows a **Sale price** column and the price-history table
+  shows the kind.
+- **CSV.** `sale_price` is an import and export column; a row is rejected when the sale
+  price is not positive or is not lower than `price`, with the error reported against
+  that row. Blank means no sale price, and an update with a blank cell clears it (with a
+  `sale_cleared` history row).
+- **Evidence.** `tests/sale-pricing.test.mjs` (resolver, window boundaries, validation,
+  CSV, history markers, DB-clock source guard, resolver-only reader guard) and
+  `tests/catalog-csv.test.mjs`.
+- **Migrations.** `0039_sale_pricing.sql` adds `products.sale_price_paise`,
+  `product_variants.sale_price_paise`, `price_history.price_kind` (default `regular`) and
+  the one-row `sale_settings` table (RLS enabled, no policies). Additive only.
+
 ---
 
 ## 3. Store admin (`/store-admin`)
@@ -833,10 +880,10 @@ amount (Returns → record refund, which stays a manual money movement).
 
 | Screen | Route | Status | Notes |
 |---|---|---|---|
-| Products list | `/products` | 🟢 Live | Filter, search, CSV export, status badges |
+| Products list | `/products` | 🟢 Live | Filter, search, CSV export, status badges, **Sale price** column |
 | New product | `/products/new` | 🟢 Live | Full create form |
-| Edit product | `/products/[id]` | 🟢 Live | Details, price, cost, images, variants, attributes, specs, **Inventory** card |
-| Price history | same page, `price` API | 🟢 Live | Every price write appends to `price_history` |
+| Edit product | `/products/[id]` | 🟢 Live | Details, price + sale price, cost, images, variants, attributes, specs, **Inventory** card |
+| Price history | same page, `price` API | 🟢 Live | Every price write appends to `price_history`, tagged `regular` / `sale` / `sale_cleared` |
 | Variants | `.../variants` API | 🟢 Live | SKU, options, stock |
 | Images | `.../images` API | 🟢 Live | Ordered gallery, archive rather than hard delete |
 | Categories | `/categories` | 🟢 Live | CRUD |
@@ -845,7 +892,7 @@ amount (Returns → record refund, which stays a manual money movement).
 | Stock | `/stock` | 🟢 Live | Per-product summary, tracked Yes/No, Adjust link, **Tracking off** filter |
 | Stock adjust | `/stock/[productId]` | 🟢 Live | Append-only `stock_movements`, reason required |
 | Low stock | `/low-stock` | 🟢 Live | Available ≤ the product's own `stock.low_stock_threshold` |
-| Catalogue data transfer | `/catalog/transfer` | 🟢 Live | CSV import/export, per-row error report |
+| Catalogue data transfer | `/catalog/transfer` | 🟢 Live | CSV import/export with `sale_price`, per-row error report |
 | Reviews | `/reviews` | 🟢 Live | Approve/reject/hide product reviews |
 | Media | `/media` | 🟢 Live | Upload to Supabase Storage; `/api/media/[id]` redirects to the public object URL |
 
@@ -1257,6 +1304,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Static catalogue | `src/lib/products/registry.ts`, `src/components/sites/accessories/data/*`, `src/components/sites/cases-protection/data/*` (fallback + marketing fields only) |
 | Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
+| Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `migrations/0039_sale_pricing.sql`, `src/components/store-admin/ProductPriceEditor.tsx`, `tests/sale-pricing.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |
 | Checkout rules (pure) | `src/lib/checkout/shipping-rules.ts`, `stock-rules.ts`, `settings.ts` |

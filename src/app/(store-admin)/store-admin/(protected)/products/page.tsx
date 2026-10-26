@@ -66,6 +66,7 @@ export default async function StoreAdminProductsPage() {
               <th>Product</th>
               <th>Category</th>
               <th className="sa-num">Price</th>
+              <th className="sa-num">Sale price</th>
               <th>Stock</th>
               <th>Status</th>
               <th>Updated</th>
@@ -89,6 +90,15 @@ export default async function StoreAdminProductsPage() {
                 <td>{product.categoryName}</td>
                 <td className="sa-num">
                   <span className="sa-price">{formatINR(product.pricePaise)}</span>
+                </td>
+                <td className="sa-num">
+                  {product.salePricePaise === null ? (
+                    <span className="sa-muted">—</span>
+                  ) : (
+                    <span className="sa-price">
+                      {formatINR(product.salePricePaise)}
+                    </span>
+                  )}
                 </td>
                 <td>
                   {product.trackInventory ? (

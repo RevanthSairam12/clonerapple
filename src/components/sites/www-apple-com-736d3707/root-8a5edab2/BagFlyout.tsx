@@ -82,6 +82,7 @@ export function BagFlyout({ isOpen, onClose }: Props) {
       subtitle: item.subtitle,
       price,
       priceDisplay: item.priceDisplay,
+      wasPriceDisplay: item.wasPriceDisplay,
       // Existing Gadzio case art. The previous path
       // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
       // so a result without its own image added a 404 to the bag.
@@ -336,9 +337,18 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                         {p.name}
                       </p>
                       <p className={`text-[10px] ${canAdd ? 'text-[#86868b]' : 'text-[#e30000]'}`}>
-                        {canAdd
-                          ? p.priceDisplay || `₹${(p.price as number).toLocaleString('en-IN')}`
-                          : 'Unavailable'}
+                        {canAdd ? (
+                          <>
+                            {p.wasPriceDisplay ? (
+                              <s className="mr-1 text-[9px] text-[#86868b]">
+                                {p.wasPriceDisplay}
+                              </s>
+                            ) : null}
+                            {p.priceDisplay || `₹${(p.price as number).toLocaleString('en-IN')}`}
+                          </>
+                        ) : (
+                          'Unavailable'
+                        )}
                       </p>
                     </div>
                   </Link>

@@ -17,6 +17,9 @@ interface CartItem {
   productId?: string;
   name: string;
   price: number;
+  /** The regular price shown struck through while a sale is live. */
+  regularPrice?: number;
+  wasPriceDisplay?: string;
   quantity: number;
   image?: string;
 }
@@ -420,6 +423,11 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                 </div>
                 {isAvailable ? (
                   <div className="font-semibold text-[#1d1d1f] shrink-0">
+                    {item.regularPrice ? (
+                      <s className="mr-2 font-normal text-[#86868b]">
+                        ₹{(item.regularPrice * item.quantity).toLocaleString('en-IN')}
+                      </s>
+                    ) : null}
                     ₹{(item.price * item.quantity).toLocaleString('en-IN')}
                   </div>
                 ) : (

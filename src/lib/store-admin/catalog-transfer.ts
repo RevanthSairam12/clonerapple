@@ -100,7 +100,7 @@ export async function exportCatalogue(
     const rows = (await sql.unsafe(
       `select p.id, p.name, p.slug, p.brand, c.name as category_name,
               cond.label as condition_label, p.description, p.price_paise,
-              p.compare_at_paise, s.on_hand, s.low_stock_threshold,
+              p.compare_at_paise, p.sale_price_paise, s.on_hand, s.low_stock_threshold,
               coalesce((
                 select string_agg(i.url, '|' order by (i.role = 'primary') desc, i.sort_order, i.id)
                 from product_images i
@@ -127,6 +127,7 @@ export async function exportCatalogue(
       text(row.description),
       money(row.price_paise),
       money(row.compare_at_paise),
+      money(row.sale_price_paise),
       row.on_hand === null || row.on_hand === undefined ? '' : String(number(row.on_hand)),
       row.low_stock_threshold === null || row.low_stock_threshold === undefined
         ? ''
@@ -479,6 +480,7 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
           description: row.description,
           price_paise: row.pricePaise,
           compare_at_paise: row.compareAtPaise,
+          sale_price_paise: row.salePricePaise,
           in_stock: row.stock === null ? true : row.stock > 0,
           is_active: row.isActive,
           seo_title: row.seoTitle,
@@ -495,6 +497,7 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
         'description',
         'price_paise',
         'compare_at_paise',
+        'sale_price_paise',
         'in_stock',
         'is_active',
         'seo_title',
@@ -513,6 +516,7 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
           variant_id: null,
           old_price_paise: null,
           new_price_paise: row.pricePaise,
+          price_kind: 'regular',
           currency: 'INR',
           reason: 'csv_import',
           source: 'bulk_import',
@@ -522,6 +526,36 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
         'variant_id',
         'old_price_paise',
         'new_price_paise',
+        'price_kind',
+        'currency',
+        'reason',
+        'source',
+        'changed_by',
+      )}
+    `;
+  }
+
+  const saleRows = rows.filter((row) => row.salePricePaise !== null);
+  for (const batch of chunks(saleRows)) {
+    await tx`
+      insert into price_history
+      ${tx(
+        batch.map((row) => ({
+          product_id: row.productId,
+          variant_id: null,
+          old_price_paise: null,
+          new_price_paise: row.salePricePaise as number,
+          price_kind: 'sale',
+          currency: 'INR',
+          reason: 'csv_import',
+          source: 'bulk_import',
+          changed_by: staffId,
+        })),
+        'product_id',
+        'variant_id',
+        'old_price_paise',
+        'new_price_paise',
+        'price_kind',
         'currency',
         'reason',
         'source',
@@ -603,7 +637,8 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
 
   const ids = rows.map((row) => row.productId);
   const currentRows = (await tx`
-    select p.id, p.price_paise, s.id as stock_id, s.on_hand, s.reserved,
+    select p.id, p.price_paise, p.sale_price_paise,
+           s.id as stock_id, s.on_hand, s.reserved,
            s.track_inventory, s.low_stock_threshold
     from products p
     left join stock s on s.product_id = p.id and s.variant_id is null
@@ -620,6 +655,10 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
       throw new Error(`Product ${row.productId} disappeared during the import.`);
     }
     const beforePrice = number(before.price_paise);
+    const beforeSale =
+      before.sale_price_paise === null || before.sale_price_paise === undefined
+        ? null
+        : number(before.sale_price_paise);
     const onHand = before.stock_id ? number(before.on_hand) : 0;
     const reserved = before.stock_id ? number(before.reserved) : 0;
     const nextOnHand = row.stock === null ? onHand : row.stock;
@@ -636,6 +675,7 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
           description = ${row.description},
           price_paise = ${row.pricePaise},
           compare_at_paise = ${row.compareAtPaise},
+          sale_price_paise = ${row.salePricePaise},
           is_active = ${row.isActive},
           seo_title = ${row.seoTitle},
           seo_description = ${row.seoDescription},
@@ -656,8 +696,25 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
         variant_id: null,
         old_price_paise: beforePrice,
         new_price_paise: row.pricePaise,
+        price_kind: 'regular',
         currency: 'INR',
         reason: 'csv_import',
+        source: 'bulk_import',
+        changed_by: staffId,
+      });
+    }
+
+    if (beforeSale !== row.salePricePaise) {
+      // A blank cell clears the sale price; 0 is the not-null sentinel the
+      // history table needs, and `price_kind` states what actually happened.
+      priceHistory.push({
+        product_id: row.productId,
+        variant_id: null,
+        old_price_paise: beforeSale,
+        new_price_paise: row.salePricePaise ?? 0,
+        price_kind: row.salePricePaise === null ? 'sale_cleared' : 'sale',
+        currency: 'INR',
+        reason: row.salePricePaise === null ? 'sale_price_cleared' : 'csv_import',
         source: 'bulk_import',
         changed_by: staffId,
       });
@@ -707,6 +764,7 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
         'variant_id',
         'old_price_paise',
         'new_price_paise',
+        'price_kind',
         'currency',
         'reason',
         'source',

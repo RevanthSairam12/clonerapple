@@ -17,6 +17,7 @@ import {
   listCategoryOptions,
 } from '@/lib/store-admin/catalog';
 import { listConditions } from '@/lib/store-admin/catalog-crud';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,12 +52,13 @@ export default async function StoreAdminProductDetailPage({
   // Editing copy is an admin-level action; reference data is owner-only.
   const canEdit = session !== null && session.role !== 'store_viewer';
 
-  const [categoriesResult, brandsResult, attributesResult, conditionsResult] =
+  const [categoriesResult, brandsResult, attributesResult, conditionsResult, saleState] =
     await Promise.all([
       listCategoryOptions(),
       listBrands(),
       listAttributes(),
       listConditions(),
+      readSaleState(),
     ]);
 
   const categories = categoriesResult.ok ? categoriesResult.data : [];
@@ -101,7 +103,9 @@ export default async function StoreAdminProductDetailPage({
         <ProductPriceEditor
           productId={product.id}
           pricePaise={product.pricePaise}
+          salePricePaise={product.salePricePaise}
           compareAtPaise={product.compareAtPaise}
+          saleLive={saleState.live}
           canEdit={canEdit}
         />
 
@@ -264,6 +268,7 @@ export default async function StoreAdminProductDetailPage({
               <thead>
                 <tr>
                   <th>Changed</th>
+                  <th>Kind</th>
                   <th className="sa-num">Old</th>
                   <th className="sa-num">New</th>
                   <th>Source</th>
@@ -275,12 +280,25 @@ export default async function StoreAdminProductDetailPage({
                 {product.priceHistory.map((row) => (
                   <tr key={row.id}>
                     <td className="sa-date">{formatDate(row.changedAt)}</td>
+                    <td>
+                      <span className="sa-chip">
+                        {row.priceKind === 'sale'
+                          ? 'Sale price'
+                          : row.priceKind === 'sale_cleared'
+                            ? 'Sale cleared'
+                            : 'Regular'}
+                      </span>
+                    </td>
                     <td className="sa-num">
                       {row.oldPricePaise === null
                         ? '—'
                         : formatINR(row.oldPricePaise)}
                     </td>
-                    <td className="sa-num">{formatINR(row.newPricePaise)}</td>
+                    <td className="sa-num">
+                      {row.priceKind === 'sale_cleared' && row.newPricePaise === 0
+                        ? '—'
+                        : formatINR(row.newPricePaise)}
+                    </td>
                     <td>
                       <span className="sa-chip">{row.source}</span>
                     </td>

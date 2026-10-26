@@ -1,5 +1,7 @@
 import { getSql } from '@/lib/admin/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
+import { resolveEffectivePrice } from '@/lib/storefront/pricing';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 import {
   getProductFromCatalog,
@@ -40,12 +42,12 @@ function knownBaseIds(cartItems: ReadonlyArray<CartPricingInput>): string[] {
   return [...ids];
 }
 
-async function loadPricingRows(ids: string[]): Promise<CatalogPriceRow[]> {
+async function loadPricingRows(ids: string[], saleLive: boolean): Promise<CatalogPriceRow[]> {
   const sql = getSql();
   if (!sql || ids.length === 0) return [];
 
   const rows = await sql`
-    select p.id, p.name, p.subtitle, p.price_paise,
+    select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
            (
              select pi.url
              from product_images pi
@@ -65,17 +67,29 @@ async function loadPricingRows(ids: string[]): Promise<CatalogPriceRow[]> {
     order by p.id
   `;
 
-  return (rows as Record<string, unknown>[]).map((row) => ({
-    id: String(row.id),
-    name: String(row.name ?? ''),
-    subtitle: row.subtitle === null || row.subtitle === undefined
-      ? null
-      : String(row.subtitle),
-    price_paise: row.price_paise as number | string,
-    image_url: row.image_url === null || row.image_url === undefined
-      ? null
-      : String(row.image_url),
-  }));
+  return (rows as Record<string, unknown>[]).map((row) => {
+    const price = resolveEffectivePrice(
+      {
+        pricePaise: Number(row.price_paise),
+        salePricePaise: row.sale_price_paise === null || row.sale_price_paise === undefined
+          ? null
+          : Number(row.sale_price_paise),
+      },
+      saleLive,
+    );
+    return {
+      id: String(row.id),
+      name: String(row.name ?? ''),
+      subtitle: row.subtitle === null || row.subtitle === undefined
+        ? null
+        : String(row.subtitle),
+      // The amount PayU will charge: one resolver decides sale vs regular.
+      price_paise: price.unitPaise,
+      image_url: row.image_url === null || row.image_url === undefined
+        ? null
+        : String(row.image_url),
+    };
+  });
 }
 
 /**
@@ -101,7 +115,8 @@ export async function resolveCartItemsFromDb(
   const ids = knownBaseIds(cartItems);
   let rows: CatalogPriceRow[];
   try {
-    rows = await loadPricingRows(ids);
+    const sale = await readSaleState();
+    rows = await loadPricingRows(ids, sale.live);
   } catch {
     // Never fall back to a code price after a database failure: the whole
     // point of this module is that the amount and the catalogue row agree.
@@ -124,8 +139,9 @@ export async function getProductFromDatabase(id: string): Promise<CatalogItem | 
   if (!normalized.baseId) return null;
 
   try {
+    const sale = await readSaleState();
     const rows = await sql`
-      select p.id, p.name, p.subtitle, p.price_paise,
+      select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
              (
                select pi.url
                from product_images pi
@@ -148,13 +164,23 @@ export async function getProductFromDatabase(id: string): Promise<CatalogItem | 
     const row = (rows as Record<string, unknown>[])[0];
     if (!row) return null;
 
-    const pricePaise = Math.round(Number(row.price_paise));
+    const price = resolveEffectivePrice(
+      {
+        pricePaise: Number(row.price_paise),
+        salePricePaise: row.sale_price_paise === null || row.sale_price_paise === undefined
+          ? null
+          : Number(row.sale_price_paise),
+      },
+      sale.live,
+    );
+    const pricePaise = price.unitPaise;
     if (!Number.isSafeInteger(pricePaise) || pricePaise < 0) return null;
 
     return {
       id: String(row.id),
       name: `${row.name} - ${row.subtitle || ''}`.trim(),
       price: pricePaise / 100,
+      ...(price.onSale ? { regularPrice: price.regularPaise / 100 } : {}),
       image: row.image_url ? String(row.image_url) : undefined,
     };
   } catch {

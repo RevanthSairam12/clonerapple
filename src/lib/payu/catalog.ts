@@ -6,6 +6,8 @@ export interface CatalogItem {
   id: string;
   name: string;
   price: number;
+  /** The regular price while a sale price is applied, for the struck-through view. */
+  regularPrice?: number;
   image?: string;
 }
 

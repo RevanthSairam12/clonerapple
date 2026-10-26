@@ -78,6 +78,8 @@ export interface SearchCandidate {
   category: string;
   price: number;
   priceDisplay: string;
+  regularPricePaise?: number;
+  wasPriceDisplay?: string;
   image: string;
   href: string;
   keywords: string[];
@@ -96,6 +98,8 @@ export function toSearchCandidates(products: StorefrontProductRef[]): SearchCand
     category: product.categoryName,
     price: product.pricePaise / 100,
     priceDisplay: product.priceDisplay,
+    ...(product.wasPriceDisplay ? { wasPriceDisplay: product.wasPriceDisplay } : {}),
+    ...(product.regularPricePaise ? { regularPricePaise: product.regularPricePaise } : {}),
     image: product.image || FALLBACK_IMAGE,
     href: `/shop/product/${encodeURIComponent(product.id)}`,
     keywords: product.keywords,

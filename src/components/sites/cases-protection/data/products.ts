@@ -27,6 +27,9 @@ export interface Product {
   subtitle: string;
   price: number;
   priceDisplay: string;
+  /** The regular price shown struck through while a sale is live. */
+  regularPrice?: number;
+  wasPriceDisplay?: string;
   image: string;
   hoverImage?: string;
   colors: ColorSwatch[];

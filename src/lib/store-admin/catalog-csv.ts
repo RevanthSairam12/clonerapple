@@ -18,6 +18,7 @@ export const IMPORT_COLUMNS = [
   'description',
   'price',
   'compare_at_price',
+  'sale_price',
   'stock',
   'low_stock_threshold',
   'image_urls',
@@ -215,6 +216,8 @@ export interface ImportRow {
   description: string;
   pricePaise: number;
   compareAtPaise: number | null;
+  /** Stored but applied only while sale mode is live. Blank clears it. */
+  salePricePaise: number | null;
   stock: number | null;
   lowStockThreshold: number | null;
   imageUrls: string[];
@@ -335,6 +338,18 @@ export function validateImportRows(
       }
     }
 
+    let salePricePaise: number | null = null;
+    const saleText = cell(header, row, 'sale_price');
+    if (saleText) {
+      salePricePaise = parseMoneyToPaise(saleText);
+      if (salePricePaise === null || salePricePaise < 1 || salePricePaise > PRICE_MAX_PAISE) {
+        fail('sale_price', 'The sale price must be a positive amount.');
+        salePricePaise = null;
+      } else if (pricePaise !== null && salePricePaise >= pricePaise) {
+        fail('sale_price', 'The sale price must be lower than the price.');
+      }
+    }
+
     let stock: number | null = null;
     const stockText = cell(header, row, 'stock');
     if (stockText) {
@@ -388,6 +403,7 @@ export function validateImportRows(
       description,
       pricePaise: pricePaise as number,
       compareAtPaise,
+      salePricePaise,
       stock,
       lowStockThreshold,
       imageUrls: images.urls,
@@ -423,6 +439,7 @@ export function templateCsv(): string {
       'Compact 65W gallium nitride charger.',
       '3499.00',
       '3999.00',
+      '2999.00',
       '25',
       '5',
       'https://example.com/charger-front.jpg|https://example.com/charger-side.jpg',

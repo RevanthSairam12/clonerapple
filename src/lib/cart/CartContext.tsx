@@ -10,6 +10,9 @@ export interface CartItem {
   subtitle?: string;
   price: number;
   priceDisplay?: string;
+  /** The regular price shown struck through while a sale is live. */
+  regularPrice?: number;
+  wasPriceDisplay?: string;
   image: string;
   color?: string;
   model?: string;
@@ -228,6 +231,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           subtitle: input.subtitle,
           price: input.price,
           priceDisplay: input.priceDisplay || `₹${input.price.toLocaleString('en-IN')}`,
+          regularPrice: input.regularPrice,
+          wasPriceDisplay: input.wasPriceDisplay,
           image: input.image,
           color: input.color,
           model: input.model,

@@ -26,6 +26,9 @@ export interface AccessoryProduct {
   subtitle: string;
   price: number;
   priceDisplay: string;
+  /** The regular price shown struck through while a sale is live. */
+  regularPrice?: number;
+  wasPriceDisplay?: string;
   image: string;
   /** Optional extra gallery images; falls back to [image] when omitted. */
   images: string[];

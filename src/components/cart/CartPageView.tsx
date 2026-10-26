@@ -125,6 +125,8 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
       subtitle: item.subtitle,
       price,
       priceDisplay: ref.priceDisplay ?? item.priceDisplay,
+      wasPriceDisplay: ref.wasPriceDisplay ?? item.wasPriceDisplay,
+      regularPrice: ref.regularPricePaise ? ref.regularPricePaise / 100 : undefined,
       // Existing Gadzio case art. The previous path
       // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
       // so a suggested item without its own image added a 404 to the bag.
@@ -251,6 +253,11 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
                   const ref = refFor(item);
                   const isAvailable = Boolean(ref && ref.inStock);
                   const linePrice = ref ? ref.pricePaise / 100 : item.price;
+                  const lineWasPrice = ref?.regularPricePaise
+                    ? (ref.regularPricePaise / 100) * item.quantity
+                    : item.regularPrice
+                      ? item.regularPrice * item.quantity
+                      : null;
                   return (
                   <div key={item.id} className="py-6 flex flex-col sm:flex-row gap-5 items-start">
                     {/* Thumbnail Image */}
@@ -283,7 +290,14 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
                         </div>
                         <div className="text-right sm:text-right font-bold text-base sm:text-lg text-[#1d1d1f] mt-1 sm:mt-0">
                           {isAvailable ? (
-                            <>₹{(linePrice * item.quantity).toLocaleString('en-IN')}</>
+                            <>
+                              {lineWasPrice ? (
+                                <s className="mr-2 text-sm font-normal text-[#86868b]">
+                                  ₹{lineWasPrice.toLocaleString('en-IN')}
+                                </s>
+                              ) : null}
+                              ₹{(linePrice * item.quantity).toLocaleString('en-IN')}
+                            </>
                           ) : (
                             <span className="text-sm font-semibold text-[#e30000]">Unavailable</span>
                           )}

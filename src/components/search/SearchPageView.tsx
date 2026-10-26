@@ -59,6 +59,9 @@ function toCollectionProduct(item: SearchResultItem): CollectionProduct {
     subtitle: item.subtitle,
     price: price ?? 0,
     priceDisplay: available ? item.priceDisplay || formatINR(price) : 'Unavailable',
+    ...(available && item.wasPriceDisplay
+      ? { wasPriceDisplay: item.wasPriceDisplay }
+      : {}),
     priceUnavailable: !available,
     image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
     images: [item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg'],

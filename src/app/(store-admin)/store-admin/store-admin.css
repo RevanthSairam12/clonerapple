@@ -112,6 +112,15 @@
   font-size: 13px;
 }
 
+.sa-warning {
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  background: #fdf3dd;
+  color: #7a5200;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
 .sa-btn {
   display: inline-flex;
   align-items: center;

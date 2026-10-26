@@ -52,6 +52,8 @@ export function AccessoryDetailPage({ product }: Props) {
       subtitle: hasColors ? currentColor.name : product.subtitle,
       price: product.price,
       priceDisplay: product.priceDisplay,
+      wasPriceDisplay: product.wasPriceDisplay,
+      regularPrice: product.regularPrice,
       image: mainImage,
       color: hasColors ? currentColor.name : undefined,
       model: product.compatibility[0],
@@ -91,6 +93,9 @@ export function AccessoryDetailPage({ product }: Props) {
             <span className="text-xs text-[#86868b] hidden sm:inline">• {stickyMeta}</span>
           </div>
           <div className="flex items-center gap-4">
+            {product.wasPriceDisplay ? (
+              <s className="text-xs text-[#86868b]">{product.wasPriceDisplay}</s>
+            ) : null}
             <span className="font-semibold text-sm text-[#1d1d1f]">{product.priceDisplay}</span>
             <button
               type="button"
@@ -210,6 +215,9 @@ export function AccessoryDetailPage({ product }: Props) {
             {/* Price Row */}
             <div className="pb-6 border-b border-[#e5e5ea] mb-6">
               <div className="flex items-baseline gap-2">
+                {product.wasPriceDisplay ? (
+                  <s className="text-lg text-[#86868b]">{product.wasPriceDisplay}</s>
+                ) : null}
                 <span className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1d1d1f]">
                   {product.priceDisplay}
                 </span>

@@ -6,6 +6,7 @@ import { getSql } from '@/lib/admin/db';
 
 import {
   checkPricePair,
+  checkSalePrice,
   createsCategoryCycle,
   stockAvailable,
   type CategoryInput,
@@ -601,9 +602,10 @@ export async function createProduct(
 }
 
 export interface PriceSnapshot {
-  before: { pricePaise: number; compareAtPaise: number | null };
-  after: { pricePaise: number; compareAtPaise: number | null };
+  before: { pricePaise: number; compareAtPaise: number | null; salePricePaise: number | null };
+  after: { pricePaise: number; compareAtPaise: number | null; salePricePaise: number | null };
   changed: boolean;
+  warnings: string[];
 }
 
 /** Change a product price and append to the immutable price history. */
@@ -615,11 +617,22 @@ export async function updateProductPricing(
 ): Promise<CatalogWrite<PriceSnapshot>> {
   const sql = getSql();
   if (!sql) return fail('unavailable', 'The catalogue is not available.');
+  return updateProductPricingUsing(sql, id, patch, reason, staffId);
+}
 
+/** The same write against a caller-supplied connection (integration tests). */
+export async function updateProductPricingUsing(
+  sql: postgres.Sql,
+  id: string,
+  patch: PricePatch,
+  reason: string,
+  staffId: string,
+): Promise<CatalogWrite<PriceSnapshot>> {
   try {
     return await sql.begin(async (tx) => {
       const rows = (await tx`
-        select price_paise, compare_at_paise from products
+        select price_paise, compare_at_paise, sale_price_paise, cost_paise
+        from products
         where id = ${id} and deleted_at is null
         for update
       `) as Row[];
@@ -628,19 +641,34 @@ export async function updateProductPricing(
 
       const beforePrice = number(row.price_paise);
       const beforeCompare = row.compare_at_paise === null ? null : number(row.compare_at_paise);
+      const beforeSale = row.sale_price_paise === null ? null : number(row.sale_price_paise);
+      const costPaise = row.cost_paise === null ? null : number(row.cost_paise);
       const nextPrice = patch.pricePaise ?? beforePrice;
       const nextCompare =
         patch.compareAtPaise !== undefined ? patch.compareAtPaise : beforeCompare;
+      const nextSale =
+        patch.salePricePaise !== undefined ? patch.salePricePaise : beforeSale;
 
       const pairError = checkPricePair(nextPrice, nextCompare);
       if (pairError) return fail('invalid-input', pairError);
 
-      const changed = nextPrice !== beforePrice || nextCompare !== beforeCompare;
+      const sale = checkSalePrice({
+        salePaise: nextSale,
+        regularPaise: nextPrice,
+        costPaise,
+      });
+      if (sale.error) return fail('invalid-input', sale.error);
+
+      const changed =
+        nextPrice !== beforePrice
+        || nextCompare !== beforeCompare
+        || nextSale !== beforeSale;
       if (changed) {
         await tx`
           update products
           set price_paise = ${nextPrice},
               compare_at_paise = ${nextCompare},
+              sale_price_paise = ${nextSale},
               updated_at = now(),
               updated_by = ${staffId}
           where id = ${id}
@@ -651,10 +679,26 @@ export async function updateProductPricing(
         await tx`
           insert into price_history (
             product_id, variant_id, old_price_paise, new_price_paise, currency, reason,
-            source, changed_by
+            source, changed_by, price_kind
           ) values (
             ${id}, null, ${beforePrice}, ${nextPrice}, 'INR', ${reason},
-            'store_admin', ${staffId}
+            'store_admin', ${staffId}, 'regular'
+          )
+        `;
+      }
+
+      if (nextSale !== beforeSale) {
+        // `new_price_paise` is not null, so a cleared sale price records 0 and
+        // `price_kind = 'sale_cleared'` says exactly what happened.
+        await tx`
+          insert into price_history (
+            product_id, variant_id, old_price_paise, new_price_paise, currency, reason,
+            source, changed_by, price_kind
+          ) values (
+            ${id}, null, ${beforeSale}, ${nextSale ?? 0}, 'INR',
+            ${nextSale === null ? 'sale_price_cleared' : reason},
+            'store_admin', ${staffId},
+            ${nextSale === null ? 'sale_cleared' : 'sale'}
           )
         `;
       }
@@ -662,9 +706,18 @@ export async function updateProductPricing(
       return {
         ok: true as const,
         data: {
-          before: { pricePaise: beforePrice, compareAtPaise: beforeCompare },
-          after: { pricePaise: nextPrice, compareAtPaise: nextCompare },
+          before: {
+            pricePaise: beforePrice,
+            compareAtPaise: beforeCompare,
+            salePricePaise: beforeSale,
+          },
+          after: {
+            pricePaise: nextPrice,
+            compareAtPaise: nextCompare,
+            salePricePaise: nextSale,
+          },
           changed,
+          warnings: sale.warning ? [sale.warning] : [],
         },
       };
     });

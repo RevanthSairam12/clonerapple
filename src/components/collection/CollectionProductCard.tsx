@@ -39,6 +39,8 @@ export function CollectionProductCard({ product }: CollectionProductCardProps) {
       subtitle: currentColor ? currentColor.name : product.subtitle,
       price: product.price,
       priceDisplay: formatINR(product.price),
+      wasPriceDisplay: product.wasPriceDisplay,
+                regularPrice: product.regularPrice,
       image: product.image,
       color: currentColor ? currentColor.name : undefined,
       href: product.href,
@@ -134,7 +136,18 @@ export function CollectionProductCard({ product }: CollectionProductCardProps) {
         {/* Price & Quick Add Button */}
         <div className="gz-collection-card-bottom">
           <span className="gz-collection-card-price">
-            {isPriceUnavailable ? 'Unavailable' : formatINR(product.price)}
+            {isPriceUnavailable ? (
+              'Unavailable'
+            ) : (
+              <>
+                {product.wasPriceDisplay ? (
+                  <s className="mr-1.5 text-[12px] font-normal text-[#86868b]">
+                    {product.wasPriceDisplay}
+                  </s>
+                ) : null}
+                {formatINR(product.price)}
+              </>
+            )}
           </span>
 
           <button

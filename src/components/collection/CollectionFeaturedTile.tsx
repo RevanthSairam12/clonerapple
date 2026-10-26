@@ -24,6 +24,8 @@ export function CollectionFeaturedTile({ product }: CollectionFeaturedTileProps)
       subtitle: product.subtitle,
       price: product.price,
       priceDisplay: formatINR(product.price),
+      wasPriceDisplay: product.wasPriceDisplay,
+      regularPrice: product.regularPrice,
       image: product.image,
       href: product.href,
     });
@@ -78,6 +80,11 @@ export function CollectionFeaturedTile({ product }: CollectionFeaturedTileProps)
 
           <div className="pt-2 flex flex-wrap items-center gap-4">
             <span className="text-2xl font-bold text-[#1d1d1f] tracking-tight">
+              {product.wasPriceDisplay ? (
+                <s className="mr-2 text-base font-normal text-[#86868b]">
+                  {product.wasPriceDisplay}
+                </s>
+              ) : null}
               {formatINR(product.price)}
             </span>
 

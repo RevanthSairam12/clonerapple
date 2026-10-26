@@ -40,6 +40,9 @@ export interface CollectionProduct {
   subtitle: string;
   price: number;
   priceDisplay: string;
+  /** The regular price shown struck through while a sale is live. */
+  regularPrice?: number;
+  wasPriceDisplay?: string;
   /** True when the source item has no real price, so the card shows "Unavailable". */
   priceUnavailable?: boolean;
   image: string;
@@ -77,6 +80,8 @@ export function normalizeProduct(raw: AccessoryProduct | CaseProduct): Collectio
       subtitle: cp.subtitle || '',
       price: cp.price,
       priceDisplay: cp.priceDisplay,
+      ...(cp.wasPriceDisplay ? { wasPriceDisplay: cp.wasPriceDisplay } : {}),
+      ...(cp.regularPrice ? { regularPrice: cp.regularPrice } : {}),
       image: cp.image,
       hoverImage: hover,
       images: hover ? [cp.image, hover] : [cp.image],
@@ -112,6 +117,8 @@ export function normalizeProduct(raw: AccessoryProduct | CaseProduct): Collectio
     subtitle: ap.subtitle || '',
     price: ap.price,
     priceDisplay: ap.priceDisplay,
+    ...(ap.wasPriceDisplay ? { wasPriceDisplay: ap.wasPriceDisplay } : {}),
+    ...(ap.regularPrice ? { regularPrice: ap.regularPrice } : {}),
     image: ap.image,
     hoverImage: hover,
     images: ap.images || [ap.image],

@@ -92,6 +92,11 @@ export function AccessoryProductCard({ product }: { product: AccessoryProduct })
         {/* Price & Quick Add Button */}
         <div className="flex items-center justify-between mt-2 pt-1">
           <p className="text-[15px] font-semibold text-[#1d1d1f] tracking-tight">
+            {product.wasPriceDisplay ? (
+              <s className="mr-1.5 text-[12px] font-normal text-[#86868b]">
+                {product.wasPriceDisplay}
+              </s>
+            ) : null}
             {product.priceDisplay}
           </p>
           <button
@@ -105,6 +110,8 @@ export function AccessoryProductCard({ product }: { product: AccessoryProduct })
                 subtitle: `${currentColor?.name || product.subtitle}`,
                 price: product.price,
                 priceDisplay: product.priceDisplay,
+                wasPriceDisplay: product.wasPriceDisplay,
+                regularPrice: product.regularPrice,
                 image: product.image,
                 color: currentColor?.name,
                 model: product.compatibility[0],

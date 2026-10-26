@@ -45,6 +45,9 @@ export default async function CheckoutPage({ searchParams }: Props) {
         id: requestedProduct.id,
         name: requestedProduct.name,
         price: requestedProduct.price,
+        ...(requestedProduct.regularPrice !== undefined
+          ? { regularPrice: requestedProduct.regularPrice }
+          : {}),
         quantity: parsedQty,
       },
     ];

@@ -6,7 +6,10 @@ import { useState } from 'react';
 interface Props {
   productId: string;
   pricePaise: number;
+  salePricePaise: number | null;
   compareAtPaise: number | null;
+  /** True when sale mode is live on the database clock right now. */
+  saleLive: boolean;
   canEdit: boolean;
 }
 
@@ -17,20 +20,34 @@ function toRupees(paise: number | null): string {
 /**
  * Price editing. The API appends every change to `price_history`, which is
  * append-only at the database level, so nothing here can rewrite history.
+ *
+ * The sale price is stored all year and applies only while sale mode is live
+ * (see /store-admin/sale). Clearing the field clears the sale price; the
+ * regular selling price is always what the customer falls back to.
  */
-export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canEdit }: Props) {
+export function ProductPriceEditor({
+  productId,
+  pricePaise,
+  salePricePaise,
+  compareAtPaise,
+  saleLive,
+  canEdit,
+}: Props) {
   const router = useRouter();
   const [price, setPrice] = useState(toRupees(pricePaise));
+  const [sale, setSale] = useState(toRupees(salePricePaise));
   const [compareAt, setCompareAt] = useState(toRupees(compareAtPaise));
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   async function save() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setWarnings([]);
     try {
       const priceValue = Math.round(Number(price) * 100);
       if (!Number.isInteger(priceValue) || priceValue <= 0) {
@@ -43,6 +60,16 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
           throw new Error('The compare-at price must be a positive amount, or blank.');
         }
       }
+      let saleValue: number | null = null;
+      if (sale.trim()) {
+        saleValue = Math.round(Number(sale) * 100);
+        if (!Number.isFinite(saleValue) || saleValue <= 0) {
+          throw new Error('The sale price must be a positive amount, or blank.');
+        }
+        if (saleValue >= priceValue) {
+          throw new Error('The sale price must be lower than the selling price.');
+        }
+      }
 
       const response = await fetch(
         `/api/store-admin/catalog/products/${encodeURIComponent(productId)}/price`,
@@ -51,6 +78,7 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             pricePaise: priceValue,
+            salePricePaise: saleValue,
             compareAtPaise: compareValue,
             reason: reason.trim() || undefined,
           }),
@@ -59,6 +87,9 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(typeof body.error === 'string' ? body.error : 'Could not save the price.');
+      }
+      if (Array.isArray(body.warnings)) {
+        setWarnings(body.warnings.filter((entry: unknown) => typeof entry === 'string'));
       }
       setNotice(body.changed ? 'Price saved and recorded in the history.' : 'No change.');
       setReason('');
@@ -84,6 +115,11 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
           {notice}
         </p>
       ) : null}
+      {warnings.map((warning) => (
+        <p className="sa-warning" role="status" key={warning}>
+          {warning}
+        </p>
+      ))}
 
       {canEdit ? (
         <>
@@ -97,6 +133,22 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
                 step="0.01"
                 value={price}
                 onChange={(event) => setPrice(event.target.value)}
+              />
+            </label>
+            <label className="sa-field">
+              <span className="sa-label">
+                Sale price ₹{' '}
+                <span className="sa-hint">
+                  {saleLive ? 'sale is live' : 'applies only while Sale mode is on'}
+                </span>
+              </span>
+              <input
+                className="sa-input"
+                type="number"
+                min={0}
+                step="0.01"
+                value={sale}
+                onChange={(event) => setSale(event.target.value)}
               />
             </label>
             <label className="sa-field">
@@ -137,7 +189,8 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
           </div>
           <p className="sa-card-note">
             Checkout charges the price stored here. Every change appends a row to
-            the immutable history below.
+            the immutable history below; a blank sale price clears it. While sale
+            mode is off the selling price is charged even if a sale price is set.
           </p>
         </>
       ) : (
@@ -145,6 +198,14 @@ export function ProductPriceEditor({ productId, pricePaise, compareAtPaise, canE
           <div>
             <dt>Selling price</dt>
             <dd>₹{(pricePaise / 100).toLocaleString('en-IN')}</dd>
+          </div>
+          <div>
+            <dt>Sale price</dt>
+            <dd>
+              {salePricePaise === null
+                ? '—'
+                : `₹${(salePricePaise / 100).toLocaleString('en-IN')}${saleLive ? ' (live)' : ''}`}
+            </dd>
           </div>
           <div>
             <dt>Compare-at</dt>

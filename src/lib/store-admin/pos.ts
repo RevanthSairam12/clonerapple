@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { getSql } from '@/lib/admin/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { restoreSoldStock } from '@/lib/payu/stock';
+import { resolveEffectivePrice } from '@/lib/storefront/pricing';
+import { readSaleState, readSaleStateUsing } from '@/lib/storefront/sale-state';
 import { maskCustomerPhone } from './masking';
 import {
   canVoidPosSale,
@@ -117,8 +119,9 @@ export async function getPosCatalog(): Promise<PosCatalogLoad> {
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable' };
   try {
+    const sale = await readSaleState();
     const rows = (await sql`
-      select p.id, p.name, p.subtitle, p.price_paise, p.currency,
+      select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise, p.currency,
              s.on_hand, s.track_inventory
       from products p
       left join stock s on s.product_id = p.id and s.variant_id is null
@@ -131,7 +134,15 @@ export async function getPosCatalog(): Promise<PosCatalogLoad> {
         id: text(row.id),
         name: text(row.name),
         subtitle: text(row.subtitle),
-        pricePaise: integer(row.price_paise),
+        pricePaise: resolveEffectivePrice(
+          {
+            pricePaise: integer(row.price_paise),
+            salePricePaise: row.sale_price_paise === null || row.sale_price_paise === undefined
+              ? null
+              : integer(row.sale_price_paise),
+          },
+          sale.live,
+        ).unitPaise,
         currency: text(row.currency) || 'INR',
         onHand: row.on_hand === null || row.on_hand === undefined ? null : integer(row.on_hand),
         trackInventory: Boolean(row.track_inventory),
@@ -415,13 +426,15 @@ export async function createPosSale(input: {
 
       // Price every line from the database catalogue inside this transaction.
       // An inactive or missing product stops the whole sale rather than
-      // silently pricing it from a stale static catalogue.
+      // silently pricing it from a stale static catalogue. The sale switch is
+      // read inside the same transaction, on the database clock.
+      const sale = await readSaleStateUsing(tx);
       const lines: PosSaleLine[] = [];
       for (let index = 0; index < cart.lines.length; index += 1) {
         const cartLine = cart.lines[index];
         const baseId = normalizeCartLineId(cartLine.id).baseId || cartLine.id;
         const productRows = (await tx`
-          select id, name, price_paise
+          select id, name, price_paise, sale_price_paise
           from products
           where id = ${baseId} and is_active and deleted_at is null
           limit 1
@@ -434,7 +447,16 @@ export async function createPosSale(input: {
             error: `Product '${cartLine.id}' is not in the active catalogue.`,
           };
         }
-        const unitPricePaise = integer(product.price_paise);
+        const unitPricePaise = resolveEffectivePrice(
+          {
+            pricePaise: integer(product.price_paise),
+            salePricePaise: product.sale_price_paise === null
+              || product.sale_price_paise === undefined
+              ? null
+              : integer(product.sale_price_paise),
+          },
+          sale.live,
+        ).unitPaise;
         lines.push({
           lineNumber: index + 1,
           productId: text(product.id),

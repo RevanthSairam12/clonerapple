@@ -15,6 +15,8 @@ export interface SearchResultItem {
   category: string;
   price?: number;
   priceDisplay?: string;
+  /** The regular price shown struck through while a sale is live. */
+  wasPriceDisplay?: string;
   image?: string;
   href: string;
   badges?: string[];

@@ -13,6 +13,8 @@
 
 import { getSql } from '@/lib/admin/db';
 import { stockStateFrom } from '@/lib/storefront/catalog-rules';
+import { resolveEffectivePrice } from '@/lib/storefront/pricing';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: The storefront catalogue must be read on the server only.');
@@ -45,10 +47,17 @@ export interface StorefrontProduct {
   slug: string;
   name: string;
   subtitle: string;
-  /** Rupees, for arithmetic. Rendered money uses `priceDisplay`. */
+  /**
+   * Rupees, for arithmetic. `priceDisplay` is what is charged today: the sale
+   * price while sale mode is live, otherwise the regular price.
+   */
   price: number;
   pricePaise: number;
   priceDisplay: string;
+  /** The regular price, shown struck through while `onSale`. */
+  regularPricePaise: number;
+  salePricePaise: number | null;
+  onSale: boolean;
   compareAtPaise: number | null;
   image: string;
   gallery: string[];
@@ -110,6 +119,9 @@ export interface StorefrontProductRef {
   subtitle: string;
   pricePaise: number;
   priceDisplay: string;
+  /** The regular price shown struck through while a sale is live. */
+  regularPricePaise?: number;
+  wasPriceDisplay?: string;
   image: string;
   categorySlug: string;
   categoryName: string;
@@ -191,10 +203,19 @@ interface ProductAggregate {
   stock?: Row;
 }
 
-function mapProduct(aggregate: ProductAggregate): StorefrontProduct {
+function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontProduct {
   const { row, images, facets, specs, variants, stock } = aggregate;
 
-  const pricePaise = Math.round(number(row.price_paise));
+  const price = resolveEffectivePrice(
+    {
+      pricePaise: number(row.price_paise),
+      salePricePaise: row.sale_price_paise === null || row.sale_price_paise === undefined
+        ? null
+        : number(row.sale_price_paise),
+    },
+    saleLive,
+  );
+  const pricePaise = price.unitPaise;
   const compareAt = row.compare_at_paise === null || row.compare_at_paise === undefined
     ? null
     : Math.round(number(row.compare_at_paise));
@@ -239,6 +260,9 @@ function mapProduct(aggregate: ProductAggregate): StorefrontProduct {
     price: pricePaise / 100,
     pricePaise,
     priceDisplay: formatPaise(pricePaise),
+    regularPricePaise: price.regularPaise,
+    salePricePaise: price.salePaise,
+    onSale: price.onSale,
     compareAtPaise: compareAt,
     image: primaryImage(ordered),
     gallery,
@@ -316,7 +340,7 @@ async function loadCatalog(): Promise<CatalogLoad | null> {
     `,
     sql`
       select p.id, p.category_id, p.slug, p.name, p.subtitle, p.price_paise,
-             p.compare_at_paise, p.currency, p.material, p.brand, p.description,
+             p.sale_price_paise, p.compare_at_paise, p.currency, p.material, p.brand, p.description,
              p.badge, p.highlights, p.in_the_box, p.seo_title, p.seo_description,
              p.in_stock, p.is_active, p.sort_order,
              c.slug as __category_slug, c.name as __category_name
@@ -379,7 +403,7 @@ function groupByProduct(rows: Row[]): Map<string, Row[]> {
   return grouped;
 }
 
-function mapAll(load: CatalogLoad): {
+function mapAll(load: CatalogLoad, saleLive: boolean): {
   categories: StorefrontCategory[];
   byProductId: Map<string, StorefrontProduct>;
 } {
@@ -399,7 +423,7 @@ function mapAll(load: CatalogLoad): {
       specs: specs.get(id) ?? [],
       variants: variants.get(id) ?? [],
       stock: stock.get(id)?.[0],
-    }));
+    }, saleLive));
   }
 
   const categories: StorefrontCategory[] = load.categories.map((row) => {
@@ -447,7 +471,11 @@ export interface StorefrontCatalogSnapshot {
 export async function readStorefrontCatalog(): Promise<StorefrontCatalogSnapshot | null> {
   const load = await loadCatalog();
   if (!load) return null;
-  const { categories, byProductId } = mapAll(load);
+  // The sale switch is tiny and read on every cache fill, so prices are never
+  // more than the 30s catalogue cache behind a toggle. `readSaleState` never
+  // throws: an unreadable switch means regular prices and normal mode.
+  const sale = await readSaleState();
+  const { categories, byProductId } = mapAll(load, sale.live);
   return { categories, products: [...byProductId.values()] };
 }
 
@@ -511,7 +539,8 @@ export async function listStorefrontCategories(): Promise<StorefrontCategory[]> 
       }
       return [];
     }
-    return mapAll(load).categories;
+    const sale = await readSaleState();
+    return mapAll(load, sale.live).categories;
   } catch {
     console.warn('[catalog/storefront] could not read the catalogue');
     throw new Error('The catalogue is temporarily unavailable.');
@@ -545,7 +574,8 @@ export async function getStorefrontProduct(id: string): Promise<StorefrontProduc
   try {
     const load = await loadCatalog();
     if (!load) return null;
-    const { byProductId } = mapAll(load);
+    const sale = await readSaleState();
+    const { byProductId } = mapAll(load, sale.live);
     return byProductId.get(id) ?? byProductId.get(id.toLowerCase()) ?? null;
   } catch {
     return null;
@@ -561,7 +591,8 @@ export async function getStorefrontProducts(ids: string[]): Promise<StorefrontPr
   try {
     const load = await loadCatalog();
     if (!load) return [];
-    const { byProductId } = mapAll(load);
+    const sale = await readSaleState();
+    const { byProductId } = mapAll(load, sale.live);
     return ids.flatMap((id) => {
       const product = byProductId.get(id) ?? byProductId.get(id.toLowerCase());
       return product ? [product] : [];
@@ -580,7 +611,8 @@ export async function listStorefrontProductRefs(): Promise<StorefrontProductRef[
   try {
     const load = await loadCatalog();
     if (!load) return [];
-    const { byProductId, categories } = mapAll(load);
+    const sale = await readSaleState();
+    const { byProductId, categories } = mapAll(load, sale.live);
     const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
 
     return [...byProductId.values()].map((product) => ({

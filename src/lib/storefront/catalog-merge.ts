@@ -33,6 +33,9 @@ export interface CatalogProductSource {
   price?: number | null;
   pricePaise?: number | null;
   priceDisplay?: string | null;
+  regularPricePaise?: number | null;
+  salePricePaise?: number | null;
+  onSale?: boolean | null;
   image?: string | null;
   gallery?: string[] | null;
   hoverImage?: string | null;
@@ -81,6 +84,13 @@ function pricePaiseOf(product: CatalogProductSource): number {
 
 function priceDisplayOf(product: CatalogProductSource, paise: number): string {
   return text(product.priceDisplay) ?? formatRupees(paise);
+}
+
+/** The struck-through regular price, only while the sale price is in force. */
+function wasPriceDisplayOf(product: CatalogProductSource): string | undefined {
+  if (product.onSale !== true) return undefined;
+  const regular = Math.round(Number(product.regularPricePaise));
+  return Number.isFinite(regular) && regular > 0 ? formatRupees(regular) : undefined;
 }
 
 function featuresOf(
@@ -145,6 +155,7 @@ export function mergeAccessoryProduct(
     value: String(spec.value ?? ''),
   }));
   const databaseImages = list((databaseProduct.gallery ?? []).filter(Boolean));
+  const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
 
   return {
     id: staticProduct.id,
@@ -152,6 +163,12 @@ export function mergeAccessoryProduct(
     subtitle: text(databaseProduct.subtitle) ?? staticProduct.subtitle,
     price: paise / 100,
     priceDisplay: priceDisplayOf(databaseProduct, paise),
+    ...(wasPriceDisplay
+      ? {
+          wasPriceDisplay,
+          regularPrice: Math.round(Number(databaseProduct.regularPricePaise)) / 100,
+        }
+      : {}),
     image: text(databaseProduct.image) ?? staticProduct.image,
     images: databaseImages ?? staticProduct.images,
     colors: list(databaseProduct.colors) ?? staticProduct.colors,
@@ -185,6 +202,7 @@ export function accessoryProductFromDatabase(
   const image = text(databaseProduct.image) ?? '';
   const gallery = (databaseProduct.gallery ?? []).filter(Boolean);
   const highlights = databaseProduct.highlights ?? [];
+  const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
 
   return {
     id: databaseProduct.id,
@@ -192,6 +210,12 @@ export function accessoryProductFromDatabase(
     subtitle: text(databaseProduct.subtitle) ?? '',
     price: paise / 100,
     priceDisplay: priceDisplayOf(databaseProduct, paise),
+    ...(wasPriceDisplay
+      ? {
+          wasPriceDisplay,
+          regularPrice: Math.round(Number(databaseProduct.regularPricePaise)) / 100,
+        }
+      : {}),
     image,
     images: gallery.length > 0 ? gallery : image ? [image] : [],
     colors: databaseProduct.colors ?? [],
@@ -220,6 +244,7 @@ export function mergeCaseProduct(
   const databaseSpecs = specsFromDatabase(databaseProduct);
   const hoverImage = text(databaseProduct.hoverImage) ?? staticProduct.hoverImage;
   const badge = text(databaseProduct.badge) ?? staticProduct.badge;
+  const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
 
   const product: CaseProduct = {
     id: staticProduct.id,
@@ -227,6 +252,12 @@ export function mergeCaseProduct(
     subtitle: text(databaseProduct.subtitle) ?? staticProduct.subtitle,
     price: paise / 100,
     priceDisplay: priceDisplayOf(databaseProduct, paise),
+    ...(wasPriceDisplay
+      ? {
+          wasPriceDisplay,
+          regularPrice: Math.round(Number(databaseProduct.regularPricePaise)) / 100,
+        }
+      : {}),
     image: text(databaseProduct.image) ?? staticProduct.image,
     colors: list(databaseProduct.colors) ?? staticProduct.colors,
     compatibility: list(databaseProduct.compatibility) ?? staticProduct.compatibility,
@@ -257,6 +288,7 @@ export function caseProductFromDatabase(
   const paise = pricePaiseOf(databaseProduct);
   const highlights = databaseProduct.highlights ?? [];
   const badge = text(databaseProduct.badge);
+  const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
 
   const product: CaseProduct = {
     id: databaseProduct.id,
@@ -264,6 +296,12 @@ export function caseProductFromDatabase(
     subtitle: text(databaseProduct.subtitle) ?? '',
     price: paise / 100,
     priceDisplay: priceDisplayOf(databaseProduct, paise),
+    ...(wasPriceDisplay
+      ? {
+          wasPriceDisplay,
+          regularPrice: Math.round(Number(databaseProduct.regularPricePaise)) / 100,
+        }
+      : {}),
     image: text(databaseProduct.image) ?? '',
     colors: databaseProduct.colors ?? [],
     compatibility: databaseProduct.compatibility ?? [],
@@ -295,6 +333,7 @@ export function collectionProductFromDatabase(
   const gallery = list((databaseProduct.gallery ?? []).filter(Boolean));
   const badge = text(databaseProduct.badge) ?? base?.badge;
   const databaseSpecs = specsFromDatabase(databaseProduct);
+  const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
 
   const product: CollectionProduct = {
     id: databaseProduct.id,
@@ -302,6 +341,12 @@ export function collectionProductFromDatabase(
     subtitle: text(databaseProduct.subtitle) ?? base?.subtitle ?? '',
     price: paise / 100,
     priceDisplay: priceDisplayOf(databaseProduct, paise),
+    ...(wasPriceDisplay
+      ? {
+          wasPriceDisplay,
+          regularPrice: Math.round(Number(databaseProduct.regularPricePaise)) / 100,
+        }
+      : {}),
     image,
     images: gallery ?? base?.images ?? (image ? [image] : []),
     colors: list(databaseProduct.colors) ?? base?.colors ?? [],
@@ -359,12 +404,17 @@ export function refFromDatabase(
   categoryName?: string | null,
 ): StorefrontProductRef {
   const paise = pricePaiseOf(databaseProduct);
+  const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
   return {
     id: databaseProduct.id,
     name: text(databaseProduct.name) ?? databaseProduct.id,
     subtitle: text(databaseProduct.subtitle) ?? '',
     pricePaise: paise,
     priceDisplay: priceDisplayOf(databaseProduct, paise),
+    ...(wasPriceDisplay ? { wasPriceDisplay } : {}),
+    ...(wasPriceDisplay
+      ? { regularPricePaise: Math.round(Number(databaseProduct.regularPricePaise)) }
+      : {}),
     image: text(databaseProduct.image) ?? '',
     categorySlug: text(databaseProduct.categorySlug) ?? '',
     categoryName: text(categoryName) ?? text(databaseProduct.categoryName) ?? '',
