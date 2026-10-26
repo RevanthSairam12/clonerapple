@@ -275,10 +275,24 @@ export interface CreateOrderParams {
   };
 }
 
+export interface LazilyExpiredReservation {
+  txnid: string;
+  previousStatus: OrderStatus;
+  status: OrderStatus;
+  state: 'RELEASED' | 'EXPIRED';
+  stockReleased: boolean;
+}
+
 export interface CreateOrderResult {
   order: Order;
   /** True when at least one tracked line was decremented. */
   stockClaimed: boolean;
+  /**
+   * Reservations whose deadline had already passed and whose stock was given
+   * back by this checkout when the claim did not fit. Normally empty: the
+   * reconcile worker expires them first.
+   */
+  expiredReservations: LazilyExpiredReservation[];
 }
 
 type Tx = postgres.TransactionSql;
@@ -333,6 +347,95 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
   return createOrderUsing(sql, params);
+}
+
+/**
+ * Return stock held by reservations whose deadline has already passed on the
+ * database clock, for the products this checkout wants.
+ *
+ * The reconcile worker is the normal expiry path, but a checkout must not
+ * depend on the scheduler being up: when the cron is late while a product is
+ * sold out, the next customer would be refused a unit that is really free.
+ * This runs inside the order transaction after the stock rows are locked, so it
+ * cannot race the worker, a verified payment (which locks the order row) or a
+ * second checkout.
+ *
+ * A CREATED/PENDING row is cancelled exactly like the worker's expiry path; a
+ * FAILED/CANCELLED row keeps its status and moves to RELEASED (the grace rule);
+ * a PROCESSING row keeps its status, loses its claim and is scheduled for an
+ * immediate verification so the worker still flags an unresolved payment. The
+ * order row lock and the `reservation_state = 'ACTIVE'` guard make a duplicate
+ * call — worker or checkout — a no-op.
+ */
+export async function releaseExpiredReservationsForProducts(
+  tx: Tx,
+  productIds: readonly string[],
+): Promise<LazilyExpiredReservation[]> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+
+  const rows = await tx<Array<{ id: string; txnid: string; status: string }>>`
+    select o.id, o.txnid, o.status
+    from orders o
+    where o.reservation_state = 'ACTIVE'
+      and o.reservation_expires_at is not null
+      and o.reservation_expires_at <= now()
+      and o.status <> 'PAID'
+      and exists (
+        select 1 from order_items oi
+        where oi.order_id = o.id
+          and oi.product_id = any(${ids}::text[])
+      )
+    order by o.reservation_expires_at asc, o.id asc
+    for update of o
+  `;
+
+  const expired: LazilyExpiredReservation[] = [];
+
+  for (const row of rows) {
+    const orderId = String(row.id);
+    const previousStatus = String(row.status) as OrderStatus;
+    const stockReleased = await releaseClaimedStock(tx, orderId);
+
+    const grace = previousStatus === 'FAILED' || previousStatus === 'CANCELLED';
+    const processing = previousStatus === 'PROCESSING';
+    const state = grace ? 'RELEASED' : 'EXPIRED';
+    const status: OrderStatus = grace || processing ? previousStatus : 'CANCELLED';
+    const reason = grace
+      ? previousStatus === 'FAILED'
+        ? 'payment failed; the grace window has ended'
+        : 'payment cancelled; the grace window has ended'
+      : processing
+        ? 'payment verification window closed; the claim was released'
+        : 'The checkout window closed before payment was confirmed.';
+
+    await tx`
+      update orders
+      set reservation_state = ${state},
+          reservation_released_at = now(),
+          reservation_released_reason = ${reason},
+          -- A closed processing window keeps its deadline so the worker can
+          -- see that the safe recovery window ended and flag the payment.
+          processing_deadline = case when ${processing} then processing_deadline else null end,
+          next_reconcile_at = ${processing ? new Date() : null},
+          status = ${status},
+          cancelled_at = case when ${status} = 'CANCELLED' then coalesce(cancelled_at, now()) else cancelled_at end,
+          cancel_reason = case when ${status} = 'CANCELLED' then ${reason} else cancel_reason end,
+          updated_at = now()
+      where id = ${orderId} and reservation_state = 'ACTIVE'
+    `;
+
+    if (status !== previousStatus) {
+      await tx`
+        insert into order_status_history (order_id, domain, actor, from_status, to_status)
+        values (${orderId}, 'payment', 'system', ${previousStatus}, ${status})
+      `;
+    }
+
+    expired.push({ txnid: String(row.txnid), previousStatus, status, state, stockReleased });
+  }
+
+  return expired;
 }
 
 /**
@@ -460,7 +563,24 @@ export async function createOrderUsing(
           return quantity > 0 ? [{ ...line, quantity }] : [];
         })
       : itemLines;
-    const plan = planStockClaim(remainingLines, stockRows);
+    let plan = planStockClaim(remainingLines, stockRows);
+    let expiredReservations: LazilyExpiredReservation[] = [];
+    if (!plan.ok && productIds.length > 0) {
+      // The checkout must not depend on the cron having run: an expired
+      // reservation is free stock even if the worker is behind. Rows are
+      // locked and released inside this transaction, then the claim is
+      // re-planned against the refreshed counters.
+      expiredReservations = await releaseExpiredReservationsForProducts(tx, productIds);
+      if (expiredReservations.length > 0) {
+        const refreshed = await tx<StockRowSnapshot[]>`
+          select product_id, on_hand, reserved, track_inventory
+          from stock
+          where variant_id is null and product_id = any(${productIds}::text[])
+          for update
+        `;
+        plan = planStockClaim(remainingLines, refreshed);
+      }
+    }
     if (!plan.ok) throw new InsufficientStockError(plan.error);
 
     // 2. Number the order inside the same transaction.
@@ -597,7 +717,7 @@ export async function createOrderUsing(
     await claimPlannedStock(tx, rows[0].id, plan.claims);
     if (plan.claims.length > 0) stockClaimed = true;
 
-    return { order: mapRowToOrder(rows[0]), stockClaimed };
+    return { order: mapRowToOrder(rows[0]), stockClaimed, expiredReservations };
   });
 }
 
@@ -1064,13 +1184,16 @@ export async function claimDueOrders(
 }
 
 /** Store the next due time and the bounded-failure bookkeeping. */
-export async function recordReconcileResult(input: {
-  txnid: string;
-  nextAt: Date | null;
-  consecutiveFailures: number;
-  error?: string;
-}): Promise<void> {
-  const sql = getSql();
+export async function recordReconcileResult(
+  input: {
+    txnid: string;
+    nextAt: Date | null;
+    consecutiveFailures: number;
+    error?: string;
+  },
+  sqlOverride?: postgres.Sql,
+): Promise<void> {
+  const sql = sqlOverride ?? getSql();
   if (!sql) return;
   try {
     await sql`
@@ -1087,11 +1210,14 @@ export async function recordReconcileResult(input: {
 }
 
 /** An unresolved payment that must be looked at by a human. */
-export async function flagPaymentForReview(input: {
-  txnid: string;
-  reason: string;
-}): Promise<void> {
-  const sql = getSql();
+export async function flagPaymentForReview(
+  input: {
+    txnid: string;
+    reason: string;
+  },
+  sqlOverride?: postgres.Sql,
+): Promise<void> {
+  const sql = sqlOverride ?? getSql();
   if (!sql) return;
   await sql`
     update orders

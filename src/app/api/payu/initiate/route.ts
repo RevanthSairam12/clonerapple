@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { getPayUConfig, assertPayUConfigured } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
-import { createOrder, findActiveReservationForUser } from '@/lib/payu/orders';
+import { createOrder, findActiveReservationForUser, getOrderByTxnid } from '@/lib/payu/orders';
 import { InsufficientStockError, ReservationUnavailableError } from '@/lib/payu/stock';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
@@ -298,6 +298,18 @@ export async function POST(req: NextRequest) {
     // The order transaction has committed. The matrix decides whether a
     // message exists; queueNotification never waits for the provider.
     queueOrderEvent('order_placed', created.order, { orderStatus: 'CREATED' });
+
+    // This checkout returned stock from checkout(s) whose window had already
+    // closed. Tell those customers the worker would have told them, so a
+    // scheduler outage does not also silence the expiry notice. Best effort:
+    // a notification failure never affects the order that just started.
+    for (const stale of created.expiredReservations) {
+      if (stale.status !== 'CANCELLED') continue;
+      const staleOrder = await getOrderByTxnid(stale.txnid).catch(() => null);
+      if (staleOrder) {
+        queueOrderEvent('reservation_expired', staleOrder, { orderStatus: 'CANCELLED' });
+      }
+    }
 
     // Opt-in is only honoured while the checkbox is enabled in settings.
     // Failure to record it never blocks the payment.

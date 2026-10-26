@@ -1,3 +1,6 @@
+import type postgres from 'postgres';
+
+import { getSql } from '@/lib/admin/db';
 import {
   addMinutes,
   classifyVerification,
@@ -28,7 +31,7 @@ import {
   flagPaymentForReview,
   recordReconcileResult,
   releaseOrderReservation,
-  transitionOrderStatus,
+  transitionOrderStatusUsing,
   type Order,
 } from './orders';
 import { listPendingRefundObligations } from './refund-obligations';
@@ -72,6 +75,17 @@ export interface ReconcileOptions {
   now?: Date;
   /** Set false in a unit test that only exercises order reconciliation. */
   runWaitlist?: boolean;
+  /**
+   * Connection the worker runs on. Defaults to the application pool; an
+   * integration test passes a connection pinned to a throwaway schema.
+   */
+  sql?: postgres.Sql;
+  /**
+   * Set false in a throwaway-schema test: notifications, audit rows and cache
+   * invalidation target the real application pool and are not part of the SQL
+   * under test.
+   */
+  sideEffects?: boolean;
 }
 
 function emptySummary(): ReconcileSummary {
@@ -125,15 +139,22 @@ export async function reconcilePendingOrders(
   const { policy, autoCancelHours } = await readPolicy();
   const verifier = options.verifier ?? verifyPaymentWithPayU;
   const now = options.now ?? new Date();
+  const sql = options.sql ?? getSql();
   const summary = emptySummary();
+
+  // No DATABASE_URL: the same silent no-op `claimDueOrders` gives.
+  if (!sql) return summary;
 
   let dueOrders: Order[] = [];
   try {
-    dueOrders = await claimDueOrders({
-      limit: options.limit,
-      leaseSeconds: 180,
-      legacyStaleMinutes: options.staleMinutes ?? 15,
-    });
+    dueOrders = await claimDueOrders(
+      {
+        limit: options.limit,
+        leaseSeconds: 180,
+        legacyStaleMinutes: options.staleMinutes ?? 15,
+      },
+      sql,
+    );
   } catch (error: unknown) {
     summary.errors.push({ txnid: '', error: (error as Error).message });
     console.error('[PayU Reconciliation] could not claim due orders:', (error as Error).message);
@@ -147,21 +168,31 @@ export async function reconcilePendingOrders(
 
   for (const order of dueOrders) {
     try {
-      await reconcileOne(order, { policy, autoCancelHours, verifier, now, summary });
+      await reconcileOrderUsing(sql, order, {
+        policy,
+        autoCancelHours,
+        verifier,
+        now,
+        summary,
+        sideEffects: options.sideEffects,
+      });
     } catch (err: unknown) {
       const message = (err as Error).message;
       summary.errors.push({ txnid: order.txnid, error: message });
       summary.unchanged += 1;
       console.error(`[PayU Reconciliation] Error processing order ${order.txnid}:`, message);
-      await recordReconcileResult({
-        txnid: order.txnid,
-        nextAt: nextBackoff(order, now),
-        consecutiveFailures: Math.min(
-          MAX_CONSECUTIVE_RECONCILE_FAILURES,
-          order.consecutiveReconcileFailures + 1,
-        ),
-        error: message,
-      }).catch(() => {});
+      await recordReconcileResult(
+        {
+          txnid: order.txnid,
+          nextAt: nextBackoff(order, now),
+          consecutiveFailures: Math.min(
+            MAX_CONSECUTIVE_RECONCILE_FAILURES,
+            order.consecutiveReconcileFailures + 1,
+          ),
+          error: message,
+        },
+        sql,
+      ).catch(() => {});
     }
   }
 
@@ -185,24 +216,39 @@ export async function reconcilePendingOrders(
   return summary;
 }
 
-async function reconcileOne(
+export interface ReconcileContext {
+  policy: ReservationPolicy;
+  autoCancelHours: number;
+  verifier: PaymentVerifier;
+  now: Date;
+  summary: ReconcileSummary;
+  /** Set false in a throwaway-schema test (see ReconcileOptions). */
+  sideEffects?: boolean;
+}
+
+/**
+ * Resolve one claimed order on a caller-owned connection.
+ *
+ * Exported so an integration test can run the real decision tree against a
+ * throwaway schema — verified success, verified failure and its grace, an
+ * ambiguous payment and its review flag, a late capture with and without stock
+ * — without a network call or the application pool. `reconcilePendingOrders`
+ * is the production entry point and calls this for each row it leases.
+ */
+export async function reconcileOrderUsing(
+  sql: postgres.Sql,
   order: Order,
-  context: {
-    policy: ReservationPolicy;
-    autoCancelHours: number;
-    verifier: PaymentVerifier;
-    now: Date;
-    summary: ReconcileSummary;
-  },
+  context: ReconcileContext,
 ): Promise<void> {
   const { policy, autoCancelHours, verifier, now, summary } = context;
+  const sideEffects = context.sideEffects !== false;
 
   const verification = await verifier(order.txnid, order.amount);
   const outcome: PaymentOutcome = classifyVerification(verification);
   const attempt = recordReconcileAttempt(order.consecutiveReconcileFailures, outcome);
 
   if (outcome === 'paid') {
-    const res = await transitionOrderStatus({
+    const res = await transitionOrderStatusUsing(sql, {
       txnid: order.txnid,
       targetStatus: 'PAID',
       mihpayid: verification.mihpayid,
@@ -211,7 +257,7 @@ async function reconcileOne(
       policy,
     });
 
-    if (res.stockReclaimed) {
+    if (res.stockReclaimed && sideEffects) {
       revalidateCatalog();
     }
 
@@ -221,31 +267,53 @@ async function reconcileOne(
         status: 'PAID',
         mihpayid: verification.mihpayid || undefined,
       });
-      queueOrderEvent('payment_received', res.order, { orderStatus: 'PAID' });
-      queueFulfilmentEvents(res.order, res.fulfilmentSteps);
+      if (sideEffects) {
+        queueOrderEvent('payment_received', res.order, { orderStatus: 'PAID' });
+        queueFulfilmentEvents(res.order, res.fulfilmentSteps);
 
-      if (res.refundObligationCreated) {
-        queueOrderEvent('refund_pending', res.order, {
-          orderStatus: 'PAID',
-          refundPaise: res.refundObligationAmountPaise,
+        if (res.refundObligationCreated) {
+          queueOrderEvent('refund_pending', res.order, {
+            orderStatus: 'PAID',
+            refundPaise: res.refundObligationAmountPaise,
+          });
+          queueOrderEvent('payment_review', res.order, {
+            orderStatus: 'PAID',
+            refundPaise: res.refundObligationAmountPaise,
+          });
+        } else if (res.paymentReviewRequired) {
+          queueOrderEvent('payment_review', res.order, { orderStatus: 'PAID' });
+        }
+      }
+
+      if (res.paymentReviewRequired && sideEffects) {
+        // The callback path writes this audit; the worker path must too.
+        await writeAudit({
+          action: 'payment.late_capture_review',
+          entity: 'order',
+          entityId: res.order.txnid,
+          status: 'flagged',
+          reason: 'stock_unavailable_for_reclaim',
+          after: {
+            previousStatus: res.previousStatus,
+            status: res.order.status,
+            stockReclaimed: false,
+          },
+          route: '/api/payu/reconcile',
         });
-        queueOrderEvent('payment_review', res.order, {
-          orderStatus: 'PAID',
-          refundPaise: res.refundObligationAmountPaise,
-        });
-      } else if (res.paymentReviewRequired) {
-        queueOrderEvent('payment_review', res.order, { orderStatus: 'PAID' });
       }
       summary.markedPaid += 1;
     } else {
       summary.unchanged += 1;
     }
 
-    await recordReconcileResult({
-      txnid: order.txnid,
-      nextAt: null,
-      consecutiveFailures: 0,
-    });
+    await recordReconcileResult(
+      {
+        txnid: order.txnid,
+        nextAt: null,
+        consecutiveFailures: 0,
+      },
+      sql,
+    );
     return;
   }
 
@@ -260,25 +328,31 @@ async function reconcileOne(
         order.reservationExpiresAt
         && order.reservationExpiresAt.getTime() <= now.getTime()
       ) {
-        const release = await releaseOrderReservation({
-          txnid: order.txnid,
-          state: 'RELEASED',
-          reason: 'payment failed; the grace window has ended',
-          cancelOrder: false,
-        });
+        const release = await releaseOrderReservation(
+          {
+            txnid: order.txnid,
+            state: 'RELEASED',
+            reason: 'payment failed; the grace window has ended',
+            cancelOrder: false,
+          },
+          sql,
+        );
         if (release.stockReleased) {
           summary.released += 1;
-          revalidateCatalog();
+          if (sideEffects) revalidateCatalog();
         } else {
           summary.unchanged += 1;
         }
       } else {
         // Not due yet: wake up exactly at the grace deadline.
-        await recordReconcileResult({
-          txnid: order.txnid,
-          nextAt: order.reservationExpiresAt,
-          consecutiveFailures: 0,
-        });
+        await recordReconcileResult(
+          {
+            txnid: order.txnid,
+            nextAt: order.reservationExpiresAt,
+            consecutiveFailures: 0,
+          },
+          sql,
+        );
         summary.unchanged += 1;
         return;
       }
@@ -286,16 +360,19 @@ async function reconcileOne(
       summary.unchanged += 1;
     }
 
-    await recordReconcileResult({
-      txnid: order.txnid,
-      nextAt: null,
-      consecutiveFailures: 0,
-    });
+    await recordReconcileResult(
+      {
+        txnid: order.txnid,
+        nextAt: null,
+        consecutiveFailures: 0,
+      },
+      sql,
+    );
     return;
   }
 
   if (outcome === 'failed') {
-    const res = await transitionOrderStatus({
+    const res = await transitionOrderStatusUsing(sql, {
       txnid: order.txnid,
       targetStatus: 'FAILED',
       rawResponse: verification.raw,
@@ -303,17 +380,22 @@ async function reconcileOne(
     });
     if (res.transitioned) {
       summary.markedFailed += 1;
-      if (res.stockReleased) revalidateCatalog();
-      queueOrderEvent('payment_failed', res.order, { orderStatus: 'FAILED' });
+      if (res.stockReleased && sideEffects) revalidateCatalog();
+      if (sideEffects) {
+        queueOrderEvent('payment_failed', res.order, { orderStatus: 'FAILED' });
+      }
     } else {
       summary.unchanged += 1;
     }
     // The transition schedules the grace release (or null for a legacy row).
-    await recordReconcileResult({
-      txnid: order.txnid,
-      nextAt: res.transitioned ? res.order.nextReconcileAt : null,
-      consecutiveFailures: 0,
-    });
+    await recordReconcileResult(
+      {
+        txnid: order.txnid,
+        nextAt: res.transitioned ? res.order.nextReconcileAt : null,
+        consecutiveFailures: 0,
+      },
+      sql,
+    );
     return;
   }
 
@@ -325,42 +407,53 @@ async function reconcileOne(
     // case: cancel and return the claim. For a legacy row the owner's
     // auto-cancel setting still decides.
     if (order.reservationState === 'ACTIVE') {
-      const release = await releaseOrderReservation({
-        txnid: order.txnid,
-        state: 'EXPIRED',
-        reason: 'The checkout window closed before payment was confirmed.',
-        cancelOrder: true,
-      });
+      const release = await releaseOrderReservation(
+        {
+          txnid: order.txnid,
+          state: 'EXPIRED',
+          reason: 'The checkout window closed before payment was confirmed.',
+          cancelOrder: true,
+        },
+        sql,
+      );
       summary.released += release.stockReleased ? 1 : 0;
       if (release.statusChanged && release.order) {
         summary.markedCancelled += 1;
-        revalidateCatalog();
-        queueOrderEvent('reservation_expired', release.order, {
-          orderStatus: 'CANCELLED',
-        });
+        if (sideEffects) {
+          revalidateCatalog();
+          queueOrderEvent('reservation_expired', release.order, {
+            orderStatus: 'CANCELLED',
+          });
+        }
       } else if (!release.order) {
         summary.unchanged += 1;
       }
-      await recordReconcileResult({
-        txnid: order.txnid,
-        nextAt: null,
-        consecutiveFailures: 0,
-      });
+      await recordReconcileResult(
+        {
+          txnid: order.txnid,
+          nextAt: null,
+          consecutiveFailures: 0,
+        },
+        sql,
+      );
       return;
     }
 
     if (!isAutoCancelDue(order.createdAt, now, autoCancelHours)) {
       summary.unchanged += 1;
-      await recordReconcileResult({
-        txnid: order.txnid,
-        nextAt: addMinutes(now, 10),
-        consecutiveFailures: 0,
-      });
+      await recordReconcileResult(
+        {
+          txnid: order.txnid,
+          nextAt: addMinutes(now, 10),
+          consecutiveFailures: 0,
+        },
+        sql,
+      );
       return;
     }
 
     const reason = autoCancelReason(autoCancelHours);
-    const res = await transitionOrderStatus({
+    const res = await transitionOrderStatusUsing(sql, {
       txnid: order.txnid,
       targetStatus: 'CANCELLED',
       rawResponse: { reason },
@@ -369,70 +462,87 @@ async function reconcileOne(
     });
     if (!res.transitioned) {
       summary.unchanged += 1;
-      await recordReconcileResult({ txnid: order.txnid, nextAt: null, consecutiveFailures: 0 });
+      await recordReconcileResult(
+        { txnid: order.txnid, nextAt: null, consecutiveFailures: 0 },
+        sql,
+      );
       return;
     }
 
     summary.markedCancelled += 1;
-    if (res.stockReleased) revalidateCatalog();
-    queueOrderEvent('cancelled', res.order, { orderStatus: 'CANCELLED' });
+    if (res.stockReleased && sideEffects) revalidateCatalog();
     logPayUEvent('RECONCILED: EXPIRED UNPAID ORDER', {
       txnid: order.txnid,
       status: 'CANCELLED',
     });
 
-    await writeAudit({
-      action: 'order.auto_cancel',
-      entity: 'order',
-      entityId: res.order.id,
-      status: 'ok',
-      reason: autoCancelHours > 0 ? `unpaid_after_${autoCancelHours}h` : 'abandoned_after_2h',
-      after: {
-        txnid: order.txnid,
-        previousStatus: res.previousStatus,
-        status: res.order.status,
-        stockReleased: res.stockReleased,
-      },
-      route: '/api/payu/reconcile',
-    });
-    await recordReconcileResult({ txnid: order.txnid, nextAt: null, consecutiveFailures: 0 });
+    if (sideEffects) {
+      queueOrderEvent('cancelled', res.order, { orderStatus: 'CANCELLED' });
+      await writeAudit({
+        action: 'order.auto_cancel',
+        entity: 'order',
+        entityId: res.order.id,
+        status: 'ok',
+        reason: autoCancelHours > 0 ? `unpaid_after_${autoCancelHours}h` : 'abandoned_after_2h',
+        after: {
+          txnid: order.txnid,
+          previousStatus: res.previousStatus,
+          status: res.order.status,
+          stockReleased: res.stockReleased,
+        },
+        route: '/api/payu/reconcile',
+      });
+    }
+    await recordReconcileResult(
+      { txnid: order.txnid, nextAt: null, consecutiveFailures: 0 },
+      sql,
+    );
     return;
   }
 
   // An unresolved or pending outcome. The safe recovery window is bounded: it
   // may hold the claim, then release and flag rather than keep stock forever.
   if (isProcessing && recoveryWindowClosed) {
-    const release = await releaseOrderReservation({
-      txnid: order.txnid,
-      state: 'EXPIRED',
-      reason: UNRESOLVED_PAYMENT_REVIEW_REASON,
-      cancelOrder: false,
-    });
+    const release = await releaseOrderReservation(
+      {
+        txnid: order.txnid,
+        state: 'EXPIRED',
+        reason: UNRESOLVED_PAYMENT_REVIEW_REASON,
+        cancelOrder: false,
+      },
+      sql,
+    );
     summary.released += release.stockReleased ? 1 : 0;
 
-    await flagPaymentForReview({
-      txnid: order.txnid,
-      reason: UNRESOLVED_PAYMENT_REVIEW_REASON,
-    });
+    await flagPaymentForReview(
+      {
+        txnid: order.txnid,
+        reason: UNRESOLVED_PAYMENT_REVIEW_REASON,
+      },
+      sql,
+    );
     summary.flagged += 1;
 
-    if (release.order) {
+    if (release.order && sideEffects) {
       queueOrderEvent('payment_review', release.order, { orderStatus: release.order.status });
     }
 
     // Keep checking after the release: a late capture still transitions to
     // PAID and follows the reclaim/refund-obligation path.
-    await recordReconcileResult({
-      txnid: order.txnid,
-      nextAt: addMinutes(now, Math.max(10, policy.unresolvedMinutes)),
-      consecutiveFailures: attempt.failures,
-      error: verification.error,
-    });
+    await recordReconcileResult(
+      {
+        txnid: order.txnid,
+        nextAt: addMinutes(now, Math.max(10, policy.unresolvedMinutes)),
+        consecutiveFailures: attempt.failures,
+        error: verification.error,
+      },
+      sql,
+    );
     return;
   }
 
   if (!isProcessing) {
-    const res = await transitionOrderStatus({
+    const res = await transitionOrderStatusUsing(sql, {
       txnid: order.txnid,
       targetStatus: 'PROCESSING',
       rawResponse: verification.raw,
@@ -440,7 +550,9 @@ async function reconcileOne(
     });
     if (res.transitioned) {
       summary.markedProcessing += 1;
-      queueOrderEvent('payment_processing', res.order, { orderStatus: 'PROCESSING' });
+      if (sideEffects) {
+        queueOrderEvent('payment_processing', res.order, { orderStatus: 'PROCESSING' });
+      }
     } else {
       summary.unchanged += 1;
     }
@@ -449,17 +561,23 @@ async function reconcileOne(
   }
 
   if (attempt.failures > 0 && attempt.failures >= MAX_CONSECUTIVE_RECONCILE_FAILURES) {
-    await flagPaymentForReview({
-      txnid: order.txnid,
-      reason: 'Repeated gateway verification failures. Check the PayU dashboard for this transaction.',
-    });
+    await flagPaymentForReview(
+      {
+        txnid: order.txnid,
+        reason: 'Repeated gateway verification failures. Check the PayU dashboard for this transaction.',
+      },
+      sql,
+    );
     summary.flagged += 1;
   }
 
-  await recordReconcileResult({
-    txnid: order.txnid,
-    nextAt: nextBackoff(order, now),
-    consecutiveFailures: attempt.failures,
-    error: verification.error,
-  });
+  await recordReconcileResult(
+    {
+      txnid: order.txnid,
+      nextAt: nextBackoff(order, now),
+      consecutiveFailures: attempt.failures,
+      error: verification.error,
+    },
+    sql,
+  );
 }
