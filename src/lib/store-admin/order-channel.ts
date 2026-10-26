@@ -1,5 +1,6 @@
 import { getSql } from '@/lib/admin/db';
 
+import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
 import {
   isSaleState,
@@ -72,7 +73,7 @@ function summary(row: Row): OrderSummary {
     channel: text(row.channel) || 'pos',
     amount: number(row.amount),
     currency: text(row.currency) || 'INR',
-    totalPaise: integer(row.total_paise),
+    totalPaise: orderRevenuePaise(row.total_paise, row.amount),
     scheduledFor: nullableIso(row.scheduled_for),
     deliverySlot: nullableText(row.delivery_slot),
     createdAt: iso(row.created_at),

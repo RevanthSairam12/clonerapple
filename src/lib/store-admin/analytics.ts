@@ -231,9 +231,9 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           )
           select
             count(*) filter (where o.created_at >= b.from_ts)::int as orders,
-            coalesce(sum(o.total_paise) filter (where o.created_at >= b.from_ts), 0)::bigint as revenue,
+            coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at >= b.from_ts), 0)::bigint as revenue,
             count(*) filter (where o.created_at < b.from_ts)::int as prev_orders,
-            coalesce(sum(o.total_paise) filter (where o.created_at < b.from_ts), 0)::bigint as prev_revenue,
+            coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at < b.from_ts), 0)::bigint as prev_revenue,
             (
               select count(*)::int
               from order_sale_state s
@@ -281,7 +281,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
               )
               select
                 to_char(b.bucket, 'Mon YY') as label,
-                coalesce(sum(o.total_paise), 0)::bigint as revenue,
+                coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
                 count(o.id)::int as orders
               from buckets b
               left join orders o
@@ -307,7 +307,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
               )
               select
                 to_char(b.bucket, 'DD Mon') as label,
-                coalesce(sum(o.total_paise), 0)::bigint as revenue,
+                coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
                 count(o.id)::int as orders
               from buckets b
               left join orders o
@@ -369,7 +369,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           select
             coalesce(nullif(o.channel, ''), 'web') as channel,
             count(*)::int as orders,
-            coalesce(sum(o.total_paise), 0)::bigint as revenue
+            coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue
           from orders o
           cross join bounds b
           where o.status = 'PAID'
@@ -556,7 +556,7 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           ) as name,
           coalesce(u.email, o.customer_email) as email,
           count(*)::int as orders,
-          coalesce(sum(o.total_paise), 0)::bigint as revenue,
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
           max(o.created_at) as last_order_at
         from orders o
         left join users u on u.id = o.user_id
@@ -625,9 +625,9 @@ export async function getTransactionsAnalytics(
         select
           o.status,
           count(*)::int as count,
-          coalesce(sum(o.total_paise), 0)::bigint as amount,
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as amount,
           count(*) filter (where o.created_at < b.from_ts)::int as prev_count,
-          coalesce(sum(o.total_paise) filter (where o.created_at < b.from_ts), 0)::bigint as prev_amount
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at < b.from_ts), 0)::bigint as prev_amount
         from orders o
         cross join bounds b
         where o.created_at >= b.prev_from_ts
@@ -647,7 +647,7 @@ export async function getTransactionsAnalytics(
             'online'
           ) as method,
           count(*)::int as count,
-          coalesce(sum(o.total_paise), 0)::bigint as amount
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as amount
         from orders o
         cross join bounds b
         where o.status = 'PAID'
@@ -665,7 +665,7 @@ export async function getTransactionsAnalytics(
         select
           coalesce(nullif(o.channel, ''), 'web') as channel,
           count(*)::int as orders,
-          coalesce(sum(o.total_paise), 0)::bigint as revenue
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue
         from orders o
         cross join bounds b
         where o.status = 'PAID'
@@ -682,7 +682,7 @@ export async function getTransactionsAnalytics(
         )
         select
           o.txnid, o.customer_name, o.customer_email, o.status,
-          o.total_paise, o.currency, o.channel, o.created_at
+          coalesce(o.total_paise, round(o.amount * 100)::bigint) as total_paise, o.currency, o.channel, o.created_at
         from orders o
         cross join bounds b
         where o.created_at >= b.from_ts

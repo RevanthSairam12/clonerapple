@@ -21,6 +21,11 @@ import {
  *
  * - A **captured sale** is `status = 'PAID'` with fulfilment not `CANCELED`.
  *   Revenue, units, AOV and sell-through use exactly that predicate.
+ * - **Revenue** is the order total as charged — items − discount + shipping —
+ *   the same figure the Overview and the Orders list show. It falls back to
+ *   the rupee `amount` for rows created before migration 0014. The item-wise
+ *   and category/brand reports sum `line_total_paise` instead: product revenue,
+ *   which excludes shipping by construction and says so in its note.
  * - A **refund** is attributed to the day it was recorded, not the order date,
  *   except in the order report where it is bucketed with the order the filters
  *   selected. Both statements appear in the note under the matching table.
@@ -295,6 +300,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
     ],
     note:
       'Captured revenue counts PAID orders that were not cancelled, matching the Sales list. ' +
+      'Each order contributes its total as charged (items − discount + shipping). ' +
       'Refunds are shown in the bucket they were recorded in and follow the status and channel filters.',
     truncated: cut.truncated,
   };
@@ -597,6 +603,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
     ],
     note:
       'Returned units count return requests approved, received or refunded in the range. ' +
+      'Revenue is line revenue (unit price × quantity), so it excludes shipping; order-level revenue includes it. ' +
       'Sell-through is units sold divided by units sold plus available stock, and is blank when inventory is not tracked.',
     truncated: cut.truncated,
   };
@@ -1526,8 +1533,8 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       { label: 'Brands', value: (brandRows as Row[]).length, format: 'int' },
     ],
     note:
-      'Both rollups use the same captured orders and filters. Share is of the filtered revenue, ' +
-      'so with a category filter selected the share is within that category.',
+      'Both rollups use the same captured orders and filters. Revenue is line revenue, so it excludes shipping. ' +
+      'Share is of the filtered revenue, so with a category filter selected the share is within that category.',
     truncated,
   };
 }
