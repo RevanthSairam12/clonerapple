@@ -3,6 +3,7 @@ import { getSql } from '@/lib/admin/db';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
 import { canTransitionRequest, type RequestStatus, type RequestType, validateCustomerRequestState } from '@/lib/account/request-rules';
 import { isWithinReturnWindow } from '@/lib/account/rules';
+import { readReturnWindowDays } from '@/lib/account/return-window';
 import { RETURN_WINDOW_DAYS } from '@/lib/account/config';
 
 export const REQUESTS_UNAVAILABLE_MESSAGE = 'Requests unavailable: apply migrations 0014-0016';
@@ -132,7 +133,13 @@ export async function createCustomerOrderRequest(userId: string, txnid: string, 
   `;
   const order = orderRows[0];
   if (!order) throw new Error('Order not found.');
-  const rule = validateCustomerRequestState({ type, fulfilmentStatus: order.fulfilment_status || 'PENDING', deliveredAt: order.delivered_at });
+  const returnWindowDays = await readReturnWindowDays();
+  const rule = validateCustomerRequestState({
+    type,
+    fulfilmentStatus: order.fulfilment_status || 'PENDING',
+    deliveredAt: order.delivered_at,
+    returnWindowDays,
+  });
   if (!rule.ok) throw new Error(rule.error);
   const trimmedReason = reason.trim().slice(0, 500);
   if (!trimmedReason) throw new Error('A reason is required.');
@@ -167,6 +174,9 @@ export async function transitionOrderRequest(id: string, status: RequestStatus, 
   return { before: current.status, after: after.data };
 }
 
-export function canRequestReturn(deliveredAt: Date | string | null): boolean {
-  return isWithinReturnWindow(deliveredAt, new Date(), RETURN_WINDOW_DAYS);
+export function canRequestReturn(
+  deliveredAt: Date | string | null,
+  returnWindowDays: number = RETURN_WINDOW_DAYS,
+): boolean {
+  return isWithinReturnWindow(deliveredAt, new Date(), returnWindowDays);
 }

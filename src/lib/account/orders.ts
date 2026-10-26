@@ -1,7 +1,7 @@
 import { getSql } from '@/lib/admin/db';
 import { getProductImage, getProductFromCatalog } from '@/lib/payu/catalog';
 import { isWithinReturnWindow } from './rules';
-import { RETURN_WINDOW_DAYS } from './config';
+import { readReturnWindowDays } from './return-window';
 
 export type AccountOrderStatus =
   | 'PENDING'
@@ -211,6 +211,7 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
       ? new Date(deliveredHistory.created_at)
       : null;
   const fulfilmentStatus = order.fulfilment_status || 'PENDING';
+  const returnWindowDays = await readReturnWindowDays();
   return {
     txnid: order.txnid,
     id: order.id,
@@ -244,7 +245,7 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
       createdAt: new Date(row.created_at),
     })),
     canRequestCancellation: fulfilmentStatus === 'PENDING' || fulfilmentStatus === 'ACCEPTED',
-    canRequestReturn: fulfilmentStatus === 'DELIVERED' && isWithinReturnWindow(deliveredAt, new Date(), RETURN_WINDOW_DAYS),
+    canRequestReturn: fulfilmentStatus === 'DELIVERED' && isWithinReturnWindow(deliveredAt, new Date(), returnWindowDays),
   };
 }
 

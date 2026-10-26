@@ -72,6 +72,20 @@ test('datetime fields accept an empty value or datetime-local text', () => {
   assert.equal(validateSettingValue('maintenance_starts_at', '2026-10-25').ok, false);
 });
 
+test('order automation settings expose only legal fulfilled statuses and the return window', () => {
+  const field = SETTING_FIELDS.find((item) => item.key === 'default_fulfilment_status');
+  assert.ok(field);
+  assert.deepEqual(
+    field.options.map((option) => option.value),
+    ['PENDING', 'ACCEPTED', 'PROCESSING', 'ON_THE_WAY'],
+  );
+  assert.equal(DEFAULT_SETTINGS.return_window_days, '7');
+  assert.equal(validateSettingValue('return_window_days', '30').ok, true);
+  assert.equal(validateSettingValue('return_window_days', '-1').ok, false);
+  // Cash on delivery is not wired into checkout, so it ships off.
+  assert.equal(DEFAULT_SETTINGS.cod_enabled, 'off');
+});
+
 test('unknown keys are refused', () => {
   assert.equal(validateSettingValue('not_a_setting', 'x').ok, false);
   assert.equal(isStoreSettingKey('not_a_setting'), false);

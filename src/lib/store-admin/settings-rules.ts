@@ -81,11 +81,13 @@ const TOGGLE_OPTIONS: readonly SettingOption[] = [
   { value: 'off', label: 'Off' },
 ];
 
+// Only statuses the order rules can actually reach are offered; the previous
+// PACKED/SHIPPED values did not exist in the database constraint.
 const FULFILMENT_OPTIONS: readonly SettingOption[] = [
   { value: 'PENDING', label: 'Pending' },
+  { value: 'ACCEPTED', label: 'Accepted' },
   { value: 'PROCESSING', label: 'Processing' },
-  { value: 'PACKED', label: 'Packed' },
-  { value: 'SHIPPED', label: 'Shipped' },
+  { value: 'ON_THE_WAY', label: 'On the way' },
 ];
 
 const FIELD_DEFINITIONS = [
@@ -161,7 +163,7 @@ const FIELD_DEFINITIONS = [
     limit: 10,
     default: '1001',
     section: 'orders',
-    help: 'Used by POS receipt numbering and the storefront once it reads the database.',
+    help: 'First number used for online orders. Existing orders keep their ids.',
   },
   { key: 'invoice_prefix', label: 'Invoice prefix', kind: 'text', limit: 10, default: 'INV', section: 'orders' },
   {
@@ -207,7 +209,16 @@ const FIELD_DEFINITIONS = [
     limit: 4,
     default: '0',
     section: 'orders',
-    help: 'Zero leaves unpaid orders open indefinitely.',
+    help: 'Zero keeps the 2-hour abandoned-checkout expiry.',
+  },
+  {
+    key: 'return_window_days',
+    label: 'Return window (days)',
+    kind: 'number',
+    limit: 3,
+    default: '7',
+    section: 'orders',
+    help: 'How long after delivery a customer can request a return.',
   },
   {
     key: 'default_fulfilment_status',
@@ -241,7 +252,8 @@ const FIELD_DEFINITIONS = [
     label: 'Cash on delivery',
     kind: 'toggle',
     limit: 3,
-    default: 'on',
+    // Checkout has no payment-method selector, so COD stays unwired and off.
+    default: 'off',
     section: 'payments',
     options: TOGGLE_OPTIONS,
   },
