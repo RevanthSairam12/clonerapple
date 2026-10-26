@@ -1,3 +1,5 @@
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
+
 import { getPayUConfig } from './config';
 import { verifyResponseHash } from './hash';
 import { getOrderByTxnid, transitionOrderStatus, Order, OrderStatus } from './orders';
@@ -189,8 +191,10 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
 
   if (transition.firstTimePaid) {
     logPayUEvent('FULFILLMENT TRIGGERED', { txnid, status: 'PAID', mihpayid: mihpayid || undefined });
-    // Trigger one-time order fulfillment (emails, inventory decrement, access grant)
   }
+
+  // A failed or cancelled callback returns a claimed unit to the shelf.
+  if (transition.stockReleased) revalidateCatalog();
 
   // Determine redirect URL
   let redirectUrl: string;

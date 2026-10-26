@@ -1,6 +1,18 @@
 import { getSql } from '@/lib/admin/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
+import { planStockClaim, type StockRowSnapshot } from '@/lib/checkout/stock-rules';
+import {
+  formatOrderNumber,
+  ORDER_NUMBER_COUNTER,
+  type OrderNumberSettings,
+} from '@/lib/orders/numbering';
+import { planFulfilmentAutomation } from '@/lib/orders/fulfilment-automation';
+import type { FulfilmentStatus } from '@/lib/store-admin/order-rules';
+import { DEFAULT_SETTINGS } from '@/lib/store-admin/settings-rules';
 import { randomBytes } from 'node:crypto';
+import type postgres from 'postgres';
+
+import { claimPlannedStock, InsufficientStockError, releaseClaimedStock } from './stock';
 
 /**
  * Order Model and Database Access Layer
@@ -65,6 +77,8 @@ export function buildOrderItemLines(
 export interface Order {
   id: string;
   txnid: string;
+  /** Allocated display number; null for orders saved before numbering. */
+  orderNumber: number | null;
   userId: string | null;
   items: OrderItemSnapshot[];
   amount: number;
@@ -84,6 +98,8 @@ export interface Order {
 interface RawOrderRow {
   id: string;
   txnid: string;
+  order_number?: string | number | null;
+  fulfilment_status?: string | null;
   user_id: string | null;
   items: OrderItemSnapshot[] | string;
   amount: string | number;
@@ -123,9 +139,12 @@ function mapRowToOrder(row: RawOrderRow): Order {
     rawResp = row.payu_raw_response as Record<string, unknown>;
   }
 
+  const orderNumber = Number(row.order_number);
+
   return {
     id: row.id,
     txnid: row.txnid,
+    orderNumber: Number.isSafeInteger(orderNumber) && orderNumber > 0 ? orderNumber : null,
     userId: row.user_id,
     items,
     amount: Number(row.amount),
@@ -144,14 +163,22 @@ function mapRowToOrder(row: RawOrderRow): Order {
 }
 
 export interface CreateOrderParams {
-  txnid: string;
+  /** Random fallback id. Required only when `numbering` is absent. */
+  txnid?: string;
+  /** Prefix and starting number from Order settings. */
+  numbering?: OrderNumberSettings | null;
   userId?: string | null;
   items: OrderItemSnapshot[];
-  amount: number;
+  /** Server-computed money breakdown, always integer paise. */
+  subtotalPaise: number;
+  shippingPaise: number;
+  totalPaise: number;
   currency?: string;
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  paymentMethod?: string;
+  pricingSnapshot?: Record<string, unknown>;
   shippingAddress: {
     name: string;
     phone: string;
@@ -163,26 +190,118 @@ export interface CreateOrderParams {
   };
 }
 
+export interface CreateOrderResult {
+  order: Order;
+  /** True when at least one tracked line was decremented. */
+  stockClaimed: boolean;
+}
+
+type Tx = postgres.TransactionSql;
+
 /**
- * Creates a new Order in 'CREATED' status.
+ * Allocate the next display number from `order_number_counters`.
+ *
+ * The first update locks the counter row for the rest of the transaction, so
+ * concurrent checkouts queue behind it and can never receive the same number.
+ * The transaction id is the prefix plus the padded number; if an old order
+ * already carries that txnid we take the next one.
  */
-export async function createOrder(params: CreateOrderParams): Promise<Order> {
+async function allocateOrderNumber(
+  tx: Tx,
+  settings: OrderNumberSettings,
+): Promise<{ orderNumber: number; txnid: string }> {
+  await tx`
+    update order_number_counters
+    set next_number = greatest(next_number, ${settings.startNumber})
+    where name = ${ORDER_NUMBER_COUNTER}
+  `;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const rows = await tx<Array<{ next_number: string | number }>>`
+      update order_number_counters
+      set next_number = next_number + 1
+      where name = ${ORDER_NUMBER_COUNTER}
+      returning next_number
+    `;
+    if (!rows[0]) throw new Error('Order numbering is unavailable.');
+
+    const orderNumber = Number(rows[0].next_number) - 1;
+    const txnid = formatOrderNumber(settings.prefix, orderNumber);
+    const clash = await tx<Array<{ txnid: string }>>`
+      select txnid from orders where txnid = ${txnid} limit 1
+    `;
+    if (clash.length === 0) return { orderNumber, txnid };
+  }
+
+  throw new Error('Could not allocate an order number.');
+}
+
+/**
+ * Creates a new Order in 'CREATED' status and claims its tracked stock.
+ *
+ * Everything happens in one transaction: the tracked rows are locked first and
+ * re-checked before anything is written, so a cart that no longer fits throws
+ * `InsufficientStockError` and leaves no order behind. Amounts are the
+ * server-computed paise breakdown; no client-sent price or total is accepted.
+ */
+export async function createOrder(params: CreateOrderParams): Promise<CreateOrderResult> {
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
 
   const id = `ord_${randomBytes(12).toString('hex')}`;
   const currency = params.currency || 'INR';
+  const itemLines = buildOrderItemLines(params.items);
+
+  const subtotalPaise = Math.max(0, Math.trunc(params.subtotalPaise));
+  const shippingPaise = Math.max(0, Math.trunc(params.shippingPaise));
+  const totalPaise = Math.max(0, Math.trunc(params.totalPaise));
+  if (totalPaise !== subtotalPaise + shippingPaise) {
+    throw new Error('Order total does not match its money breakdown.');
+  }
 
   return await sql.begin(async (tx) => {
+    // 1. Lock stock and decide the claim before creating the order row.
+    const productIds = [...new Set(itemLines.map((line) => line.productId))];
+    const stockRows = productIds.length === 0
+      ? []
+      : await tx<StockRowSnapshot[]>`
+          select product_id, on_hand, reserved, track_inventory
+          from stock
+          where variant_id is null and product_id = any(${productIds}::text[])
+          for update
+        `;
+    const plan = planStockClaim(itemLines, stockRows);
+    if (!plan.ok) throw new InsufficientStockError(plan.error);
+
+    // 2. Number the order inside the same transaction.
+    let txnid = (params.txnid || '').trim();
+    let orderNumber: number | null = null;
+    if (params.numbering && params.numbering.prefix) {
+      const allocated = await allocateOrderNumber(tx, params.numbering);
+      txnid = allocated.txnid;
+      orderNumber = allocated.orderNumber;
+    }
+    if (!txnid) throw new Error('An order needs a transaction id.');
+
+    // 3. Persist the order and its snapshot.
     const rows = await tx<RawOrderRow[]>`
       INSERT INTO orders (
         id,
         txnid,
+        order_number,
         user_id,
         items,
         amount,
         currency,
         status,
+        channel,
+        payment_method,
+        fulfilment_status,
+        subtotal_paise,
+        discount_paise,
+        shipping_paise,
+        total_paise,
+        pricing_snapshot,
         customer_name,
         customer_email,
         customer_phone,
@@ -190,12 +309,21 @@ export async function createOrder(params: CreateOrderParams): Promise<Order> {
         updated_at
       ) VALUES (
         ${id},
-        ${params.txnid},
+        ${txnid},
+        ${orderNumber},
         ${params.userId ?? null},
         ${tx.json(params.items as any)},
-        ${params.amount},
+        ${(totalPaise / 100).toFixed(2)},
         ${currency},
         'CREATED',
+        'web',
+        ${params.paymentMethod ?? 'payu'},
+        'PENDING',
+        ${subtotalPaise},
+        0,
+        ${shippingPaise},
+        ${totalPaise},
+        ${tx.json((params.pricingSnapshot ?? {}) as any)},
         ${params.customerName},
         ${params.customerEmail},
         ${params.customerPhone},
@@ -233,7 +361,6 @@ export async function createOrder(params: CreateOrderParams): Promise<Order> {
 
     // Normalised order_items rows: composite cart ids are reduced to catalog
     // base ids here, so every later lookup by product id works.
-    const itemLines = buildOrderItemLines(params.items);
     for (const line of itemLines) {
       await tx`
         INSERT INTO order_items (
@@ -246,7 +373,10 @@ export async function createOrder(params: CreateOrderParams): Promise<Order> {
       `;
     }
 
-    return mapRowToOrder(rows[0]);
+    // 4. Apply the claim. A guarded miss rolls the whole transaction back.
+    await claimPlannedStock(tx, rows[0].id, plan.claims);
+
+    return { order: mapRowToOrder(rows[0]), stockClaimed: plan.claims.length > 0 };
   });
 }
 
@@ -286,6 +416,8 @@ export interface TransitionStatusParams {
   mihpayid?: string | null;
   mode?: string | null;
   rawResponse?: Record<string, unknown> | null;
+  /** Customer-safe reason recorded when the target is CANCELLED. */
+  cancelReason?: string | null;
 }
 
 export interface TransitionResult {
@@ -293,11 +425,58 @@ export interface TransitionResult {
   previousStatus: OrderStatus;
   order: Order;
   firstTimePaid: boolean;
+  /** True when a claim was returned to stock by this transition. */
+  stockReleased: boolean;
+  /** Fulfilment statuses applied because the order became PAID. */
+  fulfilmentSteps: FulfilmentStatus[];
+}
+
+/**
+ * Apply Order settings to a freshly paid order. Every step is a legal
+ * transition from `order-rules.ts`; nothing is written when the target is not
+ * ahead of the current status.
+ */
+async function applyPaidOrderAutomation(
+  tx: Tx,
+  orderId: string,
+  fromStatus: string,
+): Promise<FulfilmentStatus[]> {
+  const rows = await tx<Array<{ key: string; value: string }>>`
+    select key, value from store_settings
+    where key in ('auto_confirm', 'default_fulfilment_status')
+  `;
+  const values = new Map(rows.map((row) => [row.key, String(row.value)]));
+
+  const steps = planFulfilmentAutomation(fromStatus, {
+    autoConfirm:
+      (values.get('auto_confirm') ?? DEFAULT_SETTINGS.auto_confirm) === 'on',
+    defaultStatus:
+      values.get('default_fulfilment_status') ?? DEFAULT_SETTINGS.default_fulfilment_status,
+  });
+
+  let previous = fromStatus;
+  for (const step of steps) {
+    await tx`
+      update orders
+      set fulfilment_status = ${step}, updated_at = now()
+      where id = ${orderId}
+    `;
+    await tx`
+      insert into order_status_history (order_id, domain, actor, from_status, to_status)
+      values (${orderId}, 'fulfilment', 'system', ${previous}, ${step})
+    `;
+    previous = step;
+  }
+
+  return steps;
 }
 
 /**
  * Transitions order status idempotently and atomically with row locking.
  * Returns firstTimePaid=true only if this call moved the order from non-PAID to PAID.
+ *
+ * A failed or cancelled unpaid order gives its claimed stock back in the same
+ * transaction; the ledger makes a duplicate callback a no-op.
  */
 export async function transitionOrderStatus(params: TransitionStatusParams): Promise<TransitionResult> {
   const sql = getSql();
@@ -315,6 +494,7 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
 
     const current = mapRowToOrder(lockedRows[0]);
     const previousStatus = current.status;
+    const currentFulfilment = String(lockedRows[0].fulfilment_status ?? 'PENDING');
 
     // If order is already PAID, do not overwrite or trigger duplicate fulfillment
     if (previousStatus === 'PAID') {
@@ -323,6 +503,8 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
         previousStatus,
         order: current,
         firstTimePaid: false,
+        stockReleased: false,
+        fulfilmentSteps: [],
       };
     }
 
@@ -333,11 +515,14 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
         previousStatus,
         order: current,
         firstTimePaid: false,
+        stockReleased: false,
+        fulfilmentSteps: [],
       };
     }
 
     const isBecomingPaid = params.targetStatus === 'PAID';
     const paidAt = isBecomingPaid ? new Date() : (current.paidAt || null);
+    const cancelledAt = params.targetStatus === 'CANCELLED' ? new Date() : null;
 
     const updatedRows = await tx<RawOrderRow[]>`
       UPDATE orders
@@ -347,6 +532,8 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
         payu_mode = COALESCE(${params.mode ?? null}, payu_mode),
         payu_raw_response = COALESCE(${params.rawResponse ? tx.json(params.rawResponse as any) : null}, payu_raw_response),
         paid_at = ${paidAt},
+        cancelled_at = COALESCE(${cancelledAt}, cancelled_at),
+        cancel_reason = COALESCE(${params.cancelReason ?? null}, cancel_reason),
         updated_at = now()
       WHERE txnid = ${params.txnid}
       RETURNING *
@@ -374,11 +561,32 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
       )
     `;
 
+    // Only an unpaid claim is released. A PAID order keeps its stock until a
+    // return is received, which restocks through the existing return flow.
+    let stockReleased = false;
+    if (
+      (params.targetStatus === 'FAILED' || params.targetStatus === 'CANCELLED') &&
+      (previousStatus === 'CREATED' || previousStatus === 'PENDING')
+    ) {
+      stockReleased = await releaseClaimedStock(tx, updated.id);
+    }
+
+    let fulfilmentSteps: FulfilmentStatus[] = [];
+    if (isBecomingPaid) {
+      fulfilmentSteps = await applyPaidOrderAutomation(tx, updated.id, currentFulfilment);
+    }
+
+    const finalRows = fulfilmentSteps.length > 0
+      ? await tx<RawOrderRow[]>`SELECT * FROM orders WHERE id = ${updated.id} LIMIT 1`
+      : updatedRows;
+
     return {
       transitioned: true,
       previousStatus,
-      order: updated,
+      order: mapRowToOrder(finalRows[0]),
       firstTimePaid: isBecomingPaid,
+      stockReleased,
+      fulfilmentSteps,
     };
   });
 }

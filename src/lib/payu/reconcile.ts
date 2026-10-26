@@ -1,3 +1,12 @@
+import { readCheckoutSettings } from '@/lib/checkout/settings';
+import {
+  autoCancelReason,
+  isAutoCancelDue,
+  parseAutoCancelHours,
+} from '@/lib/orders/auto-cancel-rules';
+import { writeAudit } from '@/lib/store-admin/audit';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
+
 import { findStaleOrders, transitionOrderStatus } from './orders';
 import { verifyPaymentWithPayU } from './verify';
 import { logPayUEvent } from './process-response';
@@ -14,6 +23,12 @@ export interface ReconcileSummary {
 /**
  * Reconciles orders stuck in 'CREATED' or 'PENDING' older than staleMinutes.
  * Uses PayU's Verify Payment API as the authoritative server-to-server source.
+ *
+ * `auto_cancel_unpaid_hours` from Store Admin → Orders decides when an unpaid
+ * order is expired. Zero keeps the previous two-hour abandoned-checkout rule.
+ * PayU is always checked first, so a captured payment is never cancelled here.
+ * Cancelling releases the claimed stock once, and the automatic cancellation
+ * writes an audit row.
  */
 export async function reconcilePendingOrders(staleMinutes: number = 15): Promise<ReconcileSummary> {
   const staleOrders = await findStaleOrders(staleMinutes, 50);
@@ -29,6 +44,11 @@ export async function reconcilePendingOrders(staleMinutes: number = 15): Promise
   if (staleOrders.length === 0) {
     return summary;
   }
+
+  const settingsResult = await readCheckoutSettings();
+  const autoCancelHours = settingsResult.ok
+    ? parseAutoCancelHours(settingsResult.settings.auto_cancel_unpaid_hours)
+    : 0;
 
   console.log(`[PayU Reconciliation] Found ${staleOrders.length} stale order(s) older than ${staleMinutes}m.`);
 
@@ -52,37 +72,76 @@ export async function reconcilePendingOrders(staleMinutes: number = 15): Promise
             status: 'PAID',
             mihpayid: verification.mihpayid || undefined,
           });
-        }
-        summary.markedPaid++;
-      } else if (verification.status === 'NOT_FOUND') {
-        // Customer never completed payment on hosted checkout page
-        const ageHours = (Date.now() - order.createdAt.getTime()) / (1000 * 60 * 60);
-        // If older than 2 hours and not found, expire as CANCELLED
-        if (ageHours >= 2) {
-          await transitionOrderStatus({
-            txnid: order.txnid,
-            targetStatus: 'CANCELLED',
-            rawResponse: { reason: 'Abandoned checkout expired after 2 hours' },
-          });
-          logPayUEvent('RECONCILED: EXPIRED ABANDONED ORDER', { txnid: order.txnid, status: 'CANCELLED' });
-          summary.markedCancelled++;
+          summary.markedPaid++;
         } else {
           summary.unchanged++;
         }
+      } else if (verification.status === 'NOT_FOUND') {
+        // Customer never completed payment on the hosted checkout page.
+        if (!isAutoCancelDue(order.createdAt, new Date(), autoCancelHours)) {
+          summary.unchanged++;
+          continue;
+        }
+
+        const reason = autoCancelReason(autoCancelHours);
+        const res = await transitionOrderStatus({
+          txnid: order.txnid,
+          targetStatus: 'CANCELLED',
+          rawResponse: { reason },
+          cancelReason: reason,
+        });
+
+        if (!res.transitioned) {
+          summary.unchanged++;
+          continue;
+        }
+
+        summary.markedCancelled++;
+        if (res.stockReleased) revalidateCatalog();
+        logPayUEvent('RECONCILED: EXPIRED UNPAID ORDER', {
+          txnid: order.txnid,
+          status: 'CANCELLED',
+        });
+
+        await writeAudit({
+          action: 'order.auto_cancel',
+          entity: 'order',
+          entityId: res.order.id,
+          status: 'ok',
+          reason: autoCancelHours > 0 ? `unpaid_after_${autoCancelHours}h` : 'abandoned_after_2h',
+          after: {
+            txnid: order.txnid,
+            previousStatus: res.previousStatus,
+            status: res.order.status,
+            stockReleased: res.stockReleased,
+          },
+          route: '/api/payu/reconcile',
+        });
       } else if (verification.unmappedstatus === 'usercancelled') {
-        await transitionOrderStatus({
+        const res = await transitionOrderStatus({
           txnid: order.txnid,
           targetStatus: 'CANCELLED',
           rawResponse: verification.raw,
+          cancelReason: 'Payment cancelled by the customer',
         });
-        summary.markedCancelled++;
+        if (res.transitioned) {
+          summary.markedCancelled++;
+          if (res.stockReleased) revalidateCatalog();
+        } else {
+          summary.unchanged++;
+        }
       } else if (verification.status === 'failure') {
-        await transitionOrderStatus({
+        const res = await transitionOrderStatus({
           txnid: order.txnid,
           targetStatus: 'FAILED',
           rawResponse: verification.raw,
         });
-        summary.markedFailed++;
+        if (res.transitioned) {
+          summary.markedFailed++;
+          if (res.stockReleased) revalidateCatalog();
+        } else {
+          summary.unchanged++;
+        }
       } else {
         summary.unchanged++;
       }

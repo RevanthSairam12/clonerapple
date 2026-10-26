@@ -3,15 +3,20 @@ import { randomBytes } from 'node:crypto';
 import { getPayUConfig, assertPayUConfigured } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
 import { createOrder } from '@/lib/payu/orders';
+import { InsufficientStockError } from '@/lib/payu/stock';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { getCustomerAddress } from '@/lib/account/addresses';
 import { validateAddressInput } from '@/lib/account/rules';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { readCheckoutConfiguration } from '@/lib/checkout/settings';
+import { quoteShipping } from '@/lib/checkout/shipping-rules';
+import { hasUsableNumbering, readOrderNumberSettings } from '@/lib/orders/numbering';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
 import { subscribeToNewsletter } from '@/lib/store-admin/subscribers';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const runtime = 'nodejs';
 
@@ -76,12 +81,30 @@ export async function POST(req: NextRequest) {
 
     // Guest checkout is controlled by Customers → Customer settings. When it
     // is off (the default), an account is required.
-    const settings = await readCustomerSettings();
+    const customerSettings = await readCustomerSettings();
     const userSession = await getUserSession();
-    if (!userSession && !isOn(settings.guest_checkout)) {
+    if (!userSession && !isOn(customerSettings.guest_checkout)) {
       return NextResponse.json(
         { error: 'Authentication required. Please sign in or create an account to proceed with purchase.' },
         { status: 401 }
+      );
+    }
+
+    // Store Admin settings decide whether PayU can be used and what shipping
+    // costs. Once a database is configured a failed read fails closed here:
+    // no order is created and the customer sees one clear error.
+    const checkoutConfiguration = await readCheckoutConfiguration();
+    if (!checkoutConfiguration.ok) {
+      return NextResponse.json(
+        { error: 'Checkout is temporarily unavailable. Please try again.' },
+        { status: 503 }
+      );
+    }
+    const settings = checkoutConfiguration.settings;
+    if (settings.payu_enabled !== 'on') {
+      return NextResponse.json(
+        { error: 'Online payment is currently unavailable. Please try again later.' },
+        { status: 400 }
       );
     }
     const userId = userSession?.userId ?? null;
@@ -160,30 +183,65 @@ export async function POST(req: NextRequest) {
       shippingAddress = addressValidation.value;
     }
 
-    // 3. Prepare PayU Config
+    // 3. Server-computed shipping. Shipping disabled or no active method means
+    //    no charge, which is what checkout did before shipping was wired.
+    const shippingQuote = quoteShipping(cart.totalPaise, checkoutConfiguration.policy);
+    const subtotalPaise = cart.totalPaise;
+    const totalPaise = subtotalPaise + shippingQuote.shippingPaise;
+
+    // 4. Prepare PayU Config
     const config = getPayUConfig();
     assertPayUConfigured(config);
 
-    // 4. Generate txnid and format exact 2-decimal amount
-    const txnid = generateTxnId();
-    const amountStr = cart.totalAmount.toFixed(2); // E.g. "5900.00"
-
-    // 5. Create Order in Database with status 'CREATED'
-    await createOrder({
-      txnid,
-      userId,
-      items: cart.items,
-      amount: cart.totalAmount,
-      currency: 'INR',
-      customerName: firstname,
-      customerEmail: rawEmail,
-      customerPhone: phone,
-      shippingAddress,
+    // 5. Number the order from Order settings, or fall back to the previous
+    //    random transaction id when the prefix is empty. The amount charged is
+    //    the server total including the server-computed shipping.
+    const numbering = readOrderNumberSettings({
+      order_prefix: settings.order_prefix,
+      order_start_number: settings.order_start_number,
     });
+    const amountStr = (totalPaise / 100).toFixed(2);
+
+    let created;
+    try {
+      created = await createOrder({
+        txnid: hasUsableNumbering(numbering) ? undefined : generateTxnId(),
+        numbering: hasUsableNumbering(numbering) ? numbering : null,
+        userId,
+        items: cart.items,
+        subtotalPaise,
+        shippingPaise: shippingQuote.shippingPaise,
+        totalPaise,
+        currency: 'INR',
+        customerName: firstname,
+        customerEmail: rawEmail,
+        customerPhone: phone,
+        paymentMethod: 'payu',
+        pricingSnapshot: {
+          shipping: {
+            methodId: shippingQuote.methodId,
+            methodName: shippingQuote.methodName,
+            reason: shippingQuote.reason,
+            shippingPaise: shippingQuote.shippingPaise,
+          },
+        },
+        shippingAddress,
+      });
+    } catch (error: unknown) {
+      if (error instanceof InsufficientStockError) {
+        return NextResponse.json({ error: error.message }, { status: 409 });
+      }
+      throw error;
+    }
+
+    const txnid = created.order.txnid;
+
+    // Availability changed when tracked stock was claimed.
+    if (created.stockClaimed) revalidateCatalog();
 
     // Opt-in is only honoured while the checkbox is enabled in settings.
     // Failure to record it never blocks the payment.
-    if (body.marketingOptIn === true && isOn(settings.checkout_marketing_optin)) {
+    if (body.marketingOptIn === true && isOn(customerSettings.checkout_marketing_optin)) {
       await subscribeToNewsletter(rawEmail, 'checkout');
     }
 

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { getSql } from '@/lib/admin/db';
+import { releaseClaimedStock } from '@/lib/payu/stock';
 
 import {
   canTransitionReturn,
@@ -828,7 +829,14 @@ export async function listCancellationReasons(
 }
 
 export type CancelOrderMutation =
-  | { ok: true; orderId: string; txnid: string; previousStatus: string; paymentStatus: string }
+  | {
+      ok: true;
+      orderId: string;
+      txnid: string;
+      previousStatus: string;
+      paymentStatus: string;
+      stockReleased: boolean;
+    }
   | {
       ok: false;
       reason:
@@ -921,12 +929,21 @@ export async function cancelOrder(input: {
         values (${text(order.id)}, 'fulfilment', 'store_admin', ${previousStatus}, 'CANCELED', ${note || null})
       `;
 
+      // An unpaid online order still holds its claimed stock. Paid orders are
+      // left alone: they are restocked by the return flow when goods come back.
+      const holdsUnpaidClaim =
+        paymentStatus === 'CREATED' || paymentStatus === 'PENDING' || paymentStatus === 'FAILED';
+      const stockReleased = holdsUnpaidClaim
+        ? await releaseClaimedStock(tx, text(order.id))
+        : false;
+
       return {
         ok: true as const,
         orderId: text(order.id),
         txnid: text(order.txnid),
         previousStatus,
         paymentStatus,
+        stockReleased,
       };
     });
   } catch {
