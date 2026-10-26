@@ -247,7 +247,18 @@ async function allocateOrderNumber(
 export async function createOrder(params: CreateOrderParams): Promise<CreateOrderResult> {
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
+  return createOrderUsing(sql, params);
+}
 
+/**
+ * The real creation path on a caller-owned connection. Exposed so an
+ * integration test can open two dedicated connections and race two buyers for
+ * the same last unit.
+ */
+export async function createOrderUsing(
+  sql: postgres.Sql,
+  params: CreateOrderParams,
+): Promise<CreateOrderResult> {
   const id = `ord_${randomBytes(12).toString('hex')}`;
   const currency = params.currency || 'INR';
   const itemLines = buildOrderItemLines(params.items);
