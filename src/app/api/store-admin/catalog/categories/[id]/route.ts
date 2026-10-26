@@ -5,6 +5,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { archiveCategory } from '@/lib/store-admin/catalog-crud';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /** Archive a category. Refused while children or products still point at it. */
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,8 @@ export async function DELETE(
     reason: 'category_archived',
     request,
   });
+
+  revalidateCatalog();
 
   return NextResponse.json({ ok: true });
 }

@@ -4,6 +4,7 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { cancelOrder } from '@/lib/store-admin/returns';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,6 +77,9 @@ export async function POST(
     },
     request,
   });
+
+  // Cancellation restocks tracked lines; the affected ids are in the order.
+  revalidateCatalog();
 
   return NextResponse.json({
     txnid: result.txnid,

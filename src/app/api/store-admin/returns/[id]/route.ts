@@ -4,6 +4,7 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { getReturnDetail, transitionReturn, type ReturnAction } from '@/lib/store-admin/returns';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const dynamic = 'force-dynamic';
 
@@ -94,6 +95,9 @@ export async function PATCH(
     after: { action, status: result.status },
     request,
   });
+
+  // Receiving a return restocks eligible lines; other transitions do not.
+  if (action === 'receive') revalidateCatalog();
 
   return NextResponse.json({ id: result.id, status: result.status });
 }

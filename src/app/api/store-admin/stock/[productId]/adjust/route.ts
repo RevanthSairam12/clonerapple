@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { adjustStock } from '@/lib/store-admin/catalog-crud';
 import { validateStockAdjustment } from '@/lib/store-admin/catalog-crud-rules';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /** Manual stock movement: receipt, adjustment or damage. */
 export const dynamic = 'force-dynamic';
@@ -68,6 +69,8 @@ export async function POST(
     reason: validation.value.reason,
     request,
   });
+
+  revalidateCatalog(productId);
 
   return NextResponse.json({ ok: true, stock: result.data });
 }

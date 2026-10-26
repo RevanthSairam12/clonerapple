@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { upsertVariant } from '@/lib/store-admin/catalog-crud';
 import { validateVariantInput } from '@/lib/store-admin/catalog-crud-rules';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /** Create or update a product variant. Price overrides append price history. */
 export const dynamic = 'force-dynamic';
@@ -64,6 +65,8 @@ export async function POST(
     reason: result.data.created ? 'variant_created' : 'variant_updated',
     request,
   });
+
+  revalidateCatalog(id);
 
   return NextResponse.json(
     { ok: true, created: result.data.created, variant: result.data.after },

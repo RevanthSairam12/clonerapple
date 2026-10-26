@@ -6,6 +6,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
 import { isReviewAction } from '@/lib/store-admin/review-rules';
 import { getReview, setReviewReply, setReviewStatus } from '@/lib/store-admin/reviews';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * One review read plus its two moderation actions:
@@ -96,6 +97,8 @@ export async function PATCH(
       request,
     });
 
+    revalidateCatalog();
+
     return NextResponse.json({ ok: true, review: result.data.after });
   }
 
@@ -133,6 +136,8 @@ export async function PATCH(
     reason: action === 'publish' ? 'review_published' : 'review_rejected',
     request,
   });
+
+  revalidateCatalog();
 
   return NextResponse.json({ ok: true, review: result.data.after });
 }

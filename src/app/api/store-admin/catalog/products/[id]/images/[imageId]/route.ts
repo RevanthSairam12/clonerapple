@@ -10,6 +10,7 @@ import {
   restoreProductImage,
   updateProductImage,
 } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * One gallery image.
@@ -78,6 +79,8 @@ export async function PUT(request: Request, context: Params) {
     request,
   });
 
+  revalidateCatalog(id);
+
   return NextResponse.json({ ok: true, image: result.data.image });
 }
 
@@ -119,6 +122,8 @@ export async function DELETE(request: Request, context: Params) {
     request,
   });
 
+  revalidateCatalog(id);
+
   return NextResponse.json({ ok: true, image: result.data.image });
 }
 
@@ -159,6 +164,8 @@ export async function POST(request: Request, context: Params) {
     reason: 'product_image_restored',
     request,
   });
+
+  revalidateCatalog(id);
 
   return NextResponse.json({ ok: true, image: result.data.image });
 }

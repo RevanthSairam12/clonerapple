@@ -7,6 +7,7 @@ import { listCatalogOverview } from '@/lib/store-admin/catalog';
 import { createProduct } from '@/lib/store-admin/catalog-crud';
 import { validateNewProductInput } from '@/lib/store-admin/catalog-crud-rules';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * Catalogue list and product creation.
@@ -87,6 +88,8 @@ export async function POST(request: Request) {
     reason: 'product_created',
     request,
   });
+
+  revalidateCatalog(result.data.id);
 
   return NextResponse.json({ ok: true, product: result.data }, { status: 201 });
 }

@@ -8,6 +8,7 @@ import {
   clearProductAttributeValue,
   setProductAttributeValue,
 } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * One product's attribute values.
@@ -81,6 +82,8 @@ export async function PUT(request: Request, context: Params) {
     request,
   });
 
+  revalidateCatalog(id);
+
   return NextResponse.json({ ok: true, value: result.data.after });
 }
 
@@ -127,6 +130,8 @@ export async function DELETE(request: Request, context: Params) {
     reason: 'product_attribute_cleared',
     request,
   });
+
+  revalidateCatalog(id);
 
   return NextResponse.json({ ok: true });
 }

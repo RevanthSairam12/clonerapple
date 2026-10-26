@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { getCatalogProduct } from '@/lib/store-admin/catalog';
 import { validateProductPatch } from '@/lib/store-admin/catalog-rules';
 import { catalogFailureStatus, updateProduct } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * Catalogue detail for the store admin.
@@ -94,6 +95,8 @@ export async function PATCH(
     reason: 'product_details_updated',
     request,
   });
+
+  revalidateCatalog(id);
 
   return NextResponse.json({ ok: true, product: result.data.after });
 }

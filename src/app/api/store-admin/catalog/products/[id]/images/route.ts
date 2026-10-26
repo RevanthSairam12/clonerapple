@@ -5,6 +5,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { validateProductImageInput } from '@/lib/store-admin/catalog-rules';
 import { addProductImage, catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /** Add one image to a product's gallery. */
 export const dynamic = 'force-dynamic';
@@ -62,6 +63,8 @@ export async function POST(
     reason: 'product_image_added',
     request,
   });
+
+  revalidateCatalog(id);
 
   return NextResponse.json({ ok: true, image: result.data }, { status: 201 });
 }

@@ -5,6 +5,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { createPosSale } from '@/lib/store-admin/pos';
 import { isPosMethod, validatePosReference } from '@/lib/store-admin/pos-rules';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,6 +78,8 @@ export async function POST(request: Request) {
     reason: 'pos_sale_recorded',
     request,
   });
+
+  revalidateCatalog(result.data.lines.map((line) => line.productId));
 
   return NextResponse.json({
     ok: true,

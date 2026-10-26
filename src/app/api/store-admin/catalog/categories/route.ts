@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { listCategoryTree, upsertCategory } from '@/lib/store-admin/catalog-crud';
 import { validateCategoryInput } from '@/lib/store-admin/catalog-crud-rules';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /** Category tree: list for any store role, edits for the owner only. */
 export const dynamic = 'force-dynamic';
@@ -70,6 +71,8 @@ export async function POST(request: Request) {
     reason: result.data.created ? 'category_created' : 'category_updated',
     request,
   });
+
+  revalidateCatalog();
 
   return NextResponse.json(
     { ok: true, created: result.data.created, category: result.data.after },

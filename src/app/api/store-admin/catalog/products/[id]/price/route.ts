@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { updateProductPricing } from '@/lib/store-admin/catalog-crud';
 import { validatePricePatch } from '@/lib/store-admin/catalog-crud-rules';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * Price editing.
@@ -78,6 +79,8 @@ export async function PATCH(
     reason: reason || 'manual_price_change',
     request,
   });
+
+  revalidateCatalog(id);
 
   return NextResponse.json({ ok: true, changed: result.data.changed, price: result.data.after });
 }

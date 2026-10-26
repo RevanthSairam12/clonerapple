@@ -4,6 +4,7 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { voidPosSale } from '@/lib/store-admin/pos';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,6 +74,9 @@ export async function POST(
     reason,
     request,
   });
+
+  // A void restocks the sale's tracked lines.
+  revalidateCatalog();
 
   return NextResponse.json({
     ok: true,

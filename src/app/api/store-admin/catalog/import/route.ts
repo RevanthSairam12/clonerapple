@@ -7,6 +7,7 @@ import { templateCsv } from '@/lib/store-admin/catalog-csv';
 import { runCatalogueImport } from '@/lib/store-admin/catalog-transfer';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
 import { cleanFilename } from '@/lib/store-admin/media-rules';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /**
  * Bulk catalogue import. GET downloads the template; POST validates or applies
@@ -108,6 +109,9 @@ export async function POST(request: Request) {
     reason: dryRun ? 'import_validated' : status === 'imported' ? 'import_applied' : 'import_rejected',
     request,
   });
+
+  // A dry run writes nothing; a committed import can touch any product.
+  if (!dryRun && status === 'imported') revalidateCatalog();
 
   return NextResponse.json({
     ok: true,

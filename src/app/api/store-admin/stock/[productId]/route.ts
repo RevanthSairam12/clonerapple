@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { getStockDetail, updateStockSettings } from '@/lib/store-admin/catalog-crud';
 import { validateStockSettings } from '@/lib/store-admin/catalog-crud-rules';
 import { catalogFailureStatus } from '@/lib/store-admin/catalog-writes';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 /** Stock detail and settings: read for any role, edits for owner or admin. */
 export const dynamic = 'force-dynamic';
@@ -86,6 +87,8 @@ export async function PATCH(
     reason: 'stock_settings_updated',
     request,
   });
+
+  revalidateCatalog(productId);
 
   return NextResponse.json({ ok: true, stock: result.data });
 }
