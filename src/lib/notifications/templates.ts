@@ -45,6 +45,8 @@ export const TEMPLATE_VARIABLES = [
   'item_count',
   'product_name',
   'stock_available',
+  'claim_deadline',
+  'claim_window_minutes',
   'admin_link',
 ] as const;
 
@@ -159,6 +161,8 @@ export function templateValues(input: {
   itemCount?: number | null;
   productName?: string | null;
   stockAvailable?: number | null;
+  claimDeadline?: string | null;
+  claimWindowMinutes?: number | null;
   storeName?: string | null;
   supportPhone?: string | null;
   supportEmail?: string | null;
@@ -192,6 +196,8 @@ export function templateValues(input: {
     item_count: numberText(input.itemCount),
     product_name: text(input.productName),
     stock_available: numberText(input.stockAvailable),
+    claim_deadline: text(input.claimDeadline),
+    claim_window_minutes: numberText(input.claimWindowMinutes),
     admin_link: adminLink,
   };
 }
@@ -499,6 +505,126 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
       heading: 'Low stock alert',
       body: '{{product_name}} is low on stock ({{stock_available}} available).',
       sms: '{{store_name}}: low stock for {{product_name}} ({{stock_available}} left).',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  payment_processing: {
+    [CUSTOMER]: {
+      subject: 'We are verifying your payment for {{order_number}}',
+      heading: 'Payment being verified',
+      body: 'Hi {{customer_name}},\n\nYour payment is being verified. If your bank has debited the amount, please do not pay again while this transaction is being checked. We will update your order status when confirmation is received.\n\nOrder: {{order_number}}\nAmount: {{order_total}}',
+      sms: '{{store_name}}: payment for {{order_number}} is being verified. Please do not pay again while we check.',
+      buttonLabel: 'Check order status',
+      buttonUrl: '{{admin_link}}',
+    },
+    [STAFF]: {
+      subject: 'Payment verification needed: {{order_number}}',
+      heading: 'Payment awaiting verification',
+      body: 'Order {{order_number}} ({{order_total}}) has an unresolved payment outcome. The stock claim is held while PayU is re-checked.',
+      sms: '{{store_name}}: {{order_number}} payment outcome unresolved.',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  payment_failed: {
+    [CUSTOMER]: {
+      subject: 'Payment could not be completed for {{order_number}}',
+      heading: 'Payment not completed',
+      body: 'Hi {{customer_name}},\n\nWe could not confirm a successful payment for order {{order_number}}. No order will be dispatched.\n\nIf your bank shows a debit, contact us at {{support_email}} before trying again. Otherwise you can return to the store and start a new checkout while stock lasts.',
+      sms: '{{store_name}}: payment for {{order_number}} did not complete. If your bank shows a debit, contact support before retrying.',
+    },
+    [STAFF]: {
+      subject: 'Payment failed: {{order_number}}',
+      heading: 'Payment failed',
+      body: 'Order {{order_number}} for {{order_total}} has a definitive failed payment. The stock claim is released after the grace window.',
+      sms: '{{order_number}}: payment failed.',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  waitlist_joined: {
+    [CUSTOMER]: {
+      subject: 'You are on the waiting list for {{product_name}}',
+      heading: 'You are on the waiting list',
+      body: 'Hi {{customer_name}},\n\nYou are on the waiting list for {{product_name}}. We will email you when a unit becomes available. Being on the waiting list does not reserve stock, so a unit is only yours once you complete checkout from an invitation.',
+      sms: '{{store_name}}: you joined the waiting list for {{product_name}}. We will email you when a unit is available.',
+    },
+    [STAFF]: {
+      subject: 'Waiting-list entry: {{product_name}}',
+      heading: 'New waiting-list entry',
+      body: 'A customer joined the waiting list for {{product_name}}.',
+      sms: '{{product_name}}: new waiting-list entry.',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  waitlist_invite: {
+    [CUSTOMER]: {
+      subject: 'A unit of {{product_name}} is being held for you',
+      heading: 'Your unit is ready to claim',
+      body: 'Hi {{customer_name}},\n\nA unit of {{product_name}} is now being held for you until {{claim_deadline}} (about {{claim_window_minutes}} minutes).\n\nComplete checkout before then. If the window passes, the unit is offered to the next customer and you can join the waiting list again.',
+      sms: '{{store_name}}: {{product_name}} is held for you until {{claim_deadline}}. Complete checkout before then.',
+      buttonLabel: 'Claim your unit',
+      buttonUrl: '{{admin_link}}',
+    },
+    [STAFF]: {
+      subject: 'Waiting-list unit offered: {{product_name}}',
+      heading: 'Unit offered to a customer',
+      body: 'A unit of {{product_name}} was offered to the next waiting-list customer until {{claim_deadline}}.',
+      sms: '{{product_name}}: unit offered until {{claim_deadline}}.',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  reservation_expired: {
+    [CUSTOMER]: {
+      subject: 'Your reservation for {{order_number}} expired',
+      heading: 'Reservation expired',
+      body: 'Hi {{customer_name}},\n\nThe reservation for order {{order_number}} expired before a payment was confirmed, so the unit has been returned to the store. No order will be dispatched from this checkout.\n\nIf your bank shows a debit, contact us at {{support_email}} before paying again. Otherwise you can start a new checkout.',
+      sms: '{{store_name}}: reservation for {{order_number}} expired. If your bank shows a debit, contact support before retrying.',
+      buttonLabel: 'View order status',
+      buttonUrl: '{{admin_link}}',
+    },
+    [STAFF]: {
+      subject: 'Reservation expired: {{order_number}}',
+      heading: 'Reservation expired',
+      body: 'The reservation for order {{order_number}} expired without a verified payment. The stock claim was released.',
+      sms: '{{order_number}}: reservation expired.',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  refund_pending: {
+    [CUSTOMER]: {
+      subject: 'A refund is pending for {{order_number}}',
+      heading: 'Refund being arranged',
+      body: 'Hi {{customer_name}},\n\nA payment of {{refund_amount}} was received for order {{order_number}} after the reserved stock was no longer available. We have recorded the refund and our team will complete it under the store refund policy. We will email you when it is completed.',
+      sms: '{{store_name}}: refund of {{refund_amount}} is pending for {{order_number}}.',
+    },
+    [STAFF]: {
+      subject: 'Refund owed: {{order_number}}',
+      heading: 'Refund obligation',
+      body: 'Order {{order_number}} was paid {{refund_amount}} after its stock was released and could not be reclaimed. Record the refund in Store Admin once it is settled.',
+      sms: '{{order_number}}: refund {{refund_amount}} owed.',
+      buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  payment_review: {
+    [CUSTOMER]: {
+      subject: 'We are checking a payment for {{order_number}}',
+      heading: 'Payment under review',
+      body: 'Hi {{customer_name}},\n\nYour payment is being verified. If your bank has debited the amount, please do not pay again while this transaction is being checked. We will update your order status when confirmation is received.',
+      sms: '{{store_name}}: payment for {{order_number}} is under review. Please do not pay again while we check.',
+      buttonLabel: 'Check order status',
+      buttonUrl: '{{admin_link}}',
+    },
+    [STAFF]: {
+      subject: 'Payment needs review: {{order_number}}',
+      heading: 'Payment flagged for review',
+      body: 'Order {{order_number}} needs a manual payment check. Verify the transaction in the PayU dashboard before fulfilling, cancelling or refunding.',
+      sms: '{{order_number}}: payment needs manual review.',
       buttonLabel: 'Open in Store Admin',
       buttonUrl: '{{admin_link}}',
     },

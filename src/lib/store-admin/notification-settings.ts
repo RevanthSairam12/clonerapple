@@ -36,6 +36,13 @@ export const NOTIFICATION_TOPICS = [
   { value: 'password_reset', label: 'Password reset' },
   { value: 'staff_invite', label: 'Staff credentials' },
   { value: 'low_stock', label: 'Low stock' },
+  { value: 'payment_processing', label: 'Payment processing' },
+  { value: 'payment_failed', label: 'Payment failed' },
+  { value: 'waitlist_joined', label: 'Waiting list joined' },
+  { value: 'waitlist_invite', label: 'Waiting-list invitation' },
+  { value: 'reservation_expired', label: 'Reservation expired' },
+  { value: 'refund_pending', label: 'Refund pending' },
+  { value: 'payment_review', label: 'Payment review' },
 ] as const;
 
 type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number]['value'];
