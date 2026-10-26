@@ -83,6 +83,7 @@ const TABLES = [
   'order_status_history',
   'stock_movements',
   'store_settings',
+  'refund_obligations',
 ];
 
 function orderParams({ productId, txnid, quantity = 2 }) {
@@ -306,6 +307,16 @@ test('late payment with no stock flags the order, claims nothing and never retri
       select payment_review_required from orders where txnid = ${txnid}
     `;
     assert.equal(stillFlagged[0].payment_review_required, true);
+
+    // The money was taken but the units are gone, so exactly one durable
+    // refund obligation exists, and the duplicate callback created no second.
+    const obligations = await a`
+      select status, amount_paise from refund_obligations
+      where order_id = ${await orderId(a, txnid)}
+    `;
+    assert.equal(obligations.length, 1, 'one pending obligation for the unfulfillable capture');
+    assert.equal(String(obligations[0].status), 'PENDING');
+    assert.equal(Number(obligations[0].amount_paise), 100000);
   } finally {
     await a.unsafe('set search_path to public');
     await a.unsafe(`drop schema if exists "${schema}" cascade`);

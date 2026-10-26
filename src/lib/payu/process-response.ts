@@ -1,3 +1,8 @@
+import {
+  decideCallbackOutcome,
+  parseReservationPolicy,
+} from '@/lib/checkout/reservation-rules';
+import { readCheckoutSettings } from '@/lib/checkout/settings';
 import { queueFulfilmentEvents, queueOrderEvent } from '@/lib/notifications/order-context';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
@@ -152,42 +157,41 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
     };
   }
 
-  // 5. Determine target status
-  let targetStatus: OrderStatus;
-  if (status === 'success' && unmapped === 'captured') {
-    // 6. Server-to-server confirmation via Verify Payment API
-    const verification = await verifyPaymentWithPayU(txnid, order.amount);
-    if (!verification.verified) {
-      logPayUEvent('Verify Payment API Failed', {
-        txnid,
-        error: verification.error || 'Server-to-server verification did not confirm captured payment',
-      });
-      // Do not mark PAID if PayU server verification fails
-      return {
-        ok: false,
-        status: order.status,
-        txnid,
-        order,
-        redirectUrl: `/order/failed?txnid=${encodeURIComponent(txnid)}&error=verification_failed`,
-        reason: 'Server-to-server verification failed.',
-      };
-    }
-    targetStatus = 'PAID';
-  } else if (status === 'pending') {
-    targetStatus = 'PENDING';
-  } else if (unmapped === 'usercancelled') {
-    targetStatus = 'CANCELLED';
-  } else {
-    targetStatus = 'FAILED';
+  // 5. Trusted server-to-server confirmation. Every callback is checked, not
+  //    just a "success" one: a stale failure must not beat a later capture,
+  //    and an unreachable verify endpoint must never become a definitive
+  //    failure. A network error leaves the claim held and the order in
+  //    processing until the reconciler resolves it.
+  const verification = await verifyPaymentWithPayU(txnid, order.amount);
+  if (!verification.verified) {
+    logPayUEvent('Verify Payment API Did Not Confirm', {
+      txnid,
+      status: `${verification.status}/${verification.unmappedstatus}`,
+      error: verification.error,
+    });
   }
 
-  // 7. Atomic & idempotent status transition
+  const decision = decideCallbackOutcome({
+    status,
+    unmappedstatus: unmapped,
+    verification,
+    verificationError: verification.error,
+  });
+  const targetStatus = decision.target as OrderStatus;
+
+  const settingsResult = await readCheckoutSettings();
+  const policy = parseReservationPolicy(
+    settingsResult.ok ? settingsResult.settings : {},
+  );
+
+  // 6. Atomic & idempotent status transition
   const transition = await transitionOrderStatus({
     txnid,
     targetStatus,
-    mihpayid,
-    mode,
+    mihpayid: mihpayid || verification.mihpayid,
+    mode: mode || verification.mode,
     rawResponse: data,
+    policy,
   });
 
   if (transition.firstTimePaid) {
@@ -196,33 +200,66 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
     // concurrent reconcile run cannot create a second message.
     queueOrderEvent('payment_received', transition.order, { orderStatus: 'PAID' });
     queueFulfilmentEvents(transition.order, transition.fulfilmentSteps);
+
+    if (transition.refundObligationCreated) {
+      // The money was captured but the units are gone. The obligation row is
+      // the durable record; these messages tell the customer and staff what
+      // happens next without ever claiming the refund is complete.
+      queueOrderEvent('refund_pending', transition.order, {
+        orderStatus: 'PAID',
+        refundPaise: transition.refundObligationAmountPaise,
+      });
+      queueOrderEvent('payment_review', transition.order, {
+        orderStatus: 'PAID',
+        refundPaise: transition.refundObligationAmountPaise,
+      });
+    } else if (transition.paymentReviewRequired) {
+      queueOrderEvent('payment_review', transition.order, { orderStatus: 'PAID' });
+    }
+  } else if (transition.transitioned && targetStatus === 'PROCESSING') {
+    // Repeat PROCESSING decisions are no-ops above, so this is sent once per
+    // order; the dedupe key protects concurrent callback/reconcile races too.
+    queueOrderEvent('payment_processing', transition.order, { orderStatus: 'PROCESSING' });
   } else if (transition.transitioned && targetStatus === 'CANCELLED') {
     queueOrderEvent('cancelled', transition.order, { orderStatus: 'CANCELLED' });
+  } else if (transition.transitioned && targetStatus === 'FAILED') {
+    queueOrderEvent('payment_failed', transition.order, { orderStatus: 'FAILED' });
   }
 
   // A failed or cancelled callback returns a claimed unit to the shelf; a late
   // PAID callback that re-claims released units takes them off it again.
   if (transition.stockReleased || transition.stockReclaimed) revalidateCatalog();
 
-  // Determine redirect URL
+  // The customer's page must show what the order actually is. A duplicate,
+  // stale or lower-priority callback is a no-op in the transition, so its
+  // requested target can sit behind the stored status (a late failure callback
+  // for a PAID order, for example); redirecting by the target would show a
+  // failure page for a paid order.
+  const effectiveStatus = transition.order.status;
+
   let redirectUrl: string;
-  if (targetStatus === 'PAID') {
+  if (effectiveStatus === 'PAID') {
     redirectUrl = `/order/success?txnid=${encodeURIComponent(txnid)}`;
-  } else if (targetStatus === 'CANCELLED') {
+  } else if (effectiveStatus === 'CANCELLED') {
     redirectUrl = `/order/cancelled?txnid=${encodeURIComponent(txnid)}`;
-  } else if (targetStatus === 'PENDING') {
+  } else if (effectiveStatus === 'PROCESSING') {
+    // The customer may have been debited. This page never starts a charge and
+    // tells them not to pay again while the transaction is checked.
+    redirectUrl = `/order/processing?txnid=${encodeURIComponent(txnid)}`;
+  } else if (effectiveStatus === 'PENDING' || effectiveStatus === 'CREATED') {
     // There is no /order/pending route; /order/status is the page that renders
-    // a pending payment and its timeline.
+    // an unanswered payment and its timeline.
     redirectUrl = `/order/status?txnid=${encodeURIComponent(txnid)}`;
   } else {
     redirectUrl = `/order/failed?txnid=${encodeURIComponent(txnid)}`;
   }
 
   return {
-    ok: targetStatus === 'PAID' || targetStatus === 'PENDING',
-    status: targetStatus,
+    ok: true,
+    status: effectiveStatus,
     txnid,
     order: transition.order,
     redirectUrl,
+    reason: decision.reason,
   };
 }

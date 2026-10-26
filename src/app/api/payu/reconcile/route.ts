@@ -6,13 +6,16 @@ import { reconcilePendingOrders } from '@/lib/payu/reconcile';
 export const runtime = 'nodejs';
 
 /**
- * Scheduled job endpoint for order reconciliation.
+ * Scheduled job endpoint for reservations, payment reconciliation and the
+ * waiting list.
  *
- * Call every 10 minutes from the deployment's scheduler with
- * `Authorization: Bearer $CRON_SECRET`. It verifies stale pending orders and
- * expires unpaid ones after `auto_cancel_unpaid_hours`, releasing their stock
- * claim. Missing `CRON_SECRET` fails closed in production (503) because stale
- * orders now hold stock.
+ * Call every minute from the deployment's scheduler with
+ * `Authorization: Bearer $CRON_SECRET`. Each tick claims due order rows with a
+ * database lease, verifies them against PayU, releases reservations whose
+ * window or failure grace ended, flags payments that stay unresolved, expires
+ * waiting-list invitations and offers newly free units to the next customer.
+ * Missing `CRON_SECRET` fails closed in production (503) because abandoned
+ * checkouts hold stock and would otherwise never be released.
  *
  * This is also the notification retry tick: after reconciling it drains a
  * small batch of due outbox rows, so a message whose best-effort after()
@@ -36,7 +39,11 @@ export async function POST(req: NextRequest) {
     }
 
     const staleMinutes = parseInt(url.searchParams.get('staleMinutes') || '15', 10);
-    const summary = await reconcilePendingOrders(staleMinutes);
+    const limit = parseInt(url.searchParams.get('limit') || '25', 10);
+    const summary = await reconcilePendingOrders({
+      staleMinutes: Number.isFinite(staleMinutes) ? staleMinutes : 15,
+      limit: Number.isFinite(limit) ? limit : 25,
+    });
     // Best-effort and bounded: a mail outage must not look like a failed
     // reconciliation. processNotificationOutbox() never throws.
     const notifications = await processNotificationOutbox(10);

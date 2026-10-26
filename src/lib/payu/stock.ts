@@ -36,6 +36,20 @@ export class InsufficientStockError extends Error {
   }
 }
 
+/**
+ * A waiting-list invitation that no longer holds stock: expired, already
+ * claimed, cancelled, addressed to another customer, or not for an item in the
+ * bag. Checkout refuses to start rather than reserve a different unit.
+ */
+export class ReservationUnavailableError extends Error {
+  readonly code = 'reservation_unavailable';
+
+  constructor(message = 'This reservation has expired. Please start a new checkout.') {
+    super(message);
+    this.name = 'ReservationUnavailableError';
+  }
+}
+
 /** Lock every tracked row for the given base product ids. */
 export async function lockStockRows(tx: Tx, productIds: readonly string[]): Promise<StockRowSnapshot[]> {
   const ids = [...new Set(productIds.filter(Boolean))];
@@ -130,6 +144,99 @@ export async function releaseClaimedStock(tx: Tx, orderId: string): Promise<bool
 export interface SoldStockLine {
   productId: string;
   quantity: number;
+}
+
+/* ------------------------------------------------ waiting-list holds */
+
+/**
+ * Raise `stock.reserved` for an invitation. The guarded update is the only
+ * place a hold is created, so two allocation workers racing for the same last
+ * unit cannot both succeed. The caller's transaction rolls back on `false`.
+ */
+export async function holdReservedStock(
+  tx: Tx,
+  productId: string,
+  quantity: number,
+): Promise<boolean> {
+  const wanted = Math.max(1, Math.trunc(quantity));
+  const rows = await tx<Array<{ id: string }>>`
+    update stock
+    set reserved = reserved + ${wanted}, updated_at = now()
+    where product_id = ${productId}
+      and variant_id is null
+      and track_inventory
+      and on_hand - reserved >= ${wanted}
+    returning id
+  `;
+  return rows.length > 0;
+}
+
+/** Give an invitation's hold back. Capped at zero so a duplicate release is safe. */
+export async function releaseReservedStock(
+  tx: Tx,
+  productId: string,
+  quantity: number,
+): Promise<boolean> {
+  const wanted = Math.max(0, Math.trunc(quantity));
+  if (wanted === 0) return false;
+  const rows = await tx<Array<{ id: string }>>`
+    update stock
+    set reserved = greatest(0, reserved - ${wanted}), updated_at = now()
+    where product_id = ${productId} and variant_id is null
+    returning id
+  `;
+  return rows.length > 0;
+}
+
+export interface ConsumeHoldInput {
+  reservationId: string;
+  orderId: string;
+  productId: string;
+  quantity: number;
+}
+
+/**
+ * Turn a held unit into a sale inside the order transaction.
+ *
+ * Both counters move together (`on_hand` and `reserved` fall by the same
+ * amount), so availability is unchanged and the unit cannot be promised
+ * twice. The reservation row moves to CLAIMED in the same statement pair; the
+ * unique one-held-per-product index then allows the next invitation to be
+ * issued. A miss — the hold was expired or consumed by a concurrent request —
+ * throws and the caller's transaction rolls back.
+ */
+export async function consumeStockHold(tx: Tx, input: ConsumeHoldInput): Promise<void> {
+  const quantity = Math.max(1, Math.trunc(input.quantity));
+  const updated = await tx<Array<{ id: string }>>`
+    update stock
+    set on_hand = on_hand - ${quantity},
+        reserved = reserved - ${quantity},
+        updated_at = now()
+    where product_id = ${input.productId}
+      and variant_id is null
+      and track_inventory
+      and on_hand >= ${quantity}
+      and reserved >= ${quantity}
+    returning id
+  `;
+  if (updated.length === 0) throw new ReservationUnavailableError();
+
+  const claimed = await tx<Array<{ id: string }>>`
+    update stock_reservations
+    set status = 'CLAIMED',
+        claimed_order_id = ${input.orderId},
+        updated_at = now()
+    where id = ${input.reservationId}
+      and status = 'HELD'
+      and expires_at > now()
+    returning id
+  `;
+  if (claimed.length === 0) throw new ReservationUnavailableError();
+
+  await tx`
+    insert into stock_movements (product_id, delta, reason, order_id)
+    values (${input.productId}, ${-quantity}, 'sale', ${input.orderId})
+  `;
 }
 
 /**

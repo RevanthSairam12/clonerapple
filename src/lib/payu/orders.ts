@@ -1,5 +1,14 @@
 import { getSql } from '@/lib/admin/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
+import {
+  addMinutes,
+  addSeconds,
+  DEFAULT_RESERVATION_POLICY,
+  MAX_CONSECUTIVE_RECONCILE_FAILURES,
+  nextReconcileAt,
+  type ReservationPolicy,
+  type ReservationState,
+} from '@/lib/checkout/reservation-rules';
 import { planStockClaim, type StockRowSnapshot } from '@/lib/checkout/stock-rules';
 import {
   formatOrderNumber,
@@ -10,15 +19,19 @@ import { planFulfilmentAutomation } from '@/lib/orders/fulfilment-automation';
 import type { FulfilmentStatus } from '@/lib/store-admin/order-rules';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { DEFAULT_SETTINGS } from '@/lib/store-admin/settings-rules';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
+import { createRefundObligationInTx } from './refund-obligations';
 import {
   claimPlannedStock,
+  consumeStockHold,
   InsufficientStockError,
   reclaimReleasedStock,
   releasedClaimLines,
   releaseClaimedStock,
+  releaseReservedStock,
+  ReservationUnavailableError,
 } from './stock';
 
 /**
@@ -32,7 +45,15 @@ if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Order repository must never run in browser code.');
 }
 
-export type OrderStatus = 'CREATED' | 'PENDING' | 'PAID' | 'FAILED' | 'CANCELLED';
+export type OrderStatus =
+  | 'CREATED'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'PAID'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export type { ReservationState };
 
 export interface OrderItemSnapshot {
   id: string;
@@ -100,6 +121,18 @@ export interface Order {
   createdAt: Date;
   updatedAt: Date;
   paidAt: Date | null;
+  /** Flash-sale hold: NONE for legacy/POS rows. */
+  reservationState: ReservationState;
+  reservationExpiresAt: Date | null;
+  reservationReleasedAt: Date | null;
+  reservationReleasedReason: string;
+  /** End of the safe recovery window for an ambiguous payment. */
+  processingDeadline: Date | null;
+  paymentReviewRequired: boolean;
+  paymentReviewReason: string;
+  reconcileAttempts: number;
+  consecutiveReconcileFailures: number;
+  nextReconcileAt: Date | null;
 }
 
 interface RawOrderRow {
@@ -121,6 +154,28 @@ interface RawOrderRow {
   created_at: string | Date;
   updated_at: string | Date;
   paid_at: string | Date | null;
+  reservation_state?: string | null;
+  reservation_expires_at?: string | Date | null;
+  reservation_released_at?: string | Date | null;
+  reservation_released_reason?: string | null;
+  processing_deadline?: string | Date | null;
+  payment_review_required?: boolean | null;
+  payment_review_reason?: string | null;
+  reconcile_attempts?: string | number | null;
+  consecutive_reconcile_failures?: string | number | null;
+  next_reconcile_at?: string | Date | null;
+}
+
+function reservationStateOf(value: unknown): ReservationState {
+  return value === 'ACTIVE' || value === 'CONSUMED' || value === 'RELEASED' || value === 'EXPIRED'
+    ? value
+    : 'NONE';
+}
+
+function dateOrNull(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function mapRowToOrder(row: RawOrderRow): Order {
@@ -166,6 +221,19 @@ function mapRowToOrder(row: RawOrderRow): Order {
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
     paidAt: row.paid_at ? new Date(row.paid_at) : null,
+    reservationState: reservationStateOf(row.reservation_state),
+    reservationExpiresAt: dateOrNull(row.reservation_expires_at),
+    reservationReleasedAt: dateOrNull(row.reservation_released_at),
+    reservationReleasedReason: String(row.reservation_released_reason ?? ''),
+    processingDeadline: dateOrNull(row.processing_deadline),
+    paymentReviewRequired: Boolean(row.payment_review_required),
+    paymentReviewReason: String(row.payment_review_reason ?? ''),
+    reconcileAttempts: Math.max(0, Math.trunc(Number(row.reconcile_attempts) || 0)),
+    consecutiveReconcileFailures: Math.max(
+      0,
+      Math.trunc(Number(row.consecutive_reconcile_failures) || 0),
+    ),
+    nextReconcileAt: dateOrNull(row.next_reconcile_at),
   };
 }
 
@@ -186,6 +254,16 @@ export interface CreateOrderParams {
   customerPhone: string;
   paymentMethod?: string;
   pricingSnapshot?: Record<string, unknown>;
+  /**
+   * Active checkout window. Zero (the POS/default) creates a legacy row with
+   * no reservation: stock is still claimed, but no timed hold is recorded.
+   */
+  reservationSeconds?: number;
+  /**
+   * Raw waiting-list invitation token. Already hashed by the caller; the
+   * matching HELD row is consumed in this same transaction.
+   */
+  reservationToken?: string | null;
   shippingAddress: {
     name: string;
     phone: string;
@@ -277,9 +355,49 @@ export async function createOrderUsing(
     throw new Error('Order total does not match its money breakdown.');
   }
 
+  const reservationSeconds = Math.max(0, Math.trunc(params.reservationSeconds ?? 0));
+  const rawToken = (params.reservationToken ?? '').trim();
+  const tokenHash = rawToken
+    ? createHash('sha256').update(rawToken).digest('hex')
+    : null;
+
   return await sql.begin(async (tx) => {
-    // 1. Lock stock and decide the claim before creating the order row.
     const productIds = [...new Set(itemLines.map((line) => line.productId))];
+
+    // A customer retrying after a failed payment may still have the grace hold
+    // from that order. A fresh checkout claims the same stock, so give the old
+    // hold back first; otherwise a one-unit product would look sold out to the
+    // very customer it is being held for. Only this customer's own failed or
+    // cancelled holds are touched, and only under the row lock.
+    if (params.userId && !tokenHash && productIds.length > 0) {
+      const superseded = await tx<Array<{ id: string }>>`
+        select id from orders
+        where user_id = ${params.userId}
+          and reservation_state = 'ACTIVE'
+          and reservation_expires_at > now()
+          and status in ('FAILED', 'CANCELLED')
+          and exists (
+            select 1 from order_items oi
+            where oi.order_id = orders.id
+              and oi.product_id = any(${productIds}::text[])
+          )
+        for update
+      `;
+      for (const row of superseded) {
+        await releaseClaimedStock(tx, String(row.id));
+        await tx`
+          update orders
+          set reservation_state = 'RELEASED',
+              reservation_released_at = now(),
+              reservation_released_reason = 'superseded by a new checkout',
+              next_reconcile_at = null,
+              updated_at = now()
+          where id = ${String(row.id)} and reservation_state = 'ACTIVE'
+        `;
+      }
+    }
+
+    // 1. Lock stock and decide the claim before creating the order row.
     const stockRows = productIds.length === 0
       ? []
       : await tx<StockRowSnapshot[]>`
@@ -288,7 +406,61 @@ export async function createOrderUsing(
           where variant_id is null and product_id = any(${productIds}::text[])
           for update
         `;
-    const plan = planStockClaim(itemLines, stockRows);
+
+    // A waiting-list invitation is exclusive stock. Validate it under the same
+    // lock as the stock row, and refuse rather than silently reserving a
+    // different unit when it has expired, been used, or belongs to someone
+    // else. The checkout then starts a fresh reservation, which is exactly
+    // what the customer is told to do.
+    type HeldReservation = {
+      id: string;
+      product_id: string;
+      user_id: string;
+      waiting_list_entry_id: string | null;
+      quantity: number;
+      status: string;
+      expires_at: string | Date;
+    };
+    let hold: HeldReservation | null = null;
+    let heldQuantity = 0;
+    if (tokenHash) {
+      const holdRows = await tx<HeldReservation[]>`
+        select id, product_id, user_id, waiting_list_entry_id, quantity, status, expires_at
+        from stock_reservations
+        where token_hash = ${tokenHash}
+        for update
+      `;
+      const row = holdRows[0];
+      if (!row) throw new ReservationUnavailableError();
+      const expires = dateOrNull(row.expires_at);
+      if (
+        row.status !== 'HELD'
+        || !expires
+        || expires.getTime() <= Date.now()
+        || !params.userId
+        || row.user_id !== params.userId
+        || !productIds.includes(row.product_id)
+      ) {
+        throw new ReservationUnavailableError();
+      }
+      hold = row;
+      const ordered = itemLines
+        .filter((line) => line.productId === row.product_id)
+        .reduce((sum, line) => sum + line.quantity, 0);
+      heldQuantity = Math.min(Math.max(1, Number(row.quantity) || 1), ordered);
+      if (heldQuantity <= 0) throw new ReservationUnavailableError();
+    }
+
+    // The held unit is already excluded from availability (`reserved`); the
+    // remaining lines are planned against the same snapshot.
+    const remainingLines = heldQuantity > 0 && hold
+      ? itemLines.flatMap((line) => {
+          if (line.productId !== hold!.product_id) return [line];
+          const quantity = line.quantity - heldQuantity;
+          return quantity > 0 ? [{ ...line, quantity }] : [];
+        })
+      : itemLines;
+    const plan = planStockClaim(remainingLines, stockRows);
     if (!plan.ok) throw new InsufficientStockError(plan.error);
 
     // 2. Number the order inside the same transaction.
@@ -323,6 +495,9 @@ export async function createOrderUsing(
         customer_name,
         customer_email,
         customer_phone,
+        reservation_state,
+        reservation_expires_at,
+        next_reconcile_at,
         created_at,
         updated_at
       ) VALUES (
@@ -345,6 +520,9 @@ export async function createOrderUsing(
         ${params.customerName},
         ${params.customerEmail},
         ${params.customerPhone},
+        ${reservationSeconds > 0 ? 'ACTIVE' : 'NONE'},
+        now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
+        now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
         now(),
         now()
       )
@@ -391,10 +569,35 @@ export async function createOrderUsing(
       `;
     }
 
-    // 4. Apply the claim. A guarded miss rolls the whole transaction back.
-    await claimPlannedStock(tx, rows[0].id, plan.claims);
+    // 4. Consume the invitation first, then apply the rest of the claim. Both
+    //    write `sale` movements under the same locked stock rows, so the
+    //    ledger always equals the units the order holds.
+    let stockClaimed = false;
+    if (hold && heldQuantity > 0) {
+      await consumeStockHold(tx, {
+        reservationId: hold.id,
+        orderId: rows[0].id,
+        productId: hold.product_id,
+        quantity: heldQuantity,
+      });
+      const remainder = Math.max(0, Math.trunc(Number(hold.quantity) || 0) - heldQuantity);
+      if (remainder > 0) {
+        await releaseReservedStock(tx, hold.product_id, remainder);
+      }
+      if (hold.waiting_list_entry_id) {
+        await tx`
+          update waiting_list_entries
+          set status = 'PURCHASED', last_purchase_at = now(), updated_at = now()
+          where id = ${hold.waiting_list_entry_id} and status = 'INVITED'
+        `;
+      }
+      stockClaimed = true;
+    }
 
-    return { order: mapRowToOrder(rows[0]), stockClaimed: plan.claims.length > 0 };
+    await claimPlannedStock(tx, rows[0].id, plan.claims);
+    if (plan.claims.length > 0) stockClaimed = true;
+
+    return { order: mapRowToOrder(rows[0]), stockClaimed };
   });
 }
 
@@ -436,6 +639,8 @@ export interface TransitionStatusParams {
   rawResponse?: Record<string, unknown> | null;
   /** Customer-safe reason recorded when the target is CANCELLED. */
   cancelReason?: string | null;
+  /** Reservation/grace policy. The coded defaults apply when omitted. */
+  policy?: ReservationPolicy;
 }
 
 export interface TransitionResult {
@@ -449,8 +654,29 @@ export interface TransitionResult {
   stockReclaimed: boolean;
   /** True when a late payment could not re-claim stock and needs a human. */
   paymentReviewRequired: boolean;
+  /** Created when the captured payment cannot be fulfilled. */
+  refundObligationCreated: boolean;
+  refundObligationAmountPaise: number;
   /** Fulfilment statuses applied because the order became PAID. */
   fulfilmentSteps: FulfilmentStatus[];
+}
+
+function noopTransition(
+  previousStatus: OrderStatus,
+  order: Order,
+): TransitionResult {
+  return {
+    transitioned: false,
+    previousStatus,
+    order,
+    firstTimePaid: false,
+    stockReleased: false,
+    stockReclaimed: false,
+    paymentReviewRequired: false,
+    refundObligationCreated: false,
+    refundObligationAmountPaise: 0,
+    fulfilmentSteps: [],
+  };
 }
 
 /**
@@ -543,6 +769,8 @@ export async function transitionOrderStatusUsing(
   sql: postgres.Sql,
   params: TransitionStatusParams,
 ): Promise<TransitionResult> {
+  const policy = params.policy ?? DEFAULT_RESERVATION_POLICY;
+
   return await sql.begin(async (tx) => {
     // Acquire exclusive row lock
     const lockedRows = await tx<RawOrderRow[]>`
@@ -558,38 +786,88 @@ export async function transitionOrderStatusUsing(
     const currentFulfilment = String(lockedRows[0].fulfilment_status ?? 'PENDING');
 
     // If order is already PAID, do not overwrite or trigger duplicate fulfillment
-    if (previousStatus === 'PAID') {
-      return {
-        transitioned: false,
-        previousStatus,
-        order: current,
-        firstTimePaid: false,
-        stockReleased: false,
-        stockReclaimed: false,
-        paymentReviewRequired: false,
-        fulfilmentSteps: [],
-      };
-    }
+    if (previousStatus === 'PAID') return noopTransition(previousStatus, current);
 
-    // If already in target status, return idempotently
+    // If already in target status, return idempotently. A repeated PROCESSING
+    // decision must not extend the recovery window.
     if (previousStatus === params.targetStatus) {
-      return {
-        transitioned: false,
-        previousStatus,
-        order: current,
-        firstTimePaid: false,
-        stockReleased: false,
-        stockReclaimed: false,
-        paymentReviewRequired: false,
-        fulfilmentSteps: [],
-      };
+      return noopTransition(previousStatus, current);
     }
 
-    const isBecomingPaid = params.targetStatus === 'PAID';
-    const paidAt = isBecomingPaid ? new Date() : (current.paidAt || null);
-    const cancelledAt = params.targetStatus === 'CANCELLED' ? new Date() : null;
+    // A failed or cancelled order only ever moves back to PAID (a late capture)
+    // or stays put. Nothing may turn it into PENDING/PROCESSING and revive a
+    // reservation whose stock has already gone back to the shelf.
+    if (
+      (previousStatus === 'FAILED' || previousStatus === 'CANCELLED')
+      && params.targetStatus !== 'PAID'
+    ) {
+      return noopTransition(previousStatus, current);
+    }
 
-    const updatedRows = await tx<RawOrderRow[]>`
+    const now = new Date();
+    const isBecomingPaid = params.targetStatus === 'PAID';
+    const isDefinitiveFailure =
+      params.targetStatus === 'FAILED' || params.targetStatus === 'CANCELLED';
+    const wasUnpaid =
+      previousStatus === 'CREATED'
+      || previousStatus === 'PENDING'
+      || previousStatus === 'PROCESSING';
+    const reservation = current.reservationState;
+
+    let nextReservation: ReservationState = reservation;
+    let nextExpires = current.reservationExpiresAt;
+    let nextDeadline = current.processingDeadline;
+    let releaseAt: Date | null = null;
+    let releaseReason = current.reservationReleasedReason;
+    let releaseNow = false;
+
+    if (isBecomingPaid) {
+      nextDeadline = null;
+      // A payment verified while the window is still held consumes it in
+      // place: no stock movement, the claim simply becomes a sale.
+      if (reservation === 'ACTIVE') nextReservation = 'CONSUMED';
+    } else if (isDefinitiveFailure && wasUnpaid) {
+      nextDeadline = null;
+      if (reservation === 'ACTIVE') {
+        if (policy.failureGraceSeconds > 0) {
+          // Keep the units for the grace window. A customer retrying the card
+          // in a second tab then finds the same stock still held, and a late
+          // verified capture consumes it instead of racing a release.
+          nextExpires = addSeconds(now, policy.failureGraceSeconds);
+          nextReservation = 'ACTIVE';
+        } else {
+          releaseNow = true;
+          nextReservation = 'RELEASED';
+          releaseAt = now;
+          releaseReason = params.targetStatus === 'FAILED'
+            ? 'payment failed'
+            : 'payment cancelled';
+        }
+      } else if (reservation === 'NONE') {
+        // Legacy/POS rows have no timed hold and keep the original behaviour:
+        // an unpaid failure gives the claim back immediately.
+        releaseNow = true;
+      }
+    } else if (params.targetStatus === 'PROCESSING') {
+      if (!nextDeadline) nextDeadline = addMinutes(now, policy.unresolvedMinutes);
+      // An unresolved payment keeps its claim for the safe recovery window;
+      // releasing it earlier could sell a unit the bank is about to debit.
+      if (reservation === 'ACTIVE') nextExpires = nextDeadline;
+    }
+
+    let nextReconcile: Date | null = current.nextReconcileAt;
+    if (isBecomingPaid || releaseNow) {
+      nextReconcile = null;
+    } else if (nextReservation === 'ACTIVE' && nextExpires) {
+      nextReconcile = nextExpires;
+    } else if (params.targetStatus === 'PROCESSING' || params.targetStatus === 'PENDING') {
+      nextReconcile = nextReconcileAt(current.reconcileAttempts, now);
+    }
+
+    const paidAt = isBecomingPaid ? now : (current.paidAt || null);
+    const cancelledAt = params.targetStatus === 'CANCELLED' ? now : null;
+
+    await tx`
       UPDATE orders
       SET
         status = ${params.targetStatus},
@@ -599,12 +877,15 @@ export async function transitionOrderStatusUsing(
         paid_at = ${paidAt},
         cancelled_at = COALESCE(${cancelledAt}, cancelled_at),
         cancel_reason = COALESCE(${params.cancelReason ?? null}, cancel_reason),
+        reservation_state = ${nextReservation},
+        reservation_expires_at = ${nextExpires},
+        reservation_released_at = COALESCE(${releaseAt}, reservation_released_at),
+        reservation_released_reason = ${releaseNow ? releaseReason : current.reservationReleasedReason},
+        processing_deadline = ${nextDeadline},
+        next_reconcile_at = ${nextReconcile},
         updated_at = now()
-      WHERE txnid = ${params.txnid}
-      RETURNING *
+      WHERE id = ${current.id}
     `;
-
-    const updated = mapRowToOrder(updatedRows[0]);
 
     await tx`
       INSERT INTO order_status_history (
@@ -616,7 +897,7 @@ export async function transitionOrderStatusUsing(
         payu_mihpayid,
         payu_mode
       ) VALUES (
-        ${updated.id},
+        ${current.id},
         'payment',
         'payu',
         ${previousStatus},
@@ -626,40 +907,68 @@ export async function transitionOrderStatusUsing(
       )
     `;
 
-    // Only an unpaid claim is released. A PAID order keeps its stock until a
-    // return is received, which restocks through the existing return flow.
+    // Only a release decided above moves stock here. A timed failure keeps its
+    // claim until the grace deadline, which the reconciler enforces.
     let stockReleased = false;
-    if (
-      (params.targetStatus === 'FAILED' || params.targetStatus === 'CANCELLED') &&
-      (previousStatus === 'CREATED' || previousStatus === 'PENDING')
-    ) {
-      stockReleased = await releaseClaimedStock(tx, updated.id);
+    if (releaseNow) {
+      stockReleased = await releaseClaimedStock(tx, current.id);
     }
 
-    // A payment that arrives after the unpaid order was cancelled or failed
-    // must not silently sell stock that is already back on the shelf. Re-take
-    // exactly what the release ledger gave back; if any unit is gone, claim
-    // nothing and flag the order. The row lock above makes duplicate callbacks
-    // no-ops, so the same units can never be taken twice.
+    // A payment that arrives after its units were given back must not silently
+    // sell stock that is already on the shelf. Re-take exactly what the release
+    // ledger returned; if any unit is gone, claim nothing, mark the payment as
+    // captured and record a refund obligation for a human to settle.
+    // Any capture whose claim is no longer ACTIVE is late: the units may have
+    // gone back to the shelf through expiry, a failure grace, a staff cancel or
+    // the end of the unresolved window. Re-take exactly what the ledger
+    // released, whatever the previous status was.
     const isLatePaid =
-      isBecomingPaid && (previousStatus === 'CANCELLED' || previousStatus === 'FAILED');
+      isBecomingPaid && reservation !== 'ACTIVE' && reservation !== 'CONSUMED';
     let stockReclaimed = false;
     let paymentReviewRequired = false;
+    let refundObligationCreated = false;
+    let refundObligationAmountPaise = 0;
+
     if (isLatePaid) {
-      const released = await releasedClaimLines(tx, updated.id);
+      const released = await releasedClaimLines(tx, current.id);
       if (released.length > 0) {
-        const reclaim = await reclaimReleasedStock(tx, updated.id, released);
+        const reclaim = await reclaimReleasedStock(tx, current.id, released);
         stockReclaimed = reclaim.ok;
-        paymentReviewRequired = !reclaim.ok;
-        if (!reclaim.ok) {
+        if (reclaim.ok) {
+          await tx`
+            UPDATE orders
+            SET reservation_state = 'CONSUMED', updated_at = now()
+            WHERE id = ${current.id}
+          `;
+        } else {
+          paymentReviewRequired = true;
+          const amountPaise = Math.max(
+            0,
+            Math.round(Number(current.amount) * 100),
+          );
+          const obligation = await createRefundObligationInTx(tx, {
+            orderId: current.id,
+            amountPaise,
+          });
+          refundObligationCreated = obligation.created;
+          refundObligationAmountPaise = obligation.amountPaise;
           await tx`
             UPDATE orders
             SET payment_review_required = true,
                 payment_review_reason = ${LATE_PAYMENT_REVIEW_REASON},
                 updated_at = now()
-            WHERE id = ${updated.id}
+            WHERE id = ${current.id}
           `;
         }
+      } else if (reservation === 'EXPIRED' || reservation === 'RELEASED') {
+        // The state says released but the ledger has no release movement, so
+        // there is nothing on the shelf to take back (an untracked line, for
+        // example). Fulfilment is safe.
+        await tx`
+          UPDATE orders
+          SET reservation_state = 'CONSUMED', updated_at = now()
+          WHERE id = ${current.id}
+        `;
       }
     }
 
@@ -667,12 +976,12 @@ export async function transitionOrderStatusUsing(
     // payment is captured, but auto-confirm must not pretend the stock exists.
     let fulfilmentSteps: FulfilmentStatus[] = [];
     if (isBecomingPaid && !paymentReviewRequired) {
-      fulfilmentSteps = await applyPaidOrderAutomation(tx, updated.id, currentFulfilment);
+      fulfilmentSteps = await applyPaidOrderAutomation(tx, current.id, currentFulfilment);
     }
 
-    const finalRows = fulfilmentSteps.length > 0
-      ? await tx<RawOrderRow[]>`SELECT * FROM orders WHERE id = ${updated.id} LIMIT 1`
-      : updatedRows;
+    const finalRows = await tx<RawOrderRow[]>`
+      SELECT * FROM orders WHERE id = ${current.id} LIMIT 1
+    `;
 
     return {
       transitioned: true,
@@ -682,9 +991,257 @@ export async function transitionOrderStatusUsing(
       stockReleased,
       stockReclaimed,
       paymentReviewRequired,
+      refundObligationCreated,
+      refundObligationAmountPaise,
       fulfilmentSteps,
     };
   });
+}
+
+/* --------------------------------------------- durable reconcile queue */
+
+export interface DueOrderClaimOptions {
+  limit?: number;
+  /** How long the claiming worker owns a row before it becomes due again. */
+  leaseSeconds?: number;
+  /** Legacy rows without a reservation become due after this much time. */
+  legacyStaleMinutes?: number;
+}
+
+/**
+ * Claim a bounded batch of orders that are due for a payment check.
+ *
+ * `FOR UPDATE SKIP LOCKED` makes this safe with several instances: each row is
+ * handed to exactly one worker. The claim moves `next_reconcile_at` forward by
+ * the lease, so a worker that crashes mid-verification does not strand the row
+ * — it simply becomes due again after the lease instead of being lost.
+ *
+ * New flash-sale orders are due at their reservation deadline. Legacy rows
+ * (no reservation, e.g. POS or pre-0037 web orders) keep the previous
+ * "stale after N minutes" behaviour.
+ */
+export async function claimDueOrders(
+  options: DueOrderClaimOptions = {},
+  sqlOverride?: postgres.Sql,
+): Promise<Order[]> {
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return [];
+
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 25), 1), 200);
+  const leaseSeconds = Math.min(Math.max(Math.trunc(options.leaseSeconds ?? 120), 30), 3600);
+  const legacyStaleMinutes = Math.max(Math.trunc(options.legacyStaleMinutes ?? 15), 1);
+
+  const rows = await sql.begin(async (tx) => {
+    return await tx<RawOrderRow[]>`
+      with due as (
+        select id
+        from orders
+        where (
+            status in ('CREATED', 'PENDING', 'PROCESSING')
+            -- A failed/cancelled order can still hold its grace stock.
+            or (status in ('FAILED', 'CANCELLED') and reservation_state = 'ACTIVE')
+          )
+          and coalesce(
+            next_reconcile_at,
+            reservation_expires_at,
+            created_at + ${`${legacyStaleMinutes} minutes`}::interval
+          ) <= now()
+        order by coalesce(next_reconcile_at, reservation_expires_at, created_at) asc
+        limit ${limit}
+        for update skip locked
+      )
+      update orders o
+      set next_reconcile_at = now() + ${`${leaseSeconds} seconds`}::interval,
+          reconcile_attempts = o.reconcile_attempts + 1,
+          last_reconcile_at = now()
+      from due
+      where o.id = due.id
+      returning o.*
+    `;
+  });
+
+  return rows.map(mapRowToOrder);
+}
+
+/** Store the next due time and the bounded-failure bookkeeping. */
+export async function recordReconcileResult(input: {
+  txnid: string;
+  nextAt: Date | null;
+  consecutiveFailures: number;
+  error?: string;
+}): Promise<void> {
+  const sql = getSql();
+  if (!sql) return;
+  try {
+    await sql`
+      update orders
+      set next_reconcile_at = ${input.nextAt},
+          consecutive_reconcile_failures = ${Math.max(0, Math.trunc(input.consecutiveFailures))},
+          last_reconcile_error = ${String(input.error ?? '').slice(0, 500)},
+          last_reconcile_at = now()
+      where txnid = ${input.txnid}
+    `;
+  } catch {
+    console.warn('[payu] could not record a reconcile result');
+  }
+}
+
+/** An unresolved payment that must be looked at by a human. */
+export async function flagPaymentForReview(input: {
+  txnid: string;
+  reason: string;
+}): Promise<void> {
+  const sql = getSql();
+  if (!sql) return;
+  await sql`
+    update orders
+    set payment_review_required = true,
+        payment_review_reason = ${input.reason.slice(0, 300)},
+        reconciliation_flagged_at = coalesce(reconciliation_flagged_at, now()),
+        updated_at = now()
+    where txnid = ${input.txnid}
+      and status in ('CREATED', 'PENDING', 'PROCESSING', 'PAID')
+  `;
+}
+
+export interface ReservationReleaseResult {
+  outcome: 'released' | 'already-released' | 'not-due' | 'paid' | 'not-found';
+  order: Order | null;
+  stockReleased: boolean;
+  statusChanged: boolean;
+}
+
+/**
+ * Return a due claim to the shelf exactly once.
+ *
+ * Used for two transitions:
+ * - an unpaid window that closed (`EXPIRED`, the order becomes CANCELLED);
+ * - the end of the failure grace (`RELEASED`, the order stays FAILED).
+ *
+ * The row lock makes this and a concurrent verified payment mutually
+ * exclusive. A PAID order can never be expired here, and a second call sees a
+ * non-ACTIVE reservation and does nothing.
+ */
+export async function releaseOrderReservation(
+  input: {
+    txnid: string;
+    state: 'EXPIRED' | 'RELEASED';
+    reason: string;
+    cancelOrder?: boolean;
+  },
+  sqlOverride?: postgres.Sql,
+): Promise<ReservationReleaseResult> {
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return { outcome: 'not-found', order: null, stockReleased: false, statusChanged: false };
+
+  return await sql.begin(async (tx) => {
+    const rows = await tx<RawOrderRow[]>`
+      select * from orders where txnid = ${input.txnid} for update
+    `;
+    const row = rows[0];
+    if (!row) {
+      return { outcome: 'not-found' as const, order: null, stockReleased: false, statusChanged: false };
+    }
+    const current = mapRowToOrder(row);
+    if (current.status === 'PAID') {
+      return { outcome: 'paid' as const, order: current, stockReleased: false, statusChanged: false };
+    }
+    if (current.reservationState !== 'ACTIVE') {
+      return {
+        outcome: 'already-released' as const,
+        order: current,
+        stockReleased: false,
+        statusChanged: false,
+      };
+    }
+    if (
+      current.reservationExpiresAt
+      && current.reservationExpiresAt.getTime() > Date.now()
+    ) {
+      return { outcome: 'not-due' as const, order: current, stockReleased: false, statusChanged: false };
+    }
+
+    const stockReleased = await releaseClaimedStock(tx, current.id);
+    const nextStatus = input.cancelOrder
+      && (current.status === 'CREATED' || current.status === 'PENDING' || current.status === 'PROCESSING')
+      ? 'CANCELLED'
+      : current.status;
+
+    await tx`
+      update orders
+      set reservation_state = ${input.state},
+          reservation_released_at = now(),
+          reservation_released_reason = ${input.reason.slice(0, 300)},
+          processing_deadline = null,
+          next_reconcile_at = null,
+          status = ${nextStatus},
+          cancelled_at = case when ${nextStatus} = 'CANCELLED' then coalesce(cancelled_at, now()) else cancelled_at end,
+          cancel_reason = case when ${nextStatus} = 'CANCELLED' then ${input.reason.slice(0, 300)} else cancel_reason end,
+          updated_at = now()
+      where id = ${current.id}
+    `;
+
+    const statusChanged = nextStatus !== current.status;
+    if (statusChanged) {
+      await tx`
+        insert into order_status_history (order_id, domain, actor, from_status, to_status)
+        values (${current.id}, 'payment', 'system', ${current.status}, ${nextStatus})
+      `;
+    }
+
+    const finalRows = await tx<RawOrderRow[]>`
+      select * from orders where id = ${current.id} limit 1
+    `;
+    return {
+      outcome: 'released' as const,
+      order: mapRaw(finalRows[0]),
+      stockReleased,
+      statusChanged,
+    };
+  });
+}
+
+function mapRaw(row: RawOrderRow | undefined): Order | null {
+  return row ? mapRowToOrder(row) : null;
+}
+
+/**
+ * An unexpired flash-sale hold for this customer, if any. Used by the initiate
+ * route to refuse a second concurrent payment: each new request creates a new
+ * order, so without this a customer could hoard several units by re-submitting
+ * checkout. The reservation itself is never extended.
+ */
+export async function findActiveReservationForUser(
+  userId: string,
+  sqlOverride?: postgres.Sql,
+): Promise<{
+  txnid: string;
+  status: OrderStatus;
+  expiresAt: Date | null;
+} | null> {
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return null;
+  try {
+    const rows = await sql<Array<{ txnid: string; status: OrderStatus; reservation_expires_at: string | Date | null }>>`
+      select txnid, status, reservation_expires_at
+      from orders
+      where user_id = ${userId}
+        and reservation_state = 'ACTIVE'
+        and status in ('CREATED', 'PENDING', 'PROCESSING')
+        and reservation_expires_at > now()
+      order by created_at desc
+      limit 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      txnid: String(row.txnid),
+      status: row.status,
+      expiresAt: dateOrNull(row.reservation_expires_at),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { getPayUConfig, assertPayUConfigured } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
-import { createOrder } from '@/lib/payu/orders';
-import { InsufficientStockError } from '@/lib/payu/stock';
+import { createOrder, findActiveReservationForUser } from '@/lib/payu/orders';
+import { InsufficientStockError, ReservationUnavailableError } from '@/lib/payu/stock';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
 import { getUserSession } from '@/lib/user-auth';
@@ -12,7 +12,9 @@ import { getCustomerAddress } from '@/lib/account/addresses';
 import { validateAddressInput } from '@/lib/account/rules';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
+import { parseReservationPolicy } from '@/lib/checkout/reservation-rules';
 import { quoteShipping } from '@/lib/checkout/shipping-rules';
+import { isInvitationToken } from '@/lib/waitlist/rules';
 import { hasUsableNumbering, readOrderNumberSettings } from '@/lib/orders/numbering';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
@@ -125,6 +127,48 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
     }
 
+    // A waiting-list claim token is exclusive stock. It must belong to a
+    // signed-in customer; createOrder re-checks ownership and expiry under the
+    // stock row lock, so a copied link cannot be used by someone else.
+    const rawReservationToken = typeof body.reservationToken === 'string'
+      ? body.reservationToken.trim()
+      : '';
+    if (rawReservationToken && !isInvitationToken(rawReservationToken)) {
+      return NextResponse.json(
+        { error: 'That reservation link is not valid. Please open the link from your email.' },
+        { status: 400 },
+      );
+    }
+    if (rawReservationToken && !userId) {
+      return NextResponse.json(
+        { error: 'Sign in to claim this reservation.' },
+        { status: 401 },
+      );
+    }
+
+    const reservationPolicy = parseReservationPolicy(settings);
+
+    // One live checkout per account. Without this a customer could open several
+    // tabs and hold several units; the reservation is never extended by a
+    // repeat request, so the window stays the one shown when checkout started.
+    // A waiting-list claim is still one checkout: the held unit stays reserved
+    // until the claim window ends, so the customer can retry after the current
+    // payment resolves.
+    if (userId) {
+      const activeReservation = await findActiveReservationForUser(userId);
+      if (activeReservation) {
+        return NextResponse.json(
+          {
+            error: 'A checkout is already in progress for this account. Finish that payment or wait for its reservation to expire before starting another.',
+            code: 'reservation_active',
+            statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
+            reservationExpiresAt: activeReservation.expiresAt?.toISOString() ?? null,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     // 1. Resolve cart items and compute price strictly server-side
     const rawItems = body.items;
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
@@ -227,8 +271,19 @@ export async function POST(req: NextRequest) {
           },
         },
         shippingAddress,
+        reservationSeconds: reservationPolicy.reservationSeconds,
+        reservationToken: rawReservationToken || undefined,
       });
     } catch (error: unknown) {
+      if (error instanceof ReservationUnavailableError) {
+        return NextResponse.json(
+          {
+            error: 'That reservation is no longer available. The unit may have been offered to the next customer. Please start a new checkout.',
+            code: 'reservation_unavailable',
+          },
+          { status: 409 },
+        );
+      }
       if (error instanceof InsufficientStockError) {
         return NextResponse.json({ error: error.message }, { status: 409 });
       }
@@ -270,6 +325,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       actionUrl: config.paymentUrl,
+      reservationSeconds: reservationPolicy.reservationSeconds,
+      reservationExpiresAt: created.order.reservationExpiresAt?.toISOString() ?? null,
       fields: {
         key: config.key,
         txnid,
