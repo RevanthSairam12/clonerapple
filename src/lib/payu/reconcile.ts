@@ -67,6 +67,10 @@ export async function reconcilePendingOrders(staleMinutes: number = 15): Promise
           rawResponse: verification.raw,
         });
 
+        // Normally the claim was already held, but if the order had been
+        // released and this run re-claims it, the shelf count changed.
+        if (res.stockReclaimed) revalidateCatalog();
+
         if (res.firstTimePaid) {
           logPayUEvent('RECONCILED: MARKED PAID & FULFILLED', {
             txnid: order.txnid,

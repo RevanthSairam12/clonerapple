@@ -2,9 +2,10 @@ import Link from 'next/link';
 
 import { formatPaise } from '@/lib/store-admin/amount';
 import { getStoreSession } from '@/lib/store-admin/auth';
-import { listPendingPayments } from '@/lib/store-admin/payments';
+import { listPaymentReviewOrders, listPendingPayments } from '@/lib/store-admin/payments';
 import { ANY_METHOD_LABELS } from '@/lib/store-admin/payment-rules';
 import { PaymentReviewActions } from '@/components/store-admin/PaymentReviewActions';
+import { PaymentReviewFlagActions } from '@/components/store-admin/PaymentReviewFlagActions';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,8 +34,12 @@ function waitingFor(value: string): string {
 
 export default async function StoreAdminPaymentsPage() {
   const session = await getStoreSession();
-  const result = await listPendingPayments();
+  const [result, reviewResult] = await Promise.all([
+    listPendingPayments(),
+    listPaymentReviewOrders(),
+  ]);
   const canReview = session?.role === 'store_admin' || session?.role === 'store_owner';
+  const flagged = reviewResult.ok ? reviewResult.data : [];
 
   if (!result.ok) {
     return (
@@ -60,7 +65,8 @@ export default async function StoreAdminPaymentsPage() {
         <div>
           <h1 className="sa-page-title">Payments</h1>
           <p className="sa-page-sub">
-            Manual UPI, bank-transfer and “other” entries wait here before they count towards an order.
+            Manual UPI, bank-transfer and “other” entries wait here before they count towards an
+            order. Captured payments whose stock could not be re-claimed are flagged below.
           </p>
         </div>
         <div className="sa-page-actions">
@@ -98,6 +104,53 @@ export default async function StoreAdminPaymentsPage() {
           </span>
         </div>
       </div>
+
+      {flagged.length > 0 ? (
+        <div className="sa-panel">
+          <div className="sa-panel-head">
+            <h2 className="sa-card-title">Captured payments needing attention</h2>
+            <span className="sa-row-sub">{flagged.length} order(s)</span>
+          </div>
+          <p className="sa-readonly-foot">
+            The payment was captured after the order was cancelled and its stock had already gone
+            back on the shelf. The released units could not be taken back. Restock or refund
+            manually, then mark the review done. Nothing here moves money automatically.
+          </p>
+          <div className="sa-table-wrap">
+            <table className="sa-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th className="sa-num">Captured</th>
+                  <th>Reason</th>
+                  <th className="sa-num">Waiting</th>
+                  <th>Review</th>
+                </tr>
+              </thead>
+              <tbody>
+                {flagged.map((order) => (
+                  <tr key={order.orderId}>
+                    <td>
+                      <Link
+                        className="sa-product-link sa-mono"
+                        href={`/store-admin/orders/${encodeURIComponent(order.txnid)}`}
+                      >
+                        {order.txnid}
+                      </Link>
+                    </td>
+                    <td className="sa-num">{formatPaise(order.amountPaise)}</td>
+                    <td className="sa-row-sub">{order.reason}</td>
+                    <td className="sa-num">{waitingFor(order.flaggedAt)}</td>
+                    <td>
+                      <PaymentReviewFlagActions txnid={order.txnid} canReview={canReview} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       {pending.length === 0 ? (
         <div className="sa-panel sa-empty-panel">

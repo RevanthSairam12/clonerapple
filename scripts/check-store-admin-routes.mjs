@@ -143,6 +143,9 @@ const EXPECTED_MUTATING_ROUTES = [
   // Phase 10: retrying a failed outbox message sends again, so it is a
   // guarded, same-origin mutation for store_admin and above.
   'settings/notifications/retry/route.ts',
+  // Phase 10: acknowledging a captured payment whose stock could not be
+  // re-claimed is an audited mutation, though it moves no money.
+  'payments/review-flag/route.ts',
 ];
 
 const EXPECTED_ROUTES = [

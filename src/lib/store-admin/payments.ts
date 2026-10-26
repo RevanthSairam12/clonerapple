@@ -340,6 +340,107 @@ export async function listPendingPayments(limit = 100): Promise<PaymentLoad<Pend
   }
 }
 
+/* ---------------------------------------- captured payments needing a human */
+
+export interface PaymentReviewOrder {
+  orderId: string;
+  txnid: string;
+  amountPaise: number;
+  reason: string;
+  /** When the payment was captured, falling back to when the order was placed. */
+  flaggedAt: string;
+}
+
+/**
+ * Orders whose payment was captured after their stock was released and could
+ * not be taken back. Read-only; clearing the flag is a separate audited action.
+ */
+export async function listPaymentReviewOrders(
+  limit = 100,
+): Promise<PaymentLoad<PaymentReviewOrder[]>> {
+  const sql = getSql();
+  if (!sql) return { ok: false, reason: 'unavailable' };
+  try {
+    const rows = (await sql`
+      select id, txnid, payment_review_reason,
+             coalesce(paid_at, created_at) as flagged_at,
+             coalesce(total_paise, round(amount * 100)::bigint) as total_paise
+      from orders
+      where payment_review_required
+      order by coalesce(paid_at, created_at) asc, id asc
+      limit ${Math.min(Math.max(limit, 1), 500)}
+    `) as Row[];
+    return {
+      ok: true,
+      data: rows.map((row) => ({
+        orderId: text(row.id),
+        txnid: text(row.txnid),
+        amountPaise: number(row.total_paise),
+        reason: text(row.payment_review_reason),
+        flaggedAt: iso(row.flagged_at),
+      })),
+    };
+  } catch {
+    console.warn('[store-admin/payments] could not read the payment review flags');
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
+export type ClearPaymentReviewResult =
+  | { ok: true; txnid: string }
+  | {
+      ok: false;
+      reason: 'unavailable' | 'not-found' | 'not-flagged';
+      error: string;
+    };
+
+/**
+ * Acknowledge that a captured-payment flag was handled. This records the
+ * decision only; stock and any refund are still a manual operation.
+ */
+export async function clearPaymentReview(input: {
+  txnid: string;
+  staffId: string;
+}): Promise<ClearPaymentReviewResult> {
+  const sql = getSql();
+  if (!sql) return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = (await tx`
+        select id, txnid, payment_review_required
+        from orders
+        where txnid = ${input.txnid.trim()}
+        for update
+      `) as Row[];
+      const order = rows[0];
+      if (!order) {
+        return { ok: false as const, reason: 'not-found' as const, error: 'Order not found.' };
+      }
+      if (!Boolean(order.payment_review_required)) {
+        return {
+          ok: false as const,
+          reason: 'not-flagged' as const,
+          error: 'This order is not waiting for a payment review.',
+        };
+      }
+      await tx`
+        update orders
+        set payment_review_required = false,
+            payment_review_reason = '',
+            payment_reviewed_at = now(),
+            payment_reviewed_by = ${input.staffId},
+            updated_at = now()
+        where id = ${text(order.id)}
+      `;
+      return { ok: true as const, txnid: text(order.txnid) };
+    });
+  } catch {
+    console.warn('[store-admin/payments] could not clear a payment review flag');
+    return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  }
+}
+
 export type PaymentReviewResult =
   | {
       ok: true;

@@ -8,11 +8,18 @@ import {
 } from '@/lib/orders/numbering';
 import { planFulfilmentAutomation } from '@/lib/orders/fulfilment-automation';
 import type { FulfilmentStatus } from '@/lib/store-admin/order-rules';
+import { writeAudit } from '@/lib/store-admin/audit';
 import { DEFAULT_SETTINGS } from '@/lib/store-admin/settings-rules';
 import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
-import { claimPlannedStock, InsufficientStockError, releaseClaimedStock } from './stock';
+import {
+  claimPlannedStock,
+  InsufficientStockError,
+  reclaimReleasedStock,
+  releasedClaimLines,
+  releaseClaimedStock,
+} from './stock';
 
 /**
  * Order Model and Database Access Layer
@@ -438,9 +445,20 @@ export interface TransitionResult {
   firstTimePaid: boolean;
   /** True when a claim was returned to stock by this transition. */
   stockReleased: boolean;
+  /** True when a late payment took its released units back from stock. */
+  stockReclaimed: boolean;
+  /** True when a late payment could not re-claim stock and needs a human. */
+  paymentReviewRequired: boolean;
   /** Fulfilment statuses applied because the order became PAID. */
   fulfilmentSteps: FulfilmentStatus[];
 }
+
+/**
+ * Reason stored on an order whose payment was captured after its stock was
+ * released and could not be taken back. Safe to show in Store Admin: no PII.
+ */
+export const LATE_PAYMENT_REVIEW_REASON =
+  'Payment captured after the order was cancelled; the released stock could not be re-claimed. Review stock and any refund manually.';
 
 /**
  * Apply Order settings to a freshly paid order. Every step is a legal
@@ -487,12 +505,44 @@ async function applyPaidOrderAutomation(
  * Returns firstTimePaid=true only if this call moved the order from non-PAID to PAID.
  *
  * A failed or cancelled unpaid order gives its claimed stock back in the same
- * transaction; the ledger makes a duplicate callback a no-op.
+ * transaction; the ledger makes a duplicate callback a no-op. A late PAID
+ * callback for such an order tries to take the released units back atomically;
+ * when it cannot, the payment is still recorded but the order is flagged for
+ * manual review and an audit row is written after the commit.
  */
 export async function transitionOrderStatus(params: TransitionStatusParams): Promise<TransitionResult> {
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
 
+  const result = await transitionOrderStatusUsing(sql, params);
+
+  if (result.paymentReviewRequired) {
+    await writeAudit({
+      action: 'payment.late_capture_review',
+      entity: 'order',
+      entityId: result.order.txnid,
+      status: 'flagged',
+      reason: 'stock_unavailable_for_reclaim',
+      after: {
+        previousStatus: result.previousStatus,
+        status: result.order.status,
+        stockReclaimed: false,
+      },
+      route: 'payment-verification',
+    });
+    console.warn(
+      `[payu] late payment for ${result.order.txnid} could not re-claim stock; flagged for review`,
+    );
+  }
+
+  return result;
+}
+
+/** The transition on a caller-owned connection; used by integration tests. */
+export async function transitionOrderStatusUsing(
+  sql: postgres.Sql,
+  params: TransitionStatusParams,
+): Promise<TransitionResult> {
   return await sql.begin(async (tx) => {
     // Acquire exclusive row lock
     const lockedRows = await tx<RawOrderRow[]>`
@@ -515,6 +565,8 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
         order: current,
         firstTimePaid: false,
         stockReleased: false,
+        stockReclaimed: false,
+        paymentReviewRequired: false,
         fulfilmentSteps: [],
       };
     }
@@ -527,6 +579,8 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
         order: current,
         firstTimePaid: false,
         stockReleased: false,
+        stockReclaimed: false,
+        paymentReviewRequired: false,
         fulfilmentSteps: [],
       };
     }
@@ -582,8 +636,37 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
       stockReleased = await releaseClaimedStock(tx, updated.id);
     }
 
+    // A payment that arrives after the unpaid order was cancelled or failed
+    // must not silently sell stock that is already back on the shelf. Re-take
+    // exactly what the release ledger gave back; if any unit is gone, claim
+    // nothing and flag the order. The row lock above makes duplicate callbacks
+    // no-ops, so the same units can never be taken twice.
+    const isLatePaid =
+      isBecomingPaid && (previousStatus === 'CANCELLED' || previousStatus === 'FAILED');
+    let stockReclaimed = false;
+    let paymentReviewRequired = false;
+    if (isLatePaid) {
+      const released = await releasedClaimLines(tx, updated.id);
+      if (released.length > 0) {
+        const reclaim = await reclaimReleasedStock(tx, updated.id, released);
+        stockReclaimed = reclaim.ok;
+        paymentReviewRequired = !reclaim.ok;
+        if (!reclaim.ok) {
+          await tx`
+            UPDATE orders
+            SET payment_review_required = true,
+                payment_review_reason = ${LATE_PAYMENT_REVIEW_REASON},
+                updated_at = now()
+            WHERE id = ${updated.id}
+          `;
+        }
+      }
+    }
+
+    // A flagged late payment stays where it is for a human to handle; the
+    // payment is captured, but auto-confirm must not pretend the stock exists.
     let fulfilmentSteps: FulfilmentStatus[] = [];
-    if (isBecomingPaid) {
+    if (isBecomingPaid && !paymentReviewRequired) {
       fulfilmentSteps = await applyPaidOrderAutomation(tx, updated.id, currentFulfilment);
     }
 
@@ -597,6 +680,8 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
       order: mapRowToOrder(finalRows[0]),
       firstTimePaid: isBecomingPaid,
       stockReleased,
+      stockReclaimed,
+      paymentReviewRequired,
       fulfilmentSteps,
     };
   });

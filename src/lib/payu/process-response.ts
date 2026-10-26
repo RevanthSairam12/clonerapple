@@ -200,8 +200,9 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
     queueOrderEvent('cancelled', transition.order, { orderStatus: 'CANCELLED' });
   }
 
-  // A failed or cancelled callback returns a claimed unit to the shelf.
-  if (transition.stockReleased) revalidateCatalog();
+  // A failed or cancelled callback returns a claimed unit to the shelf; a late
+  // PAID callback that re-claims released units takes them off it again.
+  if (transition.stockReleased || transition.stockReclaimed) revalidateCatalog();
 
   // Determine redirect URL
   let redirectUrl: string;
