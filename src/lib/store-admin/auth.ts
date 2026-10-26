@@ -34,6 +34,8 @@ export interface StoreSession {
   email: string;
   name: string;
   role: StoreRole;
+  /** True until a temporary password has been replaced. */
+  mustChangePassword: boolean;
 }
 
 const COOKIE_NAME = 'store_admin_session';
@@ -120,13 +122,21 @@ function toSession(row: Record<string, any>): StoreSession {
     email: String(row.email),
     name: String(row.name),
     role: isStoreRole(row.role) ? row.role : 'store_viewer',
+    mustChangePassword:
+      row.must_change_password === true || String(row.must_change_password) === 'true',
   };
 }
 
 /* --------------------------------------------------------------- login */
 
 export type StoreLoginResult =
-  | { ok: true; token: string; adminId: string; role: StoreRole }
+  | {
+      ok: true;
+      token: string;
+      adminId: string;
+      role: StoreRole;
+      mustChangePassword: boolean;
+    }
   | {
       ok: false;
       error: string;
@@ -159,7 +169,7 @@ export async function login(
   }
 
   const rows = await sql`
-    select id, email, name, password_hash, role, is_active,
+    select id, email, name, password_hash, role, is_active, must_change_password,
            totp_secret, totp_enabled, recovery_hash
     from store_admins
     where email = ${normalized}
@@ -200,6 +210,8 @@ export async function login(
     insert into store_admin_sessions (token_hash, admin_id, expires_at)
     values (${hashToken(token)}, ${admin.id}, ${expires})
   `;
+  // The staff list shows this column; it is informational, never a gate.
+  await sql`update store_admins set last_login_at = now() where id = ${admin.id}`;
   // Opportunistic cleanup of expired rows.
   await sql`delete from store_admin_sessions where expires_at <= now()`;
 
@@ -210,6 +222,8 @@ export async function login(
     token,
     adminId: admin.id,
     role: isStoreRole(admin.role) ? admin.role : 'store_viewer',
+    mustChangePassword:
+      admin.must_change_password === true || String(admin.must_change_password) === 'true',
   };
 }
 
@@ -225,7 +239,7 @@ export async function getStoreSession(): Promise<StoreSession | null> {
   if (!token) return null;
 
   const rows = await sql`
-    select a.id, a.email, a.name, a.role
+    select a.id, a.email, a.name, a.role, a.must_change_password
     from store_admin_sessions s
     join store_admins a on a.id = s.admin_id
     where s.token_hash = ${hashToken(token)}
@@ -234,6 +248,17 @@ export async function getStoreSession(): Promise<StoreSession | null> {
   `;
   const row = rows[0];
   return row ? toSession(row) : null;
+}
+
+/**
+ * SHA-256 of the current session cookie. Used to mark "this device" in the
+ * session list and to keep the current session alive when a password changes.
+ * Never send this value to the browser.
+ */
+export async function currentStoreTokenHash(): Promise<string | null> {
+  const store = await cookies();
+  const token = store.get(COOKIE_NAME)?.value;
+  return token ? hashToken(token) : null;
 }
 
 export async function logout(): Promise<void> {

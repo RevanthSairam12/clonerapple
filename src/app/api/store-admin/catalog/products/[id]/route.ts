@@ -11,9 +11,8 @@ import { catalogFailureStatus, updateProduct } from '@/lib/store-admin/catalog-w
  * Catalogue detail for the store admin.
  *
  * GET returns the full record. PATCH edits copy and organisation only.
- * There is deliberately no price write path: checkout still prices from the
- * code catalogue, so a price saved here would be a price the customer is never
- * charged. `validateProductPatch()` refuses price fields outright.
+ * Price changes go through `products/[id]/price` so they append to
+ * `price_history`; `validateProductPatch()` still refuses price fields here.
  */
 
 export const dynamic = 'force-dynamic';

@@ -16,9 +16,14 @@ export function parseAmountToPaise(value: unknown): number | null {
   return paise > 0 ? paise : null;
 }
 
-/** Format integer paise as `₹1,23,456.78` (en-IN). */
+/**
+ * Format integer paise as `₹1,23,456.78` (en-IN). Negative amounts keep the
+ * sign in front of the symbol (`-₹250.00`), which the transaction statement
+ * uses for refund lines.
+ */
 export function formatPaise(paise: number): string {
-  return `₹${(paise / 100).toLocaleString('en-IN', {
+  const sign = paise < 0 ? '-' : '';
+  return `${sign}₹${(Math.abs(paise) / 100).toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

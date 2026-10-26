@@ -53,12 +53,27 @@ const SAME_ORIGIN_CALL = /\bassertSameOrigin\s*\(/;
  * - `catalog/low-stock` is a read-only report.
  */
 const EXPECTED_READ_ONLY_ROUTES = [
-  'catalog/products/route.ts',
   'catalog/low-stock/route.ts',
+  // Phase 6 reports and transfers.
+  'catalog/export/route.ts',
+  'catalog/import/[id]/errors/route.ts',
+  'stock/export/route.ts',
+  'reviews/route.ts',
   'customers/route.ts',
   'customers/[id]/route.ts',
   'requests/route.ts',
   'pos/catalog/route.ts',
+  // Phase 7 reports and exports. The subscriber export is owner-only inside
+  // the handler (it carries full addresses) but stays a GET.
+  'customers/export/route.ts',
+  'subscribers/export/route.ts',
+  // Phase 8 reports. Both are reads for every store role; the export writes
+  // only an audit row.
+  'reports/route.ts',
+  'reports/export/route.ts',
+  // Phase 9: the audit log is append-only and has no write path at all.
+  'audit/route.ts',
+  'audit/export/route.ts',
 ];
 
 /** The only mutation in the customer area: an owner-only, audited reveal. */
@@ -73,6 +88,15 @@ EXPECTED_OWNER_ROUTES.push('catalog/units/route.ts');
 EXPECTED_OWNER_ROUTES.push('catalog/attributes/route.ts');
 EXPECTED_OWNER_ROUTES.push('catalog/attributes/[id]/route.ts');
 EXPECTED_OWNER_ROUTES.push('catalog/attributes/[id]/options/route.ts');
+// Phase 7: erasing an account is irreversible, so it is owner-only.
+EXPECTED_OWNER_ROUTES.push('customers/[id]/anonymise/route.ts');
+// Phase 9: staff accounts, roles and credentials are owner-only. The staff
+// list/detail GET also refuses viewers, but the owner guard is what matters
+// for the mutation.
+EXPECTED_OWNER_ROUTES.push('staff/route.ts');
+EXPECTED_OWNER_ROUTES.push('staff/[id]/route.ts');
+EXPECTED_OWNER_ROUTES.push('staff/[id]/password/route.ts');
+EXPECTED_OWNER_ROUTES.push('staff/[id]/sessions/route.ts');
 
 const EXPECTED_MUTATING_ROUTES = [
   'orders/[txnid]/fulfilment/route.ts',
@@ -86,6 +110,34 @@ const EXPECTED_MUTATING_ROUTES = [
   'catalog/products/[id]/images/route.ts',
   'catalog/products/[id]/images/[imageId]/route.ts',
   'catalog/products/[id]/attributes/route.ts',
+  // Phase 5: the product list gained a create handler.
+  'catalog/products/route.ts',
+  // Phase 6: review moderation, media library, bulk import.
+  'reviews/[id]/route.ts',
+  'media/route.ts',
+  'media/[id]/route.ts',
+  'catalog/import/route.ts',
+  // Phase 7: customer notes, account status, sessions, settings and
+  // subscribers.
+  'customers/[id]/notes/route.ts',
+  'customers/[id]/status/route.ts',
+  'customers/[id]/sessions/route.ts',
+  'customers/settings/route.ts',
+  'subscribers/route.ts',
+  'subscribers/[id]/route.ts',
+  // Phase 8: the expense ledger and its categories.
+  'expenses/route.ts',
+  'expenses/[id]/route.ts',
+  'expenses/categories/route.ts',
+  // Phase 9: self-service profile, password and sessions.
+  'profile/route.ts',
+  'profile/password/route.ts',
+  'profile/sessions/route.ts',
+  // Phase 9: the configuration lists (couriers, methods, pages, SEO, social,
+  // analytics, integrations, messages, templates, reasons) share one engine,
+  // and the notification matrix toggles one cell at a time.
+  'settings/lists/[kind]/route.ts',
+  'settings/notifications/route.ts',
 ];
 
 const EXPECTED_ROUTES = [

@@ -67,6 +67,7 @@ function summary(row: Row): OrderSummary {
     saleState,
     paymentStatus: text(row.status),
     fulfilmentStatus: text(row.fulfilment_status) as OrderSummary['fulfilmentStatus'],
+    channel: text(row.channel) || 'pos',
     amount: number(row.amount),
     currency: text(row.currency) || 'INR',
     totalPaise: integer(row.total_paise),
@@ -107,7 +108,7 @@ export async function listPosOrders(options: {
         group by s.sale_state
       `,
       sql`
-        select s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state,
+        select s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
                s.amount, s.currency, s.total_paise, s.scheduled_for,
                s.delivery_slot, s.created_at, s.updated_at, s.paid_at,
                o.customer_name, o.customer_email, o.customer_phone

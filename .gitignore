@@ -41,6 +41,10 @@ Thumbs.db
 *.temp
 .cache/
 
+# Course material — not part of the project
+team 13.docx
+team 13 (1).pdf
+
 # Sensitive files (auto-detected)
 .env.example
 .env.local

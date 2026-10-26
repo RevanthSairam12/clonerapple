@@ -2,6 +2,7 @@ import { getSql } from '../admin/db';
 
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
 import {
+  buildTrackingUrl,
   type DeliveryInput,
   type DeliveryMethod,
   type DeliverySlot,
@@ -44,6 +45,19 @@ export const SALE_STATES: readonly SaleState[] = [
   'ACCEPTED',
   'PENDING',
 ];
+
+export type OrderSort = 'newest' | 'oldest' | 'amount-desc' | 'amount-asc';
+
+export const ORDER_SORTS: readonly OrderSort[] = [
+  'newest',
+  'oldest',
+  'amount-desc',
+  'amount-asc',
+];
+
+export function isOrderSort(value: unknown): value is OrderSort {
+  return typeof value === 'string' && (ORDER_SORTS as readonly string[]).includes(value);
+}
 
 export const FULFILMENT_TRANSITIONS: Readonly<
   Record<FulfilmentStatus, readonly FulfilmentStatus[]>
@@ -132,7 +146,7 @@ function parseItems(value: unknown): OrderItem[] {
   });
 }
 
-function maskCustomerName(value: unknown): string {
+export function maskCustomerName(value: unknown): string {
   const parts = text(value).trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '[redacted name]';
   return parts.map((part) => `${part.slice(0, 1)}***`).join(' ');
@@ -300,6 +314,7 @@ export interface OrderSummary {
   saleState: SaleState;
   paymentStatus: string;
   fulfilmentStatus: FulfilmentStatus;
+  channel: string;
   amount: number;
   currency: string;
   totalPaise: number;
@@ -328,6 +343,12 @@ export interface OrderDetail extends OrderSummary {
   addresses: OrderAddress[];
   history: OrderHistoryEntry[];
   delivery: OrderDelivery | null;
+  /** Money breakdown. Zero for rows created before migration 0014 gained them. */
+  subtotalPaise: number;
+  discountPaise: number;
+  shippingPaise: number;
+  couponCode: string | null;
+  paymentMethod: string | null;
 }
 
 export type OrderLoad<T> =
@@ -368,6 +389,7 @@ function summaryFromRow(row: Row): OrderSummary {
     saleState,
     paymentStatus: text(row.status),
     fulfilmentStatus,
+    channel: text(row.channel) || 'web',
     amount: number(row.amount),
     currency: text(row.currency) || 'INR',
     totalPaise: integer(row.total_paise),
@@ -392,8 +414,10 @@ function queryParts(options: {
 export async function listOrders(options: {
   query?: string;
   state?: SaleState | null;
+  channel?: 'web' | 'pos' | null;
   dateFrom?: string | null;
   dateTo?: string | null;
+  sort?: OrderSort | null;
   page?: number;
 }): Promise<OrderLoad<OrderListData>> {
   const sql = getSql();
@@ -401,8 +425,10 @@ export async function listOrders(options: {
 
   const query = (options.query ?? '').trim().slice(0, 100);
   const state = options.state && isSaleState(options.state) ? options.state : null;
+  const channel = options.channel === 'web' || options.channel === 'pos' ? options.channel : null;
   const dateFrom = options.dateFrom || null;
   const dateTo = options.dateTo || null;
+  const sort = options.sort && isOrderSort(options.sort) ? options.sort : 'newest';
   const requestedPage = Math.max(1, Math.trunc(options.page ?? 1) || 1);
   const { pattern } = queryParts({ query, state, dateFrom, dateTo });
 
@@ -411,7 +437,8 @@ export async function listOrders(options: {
       select s.sale_state, count(*)::int as count
       from order_sale_state s
       join orders o on o.id = s.id
-      where (${query === ''}
+      where (${channel === null} or s.channel = ${channel})
+        and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
           or o.customer_email ilike ${pattern} escape '\\'
@@ -426,6 +453,7 @@ export async function listOrders(options: {
       from order_sale_state s
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
+        and (${channel === null} or s.channel = ${channel})
         and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
@@ -446,13 +474,14 @@ export async function listOrders(options: {
 
     const rows = (await sql`
       select
-        s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state,
+        s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
         s.amount, s.currency, s.total_paise, s.scheduled_for, s.delivery_slot,
         s.created_at, s.updated_at, s.paid_at,
         o.customer_name, o.customer_email, o.customer_phone
       from order_sale_state s
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
+        and (${channel === null} or s.channel = ${channel})
         and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
@@ -460,7 +489,14 @@ export async function listOrders(options: {
           or o.customer_phone ilike ${pattern} escape '\\')
         and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
         and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
-      order by s.created_at desc, s.id desc
+      order by
+        case when ${sort} = 'amount-desc'
+          then coalesce(s.total_paise, round(s.amount * 100)::bigint) end desc nulls last,
+        case when ${sort} = 'amount-asc'
+          then coalesce(s.total_paise, round(s.amount * 100)::bigint) end asc nulls last,
+        case when ${sort} = 'oldest' then s.created_at end asc,
+        s.created_at desc,
+        s.id desc
       limit ${ORDERS_PAGE_SIZE} offset ${offset}
     `) as Row[];
 
@@ -481,6 +517,104 @@ export async function listOrders(options: {
     };
   } catch {
     console.warn('[store-admin/orders] could not read the order list');
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
+export interface OrderExportRow {
+  txnid: string;
+  createdAt: string;
+  saleState: SaleState;
+  paymentStatus: string;
+  fulfilmentStatus: FulfilmentStatus;
+  channel: string;
+  customerNameMasked: string;
+  customerEmailMasked: string;
+  customerPhoneMasked: string;
+  amountPaise: number;
+  currency: string;
+  itemLines: number;
+}
+
+/**
+ * Flat rows for the CSV export. The same filters as `listOrders` apply, the
+ * result is capped, and customer values stay masked: a full email or phone is
+ * only ever handed out by the audited reveal route.
+ */
+export async function listOrdersForExport(options: {
+  query?: string;
+  state?: SaleState | null;
+  channel?: 'web' | 'pos' | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  sort?: OrderSort | null;
+  limit?: number;
+}): Promise<OrderLoad<OrderExportRow[]>> {
+  const sql = getSql();
+  if (!sql) return { ok: false, reason: 'unavailable' };
+
+  const query = (options.query ?? '').trim().slice(0, 100);
+  const state = options.state && isSaleState(options.state) ? options.state : null;
+  const channel = options.channel === 'web' || options.channel === 'pos' ? options.channel : null;
+  const dateFrom = options.dateFrom || null;
+  const dateTo = options.dateTo || null;
+  const sort = options.sort && isOrderSort(options.sort) ? options.sort : 'newest';
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 10_000), 1), 10_000);
+  const pattern = `%${escapeLike(query)}%`;
+
+  try {
+    const rows = (await sql`
+      select
+        s.txnid, s.sale_state, s.status, s.fulfilment_status, s.channel,
+        s.amount, s.currency, s.total_paise, s.created_at,
+        o.customer_name, o.customer_email, o.customer_phone,
+        (
+          select count(*)::int from order_items oi where oi.order_id = s.id
+        ) as item_lines
+      from order_sale_state s
+      join orders o on o.id = s.id
+      where (${state === null} or s.sale_state = ${state})
+        and (${channel === null} or s.channel = ${channel})
+        and (${query === ''}
+          or o.txnid ilike ${pattern} escape '\\'
+          or o.customer_name ilike ${pattern} escape '\\'
+          or o.customer_email ilike ${pattern} escape '\\'
+          or o.customer_phone ilike ${pattern} escape '\\')
+        and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
+        and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+      order by
+        case when ${sort} = 'amount-desc'
+          then coalesce(s.total_paise, round(s.amount * 100)::bigint) end desc nulls last,
+        case when ${sort} = 'amount-asc'
+          then coalesce(s.total_paise, round(s.amount * 100)::bigint) end asc nulls last,
+        case when ${sort} = 'oldest' then s.created_at end asc,
+        s.created_at desc,
+        s.id desc
+      limit ${limit}
+    `) as Row[];
+
+    return {
+      ok: true,
+      data: rows.map((row) => ({
+        txnid: text(row.txnid),
+        createdAt: iso(row.created_at),
+        saleState: isSaleState(row.sale_state) ? row.sale_state : 'PENDING',
+        paymentStatus: text(row.status),
+        fulfilmentStatus: isFulfilmentStatus(row.fulfilment_status)
+          ? row.fulfilment_status
+          : 'PENDING',
+        channel: text(row.channel) || 'web',
+        customerNameMasked: maskCustomerName(row.customer_name),
+        customerEmailMasked: maskCustomerEmail(text(row.customer_email)),
+        customerPhoneMasked: maskCustomerPhone(text(row.customer_phone)),
+        amountPaise:
+          integer(row.total_paise) || Math.round(number(row.amount) * 100),
+        currency: text(row.currency) || 'INR',
+        itemLines: integer(row.item_lines),
+      })),
+    };
+  } catch {
+    console.warn('[store-admin/orders] could not build the export rows');
     return { ok: false, reason: 'unavailable' };
   }
 }
@@ -534,8 +668,10 @@ export async function getOrderDetail(
   try {
     const orderRows = (await sql`
       select
-        s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state,
+        s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
         s.amount, s.currency, s.total_paise, s.scheduled_for, s.delivery_slot,
+        s.subtotal_paise, s.discount_paise, s.shipping_paise, s.coupon_code,
+        s.payment_method,
         s.created_at, s.updated_at, s.paid_at,
         o.customer_name, o.customer_email, o.customer_phone, o.items
       from order_sale_state s
@@ -633,6 +769,11 @@ export async function getOrderDetail(
         addresses: (addressRows as Row[]).map(maskCustomerAddress),
         history,
         delivery,
+        subtotalPaise: integer(order.subtotal_paise),
+        discountPaise: integer(order.discount_paise),
+        shippingPaise: integer(order.shipping_paise),
+        couponCode: nullableText(order.coupon_code),
+        paymentMethod: nullableText(order.payment_method),
       },
     };
   } catch {
@@ -812,6 +953,30 @@ export async function updateDelivery(input: {
         return mutationFailure('invalid-transition', 'Delivery details cannot be changed for a closed order.');
       }
 
+      // A courier whose tracking template is configured fills the tracking URL
+      // in when staff leave it blank. An explicit URL always wins.
+      let trackingUrl = input.value.trackingUrl;
+      if (
+        input.value.method === 'courier' &&
+        !trackingUrl &&
+        input.value.courierName &&
+        input.value.trackingNumber
+      ) {
+        const providers = (await tx`
+          select tracking_template
+          from fulfilment_providers
+          where is_active
+            and tracking_template <> ''
+            and lower(name) = lower(${input.value.courierName})
+          limit 1
+        `) as Row[];
+        trackingUrl = buildTrackingUrl(
+          providers[0]?.tracking_template,
+          input.value.trackingNumber,
+        );
+      }
+      const deliveryValue: DeliveryInput = { ...input.value, trackingUrl };
+
       const deliveryRows = (await tx`
          insert into order_deliveries (
            order_id, status, delivery_method, person_name, person_phone,
@@ -819,7 +984,7 @@ export async function updateDelivery(input: {
          ) values (
            ${text(order.id)}, ${text(order.fulfilment_status)}, ${input.value.method},
            ${input.value.personName}, ${input.value.personPhone}, ${input.value.courierName},
-           ${input.value.carrier}, ${input.value.trackingNumber}, ${input.value.trackingUrl},
+           ${input.value.carrier}, ${input.value.trackingNumber}, ${trackingUrl},
            ${input.value.scheduledFor}::date, now()
          )
          on conflict (order_id) do update set
@@ -852,7 +1017,7 @@ export async function updateDelivery(input: {
              personName: input.value.personName,
              hasPersonPhone: Boolean(input.value.personPhone),
              courierName: input.value.courierName,
-             trackingUrl: input.value.trackingUrl,
+             trackingUrl,
             hasTrackingNumber: Boolean(input.value.trackingNumber),
             scheduledFor: input.value.scheduledFor,
             deliverySlot: input.value.deliverySlot,
@@ -865,12 +1030,27 @@ export async function updateDelivery(input: {
         orderId: text(order.id),
         txnid: text(order.txnid),
         deliveryId,
-        value: input.value,
+        value: deliveryValue,
       };
     });
   } catch {
     console.warn('[store-admin/orders] delivery update failed');
     return mutationFailure('unavailable', 'Order records are not available.');
+  }
+}
+
+/** Cheap transaction-id lookup used by routes that never render the order. */
+export async function findOrderId(txnid: string): Promise<string | null> {
+  const sql = getSql();
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      select id from orders where txnid = ${txnid.trim()} limit 1
+    `) as Row[];
+    return rows[0] ? text(rows[0].id) || null : null;
+  } catch {
+    console.warn('[store-admin/orders] could not look up an order id');
+    return null;
   }
 }
 

@@ -1,12 +1,20 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { SEARCH_PANEL } from './data/nav';
 import { SearchArrowIcon, SearchResetIcon, SearchSubmitIcon } from './icons';
-import { searchProducts, type SearchResultItem } from '@/lib/search/searchService';
+import {
+  scoreProducts,
+  PAGE_SEARCH_ITEMS,
+  type SearchResultItem,
+} from '@/lib/search/searchService';
 import { recordSearchQuery } from '@/lib/search/searchTracker';
+import { toSearchCandidates, useLiveCatalog } from '@/lib/catalog/client-catalog';
+
+// Heading over the quick-link rail. Static copy, kept local so this panel does
+// not read from the static catalogue data modules.
+const QUICK_LINKS_HEADING = 'Quick Collections';
 
 interface Props {
   onClose?: () => void;
@@ -18,6 +26,13 @@ export function NavSearchPanel({ onClose }: Props) {
   const [totalMatches, setTotalMatches] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const { products: liveProducts, ready } = useLiveCatalog();
+
+  // Products from the live catalogue; page entries are fixed navigation.
+  const candidates = useMemo(
+    () => [...toSearchCandidates(liveProducts), ...PAGE_SEARCH_ITEMS],
+    [liveProducts],
+  );
 
   // Focus input automatically on mount
   useEffect(() => {
@@ -34,10 +49,11 @@ export function NavSearchPanel({ onClose }: Props) {
       setTotalMatches(0);
       return;
     }
-    const searchRes = searchProducts(query, { limit: 8 });
+    if (!ready) return;
+    const searchRes = scoreProducts(candidates, query, { limit: 8 });
     setResults(searchRes.items);
     setTotalMatches(searchRes.totalMatches);
-  }, [query]);
+  }, [query, candidates, ready]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +118,7 @@ export function NavSearchPanel({ onClose }: Props) {
       {!hasQuery ? (
         <div className="mt-[28px] animate-in fade-in duration-200">
           <h2 className="text-[12px] font-medium leading-[16px] tracking-[-0.12px] text-[#6e6e73]">
-            {SEARCH_PANEL.quickLinksHeading}
+            {QUICK_LINKS_HEADING}
           </h2>
           <ul className="mt-[10px] grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1">
             <li>
@@ -199,7 +215,17 @@ export function NavSearchPanel({ onClose }: Props) {
 
               {/* Grid of Results */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 max-h-[360px] overflow-y-auto pr-1">
-                {results.map((item) => (
+                {results.map((item) => {
+                  // Out of stock, or no real price, means the card must not
+                  // advertise a purchasable figure.
+                  const sellable =
+                    item.inStock !== false &&
+                    typeof item.price === 'number' &&
+                    item.price > 0;
+                  const priceLabel =
+                    item.type === 'page' ? null : sellable ? item.priceDisplay : 'Unavailable';
+
+                  return (
                   <Link
                     key={item.id}
                     href={item.href}
@@ -228,14 +254,15 @@ export function NavSearchPanel({ onClose }: Props) {
                           {item.subtitle}
                         </p>
                       </div>
-                      {item.priceDisplay && (
+                      {priceLabel && (
                         <p className="text-[13px] font-semibold text-[#1d1d1f] mt-2">
-                          {item.priceDisplay}
+                          {priceLabel}
                         </p>
                       )}
                     </div>
                   </Link>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (

@@ -1,6 +1,9 @@
 import { getUserSession } from '@/lib/user-auth';
 import { CheckoutForm } from '@/components/checkout/CheckoutForm';
-import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { getProductFromDatabase } from '@/lib/payu/db-catalog';
+import { parseCheckoutQuantity } from '@/lib/checkout/checkout-decision';
+import { isOn } from '@/lib/store-admin/customer-rules';
+import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
@@ -12,19 +15,23 @@ interface Props {
 
 export default async function CheckoutPage({ searchParams }: Props) {
   const session = await getUserSession();
+  const settings = await readCustomerSettings();
   const { productId, qty } = await searchParams;
 
-  if (!session) {
+  // Guest checkout is off unless the owner enables it under
+  // Customers → Customer settings. When it is off, an account is required.
+  if (!session && !isOn(settings.guest_checkout)) {
     const returnUrl = productId
       ? `/checkout?productId=${encodeURIComponent(productId)}${qty ? `&qty=${encodeURIComponent(qty)}` : ''}`
       : '/checkout';
     redirect(`/auth?redirect=${encodeURIComponent(returnUrl)}`);
   }
 
-  const parsedQty = Math.max(1, parseInt(qty || '1', 10));
-  const requestedProduct = productId ? getProductFromCatalog(productId) : null;
-  // A productId in the URL that resolves to nothing must never fall through to
-  // the live bag or a placeholder line — the checkout shows "unavailable".
+  const parsedQty = parseCheckoutQuantity(qty);
+  const requestedProduct = productId ? await getProductFromDatabase(productId) : null;
+  // A productId in the URL that resolves to nothing is an unavailable state,
+  // but only if the customer has nothing in their bag. The live bag is read on
+  // the client; CheckoutForm applies that rule after hydration.
   const productUnavailable = Boolean(productId) && requestedProduct === null;
   let items = undefined;
 
@@ -66,6 +73,8 @@ export default async function CheckoutPage({ searchParams }: Props) {
         initialItems={items}
         userSession={session}
         productUnavailable={productUnavailable}
+        productIdFromQuery={productId}
+        marketingOptInEnabled={isOn(settings.checkout_marketing_optin)}
       />
     </div>
   );

@@ -163,8 +163,14 @@ export async function writeAudit(input: AuditInput): Promise<boolean> {
 
   try {
     const net = networkContext(input.request);
-    const before = input.before === undefined ? null : JSON.stringify(maskPii(input.before));
-    const after = input.after === undefined ? null : JSON.stringify(maskPii(input.after));
+    // Hand the driver the object itself: passing a pre-stringified value here
+    // stores a JSON *string* in a jsonb column, so `after->>'title'` returns
+    // null and the audit trail cannot be queried. `sql.json` marks the value
+    // as JSON so the driver serialises it rather than stringifying the param.
+    type JsonParam = Parameters<typeof sql.json>[0];
+    const asJson = (value: unknown) => sql.json(value as JsonParam);
+    const before = input.before === undefined ? null : maskPii(input.before);
+    const after = input.after === undefined ? null : maskPii(input.after);
 
     await sql`
       insert into store_admin_audit (
@@ -177,8 +183,8 @@ export async function writeAudit(input: AuditInput): Promise<boolean> {
         ${input.action},
         ${input.entity},
         ${input.entityId ?? ''},
-        ${before}::jsonb,
-        ${after}::jsonb,
+        ${before === null ? null : asJson(before)},
+        ${after === null ? null : asJson(after)},
         ${input.requestId ?? net.requestId},
         ${input.route ?? net.route},
         ${input.status ?? 'ok'},

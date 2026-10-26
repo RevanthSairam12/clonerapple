@@ -30,12 +30,24 @@ export default async function StoreAdminLowStockPage() {
 
   return (
     <div>
-      <h1 className="sa-page-title">Low stock</h1>
-      <p className="sa-page-sub">
-        Products whose available count has reached its threshold. Only products
-        that track inventory are counted — for everything else checkout ignores
-        the number.
-      </p>
+      <div className="sa-detail-head">
+        <div>
+          <h1 className="sa-page-title">Low stock</h1>
+          <p className="sa-page-sub">
+            Products whose available count has reached its threshold. Only
+            products that track inventory are counted — for everything else
+            checkout ignores the number.
+          </p>
+        </div>
+        <div className="sa-inline-actions">
+          <a className="sa-btn sa-btn-small" href="/api/store-admin/stock/export?scope=low" download>
+            Export low stock
+          </a>
+          <a className="sa-btn sa-btn-small" href="/api/store-admin/stock/export?scope=all" download>
+            Export all levels
+          </a>
+        </div>
+      </div>
 
       <div className="sa-order-counts">
         <div className="sa-order-count">

@@ -27,10 +27,11 @@ if (typeof window !== 'undefined') {
  * 1. Every function runs inside one transaction, so a demoted primary image is
  *    restored if the insert that follows fails.
  * 2. Nothing in this module writes `price_paise`, `compare_at_paise` or
- *    `product_variants.price_paise_override`. Price editing stays closed until
- *    checkout reads the database (AGENTS.md). `validateProductPatch()` rejects
- *    price fields before they reach here, and no SQL below names them.
- * 3. `price_history` is never touched: it is append-only and only a price
+ *    `product_variants.price_paise_override`. Price writes live in
+ *    `catalog-crud.ts` (checkout now prices from the database), so a price
+ *    change always appends `price_history` in the same transaction. Copy edits
+ *    here never touch the price.
+ * 3. `price_history` is never touched here: it is append-only and only a price
  *    change should add a row.
  * 4. Audit rows are written by the API route, from the before/after snapshots
  *    returned here. The route audits after the transaction commits, so a
@@ -110,14 +111,24 @@ export async function updateProduct(
     return await sql.begin(async (tx) => {
       const beforeRows = (await tx`
         select name, subtitle, description, badge, material, brand, brand_id,
-               category_id, seo_title, seo_description, is_active, in_stock,
-               sort_order
+               condition_id, category_id, seo_title, seo_description, is_active,
+               in_stock, sort_order, cost_paise
         from products
         where id = ${id} and deleted_at is null
         for update
       `) as Row[];
       const before = beforeRows[0];
       if (!before) return fail('not-found', 'Product not found.');
+
+      if (patch.condition_id) {
+        const conditionRows = (await tx`
+          select 1 from conditions
+          where id = ${patch.condition_id} and is_active
+        `) as Row[];
+        if (!conditionRows[0]) {
+          return fail('invalid-input', 'That condition does not exist.');
+        }
+      }
 
       if (patch.category_id !== undefined) {
         const categoryRows = (await tx`
@@ -159,8 +170,8 @@ export async function updateProduct(
 
       const afterRows = (await tx`
         select name, subtitle, description, badge, material, brand, brand_id,
-               category_id, seo_title, seo_description, is_active, in_stock,
-               sort_order
+               condition_id, category_id, seo_title, seo_description, is_active,
+               in_stock, sort_order, cost_paise
         from products
         where id = ${id}
       `) as Row[];

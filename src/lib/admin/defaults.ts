@@ -36,7 +36,6 @@ import {
   SHELVES as EDU_SHELVES,
   type EduCard,
 } from '@/components/sites/edu-store/data/content';
-import { PRODUCTS as CASES_PRODUCTS } from '@/components/sites/cases-protection/data/products';
 
 /* ------------------------------------------------------------- helpers */
 
@@ -491,19 +490,6 @@ const CASES_PAGE_HEADER_DEFAULTS = {
   sortLabel: 'Sort by',
 };
 
-const CASES_PRODUCTS_DEFAULTS = {
-  // All products — a shorter list would drop grid entries when saved.
-  items: CASES_PRODUCTS.map((product) => ({
-    name: product.name,
-    subtitle: product.subtitle,
-    price: product.price,
-    priceDisplay: product.priceDisplay,
-    image: product.image,
-    badge: product.badge ?? '',
-    href: product.href,
-  })),
-};
-
 // Mirrors the hardcoded `metadata` in the cases-protection page. Apple product
 // terminology (iPhone, MagSafe) stays — Gadzio sells those cases — but the copy
 // no longer implies the store is Apple's or that the cases are Apple's.
@@ -551,7 +537,6 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
   /* Cases & Protection */
   'cases.category_links': CASES_CATEGORY_LINKS_DEFAULTS,
   'cases.page_header': CASES_PAGE_HEADER_DEFAULTS,
-  'cases.products': CASES_PRODUCTS_DEFAULTS,
   'cases.seo': CASES_SEO_DEFAULTS,
 };
 

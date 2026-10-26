@@ -18,37 +18,29 @@ function cleanPart(value: unknown): string | undefined {
   return cleaned || undefined;
 }
 
-function matchKnownBase(value: string, knownBaseIds: readonly string[]): {
-  baseId: string;
-  suffix?: string;
-} | null {
+/**
+ * Find a known catalogue id by exact, case-insensitive equality.
+ *
+ * Deliberately no prefix/suffix matching. An id such as `id-extra` or `id_`
+ * is a different id from `id`, not a variant of it; treating it as one would
+ * let a stale or malformed cart line be priced as a live product.
+ */
+function matchKnownBase(value: string, knownBaseIds: readonly string[]): string | null {
   const lowerValue = value.toLowerCase();
-  const known = [...knownBaseIds]
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
 
-  for (const candidate of known) {
-    const lowerCandidate = candidate.toLowerCase();
-    if (lowerValue === lowerCandidate) return { baseId: candidate };
-    for (const separator of ['-', '_']) {
-      const prefix = `${lowerCandidate}${separator}`;
-      if (lowerValue.startsWith(prefix)) {
-        return {
-          baseId: candidate,
-          suffix: value.slice(candidate.length + separator.length).trim(),
-        };
-      }
-    }
+  for (const candidate of knownBaseIds) {
+    const trimmed = candidate.trim();
+    if (trimmed && trimmed.toLowerCase() === lowerValue) return trimmed;
   }
 
   return null;
 }
 
 /**
- * Convert a persisted cart line id into the catalog id and display-only
- * variant metadata. The catalog ids remain authoritative; this helper never
- * creates or changes a price.
+ * Convert a persisted cart line id into the catalogue id and display-only
+ * variant metadata. The base id only resolves when it exactly matches a known
+ * catalogue id; an unknown base is returned as `null`. Colour and model are
+ * kept as separate display fields and never influence pricing.
  */
 export function normalizeCartLineId(
   value: unknown,
@@ -58,19 +50,32 @@ export function normalizeCartLineId(
   if (!rawId) return { rawId: '', baseId: null };
 
   const compositeParts = rawId.split('::').map((part) => part.trim());
-  const rawBase = compositeParts[0] || '';
-  const knownMatch = matchKnownBase(rawBase, knownBaseIds);
-  const baseId = knownMatch?.baseId ?? rawBase;
-  const suffix = knownMatch?.suffix;
-  const variantParts = (suffix ? [suffix] : compositeParts.slice(1))
-    .map(cleanPart)
-    .filter((part): part is string => Boolean(part));
+  const rawBase = (compositeParts[0] || '').toLowerCase();
+  const color = cleanPart(compositeParts[1]);
+  const model = cleanPart(compositeParts[2]);
+  const variantParts = [color, model].filter((part): part is string => Boolean(part));
+
+  if (!rawBase) {
+    return {
+      rawId,
+      baseId: null,
+      color,
+      model,
+      variantLabel: variantParts.length > 0 ? variantParts.join(' • ') : undefined,
+    };
+  }
+
+  // With a catalogue to check against, anything that is not an exact id is
+  // unknown. Without one, the lowercased base is returned so cart building can
+  // form a stable line id; callers that care about availability pass a
+  // catalogue.
+  const baseId = knownBaseIds.length > 0 ? matchKnownBase(rawBase, knownBaseIds) : rawBase;
 
   return {
     rawId,
-    baseId: baseId || null,
-    color: compositeParts.length > 1 ? cleanPart(compositeParts[1]) : undefined,
-    model: compositeParts.length > 2 ? cleanPart(compositeParts[2]) : undefined,
+    baseId,
+    color,
+    model,
     variantLabel: variantParts.length > 0 ? variantParts.join(' • ') : undefined,
   };
 }

@@ -120,6 +120,31 @@ test('the failing id is named when a product cannot be resolved', () => {
   );
 });
 
+test('a prefix or underscore variant of a real id is rejected and named', () => {
+  for (const id of [
+    'pa-gadzio-20w-usbc-extra',
+    'pa-gadzio-20w-usbc_',
+    'pa-gadzio-20w-usbc-black',
+  ]) {
+    assert.throws(
+      () => resolveCartItems([{ id, quantity: 1 }]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes(id), `message names ${id}`);
+        assert.match(error.message, /not found in catalog/);
+        return true;
+      },
+    );
+  }
+});
+
+test('case changes still resolve to the canonical id', () => {
+  const cart = resolveCartItems([{ id: 'PA-GADZIO-20W-USBC::Black::iPhone 17', quantity: 2 }]);
+  assert.equal(cart.items.length, 1);
+  assert.equal(cart.items[0].id, 'pa-gadzio-20w-usbc');
+  assert.equal(cart.items[0].quantity, 2);
+});
+
 test('buildOrderItemLines never trusts caller prices', () => {
   const cart = resolveCartItems([{ id: 'pa-gadzio-20w-usbc', quantity: 3 }]);
   const [resolved] = cart.items;

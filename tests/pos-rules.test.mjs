@@ -13,6 +13,7 @@ const jiti = createJiti(import.meta.url, {
 const {
   paymentCoversTotal,
   validateManualPayment,
+  methodNeedsReview,
   ADMIN_MAX_MARK_PAID_PAISE,
 } = await jiti.import(
   path.join(here, '..', 'src', 'lib', 'store-admin', 'payments.ts'),
@@ -30,8 +31,7 @@ const {
   path.join(here, '..', 'src', 'lib', 'store-admin', 'pos-rules.ts'),
 );
 const {
-  SETTING_KEYS,
-  SETTING_LIMITS,
+  SETTING_FIELDS,
   validateSettingValue,
 } = await jiti.import(
   path.join(here, '..', 'src', 'lib', 'store-admin', 'settings-rules.ts'),
@@ -71,6 +71,15 @@ test('an order becomes paid only when paid rows cover the total', () => {
 test('a zero total never counts as covered', () => {
   assert.equal(paymentCoversTotal(0, 0), false);
   assert.equal(paymentCoversTotal(100, 0), false);
+});
+
+test('UPI, bank transfer and other entries wait for a second pair of eyes', () => {
+  assert.equal(methodNeedsReview('upi'), true);
+  assert.equal(methodNeedsReview('bank_transfer'), true);
+  assert.equal(methodNeedsReview('other'), true);
+  assert.equal(methodNeedsReview('cash'), false);
+  assert.equal(methodNeedsReview('cod'), false);
+  assert.equal(methodNeedsReview('card_machine'), false);
 });
 
 test('two partial payments sum to cover the order', () => {
@@ -275,25 +284,27 @@ test('a sale that entered web fulfilment is not voided from the till', () => {
 
 /* -------------------------------------------------------- settings */
 
-test('settings validate length per key and reject a bad email', () => {
-  for (const key of SETTING_KEYS) {
-    const atLimit = 'x'.repeat(SETTING_LIMITS[key]);
-    const over = 'x'.repeat(SETTING_LIMITS[key] + 1);
-    if (key === 'email') continue;
-    if (key === 'low_stock_default') continue;
-    assert.equal(validateSettingValue(key, atLimit).ok, true, key);
-    assert.equal(validateSettingValue(key, over).ok, false, key);
+test('free-text settings validate length per key and reject a bad email', () => {
+  for (const field of SETTING_FIELDS) {
+    // Only plain text and textarea fields accept arbitrary characters at the
+    // limit; numbers, selects, toggles and datetimes have their own rules.
+    if (field.kind !== 'text' && field.kind !== 'textarea') continue;
+    if (field.key === 'email') continue;
+    const atLimit = 'x'.repeat(field.limit);
+    const over = 'x'.repeat(field.limit + 1);
+    assert.equal(validateSettingValue(field.key, atLimit).ok, true, field.key);
+    assert.equal(validateSettingValue(field.key, over).ok, false, field.key);
   }
   assert.equal(validateSettingValue('email', 'not-an-email').ok, false);
   assert.equal(validateSettingValue('email', 'store@example.com').ok, true);
   assert.equal(validateSettingValue('email', '').ok, true);
 });
 
-test('low stock default must be a whole number', () => {
-  assert.equal(validateSettingValue('low_stock_default', '5').ok, true);
-  assert.equal(validateSettingValue('low_stock_default', '').ok, true);
-  assert.equal(validateSettingValue('low_stock_default', '-2').ok, false);
-  assert.equal(validateSettingValue('low_stock_default', '2.5').ok, false);
+test('numeric settings must be whole numbers', () => {
+  assert.equal(validateSettingValue('order_start_number', '5').ok, true);
+  assert.equal(validateSettingValue('order_start_number', '').ok, true);
+  assert.equal(validateSettingValue('order_start_number', '-2').ok, false);
+  assert.equal(validateSettingValue('order_start_number', '2.5').ok, false);
 });
 
 /* -------------------------------------------------- payment references */

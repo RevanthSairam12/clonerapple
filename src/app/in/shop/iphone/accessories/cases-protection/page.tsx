@@ -1,12 +1,15 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 
 import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesProtectionPage';
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
+import { toCategoryConfig, toCollectionProduct } from '@/lib/catalog/adapter';
+import { getStorefrontCategory } from '@/lib/catalog/storefront';
 import { getContent, getContentMany } from '@/lib/content';
 
 import './cases.css';
 
-/** Admin edits must appear without a rebuild, so render per-request. */
+/** Catalogue edits must appear without a rebuild, so render per-request. */
 export const dynamic = 'force-dynamic';
 
 const metadata: Metadata = {
@@ -41,17 +44,26 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function Page() {
+  const category = await getStorefrontCategory('cases-protection');
+  if (!category) notFound();
+
+  // Page furniture only. The product grid is never read from content_blocks:
+  // products live in the `products` table and are edited in store admin.
   const c = await getContentMany({
     categoryLinks: ['cases.category_links', {}],
     header: ['cases.page_header', {}],
-    products: ['cases.products', {}],
   });
 
   const overrides: CasesProtectionOverrides = {
-    categoryLinks: (c.categoryLinks as { items?: CasesProtectionOverrides['categoryLinks'] }).items,
+    categoryLinks: (c.categoryLinks as { items?: CasesProtectionOverrides['categoryLinks'] })?.items,
     header: c.header as CasesProtectionOverrides['header'],
-    products: (c.products as { items?: CasesProtectionOverrides['products'] }).items,
   };
 
-  return <CasesProtectionPage overrides={overrides} />;
+  return (
+    <CasesProtectionPage
+      config={toCategoryConfig(category)}
+      products={category.products.map(toCollectionProduct)}
+      overrides={overrides}
+    />
+  );
 }

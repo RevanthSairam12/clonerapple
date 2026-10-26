@@ -67,6 +67,26 @@ export function isTodayOrFutureDate(value: string): boolean {
   return Date.UTC(year, month - 1, day) >= todayValue;
 }
 
+/** The placeholder a courier's tracking template uses for the number. */
+export const TRACKING_TOKEN = '{tracking}';
+
+/**
+ * Build a tracking URL from a configured template.
+ *
+ * The tracking number is percent-encoded, so a number containing `&` or `#`
+ * cannot invent extra query parameters. The result must still be a valid
+ * HTTPS URL, which also rejects templates that put the token in the host.
+ */
+export function buildTrackingUrl(template: unknown, trackingNumber: unknown): string | null {
+  if (typeof template !== 'string' || typeof trackingNumber !== 'string') return null;
+  const pattern = template.trim();
+  const number = trackingNumber.trim();
+  if (!pattern || !number || !pattern.includes(TRACKING_TOKEN)) return null;
+
+  const candidate = pattern.split(TRACKING_TOKEN).join(encodeURIComponent(number));
+  return validateHttpsTrackingUrl(candidate);
+}
+
 /** Return the trimmed URL only when it is an HTTPS URL without credentials. */
 export function validateHttpsTrackingUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null;

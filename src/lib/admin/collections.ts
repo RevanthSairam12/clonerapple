@@ -548,30 +548,6 @@ export const COLLECTIONS: CollectionSchema[] = [
     ],
   },
   {
-    key: 'cases.products',
-    label: 'Cases — Product Catalog',
-    sitePaths: ['/in/shop/iphone/accessories/cases-protection'],
-    description: 'The cases in the grid. Blank fields keep the current value.',
-    fields: [],
-    lists: [
-      {
-        path: 'items',
-        itemLabel: 'Product',
-        minItems: 1,
-        maxItems: 24,
-        itemFields: [
-          text('name', 'Name'),
-          text('subtitle', 'Subtitle / colour'),
-          text('price', 'Price (₹, numbers only)', 'Used for sorting; keep in sync with the display price.'),
-          text('priceDisplay', 'Display price', 'Shown in the grid, e.g. ₹5,900.00.'),
-          image('image', 'Image'),
-          text('badge', 'Badge', 'e.g. "New". Leave blank for no badge.'),
-          url('href', 'Product page link'),
-        ],
-      },
-    ],
-  },
-  {
     key: 'cases.seo',
     label: 'Cases — SEO',
     sitePaths: ['/in/shop/iphone/accessories/cases-protection'],

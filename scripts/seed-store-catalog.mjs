@@ -341,12 +341,14 @@ async function seed(snapshot, reference) {
             ${product.in_stock}, ${product.is_active}, ${product.sort_order},
             'seed'
           )
+          -- price_paise is deliberately not updated here. Once checkout reads
+          -- the database, the row is authoritative and a re-seed must never
+          -- undo an audited price change. New rows still get the snapshot price.
           on conflict (id) do update set
             category_id = excluded.category_id,
             slug = excluded.slug,
             name = excluded.name,
             subtitle = excluded.subtitle,
-            price_paise = excluded.price_paise,
             currency = excluded.currency,
             material = excluded.material,
             brand = excluded.brand,

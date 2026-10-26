@@ -31,6 +31,14 @@ export const METHOD_LABELS: Record<ManualMethod, string> = {
   other: 'Other',
 };
 
+/** Every method an `order_payments` row can carry, including POS card machine. */
+export type AnyPaymentMethod = ManualMethod | 'card_machine';
+
+export const ANY_METHOD_LABELS: Record<AnyPaymentMethod, string> = {
+  ...METHOD_LABELS,
+  card_machine: 'Card machine',
+};
+
 export type PaymentValidation =
   | { ok: true; amountPaise: number; providerRef: string | null; notes: string }
   | { ok: false; code: 'invalid-input' | 'limit-exceeded' | 'ref-required'; error: string };

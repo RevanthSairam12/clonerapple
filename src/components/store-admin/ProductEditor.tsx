@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import type {
@@ -12,6 +13,7 @@ interface Props {
   product: CatalogProductDetail;
   categories: CatalogCategoryOption[];
   brands: CatalogBrand[];
+  conditions: Array<{ id: string; label: string }>;
   canEdit: boolean;
 }
 
@@ -22,12 +24,18 @@ interface FormState {
   material: string;
   category_id: string;
   brand_id: string;
+  condition_id: string;
   sort_order: string;
+  cost: string;
   is_active: boolean;
   in_stock: boolean;
   description: string;
   seo_title: string;
   seo_description: string;
+}
+
+function costInput(paise: number | null | undefined): string {
+  return paise === null || paise === undefined ? '' : (paise / 100).toFixed(2);
 }
 
 function toForm(product: CatalogProductDetail): FormState {
@@ -38,7 +46,9 @@ function toForm(product: CatalogProductDetail): FormState {
     material: product.material,
     category_id: product.categoryId,
     brand_id: product.brandId ?? '',
+    condition_id: product.conditionId ?? '',
     sort_order: String(product.sortOrder ?? ''),
+    cost: costInput(product.costPaise),
     is_active: product.isActive,
     in_stock: product.inStock,
     description: product.description,
@@ -50,11 +60,12 @@ function toForm(product: CatalogProductDetail): FormState {
 /**
  * Copy and organisation editor for one product.
  *
- * Price is not a field here. It is shown on the page as a locked value, and
- * the API refuses a price key outright, because checkout still prices from the
- * code catalogue.
+ * Price is not a field here: it is edited by `ProductPriceEditor` so every
+ * change goes through the price endpoint and appends to `price_history`. The
+ * API rejects price keys on this endpoint outright.
  */
-export function ProductEditor({ product, categories, brands, canEdit }: Props) {
+export function ProductEditor({ product, categories, brands, conditions, canEdit }: Props) {
+  const router = useRouter();
   const [form, setForm] = useState<FormState>(() => toForm(product));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,8 +98,15 @@ export function ProductEditor({ product, categories, brands, canEdit }: Props) {
     if (form.brand_id !== initial.brand_id) {
       patch.brand_id = form.brand_id || null;
     }
+    if (form.condition_id !== initial.condition_id) {
+      patch.condition_id = form.condition_id || null;
+    }
     if (Number(form.sort_order) !== product.sortOrder) {
       patch.sort_order = Number(form.sort_order || 0);
+    }
+    if (form.cost.trim() !== costInput(product.costPaise)) {
+      const raw = form.cost.trim();
+      patch.cost_paise = raw === '' ? null : Math.round(Number(raw) * 100);
     }
     if (form.is_active !== initial.is_active) patch.is_active = form.is_active;
     if (form.in_stock !== initial.in_stock) patch.in_stock = form.in_stock;
@@ -100,6 +118,10 @@ export function ProductEditor({ product, categories, brands, canEdit }: Props) {
     const patch = changes();
     if (Object.keys(patch).length === 0) {
       setNotice('Nothing has changed yet.');
+      return;
+    }
+    if (typeof patch.cost_paise === 'number' && !Number.isFinite(patch.cost_paise)) {
+      setError('Unit cost must be a number of rupees, for example 1299.00.');
       return;
     }
 
@@ -118,8 +140,8 @@ export function ProductEditor({ product, categories, brands, canEdit }: Props) {
           typeof body.error === 'string' ? body.error : 'Could not save this product.',
         );
       }
-      setForm(toForm(body.product as CatalogProductDetail));
       setSaved('Product saved.');
+      router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save this product.');
     } finally {
@@ -207,6 +229,23 @@ export function ProductEditor({ product, categories, brands, canEdit }: Props) {
         </label>
 
         <label className="sa-field">
+          <span className="sa-label">Condition</span>
+          <select
+            className="sa-input"
+            value={form.condition_id}
+            disabled={!canEdit || saving}
+            onChange={(event) => update('condition_id', event.target.value)}
+          >
+            <option value="">Not set</option>
+            {conditions.map((condition) => (
+              <option key={condition.id} value={condition.id}>
+                {condition.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="sa-field">
           <span className="sa-label">
             Badge <span className="sa-hint">optional, e.g. New</span>
           </span>
@@ -240,6 +279,23 @@ export function ProductEditor({ product, categories, brands, canEdit }: Props) {
             value={form.sort_order}
             disabled={!canEdit || saving}
             onChange={(event) => update('sort_order', event.target.value)}
+          />
+        </label>
+
+        <label className="sa-field">
+          <span className="sa-label">
+            Unit cost ₹ <span className="sa-hint">internal, not shown to customers</span>
+          </span>
+          <input
+            className="sa-input"
+            type="number"
+            min={0}
+            step="0.01"
+            inputMode="decimal"
+            value={form.cost}
+            placeholder="Not set"
+            disabled={!canEdit || saving}
+            onChange={(event) => update('cost', event.target.value)}
           />
         </label>
 

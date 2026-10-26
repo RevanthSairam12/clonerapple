@@ -1,6 +1,11 @@
-import { PRODUCTS, type Product } from '@/components/sites/cases-protection/data/products';
-import { EDU_PRODUCTS, priceToNumber } from '@/components/sites/edu-store/data/content';
-import { ALL_ACCESSORY_PRODUCTS } from '@/lib/products/registry';
+/**
+ * Search scoring for the storefront.
+ *
+ * The product half of every result now comes from the live database catalogue:
+ * the caller passes the candidates it fetched (see `toSearchCandidates` in
+ * `@/lib/catalog/client-catalog`). Only the page entries below stay hard-coded,
+ * because they describe routes rather than products.
+ */
 
 export interface SearchResultItem {
   id: string;
@@ -14,6 +19,8 @@ export interface SearchResultItem {
   href: string;
   badges?: string[];
   keywords: string[];
+  /** Live catalogue availability. Absent on navigation entries. */
+  inStock?: boolean;
 }
 
 export interface QuickSuggestion {
@@ -22,131 +29,11 @@ export interface QuickSuggestion {
   category?: string;
 }
 
-// Build unified catalog of searchable items
-export const allSearchItems: SearchResultItem[] = [
-  // 1. Cases & Protection Products
-  ...PRODUCTS.map((p): SearchResultItem => {
-    const models = p.compatibility ? p.compatibility.join(' ') : '';
-    const colorNames = p.colors ? p.colors.map((c) => c.name).join(' ') : '';
-    return {
-      id: p.id,
-      type: 'product',
-      name: p.name,
-      subtitle: `${p.subtitle || ''} • ${p.material || ''}`.trim(),
-      category: 'Cases & Protection',
-      price: p.price,
-      priceDisplay: p.priceDisplay,
-      image: p.image,
-      href: `/shop/product/${encodeURIComponent(p.id)}`,
-      badges: [p.brand, p.material],
-      keywords: [
-        p.name.toLowerCase(),
-        (p.subtitle || '').toLowerCase(),
-        p.material.toLowerCase(),
-        p.brand.toLowerCase(),
-        models.toLowerCase(),
-        colorNames.toLowerCase(),
-        'case',
-        'cover',
-        'protection',
-        'magsafe',
-        'apple',
-        'gadzio',
-      ],
-    };
-  }),
-
-  // 2. Computers from the Education Store. Only cards carrying a price are real
-  //    products — the service and editorial rails reuse the same card type.
-  ...EDU_PRODUCTS.filter((c) => c.price && /^gadzio (book|mini|studio|one)/i.test(c.headline)).map(
-    (m): SearchResultItem => ({
-      id: m.id,
-      type: 'hardware',
-      name: m.headline,
-      subtitle: m.desc || 'Education Store',
-      category: 'Computers',
-      price: priceToNumber(m.price),
-      priceDisplay: m.price,
-      image: m.image,
-      href: '/in-edu/store',
-      badges: m.tag ? ['Computer', m.tag] : ['Computer'],
-      keywords: [
-        m.headline.toLowerCase(),
-        (m.desc || '').toLowerCase(),
-        'computer',
-        'laptop',
-        'notebook',
-        'desktop',
-        'all-in-one',
-        'gadzio book',
-        'gadzio mini',
-        'gadzio studio',
-        'gadzio one',
-      ],
-    }),
-  ),
-
-  // 3. Tablets from the Education Store
-  ...EDU_PRODUCTS.filter((c) => c.price && /^gadzio pad/i.test(c.headline)).map(
-    (ip): SearchResultItem => ({
-      id: ip.id,
-      type: 'hardware',
-      name: ip.headline,
-      subtitle: ip.desc || 'Education Store',
-      category: 'Tablets',
-      price: priceToNumber(ip.price),
-      priceDisplay: ip.price,
-      image: ip.image,
-      href: '/in-edu/store',
-      badges: ip.tag ? ['Tablet', ip.tag] : ['Tablet'],
-      keywords: [
-        ip.headline.toLowerCase(),
-        (ip.desc || '').toLowerCase(),
-        'tablet',
-        'stylus',
-        'pro',
-        'air',
-        'mini',
-        'gadzio pad',
-      ],
-    }),
-  ),
-
-  // 4. Generic Accessories (power adapters, wired earphones, cable & plug cases,
-  //    AirPods cases, mobile cases). Grouped under a single "Accessories" facet
-  //    for a tidy filter bar; the specific category rides in the subtitle.
-  ...ALL_ACCESSORY_PRODUCTS.map((p): SearchResultItem => {
-    const compat = p.compatibility.join(' ');
-    const colorNames = p.colors.map((c) => c.name).join(' ');
-    const facetValues = Object.values(p.facets).join(' ');
-    return {
-      id: p.id,
-      type: 'accessory',
-      name: p.name,
-      subtitle: `${p.subtitle} • ${p.category}`,
-      category: 'Accessories',
-      price: p.price,
-      priceDisplay: p.priceDisplay,
-      image: p.image,
-      href: `/shop/product/${encodeURIComponent(p.id)}`,
-      badges: [p.brand, p.material],
-      keywords: [
-        p.name.toLowerCase(),
-        p.subtitle.toLowerCase(),
-        p.material.toLowerCase(),
-        p.brand.toLowerCase(),
-        p.category.toLowerCase(),
-        compat.toLowerCase(),
-        colorNames.toLowerCase(),
-        facetValues.toLowerCase(),
-        'accessory',
-        'accessories',
-        'gadzio',
-      ].filter(Boolean),
-    };
-  }),
-
-  // 5. Key Site Categories and Pages
+/**
+ * Key site categories and pages. These are navigation, not products: they carry
+ * no price and always render as plain links.
+ */
+export const PAGE_SEARCH_ITEMS: SearchResultItem[] = [
   {
     id: 'page-cases-protection',
     type: 'page',
@@ -257,7 +144,18 @@ export const POPULAR_SEARCH_LINKS: QuickSuggestion[] = [
   { label: 'All Cases & Protection', href: '/shop/iphone/accessories/cases-protection' },
 ];
 
-export function searchProducts(query: string, options?: { category?: string; limit?: number }): {
+/**
+ * Score a caller-supplied candidate list against `query`.
+ *
+ * Pure: the candidates decide what can be found, so the same function serves
+ * live catalogue products (`toSearchCandidates`) and the fixed navigation
+ * entries in `PAGE_SEARCH_ITEMS` — callers pass both, concatenated.
+ */
+export function scoreProducts(
+  candidates: SearchResultItem[],
+  query: string,
+  options?: { category?: string; limit?: number },
+): {
   items: SearchResultItem[];
   totalMatches: number;
   suggestions: QuickSuggestion[];
@@ -267,7 +165,7 @@ export function searchProducts(query: string, options?: { category?: string; lim
   const categoryFilter = options?.category && options.category !== 'All' ? options.category : null;
 
   if (!cleanQuery) {
-    let filtered = allSearchItems;
+    let filtered = candidates;
     if (categoryFilter) {
       filtered = filtered.filter((i) => i.category === categoryFilter);
     }
@@ -280,7 +178,7 @@ export function searchProducts(query: string, options?: { category?: string; lim
 
   const queryTerms = cleanQuery.split(/\s+/).filter(Boolean);
 
-  const scoredItems = allSearchItems
+  const scoredItems = candidates
     .map((item) => {
       if (categoryFilter && item.category !== categoryFilter) {
         return { item, score: -1 };

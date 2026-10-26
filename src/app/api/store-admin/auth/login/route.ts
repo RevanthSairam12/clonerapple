@@ -76,5 +76,9 @@ export async function POST(request: Request) {
     request,
   });
 
-  return NextResponse.json({ ok: true, role: result.role });
+  return NextResponse.json({
+    ok: true,
+    role: result.role,
+    mustChangePassword: result.mustChangePassword,
+  });
 }

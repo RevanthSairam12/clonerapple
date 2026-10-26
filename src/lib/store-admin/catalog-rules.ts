@@ -20,12 +20,16 @@ const PRODUCT_EDITABLE_FIELDS = [
   'badge',
   'material',
   'brand_id',
+  'condition_id',
   'category_id',
   'seo_title',
   'seo_description',
   'is_active',
   'in_stock',
   'sort_order',
+  // Internal unit cost. This is not the selling price: it never reaches the
+  // storefront and does not go through the price history.
+  'cost_paise',
 ] as const;
 
 export type ProductEditableField = (typeof PRODUCT_EDITABLE_FIELDS)[number];
@@ -37,13 +41,18 @@ export interface ProductPatch {
   badge?: string | null;
   material?: string;
   brand_id?: string | null;
+  condition_id?: string | null;
   category_id?: string;
   seo_title?: string;
   seo_description?: string;
   is_active?: boolean;
   in_stock?: boolean;
   sort_order?: number;
+  cost_paise?: number | null;
 }
+
+/** ₹10,00,00,000 in paise — a cost above this is almost certainly a typo. */
+export const PRODUCT_COST_MAX_PAISE = 100_000_000_00;
 
 const PRICE_FIELDS = new Set([
   'price_paise',
@@ -116,10 +125,25 @@ export function validateProductPatch(input: unknown): FieldResult<ProductPatch> 
       continue;
     }
 
+    // Cost is entered as integer paise by the editor; an empty value clears it.
+    if (key === 'cost_paise') {
+      if (raw === null || raw === undefined || raw === '') {
+        patch.cost_paise = null;
+        continue;
+      }
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value < 0 || value > PRODUCT_COST_MAX_PAISE) {
+        return { ok: false, error: 'Unit cost must be a whole number of paise, zero or more.' };
+      }
+      patch.cost_paise = value;
+      continue;
+    }
+
     // badge and brand_id are nullable text.
     if (raw === null) {
       if (key === 'badge') patch.badge = null;
       else if (key === 'brand_id') patch.brand_id = null;
+      else if (key === 'condition_id') patch.condition_id = null;
       else return { ok: false, error: `'${key}' cannot be empty.` };
       continue;
     }
@@ -141,6 +165,10 @@ export function validateProductPatch(input: unknown): FieldResult<ProductPatch> 
     }
     if (key === 'brand_id') {
       patch.brand_id = trimmed || null;
+      continue;
+    }
+    if (key === 'condition_id') {
+      patch.condition_id = trimmed || null;
       continue;
     }
     if (!trimmed) {

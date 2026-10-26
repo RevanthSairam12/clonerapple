@@ -16,7 +16,7 @@ export default async function StoreAdminLoginPage() {
   if (session) redirect('/store-admin');
 
   return (
-    <main className="sa-login-wrap">
+    <main className="sa-shell sa-login-wrap">
       <div className="sa-login-card">
         <p className="sa-kicker">Gadzio Store Desk</p>
         <h1 className="sa-login-title">Operations sign-in</h1>

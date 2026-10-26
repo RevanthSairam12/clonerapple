@@ -1,6 +1,10 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+
 import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesProtectionPage';
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
+import { toCategoryConfig, toCollectionProduct } from '@/lib/catalog/adapter';
+import { getStorefrontCategory } from '@/lib/catalog/storefront';
 import { getContentMany } from '@/lib/content';
 
 import '@/app/in/shop/iphone/accessories/cases-protection/cases.css';
@@ -21,17 +25,25 @@ export const metadata: Metadata = {
 };
 
 export default async function ShopCasesPage() {
+  const category = await getStorefrontCategory('cases-protection');
+  if (!category) notFound();
+
+  // Page furniture only — the grid comes from the `products` table.
   const c = await getContentMany({
     categoryLinks: ['cases.category_links', {}],
     header: ['cases.page_header', {}],
-    products: ['cases.products', {}],
   });
 
   const overrides: CasesProtectionOverrides = {
     categoryLinks: (c.categoryLinks as { items?: CasesProtectionOverrides['categoryLinks'] })?.items,
     header: c.header as CasesProtectionOverrides['header'],
-    products: (c.products as { items?: CasesProtectionOverrides['products'] })?.items,
   };
 
-  return <CasesProtectionPage overrides={overrides} />;
+  return (
+    <CasesProtectionPage
+      config={toCategoryConfig(category)}
+      products={category.products.map(toCollectionProduct)}
+      overrides={overrides}
+    />
+  );
 }

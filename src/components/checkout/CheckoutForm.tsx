@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useCart } from '@/lib/cart/CartContext';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
+import { decideCheckoutView } from '@/lib/checkout/checkout-decision';
 
 interface CartItem {
   id: string;
@@ -36,17 +37,34 @@ interface Props {
   } | null;
   /** True when the URL named a productId that is not in the PayU catalog. */
   productUnavailable?: boolean;
+  /** The raw `?productId=`, used to clear it from the URL when the bag wins. */
+  productIdFromQuery?: string;
+  /** Customers → Customer settings controls this checkbox. */
+  marketingOptInEnabled?: boolean;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false }: Props) {
   const { items: bagItems, removeItem, isHydrated } = useCart();
 
-  // If items exist in the shopping bag, use the live bag. Only an empty bag
-  // falls back to the product resolved from ?productId= on the server. There is
-  // deliberately no placeholder line: a checkout with nothing real to buy is
-  // an "unavailable" state.
+  const decision = decideCheckoutView({
+    isHydrated,
+    bagItemCount: bagItems.length,
+    productId: productIdFromQuery,
+    initialItemCount: initialItems?.length ?? 0,
+    productUnavailable,
+  });
+
+  // If the bag has items, a bad or stale ?productId= is ignored and the URL is
+  // replaced with plain /checkout so a refresh cannot resurrect the dead link.
+  // Only an empty bag falls back to the product resolved from ?productId=.
+  React.useEffect(() => {
+    if (!decision.clearProductQueryFromUrl) return;
+    if (typeof window === 'undefined') return;
+    window.history.replaceState(window.history.state, '', '/checkout');
+  }, [decision.clearProductQueryFromUrl]);
+
   const items: CartItem[] =
-    bagItems.length > 0
+    decision.view === 'bag'
       ? bagItems.map((b) => ({
           id: b.id,
           productId: b.productId,
@@ -55,7 +73,9 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           quantity: b.quantity,
           image: b.image,
         }))
-      : initialItems ?? [];
+      : decision.view === 'product'
+        ? initialItems ?? []
+        : [];
 
   // A line is only payable when its id exists in the authoritative PayU
   // catalog. Stale/education ids and anything else are marked unavailable and
@@ -85,6 +105,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
 
   React.useEffect(() => {
     fetch('/api/account/addresses')
@@ -180,7 +201,8 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
 
     try {
       let shippingAddressId = selectedAddressId;
-      if (!shippingAddressId && saveNewAddress) {
+      // Guests have no address book; the address rides along with the order.
+      if (!shippingAddressId && saveNewAddress && userSession) {
         const saveResponse = await fetch('/api/account/addresses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -206,6 +228,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           },
           shippingAddressId: shippingAddressId || undefined,
           shippingAddress: shippingAddressId ? undefined : shippingAddress,
+          marketingOptIn: marketingOptInEnabled && marketingOptIn,
         }),
       });
 
@@ -258,38 +281,21 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     }
   };
 
-  // An empty bag and an unknown ?productId= are different states with different
-  // fixes. Saying "this item is unavailable" to someone whose bag is simply
-  // empty sent them to "Review Bag" to look for an item that was never there.
-  if (isHydrated && items.length === 0 && !productUnavailable) {
+  // Wait for the cart to hydrate before deciding: the bag is only known on the
+  // client, and a stale ?productId= must not flash the unavailable panel over
+  // items the customer actually has.
+  if (decision.view === 'loading') {
     return (
-      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Your bag is empty</h1>
-        <p className="text-sm text-[#86868b] mt-3 max-w-md mx-auto">
-          Add something to your bag before checking out. If you were part-way
-          through a payment, your bag is still here — nothing was lost.
-        </p>
-        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <Link
-            href="/shop/iphone/accessories/cases-protection"
-            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-sm font-semibold transition"
-          >
-            Back to the shop
-          </Link>
-          <Link
-            href="/cart"
-            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full border border-[#d2d2d7] text-[#1d1d1f] text-sm font-semibold hover:bg-[#f5f5f7] transition"
-          >
-            Review Bag
-          </Link>
-        </div>
+      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-center text-sm text-[#86868b]">
+        Loading your bag…
       </div>
     );
   }
 
-  // An unknown ?productId= is an explicit unavailable state — never a
-  // placeholder product.
-  if (productUnavailable) {
+  // An unknown ?productId= with an empty bag is an explicit unavailable state —
+  // never a placeholder product. A non-empty bag was handled above and shows
+  // the bag instead.
+  if (decision.view === 'unavailable') {
     return (
       <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
         <h1 className="text-3xl font-semibold tracking-tight">This item is unavailable</h1>
@@ -315,11 +321,32 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     );
   }
 
-  // Wait for the cart to hydrate before concluding that the bag is empty.
-  if (!isHydrated && items.length === 0) {
+  // A genuinely empty bag is a different state with a different fix from an
+  // unknown product. Saying "this item is unavailable" to someone whose bag is
+  // simply empty sent them to "Review Bag" to look for an item that was never
+  // there.
+  if (decision.view === 'empty') {
     return (
-      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-center text-sm text-[#86868b]">
-        Loading your bag…
+      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
+        <h1 className="text-3xl font-semibold tracking-tight">Your bag is empty</h1>
+        <p className="text-sm text-[#86868b] mt-3 max-w-md mx-auto">
+          Add something to your bag before checking out. If you were part-way
+          through a payment, your bag is still here — nothing was lost.
+        </p>
+        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link
+            href="/shop/iphone/accessories/cases-protection"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-sm font-semibold transition"
+          >
+            Back to the shop
+          </Link>
+          <Link
+            href="/cart"
+            className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full border border-[#d2d2d7] text-[#1d1d1f] text-sm font-semibold hover:bg-[#f5f5f7] transition"
+          >
+            Review Bag
+          </Link>
+        </div>
       </div>
     );
   }
@@ -511,13 +538,26 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                 ))}
               </div>
             )}
-            {!selectedAddressId && (
+            {!selectedAddressId && userSession && (
               <label className="flex items-center gap-2 text-xs text-[#6e6e73]">
                 <input type="checkbox" checked={saveNewAddress} onChange={(event) => setSaveNewAddress(event.target.checked)} disabled={isSubmitting} />
                 Save this address to my account
               </label>
             )}
           </fieldset>
+
+          {marketingOptInEnabled && (
+            <label className="mt-4 flex items-start gap-2 rounded-2xl border border-[#e5e5ea] bg-white p-4 text-xs text-[#6e6e73]">
+              <input
+                type="checkbox"
+                checked={marketingOptIn}
+                onChange={(event) => setMarketingOptIn(event.target.checked)}
+                disabled={isSubmitting}
+                className="mt-0.5"
+              />
+              <span>Email me offers and new arrivals from Gadzio. You can unsubscribe at any time.</span>
+            </label>
+          )}
 
           <div className="pt-4">
           <button

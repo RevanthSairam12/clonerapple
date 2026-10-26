@@ -31,15 +31,19 @@ export function StoreAdminLoginForm() {
             }),
           });
 
-          let json: { error?: string } = {};
+          let json: { error?: string; mustChangePassword?: boolean } = {};
           try {
-            json = (await res.json()) as { error?: string };
+            json = (await res.json()) as { error?: string; mustChangePassword?: boolean };
           } catch {
             // non-JSON error body
           }
 
           if (res.ok) {
-            window.location.href = '/store-admin';
+            // A temporary password lands on the profile page so it is replaced
+            // before the person starts working.
+            window.location.href = json.mustChangePassword
+              ? '/store-admin/profile'
+              : '/store-admin';
             return;
           }
 

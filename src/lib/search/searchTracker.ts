@@ -1,6 +1,6 @@
 'use client';
 
-import { allSearchItems, searchProducts, type SearchResultItem } from './searchService';
+import { scoreProducts, type SearchResultItem } from './searchService';
 
 export interface SearchHistoryEntry {
   query: string;
@@ -82,11 +82,23 @@ export function getMostSearchedTerms(limit: number = 5): string[] {
   }
 }
 
+/** A suggestion must be buyable: in stock and carrying a real price. */
+function isSellable(item: SearchResultItem): boolean {
+  if (item.type !== 'product' && item.type !== 'accessory') return false;
+  if (item.inStock === false) return false;
+  return typeof item.price === 'number' && Number.isFinite(item.price) && item.price > 0;
+}
+
 /**
  * Gets personalized suggested products based on the user's most-searched terms.
  * If no search history exists, falls back to trending/popular store products.
+ *
+ * `candidates` is the live catalogue (`toSearchCandidates(products)`). It has no
+ * default on purpose: this module must never fall back to bundled static data,
+ * so a caller that omits it gets no product suggestions rather than stale ones.
  */
 export function getSuggestedProducts(options?: {
+  candidates?: SearchResultItem[];
   excludeIds?: string[];
   limit?: number;
 }): {
@@ -96,6 +108,7 @@ export function getSuggestedProducts(options?: {
 } {
   const limit = options?.limit || 4;
   const excludeSet = new Set(options?.excludeIds || []);
+  const candidates = options?.candidates ?? [];
 
   const topTerms = getMostSearchedTerms(4);
   const matchedProducts: SearchResultItem[] = [];
@@ -104,12 +117,9 @@ export function getSuggestedProducts(options?: {
   // 1. Gather products matching the user's most searched queries
   if (topTerms.length > 0) {
     for (const term of topTerms) {
-      const searchRes = searchProducts(term, { limit: 6 });
+      const searchRes = scoreProducts(candidates, term, { limit: 6 });
       for (const item of searchRes.items) {
-        // Only suggest items the store actually sells. Education Store hardware
-        // has no PayU catalog record, so quick-adding it produced an unpayable
-        // bag line; editorial "page" results are navigation, not products.
-        if (item.type !== 'product' && item.type !== 'accessory') continue;
+        if (!isSellable(item)) continue;
         if (!excludeSet.has(item.id) && !seenIds.has(item.id)) {
           seenIds.add(item.id);
           matchedProducts.push(item);
@@ -122,11 +132,8 @@ export function getSuggestedProducts(options?: {
 
   // 2. If fewer than limit, fill with trending products from the store
   if (matchedProducts.length < limit) {
-    const trendingFallback = allSearchItems.filter(
-      (item) => item.type === 'product' || item.type === 'accessory'
-    );
-
-    for (const item of trendingFallback) {
+    for (const item of candidates) {
+      if (!isSellable(item)) continue;
       if (!excludeSet.has(item.id) && !seenIds.has(item.id)) {
         seenIds.add(item.id);
         matchedProducts.push(item);

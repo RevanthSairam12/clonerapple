@@ -10,6 +10,7 @@ import {
   PASSWORD_MAX_BYTES,
 } from './auth/validation';
 import { checkRateLimit } from './payu/rate-limit';
+import { deviceLabel } from './store-admin/customer-rules';
 
 /**
  * Consumer-facing authentication for Apple ID-style sign-in/sign-up.
@@ -78,13 +79,59 @@ function recordSuccess(email: string, ip: string): void {
   for (const key of attemptKeys(email, ip)) attempts.delete(key);
 }
 
-async function clientIp(): Promise<string> {
+interface RequestContext {
+  ip: string;
+  device: string;
+  /** SHA-256 of the client IP, or null. The raw address is never stored. */
+  ipHash: string | null;
+}
+
+async function requestContext(): Promise<RequestContext> {
   const h = await headers();
-  return (
+  const ip =
     h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     h.get('x-real-ip') ||
-    'unknown'
-  );
+    '';
+  return {
+    ip: ip || 'unknown',
+    device: deviceLabel(h.get('user-agent')),
+    ipHash: ip ? createHash('sha256').update(ip).digest('hex') : null,
+  };
+}
+
+/** Best-effort login trail; a logging failure never blocks a sign-in. */
+async function recordLoginEvent(
+  userId: string,
+  outcome: 'success' | 'failed' | 'blocked' | 'signup' | 'logout',
+  device: string,
+): Promise<void> {
+  const sql = getSql();
+  if (!sql) return;
+  try {
+    await sql`
+      insert into user_login_events (user_id, outcome, device)
+      values (${userId}, ${outcome}, ${device})
+    `;
+  } catch {
+    console.warn('[user-auth] could not record a login event');
+  }
+}
+
+/** New accounts start in the group chosen under Customers → Settings. */
+async function defaultCustomerGroup(): Promise<string> {
+  const sql = getSql();
+  if (!sql) return 'retail';
+  try {
+    const rows = (await sql`
+      select value from customer_settings
+      where key = 'default_customer_group'
+      limit 1
+    `) as Array<{ value?: string }>;
+    const value = rows[0]?.value;
+    return value === 'vip' || value === 'wholesale' ? value : 'retail';
+  } catch {
+    return 'retail';
+  }
 }
 
 /**
@@ -143,9 +190,9 @@ export async function signUp(
   if (!sql) return { ok: false, error: 'Database is not configured.' };
 
   const normalized = normalizeEmail(email);
-  const ip = await clientIp();
+  const context = await requestContext();
 
-  const limited = tooManyRequests(normalized, ip, 'signup');
+  const limited = tooManyRequests(normalized, context.ip, 'signup');
   if (limited !== null) {
     return {
       ok: false,
@@ -165,16 +212,23 @@ export async function signUp(
   const token = randomBytes(32).toString('hex');
   const tokenHash = hashToken(token);
   const expires = new Date(Date.now() + SESSION_TTL_MS);
+  const group = await defaultCustomerGroup();
 
   await sql`
-    insert into users (id, email, password_hash, first_name, last_name)
-    values (${userId}, ${normalized}, ${passwordHash}, ${normalizeName(firstName)}, ${normalizeName(lastName)})
+    insert into users (
+      id, email, password_hash, first_name, last_name, customer_group, last_login_at
+    ) values (
+      ${userId}, ${normalized}, ${passwordHash},
+      ${normalizeName(firstName)}, ${normalizeName(lastName)}, ${group}, now()
+    )
   `;
 
   await sql`
-    insert into user_sessions (token_hash, user_id, expires_at)
-    values (${tokenHash}, ${userId}, ${expires})
+    insert into user_sessions (token_hash, user_id, expires_at, device, ip_hash)
+    values (${tokenHash}, ${userId}, ${expires}, ${context.device}, ${context.ipHash})
   `;
+
+  await recordLoginEvent(userId, 'signup', context.device);
 
   return { ok: true, token };
 }
@@ -192,9 +246,9 @@ export async function signIn(
   if (!sql) return { ok: false, error: 'Database is not configured.' };
 
   const normalized = normalizeEmail(email);
-  const ip = await clientIp();
+  const context = await requestContext();
 
-  const limited = tooManyRequests(normalized, ip, 'signin');
+  const limited = tooManyRequests(normalized, context.ip, 'signin');
   if (limited !== null) {
     return {
       ok: false,
@@ -203,7 +257,7 @@ export async function signIn(
     };
   }
 
-  if (isLocked(normalized, ip)) {
+  if (isLocked(normalized, context.ip)) {
     return {
       ok: false,
       error: 'Too many failed attempts. Please try again in 10 minutes.',
@@ -219,20 +273,29 @@ export async function signIn(
     passwordByteLength(password) > PASSWORD_MAX_BYTES
   ) {
     await bcrypt.compare(password, DUMMY_HASH);
-    recordFailure(normalized, ip);
+    recordFailure(normalized, context.ip);
     return { ok: false, error: 'Invalid email or password.' };
   }
 
   const rows = await sql`
-    select id, password_hash, first_name, last_name
+    select id, password_hash, first_name, last_name, is_blocked
     from users where email = ${normalized}
   `;
   const user = rows[0];
 
   const valid = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
   if (!user || !valid) {
-    recordFailure(normalized, ip);
+    recordFailure(normalized, context.ip);
+    if (user) await recordLoginEvent(String(user.id), 'failed', context.device);
     return { ok: false, error: 'Invalid email or password.' };
+  }
+
+  if (user.is_blocked) {
+    await recordLoginEvent(String(user.id), 'blocked', context.device);
+    return {
+      ok: false,
+      error: 'This account has been disabled. Please contact support.',
+    };
   }
 
   const token = randomBytes(32).toString('hex');
@@ -240,13 +303,15 @@ export async function signIn(
   const expires = new Date(Date.now() + SESSION_TTL_MS);
 
   await sql`
-    insert into user_sessions (token_hash, user_id, expires_at)
-    values (${tokenHash}, ${user.id}, ${expires})
+    insert into user_sessions (token_hash, user_id, expires_at, device, ip_hash)
+    values (${tokenHash}, ${user.id}, ${expires}, ${context.device}, ${context.ipHash})
   `;
+  await sql`update users set last_login_at = now() where id = ${user.id}`;
   // Opportunistic cleanup
   await sql`delete from user_sessions where expires_at <= now()`;
 
-  recordSuccess(normalized, ip);
+  await recordLoginEvent(String(user.id), 'success', context.device);
+  recordSuccess(normalized, context.ip);
   return { ok: true, token };
 }
 
@@ -264,7 +329,9 @@ export async function getUserSession(): Promise<UserSession | null> {
     select u.id, u.email, u.first_name, u.last_name, u.phone
     from user_sessions s
     join users u on u.id = s.user_id
-    where s.token_hash = ${hashToken(token)} and s.expires_at > now()
+    where s.token_hash = ${hashToken(token)}
+      and s.expires_at > now()
+      and u.is_blocked = false
   `;
   const row = rows[0];
   if (!row) return null;
@@ -328,7 +395,15 @@ export async function userLogout(): Promise<void> {
   const store = await cookies();
   const token = store.get(COOKIE_NAME)?.value;
   if (token) {
-    await sql`delete from user_sessions where token_hash = ${hashToken(token)}`;
+    const rows = (await sql`
+      delete from user_sessions
+      where token_hash = ${hashToken(token)}
+      returning user_id
+    `) as Array<{ user_id: string }>;
+    if (rows[0]) {
+      const h = await headers();
+      await recordLoginEvent(String(rows[0].user_id), 'logout', deviceLabel(h.get('user-agent')));
+    }
   }
 }
 

@@ -30,6 +30,7 @@ export function OrderPaymentControls({ txnid, canEdit, totalPaise, paidPaise, or
   }
 
   const needsRef = method === 'upi' || method === 'bank_transfer';
+  const needsReview = needsRef || method === 'other';
   const remaining = Math.max(0, totalPaise - paidPaise);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -106,8 +107,14 @@ export function OrderPaymentControls({ txnid, canEdit, totalPaise, paidPaise, or
           />
         </label>
       </div>
+      {needsReview ? (
+        <p className="sa-note">
+          {METHOD_LABELS[method]} entries go to the payment review queue. The amount counts towards
+          the total only once someone else verifies it.
+        </p>
+      ) : null}
       <button className="sa-btn sa-btn-primary" type="submit" disabled={busy}>
-        {busy ? 'Recording…' : 'Mark as paid'}
+        {busy ? 'Recording…' : needsReview ? 'Send for review' : 'Mark as paid'}
       </button>
       {message ? <p className="sa-error" role="alert">{message}</p> : null}
     </form>

@@ -1,18 +1,22 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GadzioHeader } from '@/components/header/GadzioHeader';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
-import { searchProducts, POPULAR_SEARCH_LINKS, type SearchResultItem } from '@/lib/search/searchService';
+import {
+  scoreProducts,
+  PAGE_SEARCH_ITEMS,
+  POPULAR_SEARCH_LINKS,
+  type SearchResultItem,
+} from '@/lib/search/searchService';
 import { recordSearchQuery } from '@/lib/search/searchTracker';
 import { SearchResetIcon, SearchSubmitIcon } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/icons';
 import { WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
-import { ACCESSORY_NAV } from '@/components/sites/accessories/data/types';
 import { CollectionProductCard } from '@/components/collection/CollectionProductCard';
 import type { CollectionProduct } from '@/components/collection/types';
-import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { toSearchCandidates, useLiveCatalog } from '@/lib/catalog/client-catalog';
 import { formatINR } from '@/lib/utils';
 
 import '@/components/collection/collection.css';
@@ -27,6 +31,16 @@ const CATEGORIES = [
   'AirPods Cases',
 ];
 
+// Top navigation rail. Fixed routes, not catalogue data.
+const ACCESSORY_NAV: { label: string; href: string }[] = [
+  { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
+  { label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+  { label: 'Power & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
+  { label: 'Wired Earphones', href: '/in/shop/iphone/accessories/wired-earphones' },
+  { label: 'Cable & Plug Case', href: '/in/shop/iphone/accessories/cable-plug-case' },
+  { label: 'AirPods Cases', href: '/in/shop/iphone/accessories/airpods-case' },
+];
+
 function toCollectionProduct(item: SearchResultItem): CollectionProduct {
   // Editorial/page results and any other item without a numeric price must not
   // be turned into a ₹0 product. They render as "Unavailable" and cannot be
@@ -35,11 +49,9 @@ function toCollectionProduct(item: SearchResultItem): CollectionProduct {
     typeof item.price === 'number' && Number.isFinite(item.price) && item.price > 0
       ? item.price
       : null;
-  // A price is only meaningful if the PayU catalog can actually charge it.
-  // Education Store hardware and anything else missing from the catalog has no
-  // payable entry, so the card must never offer an enabled "Add to bag".
-  const inCatalog = Boolean(getProductFromCatalog(item.id));
-  const available = price !== null && inCatalog;
+  // Availability is the live catalogue's word: a product the database marks out
+  // of stock, or one that arrives without a real price, has no payable entry.
+  const available = price !== null && item.inStock !== false;
 
   return {
     id: item.id,
@@ -50,15 +62,15 @@ function toCollectionProduct(item: SearchResultItem): CollectionProduct {
     priceUnavailable: !available,
     image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
     images: [item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg'],
-    colors: (item as any).colors || [],
-    compatibility: (item as any).compatibility || [],
+    colors: [],
+    compatibility: [],
     material: '',
     brand: 'Gadzio',
     facets: {},
     features: [],
     description: item.subtitle,
     href: item.href,
-    inStock: true,
+    inStock: available,
   };
 }
 
@@ -89,20 +101,28 @@ export function SearchPageView({ initialQuery = '' }: Props) {
       ? 'Case for AirPods'
       : activeCategory;
 
-  const { items: rawItems } = searchProducts(query, {
+  const { products: liveProducts, ready } = useLiveCatalog();
+
+  // Products come from the live catalogue; the fixed page entries are
+  // navigation and are scored through the same function.
+  const candidates = useMemo(
+    () => [...toSearchCandidates(liveProducts), ...PAGE_SEARCH_ITEMS],
+    [liveProducts],
+  );
+
+  const { items: results } = scoreProducts(candidates, query, {
     category: mappedCategory,
     limit: 40,
   });
 
-  // Education Store hardware (type 'hardware') has no PayU catalog entry, so it
-  // can never be paid for. Keeping it out of the store's search grid avoids an
-  // "Add to bag" that only ever produces an unpayable line.
-  const results = rawItems.filter((item) => item.type !== 'hardware');
+  // Education Store hardware (type 'hardware') has no payable entry, so it must
+  // never reach the store's search grid.
+  const visible = results.filter((item) => item.type !== 'hardware');
   // Editorial 'page' results are navigation, not products: they render as plain
   // links, never as priced cards or "Unavailable" badges.
-  const productResults = results.filter((item) => item.type !== 'page');
-  const pageResults = results.filter((item) => item.type === 'page');
-  const totalMatches = results.length;
+  const productResults = visible.filter((item) => item.type !== 'page');
+  const pageResults = visible.filter((item) => item.type === 'page');
+  const totalMatches = ready ? visible.length : 0;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,7 +185,9 @@ export function SearchPageView({ initialQuery = '' }: Props) {
               )}
             </h1>
             <p className="gz-collection-subhead">
-              {totalMatches} {totalMatches === 1 ? 'item found' : 'items found'}
+              {!ready
+                ? 'Loading the catalogue…'
+                : `${totalMatches} ${totalMatches === 1 ? 'item found' : 'items found'}`}
             </p>
           </header>
 
@@ -235,7 +257,11 @@ export function SearchPageView({ initialQuery = '' }: Props) {
           </div>
 
           {/* Product Results Grid using shared CollectionProductCard */}
-          {productResults.length > 0 || pageResults.length > 0 ? (
+          {!ready ? (
+            <div className="gz-collection-empty">
+              <h3 className="gz-collection-empty-title">Loading the catalogue…</h3>
+            </div>
+          ) : productResults.length > 0 || pageResults.length > 0 ? (
             <>
               {productResults.length > 0 && (
                 <div className="gz-collection-grid" role="region" aria-label="Search results">

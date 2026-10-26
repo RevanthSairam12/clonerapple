@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { requireStoreRole } from '@/lib/store-admin/auth';
+import { parseCustomerFilters } from '@/lib/store-admin/customer-rules';
 import { listCustomers } from '@/lib/store-admin/customers';
 
 /**
@@ -17,13 +18,12 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
-  const query = url.searchParams.get('q') ?? '';
-  const parsedPage = Number.parseInt(url.searchParams.get('page') ?? '1', 10);
+  const parsed = parseCustomerFilters(Object.fromEntries(url.searchParams));
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
 
-  const result = await listCustomers({
-    query,
-    page: Number.isFinite(parsedPage) ? parsedPage : 1,
-  });
+  const result = await listCustomers(parsed.filters);
 
   if (!result.ok) {
     return NextResponse.json(

@@ -66,6 +66,7 @@ export interface CatalogImage {
 
 export interface CatalogVariant {
   id: string;
+  sku: string | null;
   optionName: string;
   optionValue: string;
   optionHex: string | null;
@@ -110,6 +111,11 @@ export interface CatalogProductDetail extends CatalogProductSummary {
   material: string;
   brand: string;
   brandId: string | null;
+  compareAtPaise: number | null;
+  /** Internal unit cost for stock valuation; null when it has never been set. */
+  costPaise: number | null;
+  conditionId: string | null;
+  conditionLabel: string | null;
   badge: string | null;
   highlights: Array<{ title: string; desc: string }>;
   inTheBox: string[];
@@ -341,13 +347,16 @@ export async function getCatalogProduct(
 
   try {
     const productRows = await sql`
-      select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.currency,
-             p.material, p.brand, p.brand_id, p.description, p.badge,
-             p.highlights, p.in_the_box, p.seo_title, p.seo_description,
-             p.in_stock, p.is_active, p.sort_order, p.created_at, p.updated_at,
+      select p.id, p.slug, p.name, p.subtitle, p.price_paise,
+             p.compare_at_paise, p.cost_paise, p.currency, p.material, p.brand, p.brand_id,
+             p.condition_id, cond.label as condition_label, p.description,
+             p.badge, p.highlights, p.in_the_box, p.seo_title,
+             p.seo_description, p.in_stock, p.is_active, p.sort_order,
+             p.created_at, p.updated_at,
              c.id as category_id, c.slug as category_slug, c.name as category_name
       from products p
       join categories c on c.id = p.category_id
+      left join conditions cond on cond.id = p.condition_id
       where p.id = ${id} and p.deleted_at is null
       limit 1
     `;
@@ -379,7 +388,7 @@ export async function getCatalogProduct(
             sort_order, id
         `,
         sql`
-          select id, option_name, option_value, option_hex,
+          select id, sku, option_name, option_value, option_hex,
                  price_paise_override, is_active, sort_order
           from product_variants
           where product_id = ${id}
@@ -424,6 +433,7 @@ export async function getCatalogProduct(
     const images: CatalogImage[] = (imageRows as Row[]).map(mapImageRow);
     const variants: CatalogVariant[] = (variantRows as Row[]).map((row) => ({
       id: text(row.id),
+      sku: row.sku === null || row.sku === undefined ? null : text(row.sku),
       optionName: text(row.option_name),
       optionValue: text(row.option_value),
       optionHex: row.option_hex === null || row.option_hex === undefined
@@ -495,6 +505,16 @@ export async function getCatalogProduct(
           productRow.brand_id === null || productRow.brand_id === undefined
             ? null
             : text(productRow.brand_id),
+        compareAtPaise: nullableNumber(productRow.compare_at_paise),
+        costPaise: nullableNumber(productRow.cost_paise),
+        conditionId:
+          productRow.condition_id === null || productRow.condition_id === undefined
+            ? null
+            : text(productRow.condition_id),
+        conditionLabel:
+          productRow.condition_label === null || productRow.condition_label === undefined
+            ? null
+            : text(productRow.condition_label),
         badge:
           productRow.badge === null || productRow.badge === undefined
             ? null

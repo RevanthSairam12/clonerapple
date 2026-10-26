@@ -3,12 +3,15 @@ import { randomBytes } from 'node:crypto';
 import { getPayUConfig, assertPayUConfigured } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
 import { createOrder } from '@/lib/payu/orders';
-import { resolveCartItems } from '@/lib/payu/catalog';
+import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { getCustomerAddress } from '@/lib/account/addresses';
 import { validateAddressInput } from '@/lib/account/rules';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { isOn } from '@/lib/store-admin/customer-rules';
+import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
+import { subscribeToNewsletter } from '@/lib/store-admin/subscribers';
 
 export const runtime = 'nodejs';
 
@@ -71,22 +74,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Authenticated user check
+    // Guest checkout is controlled by Customers → Customer settings. When it
+    // is off (the default), an account is required.
+    const settings = await readCustomerSettings();
     const userSession = await getUserSession();
-    if (!userSession) {
+    if (!userSession && !isOn(settings.guest_checkout)) {
       return NextResponse.json(
         { error: 'Authentication required. Please sign in or create an account to proceed with purchase.' },
         { status: 401 }
       );
     }
-    const userId = userSession.userId;
+    const userId = userSession?.userId ?? null;
 
-    const userLimit = checkRateLimit(`payu-init-user:${userId}`, { limit: 10, windowMs: 5 * 60 * 1000 });
-    if (!userLimit.allowed) {
-      return NextResponse.json(
-        { error: 'Too many payment attempts for this account. Please wait.' },
-        { status: 429, headers: { 'Retry-After': String(userLimit.retryAfterSec) } }
-      );
+    if (userId) {
+      const userLimit = checkRateLimit(`payu-init-user:${userId}`, { limit: 10, windowMs: 5 * 60 * 1000 });
+      if (!userLimit.allowed) {
+        return NextResponse.json(
+          { error: 'Too many payment attempts for this account. Please wait.' },
+          { status: 429, headers: { 'Retry-After': String(userLimit.retryAfterSec) } }
+        );
+      }
     }
 
     const body = await req.json().catch(() => null);
@@ -102,7 +109,7 @@ export async function POST(req: NextRequest) {
 
     let cart;
     try {
-      cart = resolveCartItems(rawItems);
+      cart = await resolveCartItemsFromDb(rawItems);
     } catch (err: unknown) {
       return NextResponse.json({ error: (err as Error).message }, { status: 400 });
     }
@@ -134,7 +141,12 @@ export async function POST(req: NextRequest) {
 
     const addressId = typeof body.shippingAddressId === 'string' ? body.shippingAddressId.trim() : '';
     let shippingAddress;
-    if (addressId) {
+    if (addressId && !userId) {
+      return NextResponse.json(
+        { error: 'Sign in to use a saved address, or enter a shipping address.' },
+        { status: 400 }
+      );
+    } else if (addressId && userId) {
       const savedAddress = await getCustomerAddress(userId, addressId);
       if (!savedAddress) {
         return NextResponse.json({ error: 'The selected shipping address is unavailable.' }, { status: 400 });
@@ -168,6 +180,12 @@ export async function POST(req: NextRequest) {
       customerPhone: phone,
       shippingAddress,
     });
+
+    // Opt-in is only honoured while the checkbox is enabled in settings.
+    // Failure to record it never blocks the payment.
+    if (body.marketingOptIn === true && isOn(settings.checkout_marketing_optin)) {
+      await subscribeToNewsletter(rawEmail, 'checkout');
+    }
 
     // 6. Generate request hash. Never log the hash string or any customer
     //    detail from this route.

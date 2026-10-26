@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation';
 import { ProductAttributes } from '@/components/store-admin/ProductAttributes';
 import { ProductEditor } from '@/components/store-admin/ProductEditor';
 import { ProductGallery } from '@/components/store-admin/ProductGallery';
+import { ProductPriceEditor } from '@/components/store-admin/ProductPriceEditor';
+import { VariantEditor } from '@/components/store-admin/VariantEditor';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import {
   formatDate,
@@ -13,6 +15,7 @@ import {
   listBrands,
   listCategoryOptions,
 } from '@/lib/store-admin/catalog';
+import { listConditions } from '@/lib/store-admin/catalog-crud';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,15 +50,20 @@ export default async function StoreAdminProductDetailPage({
   // Editing copy is an admin-level action; reference data is owner-only.
   const canEdit = session !== null && session.role !== 'store_viewer';
 
-  const [categoriesResult, brandsResult, attributesResult] = await Promise.all([
-    listCategoryOptions(),
-    listBrands(),
-    listAttributes(),
-  ]);
+  const [categoriesResult, brandsResult, attributesResult, conditionsResult] =
+    await Promise.all([
+      listCategoryOptions(),
+      listBrands(),
+      listAttributes(),
+      listConditions(),
+    ]);
 
   const categories = categoriesResult.ok ? categoriesResult.data : [];
   const brands = brandsResult.ok ? brandsResult.data : [];
   const attributes = attributesResult.ok ? attributesResult.data : [];
+  const conditions = (conditionsResult.ok ? conditionsResult.data : [])
+    .filter((condition) => condition.isActive || condition.id === product.conditionId)
+    .map((condition) => ({ id: condition.id, label: condition.label }));
 
   const facetGroups = new Map<string, string[]>();
   for (const facet of product.facets) {
@@ -93,36 +101,12 @@ export default async function StoreAdminProductDetailPage({
       </div>
 
       <div className="sa-detail-grid">
-        <section className="sa-detail-card sa-price-card">
-          <h2 className="sa-card-title">Price</h2>
-          <label className="sa-label" htmlFor="product-price">
-            Selling price
-          </label>
-          <input
-            id="product-price"
-            className="sa-input sa-input-readonly"
-            value={formatINR(product.pricePaise)}
-            readOnly
-            disabled
-          />
-          <p className="sa-lock-note">
-            Locked until checkout reads the database.
-          </p>
-          <dl className="sa-meta">
-            <div>
-              <dt>Stored value</dt>
-              <dd>{product.pricePaise.toLocaleString('en-IN')} paise</dd>
-            </div>
-            <div>
-              <dt>Currency</dt>
-              <dd>{product.currency}</dd>
-            </div>
-            <div>
-              <dt>Availability</dt>
-              <dd>{product.inStock ? 'In stock' : 'Out of stock'}</dd>
-            </div>
-          </dl>
-        </section>
+        <ProductPriceEditor
+          productId={product.id}
+          pricePaise={product.pricePaise}
+          compareAtPaise={product.compareAtPaise}
+          canEdit={canEdit}
+        />
 
         <section className="sa-detail-card">
           <h2 className="sa-card-title">Record</h2>
@@ -140,8 +124,20 @@ export default async function StoreAdminProductDetailPage({
               <dd>{product.brand || '—'}</dd>
             </div>
             <div>
+              <dt>Condition</dt>
+              <dd>{product.conditionLabel || '—'}</dd>
+            </div>
+            <div>
               <dt>Material</dt>
               <dd>{product.material || '—'}</dd>
+            </div>
+            <div>
+              <dt>Currency</dt>
+              <dd>{product.currency}</dd>
+            </div>
+            <div>
+              <dt>Availability</dt>
+              <dd>{product.inStock ? 'In stock' : 'Out of stock'}</dd>
             </div>
             <div>
               <dt>Created</dt>
@@ -159,6 +155,7 @@ export default async function StoreAdminProductDetailPage({
         product={product}
         categories={categories}
         brands={brands}
+        conditions={conditions}
         canEdit={canEdit}
       />
 
@@ -232,36 +229,24 @@ export default async function StoreAdminProductDetailPage({
         canEdit={canEdit}
       />
 
-      <section className="sa-detail-section">
-        <h2 className="sa-section-title">Colours / variants</h2>
-        {product.variants.length === 0 ? (
-          <p className="sa-empty">No variants recorded.</p>
-        ) : (
-          <>
-            <p className="sa-note">
-              Display only — colour does not price the item, change stock, or
-              create a separate cart line yet.
-            </p>
-            <div className="sa-variant-row">
-              {product.variants.map((variant) => (
-                <span key={variant.id} className="sa-variant">
-                  <span
-                    className="sa-swatch"
-                    style={{ background: variant.optionHex ?? 'transparent' }}
-                    aria-hidden="true"
-                  />
-                  {variant.optionValue}
-                  {variant.isActive ? '' : ' (inactive)'}
-                </span>
-              ))}
-            </div>
-          </>
-        )}
-      </section>
+      <VariantEditor
+        productId={product.id}
+        basePricePaise={product.pricePaise}
+        initialVariants={product.variants}
+        canEdit={canEdit}
+      />
 
       <div className="sa-detail-grid">
         <section className="sa-detail-card">
           <h2 className="sa-card-title">Stock</h2>
+          <div className="sa-inline-actions">
+            <Link
+              className="sa-btn sa-btn-small"
+              href={`/store-admin/stock/${encodeURIComponent(product.id)}`}
+            >
+              Adjust stock
+            </Link>
+          </div>
           {product.stock ? (
             <dl className="sa-meta">
               <div>
@@ -345,9 +330,9 @@ export default async function StoreAdminProductDetailPage({
       </section>
 
       <p className="sa-readonly-foot">
-        Copy, images and attributes can be edited here. The price stays locked
-        until checkout reads prices from the database. Stock changes come from
-        receipts, sales and voids so every quantity has a movement behind it.
+        Copy, images, attributes, variants and price can be edited here. Every
+        price change is appended to the history above; every stock change writes
+        a movement, so no quantity moves without a record.
       </p>
     </div>
   );

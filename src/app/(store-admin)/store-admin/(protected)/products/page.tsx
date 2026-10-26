@@ -27,16 +27,17 @@ export default async function StoreAdminProductsPage() {
 
   return (
     <div>
-      <h1 className="sa-page-title">Products</h1>
-      <p className="sa-page-sub">
-        Read-only catalogue — {products.length} products across{' '}
-        {categories.length} categories.
-      </p>
-
-      <p className="sa-notice">
-        Prices are visible but not editable here. Price editing stays locked
-        until checkout reads prices from the database.
-      </p>
+      <div className="sa-detail-head">
+        <div>
+          <h1 className="sa-page-title">Products</h1>
+          <p className="sa-page-sub">
+            {products.length} products across {categories.length} categories.
+          </p>
+        </div>
+        <Link className="sa-btn sa-btn-primary" href="/store-admin/products/new">
+          New product
+        </Link>
+      </div>
 
       <div className="sa-category-strip">
         {categories.map((category) => (
@@ -76,7 +77,6 @@ export default async function StoreAdminProductsPage() {
                 <td>{product.categoryName}</td>
                 <td className="sa-num">
                   <span className="sa-price">{formatINR(product.pricePaise)}</span>
-                  <span className="sa-lock-inline">locked</span>
                 </td>
                 <td>
                   <span
