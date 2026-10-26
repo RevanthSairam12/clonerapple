@@ -468,9 +468,11 @@ no-op (the order is already PAID and the transaction returns early).
 
 **Reconciliation scheduling (required in production).** The deployment scheduler must
 `POST /api/payu/reconcile` **every minute** with
-`Authorization: Bearer $CRON_SECRET`. A checked-out unit is held for 120 seconds by
-default (§2.15), so a 10-minute tick would keep expired stock off the shelf for up to ten
-minutes. The optional `?staleMinutes=` (default 15) controls how old a pending order must
+`Authorization: Bearer $CRON_SECRET`. A checked-out unit is held for 600 seconds (10
+minutes) by default (§2.15), so a late tick keeps expired stock off the shelf for longer
+than necessary; a checkout also frees overdue holds for the products it wants (§2.15,
+lazy expiry), so an outage of the scheduler cannot leave a sold-out product locked while
+its units are really free. The optional `?staleMinutes=` (default 15) controls how old a pending order must
 be before PayU is asked about it; the reservation window and the reconcile lease decide
 everything else. Each run verifies due payments, releases expired reservations and ended
 failure grace, cancels unpaid orders older than `auto_cancel_unpaid_hours` (0 or empty
@@ -554,7 +556,7 @@ the unit was re-sold produces a tracked refund rather than an untracked charge.
 
 | Setting | Default | Range | Effect |
 |---|---|---|---|
-| `reservation_seconds` | **120** | 30–1800 | How long a checkout holds its claimed units. Shown as a countdown at checkout. A repeat request never extends it. |
+| `reservation_seconds` | **600** | 30–1800 | How long a checkout holds its claimed units. Shown as a countdown at checkout. A repeat request never extends it. |
 | `payment_failure_grace_seconds` | **120** | 0–900 | After a **definitive** failure/cancel, stock stays held this long so a quick retry on the same order can still succeed. Then it is released once and the order stays FAILED. |
 | `payment_unresolved_minutes` | 60 | 5–1440 | How long an ambiguous payment may keep its claim before the stock is released and the order is flagged for operations. The worker keeps checking afterwards. |
 | `waitlist_enabled` | on | toggle | Turns the product-page waiting list, invitations and allocation on/off. |
@@ -580,6 +582,18 @@ that `txnid` cannot be re-initiated, a delayed callback cannot revive the window
 customer who wants the item starts a **new** checkout, which re-checks stock and may fail
 if the unit is gone.
 
+**Lazy expiry at checkout.** The cron is the normal expiry path, but a checkout never
+depends on it. When the claim does not fit, `createOrderUsing` releases the `ACTIVE`
+reservations for the requested products whose `reservation_expires_at` has passed on the
+**database** clock, inside the same transaction that holds the stock row locks. A
+`CREATED`/`PENDING` row is cancelled exactly as the worker would; a `FAILED`/`CANCELLED`
+row keeps its status and moves to `RELEASED` (the grace rule); a `PROCESSING` row keeps its
+status, loses its claim and is scheduled for an immediate check so the worker still flags
+an unresolved payment. The refreshed counters are then re-planned, and the order row lock
+plus the `reservation_state = 'ACTIVE'` guard make a duplicate release — worker or second
+checkout — a no-op. The worker remains responsible for expiring holds on products nobody
+is buying and for telling those customers.
+
 **Payment states.** The existing `orders.status` vocabulary is reused without duplication:
 `CREATED`/`PENDING` (awaiting/at the gateway), `PROCESSING` (the customer may have been
 charged; outcome not yet reliable — distinct from failed), `PAID`, `FAILED`, `CANCELLED`.
@@ -587,6 +601,14 @@ The sale-state view reports `PROCESSING` separately so account pages can explain
 Only `PAID` is set after a trusted server-side answer: reverse-hash callback plus PayU's
 `verify_payment` (or the same verification from the worker). A client redirect, a browser
 success URL, a timeout or a closed tab is never proof.
+
+`PROCESSING` is carried through every surface that lists, filters, counts or labels an
+order, and it is never revenue: the store-admin Orders list shows/filters it as its own
+sale state, the order detail shows the payment status, reports accept `status=PROCESSING`
+and their revenue/average/net figures still require `PAID`, the Overview labels it and
+counts it under **Pending** (not captured), the transactions CSV only contains orders with
+a recorded payment row or `PAID`, and the customer account/order pages explain that the
+bank may already have been debited. The full audit is in §2.15's evidence table.
 
 **Definitive vs ambiguous**
 
@@ -690,6 +712,8 @@ rewritten or removed.
 | Reservation is atomic; expiry releases once; a fresh checkout works afterwards | `tests/flash-sale-reservation-integration.test.mjs` #1 |
 | Failed payment holds through its 120 s grace, then releases | same #2 |
 | Ambiguous payment stays `PROCESSING`, never prematurely failed, claim released at the window | same #3 |
+| A checkout frees an overdue hold when the cron is down; a live hold is never taken; grace keeps `FAILED`; `PROCESSING` is queued; two buyers racing a stale hold make one order | `tests/flash-sale-reconcile-integration.test.mjs` (lazy-expiry cases) |
+| Reconciler decision tree: verified capture, verified failure → grace → release once, unresolved → `PROCESSING` → release + flag, late capture with and without stock, duplicate runs, two workers at once | same (reconcile cases) |
 | Duplicate PAID callbacks make one ledger row | same #4 |
 | Verified capture racing expiry ends `PAID`/`CONSUMED` exactly once | same #5 |
 | The queue is durable across a restart (lease reclaim, attempts increment) | same #6 |
@@ -1209,7 +1233,7 @@ secret still allows a manual run.
 npm install
 npm run db:migrate          # applies migrations/*.sql in order
 npm run dev                 # http://localhost:3000
-npm test                    # 410 tests
+npm test                    # 427 tests
 node scripts/catalog-parity.mjs                 # read-only static ↔ database parity report
 node scripts/check-store-admin-routes.mjs
 node scripts/check-setting-lists.mjs
