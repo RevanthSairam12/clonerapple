@@ -2,6 +2,7 @@ import type postgres from 'postgres';
 
 import {
   outstandingClaimQuantity,
+  restoreableQuantity,
   type StockClaimPlan,
   type StockRowSnapshot,
 } from '@/lib/checkout/stock-rules';
@@ -124,4 +125,75 @@ export async function releaseClaimedStock(tx: Tx, orderId: string): Promise<bool
   }
 
   return released;
+}
+
+export interface SoldStockLine {
+  productId: string;
+  quantity: number;
+}
+
+/**
+ * Put returned or voided units back on the shelf, capped by the sale ledger.
+ *
+ * A paid order created before Phase 2 has no `sale` movement, so it restores
+ * nothing: legacy returns and voids can never invent stock. Partial returns
+ * are capped at `sale` minus earlier `return`/`release` movements, so the same
+ * units cannot be restocked twice. Untracked products still get a movement row
+ * (their sale wrote one) but never move `on_hand`.
+ */
+export async function restoreSoldStock(
+  tx: Tx,
+  orderId: string,
+  lines: readonly SoldStockLine[],
+  options: { createdBy?: string | null } = {},
+): Promise<Array<{ productId: string; quantity: number }>> {
+  const requested = new Map<string, number>();
+  for (const line of lines) {
+    const productId = String(line.productId ?? '').trim();
+    const quantity = Number(line.quantity);
+    if (!productId || !Number.isFinite(quantity) || quantity <= 0) continue;
+    requested.set(productId, (requested.get(productId) ?? 0) + Math.trunc(quantity));
+  }
+
+  const restored: Array<{ productId: string; quantity: number }> = [];
+
+  for (const [productId, quantity] of requested) {
+    const movementRows = await tx<Array<{ claimed: number | string; restored: number | string }>>`
+      select
+        coalesce(sum(case when reason = 'sale' then -delta else 0 end), 0)::int as claimed,
+        coalesce(sum(case when reason in ('return', 'release') then delta else 0 end), 0)::int as restored
+      from stock_movements
+      where order_id = ${orderId} and product_id = ${productId}
+    `;
+    const allowed = restoreableQuantity(
+      quantity,
+      movementRows[0]?.claimed ?? 0,
+      movementRows[0]?.restored ?? 0,
+    );
+    if (allowed <= 0) continue;
+
+    const stockRows = await tx<Array<{ id: string; track_inventory: boolean }>>`
+      select id, track_inventory from stock
+      where product_id = ${productId} and variant_id is null
+      for update
+    `;
+    const stockRow = stockRows[0];
+    if (stockRow && Boolean(stockRow.track_inventory)) {
+      await tx`
+        update stock
+        set on_hand = on_hand + ${allowed},
+            updated_at = now(),
+            updated_by = ${options.createdBy ?? null}
+        where id = ${stockRow.id}
+      `;
+    }
+
+    await tx`
+      insert into stock_movements (product_id, variant_id, delta, reason, order_id, created_by)
+      values (${productId}, null, ${allowed}, 'return', ${orderId}, ${options.createdBy ?? null})
+    `;
+    restored.push({ productId, quantity: allowed });
+  }
+
+  return restored;
 }

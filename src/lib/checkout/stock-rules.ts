@@ -115,3 +115,22 @@ export function outstandingClaimQuantity(claimedQuantity: unknown, releasedQuant
   const safeReleased = Number.isFinite(released) ? Math.max(0, Math.trunc(released)) : 0;
   return Math.max(0, safeClaimed - safeReleased);
 }
+
+/**
+ * Units a return or void may put back on the shelf for one product.
+ *
+ * The ledger is the only source of truth. Orders created before Phase 2 (and
+ * untracked products at any time) have no `sale` movement, so `claimed` is 0
+ * and nothing is restored — a legacy order can never invent stock. Requests
+ * are also capped so partial returns and repeated receives cannot exceed what
+ * the order actually took.
+ */
+export function restoreableQuantity(
+  requestedQuantity: unknown,
+  claimedQuantity: unknown,
+  restoredQuantity: unknown,
+): number {
+  const requested = Number(requestedQuantity);
+  const safeRequested = Number.isFinite(requested) ? Math.max(0, Math.trunc(requested)) : 0;
+  return Math.min(safeRequested, outstandingClaimQuantity(claimedQuantity, restoredQuantity));
+}

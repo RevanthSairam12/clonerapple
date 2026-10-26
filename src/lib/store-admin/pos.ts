@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { getSql } from '@/lib/admin/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
+import { restoreSoldStock } from '@/lib/payu/stock';
 import { maskCustomerPhone } from './masking';
 import {
   canVoidPosSale,
@@ -654,32 +655,18 @@ export async function voidPosSale(input: {
         where order_id = ${orderId} and channel = 'pos'
       `;
 
-      // Restock mirrors the sale: only a tracked product's on_hand moves. The
-      // movement row is written either way so the ledger stays complete.
-      // Incrementing an untracked product would drift its stock upward,
-      // because createPosSale never decremented it.
-      for (const item of itemRows) {
-        const productId = text(item.product_id);
-        if (!productId) continue;
-        const quantity = integer(item.quantity);
-        const stockRows = (await tx`
-          select track_inventory from stock
-          where product_id = ${productId} and variant_id is null
-          for update
-        `) as Row[];
-        if (stockRows[0] && Boolean(stockRows[0].track_inventory)) {
-          await tx`
-            update stock
-            set on_hand = on_hand + ${quantity},
-                updated_at = now(), updated_by = ${input.staffId}
-            where product_id = ${productId} and variant_id is null
-          `;
-        }
-        await tx`
-          insert into stock_movements (product_id, delta, reason, order_id, created_by)
-          values (${productId}, ${quantity}, 'return', ${orderId}, ${input.staffId})
-        `;
-      }
+      // Restock mirrors the sale through the ledger: only what this order
+      // actually took is given back. Untracked products never moved on_hand,
+      // so the helper writes their balancing movement without changing stock.
+      await restoreSoldStock(
+        tx,
+        orderId,
+        itemRows.map((item) => ({
+          productId: text(item.product_id),
+          quantity: integer(item.quantity),
+        })),
+        { createdBy: input.staffId },
+      );
 
       await tx`
         insert into order_status_history (order_id, domain, actor, from_status, to_status)

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { getSql } from '@/lib/admin/db';
-import { releaseClaimedStock } from '@/lib/payu/stock';
+import { releaseClaimedStock, restoreSoldStock } from '@/lib/payu/stock';
 
 import {
   canTransitionReturn,
@@ -533,8 +533,9 @@ const ACTION_TARGET: Record<ReturnAction, ReturnStatus> = {
  * Move a return through its workflow. Receiving is the step that restocks:
  * every line flagged `restock` whose grade is resellable or opened adds its
  * quantity back to a tracked product and writes a `stock_movements` row with
- * reason `return`. The stock move happens exactly once because the transition
- * out of APPROVED cannot repeat.
+ * reason `return`. `restoreSoldStock` caps the quantity at what the order
+ * actually took (`sale` minus earlier restores), so the transition cannot
+ * repeat and a legacy order with no sale movement restores nothing.
  */
 export async function transitionReturn(input: {
   id: string;
@@ -576,34 +577,17 @@ export async function transitionReturn(input: {
           where ri.return_id = ${text(row.id)}
         `) as Row[];
 
-        for (const item of items) {
+        const restockLines = items.flatMap((item) => {
           const grade = isConditionGrade(item.condition_grade) ? item.condition_grade : 'RESELLABLE';
-          if (!restockEligible(grade, Boolean(item.restock))) continue;
-          const productId = text(item.product_id);
-          if (!productId) continue;
+          if (!restockEligible(grade, Boolean(item.restock))) return [];
           const quantity = number(item.quantity);
-          if (quantity <= 0) continue;
+          if (quantity <= 0) return [];
+          return [{ productId: text(item.product_id), quantity }];
+        });
 
-          const stockRows = (await tx`
-            select id, track_inventory from stock
-            where product_id = ${productId} and variant_id is null
-            for update
-          `) as Row[];
-          const stockRow = stockRows[0];
-          if (!stockRow || !Boolean(stockRow.track_inventory)) continue;
-
-          await tx`
-            update stock
-            set on_hand = on_hand + ${quantity},
-                updated_at = now(),
-                updated_by = ${input.actorId}
-            where id = ${text(stockRow.id)}
-          `;
-          await tx`
-            insert into stock_movements (product_id, variant_id, delta, reason, order_id, created_by)
-            values (${productId}, null, ${quantity}, 'return', ${orderId}, ${input.actorId})
-          `;
-        }
+        // Ledger-guarded: an order created before Phase 2 has no sale movement,
+        // so receiving its return restocks nothing rather than inventing stock.
+        await restoreSoldStock(tx, orderId, restockLines, { createdBy: input.actorId });
       }
 
       await tx`
