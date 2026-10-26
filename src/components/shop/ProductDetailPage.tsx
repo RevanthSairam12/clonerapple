@@ -10,9 +10,11 @@ import type { Product, ColorSwatch } from '@/components/sites/cases-protection/d
 
 interface Props {
   product: Product;
+  /** Server-rendered waiting-list panel, shown only when the item is unavailable. */
+  waitlistSlot?: React.ReactNode;
 }
 
-export function ProductDetailPage({ product }: Props) {
+export function ProductDetailPage({ product, waitlistSlot }: Props) {
   const router = useRouter();
   const { addItem } = useCart();
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
@@ -482,6 +484,8 @@ export function ProductDetailPage({ product }: Props) {
                 <span>Add to Bag</span>
               )}
             </button>
+
+            {waitlistSlot}
 
             {/* Added Confirmation Banner */}
             {isAdded && (
