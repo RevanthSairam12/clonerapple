@@ -42,6 +42,13 @@ export interface CustomerStatusData {
   fulfilmentStatus: string;
   channel: string;
   deliverySlot: string | null;
+  /** NONE | ACTIVE | CONSUMED | RELEASED | EXPIRED */
+  reservationState: string;
+  reservationExpiresAt: string | null;
+  reservationReleasedReason: string;
+  /** An ambiguous payment is being verified; the customer must not pay again. */
+  paymentReviewRequired: boolean;
+  processingDeadline: string | null;
   createdAt: string;
   updatedAt: string;
   delivery: CustomerStatusDelivery | null;
@@ -65,7 +72,10 @@ export async function getCustomerOrderStatus(
     const orderRows = (await sql`
       select s.id, s.txnid, o.user_id, s.sale_state, s.status,
              s.fulfilment_status, s.channel, s.delivery_slot,
-             s.created_at, s.updated_at
+             s.created_at, s.updated_at,
+             o.reservation_state, o.reservation_expires_at,
+             o.reservation_released_reason, o.payment_review_required,
+             o.processing_deadline
       from order_sale_state s
       join orders o on o.id = s.id
       where s.txnid = ${key}
@@ -127,6 +137,11 @@ export async function getCustomerOrderStatus(
         fulfilmentStatus: text(order.fulfilment_status) || 'PENDING',
         channel: text(order.channel) || 'web',
         deliverySlot: nullableText(order.delivery_slot),
+        reservationState: text(order.reservation_state) || 'NONE',
+        reservationExpiresAt: nullableIso(order.reservation_expires_at),
+        reservationReleasedReason: text(order.reservation_released_reason),
+        paymentReviewRequired: order.payment_review_required === true,
+        processingDeadline: nullableIso(order.processing_deadline),
         createdAt: iso(order.created_at),
         updatedAt: iso(order.updated_at),
         delivery: deliveryRow

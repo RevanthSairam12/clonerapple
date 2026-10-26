@@ -1,5 +1,10 @@
 import Link from 'next/link';
 
+import { ReservationCountdown } from '@/components/checkout/ReservationCountdown';
+import {
+  customerPaymentPhase,
+  secondsRemaining,
+} from '@/lib/checkout/reservation-rules';
 import { getCustomerOrderStatus } from '@/lib/order-status';
 import { getUserSession } from '@/lib/user-auth';
 
@@ -83,7 +88,25 @@ export default async function OrderStatusPage({ searchParams }: Props) {
   const timeline = result.data.history
     .map((entry) => ({ ...entry, label: statusLabel(entry.toStatus) }))
     .filter((entry): entry is typeof entry & { label: string } => Boolean(entry.label));
-  const currentLabel = statusLabel(result.data.fulfilmentStatus) ?? statusLabel(result.data.paymentStatus) ?? 'Order received';
+
+  const now = new Date();
+  const phase = customerPaymentPhase(
+    {
+      status: result.data.paymentStatus,
+      reservationState: result.data.reservationState,
+      reservationExpiresAt: result.data.reservationExpiresAt,
+      reservationReleasedReason: result.data.reservationReleasedReason,
+    },
+    now,
+  );
+  const remainingSeconds = secondsRemaining(result.data.reservationExpiresAt, now);
+  const currentLabel = phase === 'processing'
+    ? 'Payment being verified'
+    : phase === 'expired'
+      ? 'Reservation expired'
+      : statusLabel(result.data.fulfilmentStatus)
+        ?? statusLabel(result.data.paymentStatus)
+        ?? 'Order received';
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f]">
@@ -93,6 +116,48 @@ export default async function OrderStatusPage({ searchParams }: Props) {
           <h1 className="text-3xl font-semibold tracking-tight mt-3 mb-2">{currentLabel}</h1>
           <p className="text-sm text-[#86868b]">Reference <span className="font-mono text-[#1d1d1f]">{result.data.txnid}</span></p>
         </div>
+
+        {phase === 'processing' ? (
+          <section className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-8 text-sm leading-relaxed" role="status">
+            <p className="font-medium text-amber-900 mb-1">Your payment is being verified.</p>
+            <p className="text-amber-900">
+              If your bank has debited the amount, please do not pay again while this transaction
+              is being checked. We&apos;ll update your order status when confirmation is received.
+            </p>
+            <Link
+              href={`/order/processing?txnid=${encodeURIComponent(result.data.txnid)}`}
+              className="inline-block mt-3 text-[#0071e3] font-medium hover:underline"
+            >
+              Check payment status
+            </Link>
+          </section>
+        ) : null}
+
+        {phase === 'expired' ? (
+          <section className="bg-[#fbfbfd] border border-[#e5e5ea] rounded-2xl p-5 mb-8 text-sm" role="status">
+            <p className="font-medium mb-1">This reservation has ended.</p>
+            <p className="text-[#86868b]">
+              The unit was returned to the store because the payment was not confirmed in time.
+              The items must be bought again through a new checkout while stock lasts.
+            </p>
+          </section>
+        ) : null}
+
+        {phase === 'failed' ? (
+          <section className="bg-red-50 border border-red-200 rounded-2xl p-5 mb-8 text-sm" role="status">
+            <p className="font-medium text-red-800 mb-1">The payment did not complete.</p>
+            <p className="text-red-800">
+              If your bank shows a debit, contact us before paying again. Otherwise start a new
+              checkout while stock lasts.
+            </p>
+          </section>
+        ) : null}
+
+        {phase === 'active' && remainingSeconds > 0 ? (
+          <section className="bg-[#fbfbfd] border border-[#e5e5ea] rounded-2xl p-5 mb-8">
+            <ReservationCountdown seconds={remainingSeconds} />
+          </section>
+        ) : null}
 
         <section className="mb-8">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-[#86868b] mb-4">Status timeline</h2>
@@ -121,7 +186,15 @@ export default async function OrderStatusPage({ searchParams }: Props) {
         </section>
 
         <div className="flex flex-col sm:flex-row gap-3">
-          <Link href={`/order/success?txnid=${encodeURIComponent(result.data.txnid)}`} className="flex-1 text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition">View order summary</Link>
+          {phase === 'paid' ? (
+            <Link href={`/order/success?txnid=${encodeURIComponent(result.data.txnid)}`} className="flex-1 text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition">View order summary</Link>
+          ) : phase === 'processing' ? (
+            <Link href={`/order/processing?txnid=${encodeURIComponent(result.data.txnid)}`} className="flex-1 text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition">Check payment status</Link>
+          ) : phase === 'failed' || phase === 'expired' || phase === 'cancelled' ? (
+            <Link href="/checkout" className="flex-1 text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition">Start a new checkout</Link>
+          ) : (
+            <Link href={`/order/status?txnid=${encodeURIComponent(result.data.txnid)}`} className="flex-1 text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition">Refresh status</Link>
+          )}
           <Link href="/" className="flex-1 text-center bg-[#f5f5f7] text-[#1d1d1f] py-3.5 rounded-full text-sm font-medium hover:bg-[#e8e8ed] transition">Continue shopping</Link>
         </div>
       </div>
