@@ -13,6 +13,7 @@
     "db:create-store-admin": "node scripts/create-store-admin.mjs",
     "check:store-admin-routes": "node scripts/check-store-admin-routes.mjs",
     "check:account-routes": "node scripts/check-account-routes.mjs",
+    "check:admin-boundary": "node scripts/check-admin-boundary.mjs",
     "test": "node --test \"tests/**/*.test.mjs\"",
     "placeholders": "python scripts/generate_all_placeholders.py"
   },

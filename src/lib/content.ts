@@ -44,6 +44,7 @@ export async function getContentRaw<T>(key: string): Promise<T | null> {
         .from('content_blocks')
         .select('value')
         .eq('key', key)
+        .is('archived_at', null)
         .maybeSingle();
       if (!error) return ((data?.value as T) ?? null);
     } catch {
@@ -54,7 +55,10 @@ export async function getContentRaw<T>(key: string): Promise<T | null> {
   const sql = getSql();
   if (!sql) return null;
   try {
-    const rows = await sql`select value from content_blocks where key = ${key}`;
+    const rows = await sql`
+      select value from content_blocks
+      where key = ${key} and archived_at is null
+    `;
     return (rows[0]?.value as T) ?? null;
   } catch {
     return null;
@@ -85,7 +89,8 @@ export async function getContentMany<T extends Record<string, unknown>>(
         const { data, error } = await supabase
           .from('content_blocks')
           .select('key, value')
-          .in('key', keys);
+          .in('key', keys)
+          .is('archived_at', null);
         if (!error) for (const row of data ?? []) result[row.key] = row.value;
       } catch {
         // fall through to the direct connection
@@ -96,7 +101,10 @@ export async function getContentMany<T extends Record<string, unknown>>(
       const sql = getSql();
       if (sql) {
         try {
-          const rows = await sql`select key, value from content_blocks where key in ${sql(keys)}`;
+          const rows = await sql`
+            select key, value from content_blocks
+            where key in ${sql(keys)} and archived_at is null
+          `;
           for (const row of rows) result[row.key] = row.value;
         } catch {
           // fall through to defaults

@@ -32,7 +32,7 @@ export default async function AdminAreaLayout({ children }: { children: React.Re
   let editedKeys: Set<string> = new Set();
   if (sql) {
     try {
-      const rows = await sql`select key from content_blocks`;
+      const rows = await sql`select key from content_blocks where archived_at is null`;
       editedKeys = new Set(rows.map((r) => r.key));
     } catch {
       editedKeys = new Set();

@@ -5,12 +5,17 @@ import { NextResponse } from 'next/server';
 import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
 import { getSql } from '@/lib/admin/db';
 import { storageConfigured, uploadToStorage } from '@/lib/admin/storage';
+import { imageDimensions } from '@/lib/store-admin/media-rules';
 
 /**
- * POST /api/admin/media — multipart image/video upload. Bytes go to the
- * public `media` bucket in Supabase Storage (CDN-served; the database keeps
- * only metadata). The returned /api/admin/media/[id] URL redirects there, so
- * stored URLs never change if the storage backend moves again.
+ * POST /api/admin/media — multipart image/video upload.
+ *
+ * The legacy editor and the Store Admin media library share one source,
+ * `store_media`, and one public Storage bucket. New legacy uploads therefore
+ * appear in Store Admin → Media, and both editors can reference the same
+ * object. The returned /api/admin/media/[id] URL is preserved for old CMS
+ * values; that route resolves store_media first and falls back to the legacy
+ * `media` table for pre-convergence rows.
  */
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB (video clips need more than images)
@@ -106,10 +111,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Could not store the upload.' }, { status: 500 });
   }
 
+  const dimensions = imageDimensions(bytes);
+  const filename = (file.name || 'upload').slice(0, 200);
+
   try {
     await sql`
-      insert into media (id, filename, url, mime_type, size, storage_path)
-      values (${id}, ${file.name}, ${url}, ${mimeType}, ${file.size}, ${path})
+      insert into store_media (
+        id, filename, url, mime_type, size, width, height, alt,
+        storage_path, uploaded_by
+      ) values (
+        ${id}, ${filename}, ${url}, ${mimeType}, ${file.size},
+        ${dimensions?.width ?? null}, ${dimensions?.height ?? null}, '',
+        ${path}, ${`cms:${guard.userId}`}
+      )
     `;
   } catch (err) {
     console.error('[admin/media] insert failed', err);

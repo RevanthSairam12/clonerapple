@@ -1,22 +1,13 @@
 /**
- * Admin override shapes for the Cases & Protection page. The admin editor
- * stores these under the cases.* content keys; CasesProtectionPage receives
- * them and merges over the hardcoded defaults from ./data/products.
+ * Admin override shapes for the Cases & Protection page furniture.
+ *
+ * The legacy editor may change the page title, the sort label and the
+ * category-link rail. Products, prices, images and stock are deliberately
+ * absent: the grid comes from `products` and is edited in Store Admin.
  */
 
 export interface CasesCategoryLinkOverride {
   label?: string;
-  href?: string;
-}
-
-export interface CasesProductOverride {
-  name?: string;
-  subtitle?: string;
-  /** Numeric price in ₹, used for sorting. */
-  price?: number;
-  priceDisplay?: string;
-  image?: string;
-  badge?: string;
   href?: string;
 }
 

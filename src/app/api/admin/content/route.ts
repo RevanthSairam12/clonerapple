@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
+import { validateLegacyContentWrite } from '@/lib/admin/boundary';
 import { getCollection } from '@/lib/admin/collections';
 import { getSql } from '@/lib/admin/db';
 import { getContentRaw } from '@/lib/content';
@@ -48,12 +49,23 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: 'Value must be an object.' }, { status: 400 });
   }
 
+  // Design/marketing only. Products, prices, stock, orders, customers and
+  // shipping live in Store Admin; a legacy save that carries them is refused
+  // rather than silently stored. Education Store keys are exempt by rule.
+  const boundary = validateLegacyContentWrite(key, value);
+  if (!boundary.ok) {
+    return NextResponse.json({ error: boundary.error }, { status: 400 });
+  }
+
   try {
     await sql`
-      insert into content_blocks (key, value, updated_at, updated_by)
-      values (${key}, ${JSON.parse(JSON.stringify(value)) as never}, now(), ${guard.email})
+      insert into content_blocks (key, value, updated_at, updated_by, archived_at)
+      values (${key}, ${JSON.parse(JSON.stringify(value)) as never}, now(), ${guard.email}, null)
       on conflict (key) do update
-      set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by
+      set value = excluded.value,
+          updated_at = now(),
+          updated_by = excluded.updated_by,
+          archived_at = null
     `;
   } catch (err) {
     console.error('[admin/content] upsert failed', err);
@@ -63,7 +75,11 @@ export async function PUT(request: Request) {
   return NextResponse.json({ ok: true });
 }
 
-/** DELETE /api/admin/content?key=... — revert a collection to defaults. */
+/**
+ * DELETE /api/admin/content?key=... — revert a collection to its coded
+ * defaults WITHOUT destroying the row. The row is archived and ignored by
+ * every reader; a later save un-archives it, so a mistaken reset is reversible.
+ */
 export async function DELETE(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
@@ -79,6 +95,10 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'Unknown collection key.' }, { status: 400 });
   }
 
-  await sql`delete from content_blocks where key = ${key}`;
-  return NextResponse.json({ ok: true });
+  await sql`
+    update content_blocks
+    set archived_at = now(), updated_at = now(), updated_by = ${guard.email}
+    where key = ${key} and archived_at is null
+  `;
+  return NextResponse.json({ ok: true, archived: true });
 }

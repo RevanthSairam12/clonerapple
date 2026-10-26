@@ -4,10 +4,11 @@ import { publicObjectUrl } from '@/lib/admin/storage';
 /**
  * GET /api/admin/media/[id] — serves an uploaded image.
  *
- * Storage-backed rows (storage_path set) redirect to the Supabase Storage
- * public URL: the CDN streams the bytes with aggressive immutable caching and
- * they never touch the Next.js server or the DB connection. Legacy bytea rows
- * stream from the database exactly as before.
+ * New legacy uploads live in the shared `store_media` table, so they resolve
+ * exactly like a Store Admin media row. Older uploads still live in the
+ * legacy `media` table; that path is checked second so every URL an existing
+ * content block already stores keeps working. Archived `store_media` rows
+ * stop resolving, matching the Store Admin library.
  *
  * Public (no editor session): the bytes render in <img> tags on the public
  * site, which never sends the admin cookie.
@@ -22,6 +23,26 @@ export async function GET(
   if (!sql) return new Response('Database not configured.', { status: 503 });
 
   try {
+    // Shared library first (new legacy uploads and every Store Admin upload).
+    const shared = await sql`
+      select storage_path, deleted_at from store_media where id = ${id} limit 1
+    `;
+    const sharedRow = shared[0];
+    if (sharedRow) {
+      if (sharedRow.deleted_at || !sharedRow.storage_path) {
+        return new Response('Not found', { status: 404 });
+      }
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: publicObjectUrl(sharedRow.storage_path as string),
+          'Cache-Control': 'public, max-age=3600',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
+
+    // Pre-convergence legacy rows.
     const rows = await sql`
       select storage_path, data, mime_type from media where id = ${id}
     `;
