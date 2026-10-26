@@ -26,7 +26,7 @@ export interface ReservationPolicy {
 }
 
 export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
-  reservationSeconds: 120,
+  reservationSeconds: 600,
   failureGraceSeconds: 120,
   unresolvedMinutes: 60,
   waitlistClaimMinutes: 15,

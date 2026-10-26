@@ -216,7 +216,7 @@ const FIELD_DEFINITIONS = [
     label: 'Checkout reservation (seconds)',
     kind: 'number',
     limit: 4,
-    default: '120',
+    default: '600',
     section: 'orders',
     help: 'How long a checkout holds stock before it is returned. 30–1800 seconds.',
   },

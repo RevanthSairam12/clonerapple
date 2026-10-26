@@ -26,8 +26,8 @@ import {
 
 const now = new Date('2026-10-26T12:00:00Z');
 
-test('defaults: 120s checkout hold, 120s failure grace, 60min unresolved window', () => {
-  assert.equal(DEFAULT_RESERVATION_POLICY.reservationSeconds, 120);
+test('defaults: a 10-minute checkout hold, 120s failure grace, 60min unresolved window', () => {
+  assert.equal(DEFAULT_RESERVATION_POLICY.reservationSeconds, 600);
   assert.equal(DEFAULT_RESERVATION_POLICY.failureGraceSeconds, 120);
   assert.equal(DEFAULT_RESERVATION_POLICY.unresolvedMinutes, 60);
   assert.equal(DEFAULT_RESERVATION_POLICY.waitlistClaimMinutes, 15);
@@ -35,6 +35,11 @@ test('defaults: 120s checkout hold, 120s failure grace, 60min unresolved window'
 
   const parsed = parseReservationPolicy({});
   assert.deepEqual(parsed, DEFAULT_RESERVATION_POLICY);
+
+  // The editable range is still 30–1800 seconds; only the default moved.
+  assert.equal(parseReservationPolicy({ reservation_seconds: '10' }).reservationSeconds, 30);
+  assert.equal(parseReservationPolicy({ reservation_seconds: '1800' }).reservationSeconds, 1800);
+  assert.equal(parseReservationPolicy({ reservation_seconds: '7200' }).reservationSeconds, 1800);
 });
 
 test('a configured policy is clamped to safe bounds', () => {
@@ -58,7 +63,7 @@ test('a configured policy is clamped to safe bounds', () => {
     payment_failure_grace_seconds: '-5',
     waitlist_claim_minutes: '99999',
   });
-  assert.equal(junk.reservationSeconds, 120, 'junk falls back to the default');
+  assert.equal(junk.reservationSeconds, 600, 'junk falls back to the default');
   assert.equal(junk.failureGraceSeconds, 0, 'a negative grace floors at zero');
   assert.equal(junk.waitlistClaimMinutes, 1440, 'an absurd claim window is capped');
 });
