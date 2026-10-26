@@ -140,6 +140,9 @@ const EXPECTED_MUTATING_ROUTES = [
   // and the notification matrix toggles one cell at a time.
   'settings/lists/[kind]/route.ts',
   'settings/notifications/route.ts',
+  // Phase 10: retrying a failed outbox message sends again, so it is a
+  // guarded, same-origin mutation for store_admin and above.
+  'settings/notifications/retry/route.ts',
 ];
 
 const EXPECTED_ROUTES = [
