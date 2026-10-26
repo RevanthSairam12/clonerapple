@@ -7,6 +7,7 @@ import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
+import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
 import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
@@ -23,9 +24,11 @@ interface Props {
    * database is unreachable). Line prices and availability come from here.
    */
   initialProducts: StorefrontProductRef[];
+  /** Server-computed Store Admin shipping rules; the same quote checkout charges. */
+  shippingPolicy: ShippingPolicy;
 }
 
-export function CartPageView({ initialProducts }: Props) {
+export function CartPageView({ initialProducts, shippingPolicy }: Props) {
   const { items, totalCount, updateQuantity, removeItem, addItem } = useCart();
 
   const productsById = useMemo(() => {
@@ -67,6 +70,8 @@ export function CartPageView({ initialProducts }: Props) {
     const ref = refFor(item);
     return sum + (ref ? ref.pricePaise / 100 : item.price) * item.quantity;
   }, 0);
+  // The same quote the initiate route computes from the database subtotal.
+  const shippingAmount = quoteShipping(Math.round(payableAmount * 100), shippingPolicy).shippingPaise / 100;
 
   // Check user session
   useEffect(() => {
@@ -361,14 +366,18 @@ export function CartPageView({ initialProducts }: Props) {
                     </div>
                     <div className="flex justify-between text-[#86868b]">
                       <span>Shipping</span>
-                      <span className="text-[#34c759] font-semibold">FREE</span>
+                      <span className={shippingAmount > 0 ? 'text-[#1d1d1f] font-semibold' : 'text-[#34c759] font-semibold'}>
+                        {shippingAmount > 0
+                          ? `₹${shippingAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                          : 'FREE'}
+                      </span>
                     </div>
                   </div>
 
                   <div className="flex justify-between items-baseline mb-6">
                     <span className="font-semibold text-base text-[#1d1d1f]">Total Payable</span>
                     <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
-                      ₹{payableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{(payableAmount + shippingAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 

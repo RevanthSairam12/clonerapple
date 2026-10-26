@@ -2,6 +2,8 @@ import { getUserSession } from '@/lib/user-auth';
 import { CheckoutForm } from '@/components/checkout/CheckoutForm';
 import { getProductFromDatabase } from '@/lib/payu/db-catalog';
 import { parseCheckoutQuantity } from '@/lib/checkout/checkout-decision';
+import { readCheckoutConfiguration } from '@/lib/checkout/settings';
+import { EMPTY_SHIPPING_POLICY } from '@/lib/checkout/shipping-rules';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
 import Link from 'next/link';
@@ -16,6 +18,7 @@ interface Props {
 export default async function CheckoutPage({ searchParams }: Props) {
   const session = await getUserSession();
   const settings = await readCustomerSettings();
+  const checkoutConfiguration = await readCheckoutConfiguration();
   const { productId, qty } = await searchParams;
 
   // Guest checkout is off unless the owner enables it under
@@ -75,6 +78,8 @@ export default async function CheckoutPage({ searchParams }: Props) {
         productUnavailable={productUnavailable}
         productIdFromQuery={productId}
         marketingOptInEnabled={isOn(settings.checkout_marketing_optin)}
+        shippingPolicy={checkoutConfiguration.ok ? checkoutConfiguration.policy : EMPTY_SHIPPING_POLICY}
+        paymentNote={checkoutConfiguration.ok ? checkoutConfiguration.settings.payment_note : ''}
       />
     </div>
   );

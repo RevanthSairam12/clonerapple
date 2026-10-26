@@ -6,6 +6,11 @@ import { useCart } from '@/lib/cart/CartContext';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { decideCheckoutView } from '@/lib/checkout/checkout-decision';
+import {
+  EMPTY_SHIPPING_POLICY,
+  quoteShipping,
+  type ShippingPolicy,
+} from '@/lib/checkout/shipping-rules';
 
 interface CartItem {
   id: string;
@@ -41,9 +46,13 @@ interface Props {
   productIdFromQuery?: string;
   /** Customers → Customer settings controls this checkbox. */
   marketingOptInEnabled?: boolean;
+  /** Store Admin shipping rules; the same quote initiate charges. */
+  shippingPolicy?: ShippingPolicy;
+  /** Payments → "Checkout payment note". Empty by default. */
+  paymentNote?: string;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '' }: Props) {
   const { items: bagItems, removeItem, isHydrated } = useCart();
 
   const decision = decideCheckoutView({
@@ -153,7 +162,10 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     setPhone(selected.phone);
   };
 
-  const totalAmount = payableItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
+  const subtotalAmount = payableItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
+  const shippingAmount =
+    quoteShipping(Math.round(subtotalAmount * 100), shippingPolicy).shippingPaise / 100;
+  const totalAmount = subtotalAmount + shippingAmount;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -590,6 +602,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
 
         <div className="text-center text-xs text-[#6e6e73] pt-2">
           <span>🔒 256-bit SSL Encrypted • Card, UPI, NetBanking & Wallets via PayU</span>
+          {paymentNote ? <span className="block mt-1">{paymentNote}</span> : null}
         </div>
         </div>
       </form>
