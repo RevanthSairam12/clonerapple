@@ -56,9 +56,11 @@ function emptyCounts(): Record<SaleState, number> {
 
 function summary(row: Row): OrderSummary {
   const saleState = isSaleState(row.sale_state) ? row.sale_state : 'PENDING';
+  const orderNumber = integer(row.order_number);
   return {
     id: text(row.id),
     txnid: text(row.txnid),
+    orderNumber: orderNumber > 0 ? orderNumber : null,
     customer: {
       nameMasked: maskName(row.customer_name),
       emailMasked: maskCustomerEmail(text(row.customer_email)),
@@ -111,6 +113,7 @@ export async function listPosOrders(options: {
         select s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
                s.amount, s.currency, s.total_paise, s.scheduled_for,
                s.delivery_slot, s.created_at, s.updated_at, s.paid_at,
+               o.order_number,
                o.customer_name, o.customer_email, o.customer_phone
         from order_sale_state s
         join orders o on o.id = s.id

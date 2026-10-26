@@ -63,6 +63,7 @@ export async function GET(request: Request) {
 
   const header = [
     'Transaction',
+    'Order number',
     'Placed at',
     'Sale state',
     'Payment status',
@@ -72,6 +73,7 @@ export async function GET(request: Request) {
     'Email',
     'Phone',
     'Amount',
+    'Shipping',
     'Currency',
     'Item lines',
   ];
@@ -81,6 +83,7 @@ export async function GET(request: Request) {
     lines.push(
       [
         row.txnid,
+        row.orderNumber !== null ? String(row.orderNumber) : '',
         row.createdAt,
         row.saleState,
         row.paymentStatus,
@@ -90,6 +93,7 @@ export async function GET(request: Request) {
         row.customerEmailMasked,
         row.customerPhoneMasked,
         (row.amountPaise / 100).toFixed(2),
+        (row.shippingPaise / 100).toFixed(2),
         row.currency,
         row.itemLines,
       ]

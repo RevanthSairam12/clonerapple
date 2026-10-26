@@ -5,6 +5,7 @@ import { PrintButton } from '@/components/store-admin/PrintButton';
 import { DocumentHeader } from '@/components/store-admin/DocumentHeader';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { getStoreSession } from '@/lib/store-admin/auth';
+import { formatInvoiceReference } from '@/lib/orders/numbering';
 import { formatDate } from '@/lib/store-admin/catalog';
 import {
   formatRupees,
@@ -83,6 +84,12 @@ export default async function OrderInvoicePage({ params }: Props) {
   const paymentLabel =
     order.paymentMethod?.replace(/_/g, ' ') ??
     (order.channel === 'pos' ? 'point of sale' : 'online payment');
+  // Invoice prefix + allocated number; legacy rows keep their txnid.
+  const invoiceReference = formatInvoiceReference({
+    orderNumber: order.orderNumber,
+    invoicePrefix: settings?.invoice_prefix,
+    txnid: order.txnid,
+  });
 
   await writeAudit({
     actorId: session.adminId,
@@ -133,7 +140,7 @@ export default async function OrderInvoicePage({ params }: Props) {
           <section className="sa-doc-block sa-doc-facts">
             <h2>Details</h2>
             <dl className="sa-doc-facts-list">
-              <div><dt>Invoice ref</dt><dd className="sa-mono">{order.txnid}</dd></div>
+              <div><dt>Invoice ref</dt><dd className="sa-mono">{invoiceReference}</dd></div>
               <div><dt>Order date</dt><dd>{formatDate(order.createdAt)}</dd></div>
               <div><dt>Channel</dt><dd>{order.channel === 'pos' ? 'Point of sale' : 'Online store'}</dd></div>
               <div><dt>Payment</dt><dd>{paymentLabel}</dd></div>
@@ -216,7 +223,7 @@ export default async function OrderInvoicePage({ params }: Props) {
             is not a tax invoice and no GST has been charged.
           </p>
           <p>
-            Invoice reference {order.txnid} · generated from the store back office on{' '}
+            Invoice reference {invoiceReference} · generated from the store back office on{' '}
             {formatDate(new Date().toISOString())}.
           </p>
         </footer>

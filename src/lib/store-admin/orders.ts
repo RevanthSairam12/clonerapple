@@ -310,6 +310,8 @@ export interface OrderCustomer {
 export interface OrderSummary {
   id: string;
   txnid: string;
+  /** Allocated display number from Order settings; null on legacy rows. */
+  orderNumber: number | null;
   customer: OrderCustomer;
   saleState: SaleState;
   paymentStatus: string;
@@ -378,9 +380,11 @@ function summaryFromRow(row: Row): OrderSummary {
         scheduledFor: row.scheduled_for,
         refundCount: row.refund_count,
       });
+  const orderNumber = integer(row.order_number);
   return {
     id: text(row.id),
     txnid: text(row.txnid),
+    orderNumber: orderNumber > 0 ? orderNumber : null,
     customer: {
       nameMasked: maskCustomerName(row.customer_name),
       emailMasked: maskCustomerEmail(text(row.customer_email)),
@@ -477,7 +481,7 @@ export async function listOrders(options: {
         s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
         s.amount, s.currency, s.total_paise, s.scheduled_for, s.delivery_slot,
         s.created_at, s.updated_at, s.paid_at,
-        o.customer_name, o.customer_email, o.customer_phone
+        o.order_number, o.customer_name, o.customer_email, o.customer_phone
       from order_sale_state s
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
@@ -523,6 +527,7 @@ export async function listOrders(options: {
 
 export interface OrderExportRow {
   txnid: string;
+  orderNumber: number | null;
   createdAt: string;
   saleState: SaleState;
   paymentStatus: string;
@@ -532,6 +537,8 @@ export interface OrderExportRow {
   customerEmailMasked: string;
   customerPhoneMasked: string;
   amountPaise: number;
+  /** Server-stored shipping share of the paid total. */
+  shippingPaise: number;
   currency: string;
   itemLines: number;
 }
@@ -566,7 +573,8 @@ export async function listOrdersForExport(options: {
     const rows = (await sql`
       select
         s.txnid, s.sale_state, s.status, s.fulfilment_status, s.channel,
-        s.amount, s.currency, s.total_paise, s.created_at,
+        s.amount, s.currency, s.total_paise, s.shipping_paise, s.created_at,
+        o.order_number,
         o.customer_name, o.customer_email, o.customer_phone,
         (
           select count(*)::int from order_items oi where oi.order_id = s.id
@@ -595,8 +603,11 @@ export async function listOrdersForExport(options: {
 
     return {
       ok: true,
-      data: rows.map((row) => ({
+      data: rows.map((row) => {
+        const orderNumber = integer(row.order_number);
+        return {
         txnid: text(row.txnid),
+        orderNumber: orderNumber > 0 ? orderNumber : null,
         createdAt: iso(row.created_at),
         saleState: isSaleState(row.sale_state) ? row.sale_state : 'PENDING',
         paymentStatus: text(row.status),
@@ -610,8 +621,10 @@ export async function listOrdersForExport(options: {
         amountPaise:
           integer(row.total_paise) || Math.round(number(row.amount) * 100),
         currency: text(row.currency) || 'INR',
+        shippingPaise: integer(row.shipping_paise),
         itemLines: integer(row.item_lines),
-      })),
+        };
+      }),
     };
   } catch {
     console.warn('[store-admin/orders] could not build the export rows');
@@ -673,6 +686,7 @@ export async function getOrderDetail(
         s.subtotal_paise, s.discount_paise, s.shipping_paise, s.coupon_code,
         s.payment_method,
         s.created_at, s.updated_at, s.paid_at,
+        o.order_number,
         o.customer_name, o.customer_email, o.customer_phone, o.items
       from order_sale_state s
       join orders o on o.id = s.id
