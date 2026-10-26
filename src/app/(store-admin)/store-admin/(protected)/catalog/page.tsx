@@ -45,9 +45,14 @@ export default async function StoreAdminCatalogPage() {
             Product copy, price and images are edited on the product page.
           </p>
         </div>
-        <Link className="sa-btn sa-btn-quiet" href="/store-admin/categories">
-          Category tree
-        </Link>
+        <div className="sa-inline-actions">
+          <Link className="sa-btn sa-btn-quiet" href="/store-admin/collections">
+            Collections
+          </Link>
+          <Link className="sa-btn sa-btn-quiet" href="/store-admin/categories">
+            Category tree
+          </Link>
+        </div>
       </div>
 
       <div className="sa-detail-grid">

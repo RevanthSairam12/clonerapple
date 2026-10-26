@@ -112,6 +112,8 @@ const EXPECTED_MUTATING_ROUTES = [
   'catalog/products/[id]/attributes/route.ts',
   // Phase 5: the product list gained a create handler.
   'catalog/products/route.ts',
+  // Phase 0: storefront collection membership (merchandising).
+  'catalog/collections/route.ts',
   // Phase 6: review moderation, media library, bulk import.
   'reviews/[id]/route.ts',
   'media/route.ts',
