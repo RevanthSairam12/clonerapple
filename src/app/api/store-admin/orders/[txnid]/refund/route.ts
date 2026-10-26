@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { recordRefund } from '@/lib/store-admin/returns';
@@ -88,6 +89,11 @@ export async function POST(
       remainingPaise: result.remainingPaise,
     },
     request,
+  });
+
+  await queueOrderEventByTxnid('refund_completed', result.txnid, {
+    refundPaise: result.amountPaise,
+    token: result.refundId,
   });
 
   return NextResponse.json(

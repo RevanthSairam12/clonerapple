@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireAccountSessionApi } from '@/lib/account/auth';
+import { queueNotification } from '@/lib/notifications/queue';
 import { passwordByteLength } from '@/lib/auth/validation';
 import { changeUserPassword } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
@@ -19,5 +20,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'New password must be 8 to 72 UTF-8 bytes.' }, { status: 400 });
   }
   const result = await changeUserPassword(auth.session.userId, currentPassword, newPassword);
+  if (result.ok) {
+    queueNotification(
+      'password_reset',
+      { type: 'customer', id: auth.session.userId },
+      {
+        customerName: `${auth.session.firstName} ${auth.session.lastName}`.trim(),
+        customerEmail: auth.session.email,
+        customerPhone: auth.session.phone ?? null,
+        customerLink: '/account',
+        token: String(Date.now()),
+      },
+    );
+  }
   return result.ok ? NextResponse.json({ ok: true }) : NextResponse.json({ error: result.error }, { status: 400 });
 }

@@ -1,4 +1,5 @@
 import { readCheckoutSettings } from '@/lib/checkout/settings';
+import { queueFulfilmentEvents, queueOrderEvent } from '@/lib/notifications/order-context';
 import {
   autoCancelReason,
   isAutoCancelDue,
@@ -72,6 +73,10 @@ export async function reconcilePendingOrders(staleMinutes: number = 15): Promise
             status: 'PAID',
             mihpayid: verification.mihpayid || undefined,
           });
+          // Same dedupe keys as the callback path: exactly one message even
+          // when both paths see the same payment.
+          queueOrderEvent('payment_received', res.order, { orderStatus: 'PAID' });
+          queueFulfilmentEvents(res.order, res.fulfilmentSteps);
           summary.markedPaid++;
         } else {
           summary.unchanged++;
@@ -98,6 +103,7 @@ export async function reconcilePendingOrders(staleMinutes: number = 15): Promise
 
         summary.markedCancelled++;
         if (res.stockReleased) revalidateCatalog();
+        queueOrderEvent('cancelled', res.order, { orderStatus: 'CANCELLED' });
         logPayUEvent('RECONCILED: EXPIRED UNPAID ORDER', {
           txnid: order.txnid,
           status: 'CANCELLED',
@@ -127,6 +133,7 @@ export async function reconcilePendingOrders(staleMinutes: number = 15): Promise
         if (res.transitioned) {
           summary.markedCancelled++;
           if (res.stockReleased) revalidateCatalog();
+          queueOrderEvent('cancelled', res.order, { orderStatus: 'CANCELLED' });
         } else {
           summary.unchanged++;
         }

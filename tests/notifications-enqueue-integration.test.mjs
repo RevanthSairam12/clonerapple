@@ -243,6 +243,72 @@ test('enqueue follows the matrix, remembers why nothing was sent, and never dupl
       assert.doesNotMatch(row.body, /Ravi Kumar/, 'staff messages never name the customer');
     }
 
+    /* ---------- payment success is one message per order, however it arrives */
+    await setMatrix(a, [
+      ['email', 'customer', 'payment_received', true],
+      ['email', 'admin', 'payment_received', true],
+    ]);
+    const onceId = `ONCE${suffix}`;
+    const onceContext = {
+      txnid: onceId,
+      customerName: 'Asha Rao',
+      customerEmail: 'once@example.test',
+      customerPhone: '9876543210',
+      orderTotalPaise: 500000,
+      customerLink: `/order/status?txnid=${onceId}`,
+      staffLink: `/store-admin/orders/${onceId}`,
+    };
+    const firstPayment = await enqueueNotification(
+      'payment_received',
+      { type: 'order', id: onceId },
+      onceContext,
+      a,
+    );
+    assert.equal(firstPayment.queued, 3, 'one customer email plus support and the owner');
+    const secondPayment = await enqueueNotification(
+      'payment_received',
+      { type: 'order', id: onceId },
+      onceContext,
+      a,
+    );
+    assert.equal(secondPayment.duplicates, 3, 'a duplicate callback or reconcile adds nothing');
+    const onceRows = await rowsFor(a, onceId);
+    assert.equal(onceRows.length, 3);
+
+    const customerPaid = onceRows.find((row) => row.audience === 'customer');
+    assert.match(customerPaid.body, new RegExp(`/order/status\\?txnid=${onceId}`));
+    assert.doesNotMatch(customerPaid.body, /\/store-admin\/orders\//);
+    for (const row of onceRows.filter((entry) => entry.audience === 'staff')) {
+      assert.match(row.body, new RegExp(`/store-admin/orders/${onceId}`));
+      assert.doesNotMatch(row.body, /\/order\/status\?txnid=/);
+    }
+
+    /* ------------------------ an auto-cancel sends once, not once per tick */
+    await setMatrix(a, [
+      ['email', 'customer', 'cancelled', true],
+      ['email', 'admin', 'cancelled', true],
+    ]);
+    const cancelId = `AUTOCANCEL${suffix}`;
+    const cancelContext = {
+      txnid: cancelId,
+      customerName: 'Asha Rao',
+      customerEmail: 'cancel@example.test',
+      orderTotalPaise: 250000,
+    };
+    await enqueueNotification(
+      'cancelled',
+      { type: 'order', id: cancelId },
+      cancelContext,
+      a,
+    );
+    await enqueueNotification(
+      'cancelled',
+      { type: 'order', id: cancelId },
+      cancelContext,
+      a,
+    );
+    assert.equal((await rowsFor(a, cancelId)).length, 3, 'one cancellation, one message');
+
     /* ------------------- targeted staff reset goes only to that staff member */
     await setMatrix(a, [
       ['email', 'admin', 'password_reset', true],
@@ -308,6 +374,33 @@ test('enqueue follows the matrix, remembers why nothing was sent, and never dupl
       a,
     );
     assert.equal((await rowsFor(a, repeatId)).length, 2, 'two distinct requests, two messages');
+
+    /* ------------- a broken settings store is a no-op, never a thrown error */
+    await a.unsafe(`drop table "${schema}".notification_channel_settings cascade`);
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.map(String).join(' '));
+    let missing = null;
+    try {
+      missing = await enqueueNotification(
+        'payment_received',
+        { type: 'order', id: `NOSTORE${suffix}` },
+        { txnid: `NOSTORE${suffix}`, customerEmail: 'private@example.test' },
+        a,
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(missing.ok, false, 'the caller sees a no-op, not an exception');
+    assert.equal(missing.queued, 0);
+    assert.ok(
+      warnings.some((line) => line.includes('could not queue payment_received')),
+      'the failure is logged by event name',
+    );
+    assert.ok(
+      warnings.every((line) => !line.includes('private@example.test')),
+      'the log never contains the recipient',
+    );
   } finally {
     try {
       await a.unsafe('set search_path to public');

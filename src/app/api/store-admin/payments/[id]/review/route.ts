@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { reviewManualPayment } from '@/lib/store-admin/payments';
@@ -86,6 +87,10 @@ export async function POST(
     },
     request,
   });
+
+  if (result.orderPaidNow) {
+    await queueOrderEventByTxnid('payment_received', result.txnid, { orderStatus: 'PAID' });
+  }
 
   return NextResponse.json({
     ok: true,

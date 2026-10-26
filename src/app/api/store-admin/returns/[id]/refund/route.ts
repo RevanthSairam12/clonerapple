@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { getReturnDetail, recordRefund } from '@/lib/store-admin/returns';
@@ -98,6 +99,12 @@ export async function POST(
       returnClosed: result.returnClosed,
     },
     request,
+  });
+
+  // One message per refund row, so a partial refund can be followed by another.
+  await queueOrderEventByTxnid('refund_completed', result.txnid, {
+    refundPaise: result.amountPaise,
+    token: result.refundId,
   });
 
   return NextResponse.json(

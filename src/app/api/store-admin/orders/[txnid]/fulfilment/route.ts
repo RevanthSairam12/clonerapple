@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import {
+  fulfilmentNotificationEvent,
+  queueOrderEventByTxnid,
+} from '@/lib/notifications/order-context';
 import { requireStoreRole, type StoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import {
@@ -88,6 +92,15 @@ export async function POST(
   });
 
   if (result.currentStatus === 'CANCELED') revalidateCatalog();
+
+  const event = fulfilmentNotificationEvent(result.currentStatus);
+  if (event) {
+    await queueOrderEventByTxnid(event, result.txnid, {
+      orderStatus: result.currentStatus,
+      trackingNumber: result.trackingNumber,
+      trackingLink: result.trackingUrl,
+    });
+  }
 
   return NextResponse.json({
     ok: true,

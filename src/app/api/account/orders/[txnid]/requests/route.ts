@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { validateRequestType, type RequestType } from '@/lib/account/request-rules';
 import { createCustomerOrderRequest } from '@/lib/store-admin/order-requests';
@@ -18,6 +19,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ tx
   const reason = typeof body?.reason === 'string' ? body.reason : '';
   try {
     const created = await createCustomerOrderRequest(auth.session.userId, txnid, body.type as RequestType, reason);
+    await queueOrderEventByTxnid('refund_requested', created.txnid, { token: created.id });
     return NextResponse.json({ request: created }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not create request.';

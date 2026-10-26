@@ -71,7 +71,11 @@ export interface NotificationContext {
   itemCount?: number | null;
   productName?: string | null;
   stockAvailable?: number | null;
-  /** Relative Store Admin or account path, e.g. /store-admin/orders/GDZ1001. */
+  /** Where a customer message should link, e.g. /order/status?txnid=GDZ1001. */
+  customerLink?: string | null;
+  /** Where a staff message should link, e.g. /store-admin/orders/GDZ1001. */
+  staffLink?: string | null;
+  /** Legacy single link; each audience prefers its own link above. */
   adminLink?: string | null;
   /**
    * Distinguishes legitimate repeats (a second return request on one order).

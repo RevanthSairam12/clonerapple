@@ -5,6 +5,7 @@ import { generateRequestHash } from '@/lib/payu/hash';
 import { createOrder } from '@/lib/payu/orders';
 import { InsufficientStockError } from '@/lib/payu/stock';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
+import { queueOrderEvent } from '@/lib/notifications/order-context';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { getCustomerAddress } from '@/lib/account/addresses';
@@ -238,6 +239,10 @@ export async function POST(req: NextRequest) {
 
     // Availability changed when tracked stock was claimed.
     if (created.stockClaimed) revalidateCatalog();
+
+    // The order transaction has committed. The matrix decides whether a
+    // message exists; queueNotification never waits for the provider.
+    queueOrderEvent('order_placed', created.order, { orderStatus: 'CREATED' });
 
     // Opt-in is only honoured while the checkbox is enabled in settings.
     // Failure to record it never blocks the payment.

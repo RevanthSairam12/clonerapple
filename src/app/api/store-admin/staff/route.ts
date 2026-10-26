@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueNotification } from '@/lib/notifications/queue';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { createStaff, listStaff } from '@/lib/store-admin/staff';
@@ -75,6 +76,18 @@ export async function POST(request: Request) {
     reason: 'staff_created',
     request,
   });
+
+  // The credential itself never goes into a message. This only tells the new
+  // staff member that the account exists and to change the password.
+  queueNotification(
+    'staff_invite',
+    { type: 'staff', id: result.data.staff.id },
+    {
+      staffEmail: result.data.staff.email,
+      staffPhone: result.data.staff.phone,
+      staffLink: '/store-admin/login',
+    },
+  );
 
   return NextResponse.json(
     {

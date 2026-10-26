@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { cancelOrder } from '@/lib/store-admin/returns';
@@ -82,6 +83,8 @@ export async function POST(
 
   // Cancellation restocks tracked lines; the affected ids are in the order.
   revalidateCatalog();
+
+  await queueOrderEventByTxnid('cancelled', result.txnid, { orderStatus: 'CANCELLED' });
 
   return NextResponse.json({
     txnid: result.txnid,

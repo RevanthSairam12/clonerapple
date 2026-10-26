@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { getOrderRequestDetail, transitionOrderRequest, REQUESTS_UNAVAILABLE_MESSAGE } from '@/lib/store-admin/order-requests';
 import { writeAudit } from '@/lib/store-admin/audit';
@@ -45,6 +46,15 @@ export async function PATCH(request: NextRequest, context: Context) {
     const result = await transitionOrderRequest(id, status, adminNote, guard.session.adminId, guard.session.role);
     await writeAudit({ request, actorId: guard.session.adminId, actorEmail: guard.session.email, action: 'update_request', entity: 'order_request', entityId: id, before: { status: result.before }, after: { status, stockMoved: result.stockMoved }, reason: status === 'RESOLVED' && before.data.type === 'cancel' ? 'cancellation_approved' : 'request_status_changed' });
     if (result.stockMoved) revalidateCatalog();
+    // Approving a cancellation that actually moved the order is a cancellation
+    // event. A request already resolved against a cancelled order sends nothing.
+    if (
+      before.data.type === 'cancel'
+      && result.after.fulfilmentStatus === 'CANCELED'
+      && before.data.fulfilmentStatus !== 'CANCELED'
+    ) {
+      await queueOrderEventByTxnid('cancelled', result.after.txnid, { orderStatus: 'CANCELLED' });
+    }
     return NextResponse.json({ request: result.after });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not update request.' }, { status: 400 });

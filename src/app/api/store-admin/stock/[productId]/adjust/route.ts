@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueNotification } from '@/lib/notifications/queue';
+import { stockNotificationEvent } from '@/lib/notifications/stock-events';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { adjustStock } from '@/lib/store-admin/catalog-crud';
@@ -71,6 +73,28 @@ export async function POST(
   });
 
   revalidateCatalog(productId);
+
+  // Only a crossing raises an alert: going below the threshold, or coming
+  // back above zero. Staying low or staying in stock is silent, and the
+  // movement id is the token so one adjustment cannot notify twice.
+  const snapshot = result.data;
+  const availableBefore = snapshot.before.onHand - snapshot.before.reserved;
+  const availableAfter = snapshot.after.onHand - snapshot.after.reserved;
+  const threshold = snapshot.lowStockThreshold;
+  const stockContext = {
+    productName: snapshot.productName,
+    stockAvailable: availableAfter,
+    staffLink: `/store-admin/stock/${encodeURIComponent(productId)}`,
+    token: `movement:${snapshot.movementId}`,
+  };
+  const event = stockNotificationEvent({
+    availableBefore,
+    availableAfter,
+    threshold,
+  });
+  if (event) {
+    queueNotification(event, { type: 'product', id: productId }, stockContext);
+  }
 
   return NextResponse.json({ ok: true, stock: result.data });
 }

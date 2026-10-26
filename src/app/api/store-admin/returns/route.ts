@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { createReturn, listReturns, type ReturnLineInput } from '@/lib/store-admin/returns';
@@ -92,6 +93,9 @@ export async function POST(request: Request) {
     },
     request,
   });
+
+  // Each return is a legitimate repeat; its id is the dedupe token.
+  await queueOrderEventByTxnid('refund_requested', txnid, { token: result.id });
 
   return NextResponse.json({ id: result.id, status: result.status }, { status: 201 });
 }

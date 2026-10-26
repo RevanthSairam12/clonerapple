@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { queueNotification } from '@/lib/notifications/queue';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { generateTemporaryPassword, resetStaffPassword } from '@/lib/store-admin/staff';
@@ -62,6 +63,18 @@ export async function POST(
     reason: `sessions_revoked:${result.data.sessionsRevoked}`,
     request,
   });
+
+  // Notify only; the new password is handed over separately and never rendered.
+  queueNotification(
+    'password_reset',
+    { type: 'staff', id: result.data.staff.id },
+    {
+      staffEmail: result.data.staff.email,
+      staffPhone: result.data.staff.phone,
+      staffLink: '/store-admin/login',
+      token: String(Date.now()),
+    },
+  );
 
   return NextResponse.json(
     {

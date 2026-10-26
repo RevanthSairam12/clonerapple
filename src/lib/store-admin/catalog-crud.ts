@@ -790,6 +790,11 @@ export interface StockSnapshot {
   before: { onHand: number; reserved: number; trackInventory: boolean };
   after: { onHand: number; reserved: number; trackInventory: boolean };
   inStock: boolean;
+  /** Used by low-stock and back-in-stock notification copy. */
+  productName: string;
+  lowStockThreshold: number;
+  /** Dedupe token for notifications raised by this movement. */
+  movementId: number;
 }
 
 export async function adjustStock(input: {
@@ -803,12 +808,12 @@ export async function adjustStock(input: {
   try {
     return await sql.begin(async (tx) => {
       const productRows = (await tx`
-        select id from products where id = ${input.productId} and deleted_at is null
+        select id, name from products where id = ${input.productId} and deleted_at is null
       `) as Row[];
       if (!productRows[0]) return fail('not-found', 'Product not found.');
 
       const rows = (await tx`
-        select id, on_hand, reserved, track_inventory
+        select id, on_hand, reserved, low_stock_threshold, track_inventory
         from stock
         where product_id = ${input.productId} and variant_id is null
         for update
@@ -839,13 +844,14 @@ export async function adjustStock(input: {
         set on_hand = ${nextOnHand}, updated_at = now(), updated_by = ${input.staffId}
         where id = ${text(stock.id)}
       `;
-      await tx`
+      const movementRows = (await tx`
         insert into stock_movements (product_id, variant_id, delta, reason, note, created_by)
         values (
           ${input.productId}, null, ${input.adjustment.delta}, ${input.adjustment.reason},
           ${input.adjustment.note}, ${input.staffId}
         )
-      `;
+        returning id
+      `) as Row[];
 
       const inStock = nextOnHand - before.reserved > 0;
       await tx`
@@ -859,6 +865,9 @@ export async function adjustStock(input: {
           before,
           after: { onHand: nextOnHand, reserved: before.reserved, trackInventory: true },
           inStock,
+          productName: text(productRows[0]?.name),
+          lowStockThreshold: number(stock.low_stock_threshold),
+          movementId: number(movementRows[0]?.id),
         },
       };
     });
@@ -879,7 +888,7 @@ export async function updateStockSettings(input: {
   try {
     return await sql.begin(async (tx) => {
       const productRows = (await tx`
-        select id from products where id = ${input.productId} and deleted_at is null
+        select id, name from products where id = ${input.productId} and deleted_at is null
       `) as Row[];
       if (!productRows[0]) return fail('not-found', 'Product not found.');
 
@@ -936,6 +945,9 @@ export async function updateStockSettings(input: {
             trackInventory: input.settings.trackInventory,
           },
           inStock,
+          productName: text(productRows[0]?.name),
+          lowStockThreshold: input.settings.lowStockThreshold,
+          movementId: 0,
         },
       };
     });

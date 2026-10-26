@@ -1,3 +1,4 @@
+import { queueFulfilmentEvents, queueOrderEvent } from '@/lib/notifications/order-context';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 import { getPayUConfig } from './config';
@@ -191,6 +192,12 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
 
   if (transition.firstTimePaid) {
     logPayUEvent('FULFILLMENT TRIGGERED', { txnid, status: 'PAID', mihpayid: mihpayid || undefined });
+    // The dedupe key is the order and event, so duplicate callbacks and a
+    // concurrent reconcile run cannot create a second message.
+    queueOrderEvent('payment_received', transition.order, { orderStatus: 'PAID' });
+    queueFulfilmentEvents(transition.order, transition.fulfilmentSteps);
+  } else if (transition.transitioned && targetStatus === 'CANCELLED') {
+    queueOrderEvent('cancelled', transition.order, { orderStatus: 'CANCELLED' });
   }
 
   // A failed or cancelled callback returns a claimed unit to the shelf.

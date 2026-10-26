@@ -331,6 +331,9 @@ export async function enqueueNotification(
       if (channel !== 'email' && channel !== 'sms' && channel !== 'inapp') continue;
 
       const audience: NotificationAudience = row.audience === 'admin' ? 'staff' : 'customer';
+      const link = audience === 'staff'
+        ? firstNonEmpty(context.staffLink ?? undefined, context.adminLink ?? undefined)
+        : firstNonEmpty(context.customerLink ?? undefined, context.adminLink ?? undefined);
       const values = templateValues({
         audience,
         txnid: context.txnid,
@@ -349,7 +352,7 @@ export async function enqueueNotification(
         supportPhone: settings.phone,
         supportEmail: settings.email,
         returnWindowDays: settings.return_window_days,
-        adminLink: context.adminLink,
+        adminLink: link,
       });
 
       const parts = buildParts(event, channel, audience, storedEmail, automated);

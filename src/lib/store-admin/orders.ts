@@ -829,6 +829,9 @@ export type FulfilmentMutation =
       txnid: string;
       /** True when cancelling returned claimed stock to the shelf. */
       stockMoved: boolean;
+      /** Present on an ON_THE_WAY move so the shipped message can link to it. */
+      trackingNumber: string | null;
+      trackingUrl: string | null;
     }
   | MutationFailure;
 
@@ -895,6 +898,9 @@ async function transitionFulfilmentInTx(
   });
   if (!validation.ok) return mutationFailure(validation.code, validation.error);
 
+  let trackingNumber: string | null = null;
+  let trackingUrl: string | null = null;
+
   if (input.target === 'ON_THE_WAY') {
     const deliveryRows = (await tx`
       select d.delivery_method, d.person_name, d.person_phone,
@@ -933,6 +939,8 @@ async function transitionFulfilmentInTx(
         : null,
     );
     if (!ready.ok) return mutationFailure('delivery-required', ready.error);
+    trackingNumber = nullableText(delivery?.tracking_number);
+    trackingUrl = nullableText(delivery?.tracking_url) ?? nullableText(details.trackingUrl);
   }
 
   await tx`
@@ -993,6 +1001,8 @@ async function transitionFulfilmentInTx(
     orderId: text(order.id),
     txnid: text(order.txnid),
     stockMoved,
+    trackingNumber,
+    trackingUrl,
   };
 }
 
