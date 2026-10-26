@@ -7,14 +7,14 @@ reached through `.env.local`.
 
 | Check | Result |
 |---|---|
-| `npm test` | **376 tests, 376 pass, 0 fail** |
+| `npm test` | **385 tests, 385 pass, 0 fail** |
 | `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported |
-| `node scripts/check-store-admin-routes.mjs` | **All 85 store-admin routes are guarded** |
+| `node scripts/check-store-admin-routes.mjs` | **All 86 store-admin routes are guarded** |
 | `node scripts/check-setting-lists.mjs` | all 12 settings tables readable, 72 notification cells |
 | `node scripts/check-admin-boundary.mjs` | legacy CMS holds no commerce field; 11 Education collections exempt |
 | `npm run typecheck` / `npm run build` | both succeed |
 | Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render |
-| Migrations applied | `schema_migrations` holds every migration file through `0035_notification_outbox.sql`; Phase 1 added no migration |
+| Migrations applied | `schema_migrations` holds every migration file through `0036_order_payment_review.sql`; Phase 1 added no migration |
 | Database contents | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
 ---
@@ -68,6 +68,7 @@ environment variables in the table below at deploy time.
 | `MAIL_PASSWORD` | **no** | Email still queues, but every email row is marked `SKIPPED` with “mail not configured (`MAIL_PASSWORD` is missing)”. Checkout is unaffected. |
 | `MSG91_AUTH_KEY` / `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` | **no** | SMS still queues, but every SMS row is marked `SKIPPED` until the chosen gateway's credentials exist. |
 | `APP_BASE_URL` | **no** | Optional. Absolute links in messages fall back to `https://gadzio.in` in production and `http://localhost:3000` in development. |
+| `NOTIFICATION_RETENTION_ENABLED`, `NOTIFICATION_RETENTION_DAYS` | **no** | Optional. Retention is off unless the switch is `1`/`true`/`on`/`yes`; then finished outbox rows older than N days lose their body and recipient. N defaults to 90 and is clamped to 3650. |
 
 ---
 
@@ -86,7 +87,7 @@ Browser
   ├── Customer account  (/account, /auth) ─────► users / user_sessions / orders / customer_addresses / order_requests
   │
   ├── Store admin  (/store-admin) ─────────────► store_admins / store_admin_sessions  (cookie store_admin_session)
-  │        └── 84 API routes, each requireStoreRole(...); owns products, collections, orders, customers
+  │        └── 86 API routes, each requireStoreRole(...); owns products, collections, orders, customers
   │
   └── Legacy CMS admin (/admin) ───────────────► admin_users / admin_sessions  (cookie admin_session)
                                                    edits content_blocks (design/marketing only), theme, shared media
@@ -277,14 +278,21 @@ separate validation code.
      `system`.
   9. A verified failure or cancellation releases the stock claim once, through the movement
      ledger (`sale` minus `release`), so duplicate callbacks and reconcile runs cannot
-     release twice. An admin cancelling an unpaid order releases too; a paid order keeps
-     its stock until the return flow restocks it.
+     release twice. An admin cancelling an unpaid order releases too; cancelling a paid
+     order gives its sold units back through `restoreSoldStock` (§2.14). If a payment is
+     captured after its order was cancelled and the released units are still on the shelf,
+     the late PAID transition re-claims them atomically in one transaction. If they are
+     gone, the order still becomes PAID — the money was taken — but is flagged
+     `payment_review_required`, audited and shown in Payments review; nothing is
+     auto-refunded and no partial claim is written.
   10. `/api/payu/webhook` accepts the same payloads server to server (rate limited to 100
       per minute per IP). `/api/payu/reconcile` re-checks stale pending orders and cancels
       unpaid ones older than `auto_cancel_unpaid_hours` (0 or empty keeps the 2-hour
       abandoned-checkout rule), releasing stock once and writing an `order.auto_cancel`
-      audit row. The production scheduler must POST this endpoint every 10 minutes with
-      `CRON_SECRET`; it fails closed (503) when the secret is unset (§2.14).
+      audit row. The same run drains the notification outbox and, when retention is
+      switched on, scrubs old finished message bodies (§3.6). The production scheduler must
+      POST this endpoint every 10 minutes with `CRON_SECRET`; it fails closed (503) when the
+      secret is unset (§2.14).
 - **No other payment method exists.** There is no cash-on-delivery path, no manual bank
   transfer path and no wallet. `payment_methods` in settings is not consulted, and
   `cod_enabled` ships off because checkout has no payment-method selector.
@@ -435,14 +443,25 @@ transaction rolls back and initiate returns 409 through the existing alert — n
 no claim are left behind. A verified failure/cancel, an admin cancellation of an unpaid
 order and auto-cancel each release the outstanding claim once, guarded by the movement
 ledger (`sale` minus `release`), so duplicate callbacks or reconcile runs cannot release
-twice. Paid orders keep their stock.
+twice. A paid order keeps its stock until it is cancelled or returned.
 
-Returns and POS voids restock through the same ledger. `restoreSoldStock` gives back at
-most `sale` minus earlier `return`/`release` movements for that order and product, so a
-partial or repeated receive cannot over-restock. An order created **before Phase 2** has
-no `sale` movement, so cancelling, voiding or returning it restores nothing — legacy
-orders can never invent stock. Cancelling a paid order still restocks nothing; the return
-flow does that when the goods come back.
+Returns, paid-order cancellations and POS voids restock through the same ledger.
+`restoreSoldStock` gives back at most `sale` minus earlier `return`/`release` movements
+for that order and product, so a partial, repeated receive or a cancel after a return
+cannot over-restock. An order created **before Phase 2** has no `sale` movement, so
+cancelling, voiding or returning it restores nothing — legacy orders can never invent
+stock.
+
+**Late payment.** A payment can arrive after auto-cancel or a failed/cancelled callback
+has already released its claim. The PAID transition reads the order's `release` movements
+and tries to take exactly those units back in one transaction, locking every stock row
+`for update` first. Success continues normally (a second `sale` ledger line). If any line
+no longer fits, nothing is claimed, the order is marked PAID with
+`payment_review_required = true` and a fixed reason, paid-order automation is skipped, and
+the order appears under **Payments → Captured payments needing attention**, where an owner
+or admin can mark it reviewed (`payment_reviewed_at/by`). The flag write is audited as
+`payment.late_capture_review`. There is no automatic refund and a duplicate callback is a
+no-op (the order is already PAID and the transaction returns early).
 
 **Reconciliation scheduling (required in production).** The deployment scheduler must
 `POST /api/payu/reconcile` **every 10 minutes** with
@@ -454,8 +473,12 @@ the schedule, abandoned orders keep holding stock forever.
 
 Each run also drains up to **10 due notification outbox rows** (§3.6), so the same cron
 retries email and SMS that a provider rejected. Enqueued messages first get one best-effort
-send in the request's `after()` hook; the cron is the safety net. `CRON_SECRET` behaviour
-is unchanged.
+send in the request's `after()` hook; the cron is the safety net. When
+`NOTIFICATION_RETENTION_ENABLED` is on, the run then clears `body` and `recipient` on
+terminal rows older than `NOTIFICATION_RETENTION_DAYS` (default 90, clamped to 3650),
+keeping event, status, masked recipient, reason and timestamps; the response reports
+`retention: { enabled, days, scrubbed }`. Off by default. `CRON_SECRET` behaviour is
+unchanged.
 
 - Host cron: `*/10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" https://<store-host>/api/payu/reconcile`
 - GitHub Actions `on: schedule` (`*/10 * * * *`) running the same `curl`.
@@ -474,6 +497,8 @@ remains callable in development for manual runs.
 | Insufficient / unknown / archived rejected before any order row | `checkout-stock.test.mjs` plan tests; `createOrder` plans and throws before the insert |
 | Claim released once on failure/cancel/void/auto-cancel, never twice | ledger idempotence tests in `checkout-stock.test.mjs` + `tests/auto-cancel.test.mjs` |
 | Legacy order (no `sale` movement) never restocks | `tests/stock-restore.test.mjs` ledger-cap tests + source guard that only `stock.ts` adds `on_hand` |
+| A late PAID after release re-claims once, or flags with no partial claim | `tests/late-payment-stock-integration.test.mjs` (ledger `[sale, release, sale]`; out-of-stock sets `payment_review_required`, skips automation, duplicate callback adds nothing) |
+| A cancelled paid order gives its sold units back, capped by the ledger | `tests/stock-restore.test.mjs` + `src/lib/store-admin/returns.ts` / `orders.ts` use `restoreSoldStock`, not a raw increment |
 | Reconcile fails closed without `CRON_SECRET` | `tests/cron-auth.test.mjs` (503 in production, open in development) |
 | Revenue definition consistent | `tests/revenue-definition.test.mjs` (total-with-fallback in Overview and reports; item revenue excludes shipping) |
 | Shipping threshold matrix (below/above/no method/pickup/disabled) | `tests/checkout-shipping.test.mjs` (disabled, no method, inactive method, at/above threshold, method free-over, zero rate) |
@@ -503,8 +528,13 @@ remains callable in development for manual runs.
 **Migration `0034`** adds `orders.order_number`, the `order_number_counters` table (RLS
 enabled, reset-blocking trigger), a partial unique index on `order_number`, an index on
 `stock_movements.order_id`, and adds `release` to the movement-reason check. Phase 1 needed
-no migration; Phase 2 used `0034` and the notification outbox used `0035`, so the next free
-number is `0036`.
+no migration; Phase 2 used `0034`, the notification outbox used `0035` and the payment
+review flag used `0036`, so the next free number is `0037`.
+
+**Migration `0036`** adds `orders.payment_review_required` (boolean, default false),
+`orders.payment_review_reason`, `orders.payment_reviewed_at` and
+`orders.payment_reviewed_by` (references `store_admins(id)`), plus a partial index on the
+unreviewed flag. `orders` already has RLS; no new table is created.
 
 ---
 
@@ -608,6 +638,13 @@ token, use HTTP, or embed credentials are rejected at save time and again at app
 `/store-admin/payments` lists recorded payments needing review (mismatched amount,
 missing reference) and lets staff mark them reviewed through
 `/api/store-admin/payments/[id]/review`. Audited.
+
+A second table, **Captured payments needing attention**, lists orders whose late PayU
+capture could not re-claim its released stock (§2.14). It shows the order, capture time,
+the fixed reason and how long it has waited; `store_admin` and above can mark it reviewed
+through `POST /api/store-admin/payments/review-flag` (same-origin checked, audited as
+`payment.review_cleared`). Reviewing clears the flag and records who and when
+(`payment_reviewed_at/by`); it does not move stock or money, and the page says so.
 
 ### 3.3 Catalog
 
@@ -731,6 +768,11 @@ or a missing provider can never roll back an order, payment callback or request 
 Only the customer's order-visible data reaches a template; both audiences get their own
 link (`/order/status?txnid=…` for the customer, `/store-admin/orders/…` for staff).
 
+**Message timing.** Customer order confirmation should use the `payment_received` cell,
+not `order_placed`. `order_placed` fires when PayU checkout creates the order, before the
+money is confirmed, so it can only honestly say “we have your order, awaiting payment”.
+The matrix itself is unchanged; this is how to choose the cell.
+
 | Matrix event | Fires when | Code |
 |---|---|---|
 | `order_placed` | PayU checkout creates the order | `src/app/api/payu/initiate/route.ts` |
@@ -757,7 +799,10 @@ link (`/order/status?txnid=…` for the customer, `/store-admin/orders/…` for 
   tracking, store name, support contact, return window, refund amount, item count, product
   and stock count, relative admin link). Unknown tokens render empty. Email values are
   HTML-escaped; SMS values are stripped of control characters. Tracking links must already
-  be `https`.
+  be `https`. `staff_invite` is a notice only: it says an account was created and links to
+  the store-admin sign-in page; the owner shares the password out of band. A password,
+  temporary password, token or reset link is not a template variable, so a message can
+  never carry one.
 - **Delivery:** `processNotificationOutbox()` claims due rows with
   `FOR UPDATE SKIP LOCKED`, marks them `SENDING` with a 5-minute lease, sends with a ~10 s
   provider timeout, then writes `SENT`, or `FAILED` with `attempts + 1` and exponential
@@ -768,6 +813,11 @@ link (`/order/status?txnid=…` for the customer, `/store-admin/orders/…` for 
   runs and double-clicks harmless. Order-level events are once per order; legitimate
   repeats (multiple return requests, refunds, stock movements, password changes) carry a
   token in the key.
+- **Retention:** off by default. With `NOTIFICATION_RETENTION_ENABLED` on, each reconcile
+  run clears `body` and `recipient` for `SENT`/`FAILED`/`SKIPPED` rows older than
+  `NOTIFICATION_RETENTION_DAYS` (default 90, clamped to 3650). Event, status, masked
+  recipient, reason and timestamps remain, so the delivery log still shows that a message
+  happened without keeping its content. `QUEUED`/`SENDING` rows are never touched.
 - **Visibility:** the page shows counts per status and the recent log (event, channel,
   audience, masked recipient, status, reason, attempts, time), filterable by status.
   `store_viewer` can read; `store_admin` and above can requeue a terminal `FAILED` row,
@@ -792,6 +842,9 @@ appears in a log line, an audit row or the admin screen.
 | Template escaping and unknown variables | `tests/notifications-templates.test.mjs` (`<script>` escaped, unknown token empty, header injection blocked, only `https` links) |
 | Retry/backoff stops at the cap; two workers never share a row | `tests/notifications-outbox-integration.test.mjs` (`FOR UPDATE SKIP LOCKED`, attempts, terminal `FAILED`) |
 | No secret or full PII in errors/logs/audit | `tests/notifications-providers.test.mjs` (missing secret named, never echoed); masked recipient in `recipient_masked` and the audit retry row |
+| No message can carry a password, token or reset link | `tests/notifications-templates.test.mjs` renders all 12 events × 3 channels × 2 audiences with secret markers and finds none; `tests/notifications-enqueue-integration.test.mjs` stores `{{token}} {{password}} {{temporary_password}} {{reset_link}}` in a template and every outbox row renders them empty |
+| Staff invite is a notice, never a credential | `tests/notifications-templates.test.mjs` (absolute `/store-admin/login` link, “password the owner shared”, no secret) |
+| Old finished messages lose body and recipient but keep the audit trail | `tests/notifications-outbox-integration.test.mjs` (terminal rows scrubbed, `QUEUED`/recent kept, masked recipient and status stay, rerun is a no-op) + `tests/notifications-rules.test.mjs` (off by default, 90-day default, 3650 clamp, exact cutoff) |
 
 **Known limits.** Indian transactional SMS through MSG91 normally requires a
 DLT-registered template id, and no such setting exists, so MSG91 may reject live SMS until
@@ -928,7 +981,7 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migration `0035` | Written: the notification outbox (`0033` is `product_collections` + `content_blocks.archived_at`; `0034` is Phase 2 order numbering + stock release). The next free number is `0036`. |
+| Migration `0036` | Written: the notification outbox (`0035`) and the payment-review flag (`0036`); `0033` is `product_collections` + `content_blocks.archived_at` and `0034` is Phase 2 order numbering + stock release. The next free number is `0037`. |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
 | SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |
@@ -955,7 +1008,8 @@ These are deliberate gaps, not bugs.
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
 | Audit | `store_admin_audit` is append-only at the database level (trigger). PII is masked; IP and user agent are hashed. |
 | Secrets | Never stored in the database and never rendered. Settings pages show only “configured / missing” badges via `secret-status.ts`. The notification worker reads `MAIL_PASSWORD`, `MSG91_AUTH_KEY`, `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` from the environment; a missing credential is reported by name only, and provider errors are reduced to a code. |
-| Notification PII | The outbox stores the recipient because it must send; the admin log shows `recipient_masked` and never the subject or body. Audit rows for retries carry the message id only. No log line contains a full email or phone. |
+| Notification PII | The outbox stores the recipient because it must send; the admin log shows `recipient_masked` and never the subject or body. Audit rows for retries carry the message id only. No log line contains a full email or phone. Retention can clear `body` and `recipient` on finished rows after N days (off by default). |
+| Notification credentials | No template variable can read a password, temporary password, token or reset link; `staff_invite` carries a notice and a sign-in link only. A test renders all 72 combinations with secret markers. |
 | Rate limiting | In-memory sliding window on PayU initiate, PayU webhook (100/min/IP) and customer order requests (10/15 min/user). |
 | Payment integrity | Reverse-hash verification plus a server-side PayU verification call before an order becomes paid; atomic idempotent transition prevents double capture. |
 | Order documents | Invoice/packing slip pages are behind the store-admin session and role check. |
@@ -974,7 +1028,7 @@ run.
 npm install
 npm run db:migrate          # applies migrations/*.sql in order
 npm run dev                 # http://localhost:3000
-npm test                    # 300 tests
+npm test                    # 385 tests
 node scripts/catalog-parity.mjs                 # read-only static ↔ database parity report
 node scripts/check-store-admin-routes.mjs
 node scripts/check-setting-lists.mjs
@@ -1018,6 +1072,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Store-admin APIs | `src/app/api/store-admin/**` |
 | Settings engine | `src/lib/store-admin/settings-rules.ts`, `setting-lists.ts`, `notification-settings.ts`, `secret-status.ts` |
 | Notifications | `src/lib/notifications/{types,rules,templates,settings,enqueue,queue,outbox,providers,order-context,stock-events}.ts`, `src/app/api/store-admin/settings/notifications/retry/route.ts`, `src/components/store-admin/{NotificationMatrix,NotificationRetryButton}.tsx`, `migrations/0035_notification_outbox.sql` |
+| Payment review flag | `src/lib/store-admin/payments.ts`, `src/app/api/store-admin/payments/review-flag/route.ts`, `src/components/store-admin/PaymentReviewFlagActions.tsx`, `migrations/0036_order_payment_review.sql` |
 | Audit | `src/lib/store-admin/audit.ts`, `audit-log.ts`, `migrations/0010_store_admin_auth.sql` |
 | Legacy CMS | `src/app/(admin)/admin/**`, `src/app/api/admin/**`, `src/lib/admin/*` |
 | Database | `migrations/*.sql` |
