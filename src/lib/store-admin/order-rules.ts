@@ -41,6 +41,9 @@ export function mapSaleState(input: {
   const paymentStatus = String(input.paymentStatus ?? '').toUpperCase();
   const fulfilmentStatus = String(input.fulfilmentStatus ?? '').toUpperCase();
   if (Number(input.refundCount ?? 0) > 0) return 'REFUNDED';
+  // An unconfirmed payment is its own state: it is not "awaiting payment"
+  // (PENDING) and must never look like a captured sale.
+  if (paymentStatus === 'PROCESSING') return 'PROCESSING';
   if (paymentStatus === 'FAILED') return 'PAYMENT_FAILED';
   if (paymentStatus === 'CANCELLED' || fulfilmentStatus === 'CANCELED') return 'CANCELED';
   if (fulfilmentStatus === 'DELIVERED') return 'DELIVERED';

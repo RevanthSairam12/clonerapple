@@ -37,6 +37,10 @@ test('sale state mapping follows refund, payment, cancellation, and fulfilment p
   assert.equal(mapSaleState({ paymentStatus: 'PAID', fulfilmentStatus: 'ON_THE_WAY' }), 'ON_THE_WAY');
   assert.equal(mapSaleState({ paymentStatus: 'PAID', fulfilmentStatus: 'PENDING', scheduledFor: '2026-10-21T10:00:00Z' }), 'SCHEDULED');
   assert.equal(mapSaleState({ paymentStatus: 'PAID', fulfilmentStatus: 'ACCEPTED' }), 'ACCEPTED');
+  // An unconfirmed payment is its own state, exactly as the order_sale_state
+  // view reports it — never PENDING ("awaiting payment") and never a sale.
+  assert.equal(mapSaleState({ paymentStatus: 'PROCESSING', fulfilmentStatus: 'PENDING' }), 'PROCESSING');
+  assert.equal(mapSaleState({ paymentStatus: 'PROCESSING', fulfilmentStatus: 'ACCEPTED' }), 'PROCESSING');
 });
 
 test('customer masking helpers do not expose full contact values', () => {

@@ -186,6 +186,9 @@ export function mapSaleState(input: {
   const paymentStatus = text(input.paymentStatus).toUpperCase();
   const fulfilmentStatus = text(input.fulfilmentStatus).toUpperCase();
   if (input.refunded || number(input.refundCount) > 0) return 'REFUNDED';
+  // Matches the order_sale_state view: an unconfirmed payment is PROCESSING,
+  // never PENDING (which reads as "awaiting payment") and never revenue.
+  if (paymentStatus === 'PROCESSING') return 'PROCESSING';
   if (paymentStatus === 'FAILED') return 'PAYMENT_FAILED';
   if (paymentStatus === 'CANCELLED' || fulfilmentStatus === 'CANCELED') return 'CANCELED';
   if (fulfilmentStatus === 'DELIVERED') return 'DELIVERED';

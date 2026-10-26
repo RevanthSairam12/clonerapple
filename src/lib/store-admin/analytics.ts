@@ -1,5 +1,6 @@
 import { getSql } from '@/lib/admin/db';
 
+import { countPendingTransactions, isRevenueStatus } from './analytics-rules';
 import { maskCustomerEmail } from './masking';
 import { maskCustomerName } from './orders';
 
@@ -710,13 +711,16 @@ export async function getTransactionsAnalytics(
       amountPaise: number(row.amount),
     }));
 
-    const paid = (statusRows as Row[]).find((row) => text(row.status) === 'PAID');
+    const paid = (statusRows as Row[]).find((row) => isRevenueStatus(text(row.status)));
     const failed = (statusRows as Row[]).find((row) => text(row.status) === 'FAILED');
-    const pending = (statusRows as Row[]).filter(
-      (row) => text(row.status) === 'PENDING' || text(row.status) === 'CREATED',
+    // PROCESSING belongs here: the money is unconfirmed, so it is neither
+    // captured revenue nor a failed payment.
+    const pendingCount = countPendingTransactions(
+      (statusRows as Row[]).map((row) => ({
+        status: text(row.status),
+        count: number(row.count),
+      })),
     );
-
-    const pendingCount = pending.reduce((sum, row) => sum + number(row.count), 0);
     const refundRowsTyped = (refundRows as Row[])[0] ?? {};
 
     return {

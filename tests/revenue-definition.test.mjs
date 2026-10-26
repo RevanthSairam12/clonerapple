@@ -41,3 +41,32 @@ test('the definition is documented, and item reports say they exclude shipping',
   // Item-wise revenue is line revenue, not the order total.
   assert.match(reports, /coalesce\(sum\(oi\.line_total_paise\), 0\)::bigint as revenue/);
 });
+
+test('an unconfirmed (PROCESSING) payment is labelled and counted, never revenue', () => {
+  // Overview: the status table must label PROCESSING, and the "Pending" tile
+  // counts it through the pure rule rather than dropping it.
+  const overview = read('src/app/(store-admin)/store-admin/(protected)/page.tsx');
+  assert.match(overview, /PROCESSING: 'Processing'/);
+  assert.match(overview, /data\.pending/);
+
+  const analytics = read('src/lib/store-admin/analytics.ts');
+  assert.match(analytics, /countPendingTransactions/);
+  assert.match(analytics, /isRevenueStatus/);
+  const analyticsProcessing = analytics
+    .split('\n')
+    .filter((line) => line.includes('PROCESSING'));
+  assert.equal(analyticsProcessing.length > 0, true);
+  for (const line of analyticsProcessing) {
+    assert.match(line.trim(), /^\/\//, 'PROCESSING may only be commented on in revenue code');
+  }
+
+  // The reports module computes money from PAID rows only; the status filter
+  // itself lives in report-rules.ts (see tests/report-rules.test.mjs).
+  assert.doesNotMatch(read('src/lib/store-admin/reports.ts'), /PROCESSING/);
+
+  // The accountant export carries captured payments only.
+  assert.match(
+    read('src/lib/store-admin/transactions.ts'),
+    /p\.id is not null or o\.status = 'PAID'/,
+  );
+});

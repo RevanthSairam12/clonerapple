@@ -40,6 +40,7 @@ const STATUS_LABELS: Record<string, string> = {
   FAILED: 'Failed',
   PENDING: 'Pending',
   CREATED: 'Created',
+  PROCESSING: 'Processing',
   CANCELLED: 'Cancelled',
 };
 
@@ -546,7 +547,7 @@ function TransactionsTab({
         <StatCard
           label="Pending"
           value={data.pending.toLocaleString('en-IN')}
-          meta="Created or awaiting confirmation"
+          meta="Created, unconfirmed or being verified"
           icon="inbox"
           tone="amber"
         />

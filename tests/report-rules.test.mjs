@@ -13,6 +13,7 @@ const jiti = createJiti(import.meta.url, {
 const {
   DEFAULT_REPORT_DAYS,
   MAX_REPORT_DAYS,
+  ORDER_STATUSES,
   REPORTS,
   REPORT_KEYS,
   REPORT_ROW_LIMIT,
@@ -120,6 +121,23 @@ test('unknown status and channel values fall back to all', () => {
   assert.equal(valid.ok, true);
   assert.equal(valid.filters.status, 'PAID');
   assert.equal(valid.filters.channel, 'pos');
+});
+
+test('every order status, including PROCESSING, can be filtered on', () => {
+  // PROCESSING exists so an unconfirmed payment can be found and reviewed; a
+  // status filter that silently dropped it would hide those orders.
+  assert.deepEqual(
+    [...ORDER_STATUSES],
+    ['CREATED', 'PENDING', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED'],
+  );
+  const processing = parseReportFilters({ status: 'processing' }, NOW);
+  assert.equal(processing.ok, true);
+  assert.equal(processing.filters.status, 'PROCESSING');
+  assert.equal(
+    reportQuery(processing.filters).includes('status=PROCESSING'),
+    true,
+    'the filtered report link keeps the status',
+  );
 });
 
 test('category and brand filters must look like ids', () => {
