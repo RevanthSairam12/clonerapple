@@ -151,7 +151,7 @@ export function reportDefinition(key: ReportKey): ReportDefinition {
 
 /* -------------------------------------------------------------- filters */
 
-export const ORDER_STATUSES = ['CREATED', 'PENDING', 'PAID', 'FAILED', 'CANCELLED'] as const;
+export const ORDER_STATUSES = ['CREATED', 'PENDING', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export const REPORT_CHANNELS = ['web', 'pos'] as const;

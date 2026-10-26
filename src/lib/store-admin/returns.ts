@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { getSql } from '@/lib/admin/db';
+import { closeRefundObligationsInTx } from '@/lib/payu/refund-obligations';
 import { releaseClaimedStock, restoreSoldStock } from '@/lib/payu/stock';
 
 import {
@@ -622,6 +623,8 @@ export type RefundMutation =
       amountPaise: number;
       remainingPaise: number;
       returnClosed: boolean;
+      /** Pending refund obligations this refund settled, if any. */
+      refundObligationsClosed: string[];
     }
   | {
       ok: false;
@@ -744,6 +747,11 @@ export async function recordRefund(input: {
         )
       `;
 
+      // A late captured payment that could not be fulfilled leaves one pending
+      // obligation. This refund may settle it; closing is amount-based and
+      // idempotent, so a second partial refund cannot close it twice.
+      const refundObligationsClosed = await closeRefundObligationsInTx(tx, orderId);
+
       let returnClosed = false;
       if (returnId && expectedPaise > 0) {
         const paidRows = (await tx`
@@ -770,6 +778,7 @@ export async function recordRefund(input: {
         amountPaise: Math.trunc(input.amountPaise),
         remainingPaise: check.remainingPaise,
         returnClosed,
+        refundObligationsClosed,
       };
     });
   } catch {
@@ -887,7 +896,7 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
   const note = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';
 
   const orderRows = (await tx`
-    select id, txnid, status, fulfilment_status
+    select id, txnid, status, fulfilment_status, reservation_state
     from orders
     where txnid = ${input.txnid.trim()}
     for update
@@ -928,7 +937,10 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
   await tx`
     update orders
     set fulfilment_status = 'CANCELED',
-        status = case when status in ('CREATED', 'PENDING') then 'CANCELLED' else status end,
+        status = case
+          when status in ('CREATED', 'PENDING', 'PROCESSING') then 'CANCELLED'
+          else status
+        end,
         cancelled_at = now(),
         cancel_reason = ${note ? `${label} — ${note}` : label},
         cancellation_reason_id = ${text(reason.id)},
@@ -936,6 +948,22 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
         updated_at = now()
     where id = ${orderId}
   `;
+
+  // An unpaid claim leaves the shelf in this transaction, so its reservation
+  // must stop looking live. A later verified capture then follows the
+  // reclaim-or-refund path instead of assuming it still owns the units.
+  if (paymentStatus !== 'PAID' && text(order.reservation_state) === 'ACTIVE') {
+    await tx`
+      update orders
+      set reservation_state = 'RELEASED',
+          reservation_released_at = now(),
+          reservation_released_reason = 'cancelled by store staff',
+          processing_deadline = null,
+          next_reconcile_at = null,
+          updated_at = now()
+      where id = ${orderId} and reservation_state = 'ACTIVE'
+    `;
+  }
 
   await tx`
     update order_deliveries

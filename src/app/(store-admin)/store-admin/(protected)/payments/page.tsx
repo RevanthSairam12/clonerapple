@@ -4,6 +4,7 @@ import { formatPaise } from '@/lib/store-admin/amount';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { listPaymentReviewOrders, listPendingPayments } from '@/lib/store-admin/payments';
 import { ANY_METHOD_LABELS } from '@/lib/store-admin/payment-rules';
+import { listPendingRefundObligations } from '@/lib/payu/refund-obligations';
 import { PaymentReviewActions } from '@/components/store-admin/PaymentReviewActions';
 import { PaymentReviewFlagActions } from '@/components/store-admin/PaymentReviewFlagActions';
 
@@ -34,12 +35,14 @@ function waitingFor(value: string): string {
 
 export default async function StoreAdminPaymentsPage() {
   const session = await getStoreSession();
-  const [result, reviewResult] = await Promise.all([
+  const [result, reviewResult, obligations] = await Promise.all([
     listPendingPayments(),
     listPaymentReviewOrders(),
+    listPendingRefundObligations(100),
   ]);
   const canReview = session?.role === 'store_admin' || session?.role === 'store_owner';
   const flagged = reviewResult.ok ? reviewResult.data : [];
+  const refundsOwedPaise = obligations.reduce((sum, obligation) => sum + obligation.amountPaise, 0);
 
   if (!result.ok) {
     return (
@@ -144,6 +147,52 @@ export default async function StoreAdminPaymentsPage() {
                     <td>
                       <PaymentReviewFlagActions txnid={order.txnid} canReview={canReview} />
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {obligations.length > 0 ? (
+        <div className="sa-panel">
+          <div className="sa-panel-head">
+            <h2 className="sa-card-title">Refunds owed</h2>
+            <span className="sa-row-sub">
+              {obligations.length} order(s) · {formatPaise(refundsOwedPaise)}
+            </span>
+          </div>
+          <p className="sa-readonly-foot">
+            The bank captured these payments after the reservation had expired and the units were
+            sold to someone else, so the order cannot be fulfilled. Record a refund against the
+            order; the obligation closes itself once the refunds cover the amount. Nothing here
+            moves money automatically.
+          </p>
+          <div className="sa-table-wrap">
+            <table className="sa-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th className="sa-num">Owed</th>
+                  <th>Reason</th>
+                  <th className="sa-num">Waiting</th>
+                </tr>
+              </thead>
+              <tbody>
+                {obligations.map((obligation) => (
+                  <tr key={obligation.id}>
+                    <td>
+                      <Link
+                        className="sa-product-link sa-mono"
+                        href={`/store-admin/orders/${encodeURIComponent(obligation.txnid)}`}
+                      >
+                        {obligation.txnid}
+                      </Link>
+                    </td>
+                    <td className="sa-num">{formatPaise(obligation.amountPaise)}</td>
+                    <td className="sa-row-sub">{obligation.reason || '—'}</td>
+                    <td className="sa-num">{waitingFor(obligation.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
