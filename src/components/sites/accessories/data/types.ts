@@ -48,6 +48,11 @@ export interface AccessoryProduct {
   specs: SpecRow[];
   inTheBox: string[];
   href: string;
+  /**
+   * Sellable right now. Static bundles omit it (treated as true); the
+   * database-backed reader sets it from `products.in_stock` and the stock row.
+   */
+  inStock?: boolean;
 }
 
 /** A single filter group in the sidebar (and the facet it reads from). */

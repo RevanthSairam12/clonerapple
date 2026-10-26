@@ -12,6 +12,7 @@
  */
 
 import { getSql } from '@/lib/admin/db';
+import { stockStateFrom } from '@/lib/storefront/catalog-rules';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: The storefront catalogue must be read on the server only.');
@@ -31,6 +32,13 @@ export interface StorefrontHighlight {
   title: string;
   desc: string;
 }
+
+/**
+ * Availability as the stock table defines it. Only `out_of_stock` changes a
+ * storefront surface today (a disabled quick-add); `low_stock` is carried for
+ * the surfaces that already have room for it.
+ */
+export type StorefrontStockState = 'in_stock' | 'low_stock' | 'out_of_stock';
 
 export interface StorefrontProduct {
   id: string;
@@ -60,6 +68,13 @@ export interface StorefrontProduct {
   inTheBox: string[];
   badge?: string;
   inStock: boolean;
+  /** `in_stock` / `low_stock` / `out_of_stock`, from the stock row. */
+  stockState: StorefrontStockState;
+  /** Units available (`on_hand - reserved`); null when the product is untracked. */
+  availableStock: number | null;
+  /** The product's `stock.low_stock_threshold`; null when there is no stock row. */
+  lowStockThreshold: number | null;
+  trackInventory: boolean;
   categoryId: string;
   categorySlug: string;
   categoryName: string;
@@ -173,10 +188,11 @@ interface ProductAggregate {
   facets: Row[];
   specs: Row[];
   variants: Row[];
+  stock?: Row;
 }
 
 function mapProduct(aggregate: ProductAggregate): StorefrontProduct {
-  const { row, images, facets, specs, variants } = aggregate;
+  const { row, images, facets, specs, variants, stock } = aggregate;
 
   const pricePaise = Math.round(number(row.price_paise));
   const compareAt = row.compare_at_paise === null || row.compare_at_paise === undefined
@@ -213,6 +229,7 @@ function mapProduct(aggregate: ProductAggregate): StorefrontProduct {
 
   const colors = asColors(row.__colors);
   const compatibility = facetValues.model ?? [];
+  const stockState = stockStateFrom(stock, Boolean(row.in_stock));
 
   const product: StorefrontProduct = {
     id: text(row.id),
@@ -240,7 +257,11 @@ function mapProduct(aggregate: ProductAggregate): StorefrontProduct {
       .map((spec) => ({ label: text(spec.label), value: text(spec.value) }))
       .filter((spec) => spec.label),
     inTheBox: asStringArray(row.in_the_box),
-    inStock: Boolean(row.in_stock),
+    inStock: stockState.state !== 'out_of_stock',
+    stockState: stockState.state,
+    availableStock: stockState.available,
+    lowStockThreshold: stockState.threshold,
+    trackInventory: stockState.tracked,
     categoryId: text(row.category_id),
     categorySlug: text(row.__category_slug),
     categoryName: text(row.__category_name),
@@ -277,13 +298,14 @@ interface CatalogLoad {
   facets: Row[];
   specs: Row[];
   variants: Row[];
+  stock: Row[];
 }
 
 async function loadCatalog(): Promise<CatalogLoad | null> {
   const sql = getSql();
   if (!sql) return null;
 
-  const [categories, products, images, facets, specs, variants] = await Promise.all([
+  const [categories, products, images, facets, specs, variants, stock] = await Promise.all([
     sql`
       select c.id, c.slug, c.name, c.title, c.subhead, c.breadcrumb_leaf,
              c.count_noun, c.disclaimer, c.nav_label, c.nav_href,
@@ -326,6 +348,13 @@ async function loadCatalog(): Promise<CatalogLoad | null> {
       from product_variants
       order by sort_order asc
     `,
+    // Product-level stock only. Variant stock exists but carries no storefront
+    // meaning yet (variants have no price and no per-colour availability UI).
+    sql`
+      select product_id, on_hand, reserved, low_stock_threshold, track_inventory
+      from stock
+      where variant_id is null
+    `,
   ]);
 
   return {
@@ -335,6 +364,7 @@ async function loadCatalog(): Promise<CatalogLoad | null> {
     facets: facets as Row[],
     specs: specs as Row[],
     variants: variants as Row[],
+    stock: stock as Row[],
   };
 }
 
@@ -357,6 +387,7 @@ function mapAll(load: CatalogLoad): {
   const facets = groupByProduct(load.facets);
   const specs = groupByProduct(load.specs);
   const variants = groupByProduct(load.variants);
+  const stock = groupByProduct(load.stock);
 
   const byProductId = new Map<string, StorefrontProduct>();
   for (const row of load.products) {
@@ -367,6 +398,7 @@ function mapAll(load: CatalogLoad): {
       facets: facets.get(id) ?? [],
       specs: specs.get(id) ?? [],
       variants: variants.get(id) ?? [],
+      stock: stock.get(id)?.[0],
     }));
   }
 
@@ -398,6 +430,25 @@ function mapAll(load: CatalogLoad): {
   });
 
   return { categories, byProductId };
+}
+
+/** Everything one request may need, in cacheable (serializable) form. */
+export interface StorefrontCatalogSnapshot {
+  categories: StorefrontCategory[];
+  products: StorefrontProduct[];
+}
+
+/**
+ * Strict catalogue read for the caching layer. Returns null when no database
+ * is configured; throws when a configured database cannot be read, so the
+ * caller can tell "no database" apart from "query failed" and fall back to
+ * the static bundles exactly once.
+ */
+export async function readStorefrontCatalog(): Promise<StorefrontCatalogSnapshot | null> {
+  const load = await loadCatalog();
+  if (!load) return null;
+  const { categories, byProductId } = mapAll(load);
+  return { categories, products: [...byProductId.values()] };
 }
 
 /**
@@ -498,6 +549,25 @@ export async function getStorefrontProduct(id: string): Promise<StorefrontProduc
     return byProductId.get(id) ?? byProductId.get(id.toLowerCase()) ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Several products by id, in the order requested. Inactive, deleted and
+ * unknown ids are dropped rather than rendered as empty cards.
+ */
+export async function getStorefrontProducts(ids: string[]): Promise<StorefrontProduct[]> {
+  if (ids.length === 0) return [];
+  try {
+    const load = await loadCatalog();
+    if (!load) return [];
+    const { byProductId } = mapAll(load);
+    return ids.flatMap((id) => {
+      const product = byProductId.get(id) ?? byProductId.get(id.toLowerCase());
+      return product ? [product] : [];
+    });
+  } catch {
+    return [];
   }
 }
 
