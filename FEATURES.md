@@ -7,14 +7,14 @@ reached through `.env.local`.
 
 | Check | Result |
 |---|---|
-| `npm test` | **300 tests, 300 pass, 0 fail** |
+| `npm test` | **376 tests, 376 pass, 0 fail** |
 | `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported |
-| `node scripts/check-store-admin-routes.mjs` | **All 84 store-admin routes are guarded** |
+| `node scripts/check-store-admin-routes.mjs` | **All 85 store-admin routes are guarded** |
 | `node scripts/check-setting-lists.mjs` | all 12 settings tables readable, 72 notification cells |
 | `node scripts/check-admin-boundary.mjs` | legacy CMS holds no commerce field; 11 Education collections exempt |
 | `npm run typecheck` / `npm run build` | both succeed |
 | Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render |
-| Migrations applied | `schema_migrations` holds all 31 migration files through `0033_storefront_collections.sql`; Phase 1 added no migration |
+| Migrations applied | `schema_migrations` holds every migration file through `0035_notification_outbox.sql`; Phase 1 added no migration |
 | Database contents | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
 ---
@@ -65,7 +65,9 @@ environment variables in the table below at deploy time.
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | yes | CMS content reads through Supabase REST first. |
 | `CRON_SECRET` | **no** | `/api/payu/reconcile` accepts unauthenticated POSTs. See §7. |
 | `RECAPTCHA_SECRET_KEY` | **no** | reCAPTCHA is not enforced anywhere. |
-| `MAIL_PASSWORD`, `MSG91_AUTH_KEY`, `TWILIO_AUTH_TOKEN` | **no** | No outbound email or SMS exists in code at all. |
+| `MAIL_PASSWORD` | **no** | Email still queues, but every email row is marked `SKIPPED` with “mail not configured (`MAIL_PASSWORD` is missing)”. Checkout is unaffected. |
+| `MSG91_AUTH_KEY` / `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` | **no** | SMS still queues, but every SMS row is marked `SKIPPED` until the chosen gateway's credentials exist. |
+| `APP_BASE_URL` | **no** | Optional. Absolute links in messages fall back to `https://gadzio.in` in production and `http://localhost:3000` in development. |
 
 ---
 
@@ -450,6 +452,11 @@ payments and cancels unpaid orders older than `auto_cancel_unpaid_hours` (0 or e
 2 hours), releasing their stock once and writing an `order.auto_cancel` audit row. Without
 the schedule, abandoned orders keep holding stock forever.
 
+Each run also drains up to **10 due notification outbox rows** (§3.6), so the same cron
+retries email and SMS that a provider rejected. Enqueued messages first get one best-effort
+send in the request's `after()` hook; the cron is the safety net. `CRON_SECRET` behaviour
+is unchanged.
+
 - Host cron: `*/10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" https://<store-host>/api/payu/reconcile`
 - GitHub Actions `on: schedule` (`*/10 * * * *`) running the same `curl`.
 - Any scheduler that can send a POST. The route accepts POST only, so a GET-only cron
@@ -496,7 +503,8 @@ remains callable in development for manual runs.
 **Migration `0034`** adds `orders.order_number`, the `order_number_counters` table (RLS
 enabled, reset-blocking trigger), a partial unique index on `order_number`, an index on
 `stock_movements.order_id`, and adds `release` to the movement-reason check. Phase 1 needed
-no migration; Phase 2 used `0034`, so the next free number is `0035` (notifications).
+no migration; Phase 2 used `0034` and the notification outbox used `0035`, so the next free
+number is `0036`.
 
 ---
 
@@ -693,9 +701,9 @@ the server would reject. Every write is audited.
 | Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, default fulfilment status, return window, processing/cut-off text | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
 | Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🟡 `payu_enabled` gates initiate and `payment_note` renders under the checkout PayU helper. `cod_enabled` (default off), `manual_payments_enabled`, `payu_mode` and `payment_methods` are stored only — checkout has no method selector. |
 | Storefront | `/settings/storefront` | Login heading/subheading, login background media, support link, reCAPTCHA site key + status | 🔵 None consumed by the storefront. The store-admin login page renders its own copy. |
-| Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id | ⚪ Status only — no mail/SMS sender code exists. |
+| Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id | 🟢 These settings decide whether the outbox can deliver email or SMS. Secrets stay in environment variables; the page still shows only configured/missing badges. |
 | Shipping | `/settings/shipping` | Couriers + tracking templates, shipping methods and rates, live link tester | 🟢 Couriers + tracking templates used at delivery save; rates and free-over thresholds consumed by the checkout quote and the cart Shipping row |
-| Notifications | `/settings/notifications` | 72 toggles (12 events × 3 channels × 2 audiences), automated messages, email templates | 🔵 Stored only |
+| Notifications | `/settings/notifications` | 72 toggles (12 events × 3 channels × 2 audiences), automated messages, email templates, delivery log | 🟢 Enabled cells queue real messages when their event fires; stored templates render them; the delivery log shows every send, skip and failure. |
 | Content | `/settings/content` | Store pages (8) and fixed SEO rows (14) | 🔵 Stored only — no route renders `store_pages`, no metadata reads `seo_pages` |
 | Analytics | `/settings/analytics` | Social links, analytics script IDs, integrations (storage/mail/payment/webhook) | 🔵 Stored only |
 | Reasons | `/settings/reasons` | Cancellation reasons, refund reasons, return reasons | 🟡 Cancellation reasons are used by the returns/cancel flow; refund and return reason lists are stored only. |
@@ -714,9 +722,83 @@ a store-wide `free_shipping_over` threshold short-circuits to free. The quote is
 `orders.shipping_paise` and charged by PayU; the cart page shows the same figure in its
 existing Shipping row.
 
-#### Notifications — 🔵 Stored only
-The matrix and message templates persist, but there is no dispatcher, no outbox table and
-no provider client. Nothing is ever sent.
+#### Notifications and delivery — 🟢 Live
+The 72-cell matrix now drives real messages. When a business event fires, the app reads
+the enabled cells for that event and writes one row per channel and audience into
+`notification_outbox` (migration `0035`, RLS enabled, no policies). Queueing happens after
+the business transaction commits and is best-effort: a failed enqueue, a slow SMTP server
+or a missing provider can never roll back an order, payment callback or request update.
+Only the customer's order-visible data reaches a template; both audiences get their own
+link (`/order/status?txnid=…` for the customer, `/store-admin/orders/…` for staff).
+
+| Matrix event | Fires when | Code |
+|---|---|---|
+| `order_placed` | PayU checkout creates the order | `src/app/api/payu/initiate/route.ts` |
+| `payment_received` | The first verified PAID transition (callback or reconcile) | `src/lib/payu/process-response.ts`, `reconcile.ts` |
+| `processing` | Fulfilment moves to `PROCESSING` | `orders/[txnid]/fulfilment/route.ts` |
+| `shipped` | Fulfilment moves to `ON_THE_WAY` (with tracking number/link) | same |
+| `delivered` | Fulfilment moves to `DELIVERED` | same |
+| `cancelled` | Admin cancel, PayU failure/auto-cancel, approved customer cancel | cancel + reconcile + requests routes |
+| `refund_requested` | A customer opens a return/refund request, or staff creates one | account requests + `store-admin/returns` |
+| `refund_completed` | A refund is recorded | refund routes |
+| `back_in_stock` | Available stock crosses up from 0 | `stock/[productId]/adjust` |
+| `low_stock` | Available crosses down through `low_stock_threshold` | same |
+| `password_reset` | A customer or staff password is changed | `account/password`, `staff/[id]/password` |
+| `staff_invite` | A staff account is created | `store-admin/staff` |
+
+- **Defaults:** only in-app messages to staff start on. Email and SMS stay off until the
+  owner turns the cell on *and* configures the provider under `/settings/mail`.
+- **Recipients:** customer email/phone come from the order. Staff messages go to the
+  business `email` setting; invitations and password resets go to the staff member's own
+  address. A missing address/phone creates a `SKIPPED` row with a reason, never silence.
+- **Templates:** stored `email_templates` / `automated_messages` win; a missing or empty
+  template falls back to a built-in plain default so an enabled cell is never blank.
+  Variables are whitelisted (order number, customer name, total, shipping, status,
+  tracking, store name, support contact, return window, refund amount, item count, product
+  and stock count, relative admin link). Unknown tokens render empty. Email values are
+  HTML-escaped; SMS values are stripped of control characters. Tracking links must already
+  be `https`.
+- **Delivery:** `processNotificationOutbox()` claims due rows with
+  `FOR UPDATE SKIP LOCKED`, marks them `SENDING` with a 5-minute lease, sends with a ~10 s
+  provider timeout, then writes `SENT`, or `FAILED` with `attempts + 1` and exponential
+  backoff (60/120/240/480 s, capped at 1 h). Five attempts is the cap; a permanently
+  invalid recipient is `FAILED` immediately. Two workers never send the same row. A crash
+  between send and the status write can repeat one message (at-least-once), never lose one.
+- **Dedupe:** the unique `dedupe_key` makes duplicate PayU callbacks, repeated reconcile
+  runs and double-clicks harmless. Order-level events are once per order; legitimate
+  repeats (multiple return requests, refunds, stock movements, password changes) carry a
+  token in the key.
+- **Visibility:** the page shows counts per status and the recent log (event, channel,
+  audience, masked recipient, status, reason, attempts, time), filterable by status.
+  `store_viewer` can read; `store_admin` and above can requeue a terminal `FAILED` row,
+  which is same-origin checked and audited by message id only.
+
+**What actually sends.** Email needs `mail_driver = smtp`, `mail_status = on`, a host, a
+valid From address and `MAIL_PASSWORD`. SMS needs `sms_status = on`, a gateway, a sender id,
+and `MSG91_AUTH_KEY` or `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`. Anything missing leaves
+the row `SKIPPED` with a “not configured” reason that names the setting, never its value.
+Application logs and `store_admin_audit` contain masked recipients only; a secret never
+appears in a log line, an audit row or the admin screen.
+
+**Evidence**
+
+| Rule | Proof |
+|---|---|
+| Payment success sends one message per order despite duplicate callbacks/reconcile | `tests/notifications-enqueue-integration.test.mjs` (repeat enqueue inserts nothing) + the unique `dedupe_key` |
+| Auto-cancel sends the cancellation once | same test file (`cancelled` matrix, two calls, three rows once) |
+| A disabled cell creates no row and sends nothing | `tests/notifications-enqueue-integration.test.mjs` |
+| Guest with email only: email queues, SMS is `SKIPPED` with a reason | `tests/notifications-enqueue-integration.test.mjs` |
+| Missing mail configuration never breaks checkout | `tests/notifications-providers.test.mjs` + enqueue swallows every error; `notifications-enqueue-integration.test.mjs` drops the settings table and asserts a no-op |
+| Template escaping and unknown variables | `tests/notifications-templates.test.mjs` (`<script>` escaped, unknown token empty, header injection blocked, only `https` links) |
+| Retry/backoff stops at the cap; two workers never share a row | `tests/notifications-outbox-integration.test.mjs` (`FOR UPDATE SKIP LOCKED`, attempts, terminal `FAILED`) |
+| No secret or full PII in errors/logs/audit | `tests/notifications-providers.test.mjs` (missing secret named, never echoed); masked recipient in `recipient_masked` and the audit retry row |
+
+**Known limits.** Indian transactional SMS through MSG91 normally requires a
+DLT-registered template id, and no such setting exists, so MSG91 may reject live SMS until
+that is added (report, not invented). The POS in-store sale path and sale/refund-induced
+low-stock crossings do not raise notifications yet; nor does a later edit to delivery
+details after `shipped` (the first message already carried the tracking data). There is no
+customer “forgot password” flow to notify.
 
 #### Content pages and SEO — 🔵 Stored only
 `store_pages` holds eight pages (about, contact, FAQ, policies, etc.). They are edited and
@@ -813,10 +895,11 @@ A single view of every Phase 9 setting.
 | `refund_reasons`, `return_reasons` | Settings → Reasons | — | 🔵 |
 | `login_heading`, `login_subheading`, `login_background_media_id`, `login_support_link`, `recaptcha_site_key`, `recaptcha_status` | Settings → Storefront | — | 🔵 |
 | `maintenance_enabled`, `maintenance_message`, `maintenance_starts_at`, `maintenance_ends_at` | Settings → Storefront (owner only) | — | 🔵 |
-| `mail_driver`, `mail_status`, `mail_host`, `mail_port`, `mail_username`, `mail_encryption`, `mail_from_email`, `mail_from_name`, `sms_gateway`, `sms_status`, `sms_sender_id` | Settings → Mail | — | 🔵 |
-| Notification matrix (72 cells) | Settings → Notifications | — | 🔵 |
-| Automated messages | Settings → Notifications | — | 🔵 |
-| Email templates | Settings → Notifications | — | 🔵 |
+| `mail_driver`, `mail_status`, `mail_host`, `mail_port`, `mail_username`, `mail_encryption`, `mail_from_email`, `mail_from_name` | Settings → Mail | Notification outbox email delivery (SMTP); `MAIL_PASSWORD` stays in the environment | 🟢 |
+| `sms_gateway`, `sms_status`, `sms_sender_id` | Settings → Mail | Notification outbox SMS delivery (MSG91/Twilio); credentials stay in the environment | 🟢 |
+| Notification matrix (72 cells) | Settings → Notifications | Which outbox rows each business event creates | 🟢 |
+| Automated messages | Settings → Notifications | SMS/email copy rendered into outbox rows, with built-in fallbacks | 🟢 |
+| Email templates | Settings → Notifications | Email subject/heading/body/button/footer, with built-in fallbacks | 🟢 |
 | `store_pages` | Settings → Content | — | 🔵 |
 | `seo_pages` | Settings → Content | — | 🔵 |
 | Social links | Settings → Analytics | — | 🔵 |
@@ -824,12 +907,13 @@ A single view of every Phase 9 setting.
 | Integrations (storage/mail/webhooks) | Settings → Analytics | — | 🔵 |
 | SMTP password, MSG91/Twilio token, reCAPTCHA secret, PayU key/salt | Environment only | Secret-presence badges | ⚪ |
 
-Summary: of the **51 keys** in `store_settings`, **16 are consumed** — `trade_name`,
+Summary: of the **51 keys** in `store_settings`, **27 are consumed** — `trade_name`,
 `address`, `phone`, `email`, `receipt_footer`, `order_prefix`, `order_start_number`,
 `invoice_prefix`, `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`,
-`return_window_days`, `shipping_enabled`, `free_shipping_over`, `payu_enabled` and
-`payment_note` — plus the `shipping_methods` table and the three `customer_settings` keys.
-The remaining 35 are persisted and audited but read by nothing.
+`return_window_days`, `shipping_enabled`, `free_shipping_over`, `payu_enabled`,
+`payment_note`, the eight mail keys and the three SMS keys — plus the `shipping_methods`
+table, the three `customer_settings` keys, the 72-cell notification matrix and both message
+tables. The remaining 24 are persisted and audited but read by nothing.
 
 `store_settings` currently holds **1 row** — the smoke run from Phase 9 set `trade_name` to
 “Gadzio”. Every other key still shows its coded default.
@@ -842,9 +926,11 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migration `0035` | Reserved for notifications/outbox, background jobs and search indexes. Not written yet. (`0033` is `product_collections` + `content_blocks.archived_at`; `0034` is Phase 2 order numbering + stock release.) |
+| Migration `0035` | Written: the notification outbox (`0033` is `product_collections` + `content_blocks.archived_at`; `0034` is Phase 2 order numbering + stock release). The next free number is `0036`. |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
-| Email and SMS delivery | No provider client, no outbox, no worker. The settings exist so the configuration has a home when the sender is built. |
+| Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
+| SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |
+| POS and staff-initiated notifications | In-store sales and their low-stock crossings do not enqueue. A later edit to delivery details after `shipped` sends no second message. |
 | PayU refund API | Manual refunds by design. The admin records the refund and the owner moves money in the PayU dashboard. |
 | Courier API integration | Third-party courier; the owner supplies a tracking URL template. |
 | Wallet, loyalty, serial/IMEI tracking, vendor/marketplace modules | Out of scope for a single store. |
@@ -861,12 +947,13 @@ These are deliberate gaps, not bugs.
 | Area | Implementation |
 |---|---|
 | Database access | Server-side only, `DATABASE_URL`, `postgres` tagged templates. The Supabase publishable key is used **only** for read-only `content_blocks`. |
-| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`) and `order_number_counters` (`0034`). Every table created since ships with RLS enabled in its own migration file. |
+| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`), `order_number_counters` (`0034`) and `notification_outbox` (`0035`). Every table created since ships with RLS enabled in its own migration file. |
 | Admin identities | Three completely separate stores: customer (`users`), store staff (`store_admins`), legacy CMS (`admin_users`). No cookie or session table is shared. |
 | Role checks | Every store-admin API route calls `requireStoreRole(...)`; verified by `scripts/check-store-admin-routes.mjs`. |
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
 | Audit | `store_admin_audit` is append-only at the database level (trigger). PII is masked; IP and user agent are hashed. |
-| Secrets | Never stored in the database and never rendered. Settings pages show only “configured / missing” badges via `secret-status.ts`. |
+| Secrets | Never stored in the database and never rendered. Settings pages show only “configured / missing” badges via `secret-status.ts`. The notification worker reads `MAIL_PASSWORD`, `MSG91_AUTH_KEY`, `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` from the environment; a missing credential is reported by name only, and provider errors are reduced to a code. |
+| Notification PII | The outbox stores the recipient because it must send; the admin log shows `recipient_masked` and never the subject or body. Audit rows for retries carry the message id only. No log line contains a full email or phone. |
 | Rate limiting | In-memory sliding window on PayU initiate, PayU webhook (100/min/IP) and customer order requests (10/15 min/user). |
 | Payment integrity | Reverse-hash verification plus a server-side PayU verification call before an order becomes paid; atomic idempotent transition prevents double capture. |
 | Order documents | Invoice/packing slip pages are behind the store-admin session and role check. |
@@ -928,6 +1015,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Store-admin pages | `src/app/(store-admin)/store-admin/**` |
 | Store-admin APIs | `src/app/api/store-admin/**` |
 | Settings engine | `src/lib/store-admin/settings-rules.ts`, `setting-lists.ts`, `notification-settings.ts`, `secret-status.ts` |
+| Notifications | `src/lib/notifications/{types,rules,templates,settings,enqueue,queue,outbox,providers,order-context,stock-events}.ts`, `src/app/api/store-admin/settings/notifications/retry/route.ts`, `src/components/store-admin/{NotificationMatrix,NotificationRetryButton}.tsx`, `migrations/0035_notification_outbox.sql` |
 | Audit | `src/lib/store-admin/audit.ts`, `audit-log.ts`, `migrations/0010_store_admin_auth.sql` |
 | Legacy CMS | `src/app/(admin)/admin/**`, `src/app/api/admin/**`, `src/lib/admin/*` |
 | Database | `migrations/*.sql` |
