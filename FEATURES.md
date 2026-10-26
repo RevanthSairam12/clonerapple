@@ -798,7 +798,9 @@ DLT-registered template id, and no such setting exists, so MSG91 may reject live
 that is added (report, not invented). The POS in-store sale path and sale/refund-induced
 low-stock crossings do not raise notifications yet; nor does a later edit to delivery
 details after `shipped` (the first message already carried the tracking data). There is no
-customer “forgot password” flow to notify.
+customer “forgot password” flow to notify. Staff in-app messages are marked `SENT` and are
+visible in the delivery log but have no separate inbox screen; a customer in-app cell has
+no destination and is `SKIPPED`.
 
 #### Content pages and SEO — 🔵 Stored only
 `store_pages` holds eight pages (about, contact, FAQ, policies, etc.). They are edited and
