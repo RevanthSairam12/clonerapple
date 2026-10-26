@@ -1,18 +1,21 @@
 # Gadzio — Feature Reference
 
-**Verified:** 25 October 2026, against the code in this repository and the database
+**Verified:** 26 October 2026, against the code in this repository and the database
 reached through `.env.local`.
 
 **Evidence collected at that moment**
 
 | Check | Result |
 |---|---|
-| `npm test` | **249 tests, 249 pass, 0 fail** |
-| `node scripts/check-store-admin-routes.mjs` | **All 83 store-admin routes are guarded** |
+| `npm test` | **300 tests, 300 pass, 0 fail** |
+| `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported |
+| `node scripts/check-store-admin-routes.mjs` | **All 84 store-admin routes are guarded** |
 | `node scripts/check-setting-lists.mjs` | all 12 settings tables readable, 72 notification cells |
-| `npm run build` | succeeds |
-| Migrations applied | `schema_migrations` holds all 30 migration files through `0032_store_settings.sql` |
-| Database contents | 13 active products, 29 orders, 3 users, 1 store admin, 793 audit rows, 6 content blocks, 0 media, 0 subscribers, 0 order requests |
+| `node scripts/check-admin-boundary.mjs` | legacy CMS holds no commerce field; 11 Education collections exempt |
+| `npm run typecheck` / `npm run build` | both succeed |
+| Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render |
+| Migrations applied | `schema_migrations` holds all 31 migration files through `0033_storefront_collections.sql`; Phase 1 added no migration |
+| Database contents | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
 ---
 
@@ -72,18 +75,27 @@ environment variables in the table below at deploy time.
 Browser
   │
   ├── Storefront  (src/app/(public routes))  ── reads content_blocks (Supabase REST → DATABASE_URL fallback)
-  │        │                                      reads static product registry
+  │        │                                      reads catalogue via src/lib/storefront/catalog.ts
+  │        │                                        (DATABASE_URL; static bundle only on outage)
+  │        │                                      reads product_collections only when a rail consumes one
   │        │                                      cart in localStorage + cart-id cookie
   │        └── /api/payu/* ──────────────► PayU hosted checkout ──► callbacks ──► orders table
   │
   ├── Customer account  (/account, /auth) ─────► users / user_sessions / orders / customer_addresses / order_requests
   │
   ├── Store admin  (/store-admin) ─────────────► store_admins / store_admin_sessions  (cookie store_admin_session)
-  │        └── 83 API routes, each requireStoreRole(...)
+  │        └── 84 API routes, each requireStoreRole(...); owns products, collections, orders, customers
   │
   └── Legacy CMS admin (/admin) ───────────────► admin_users / admin_sessions  (cookie admin_session)
-                                                   edits content_blocks, theme, media
+                                                   edits content_blocks (design/marketing only), theme, shared media
 ```
+
+**The admin boundary (Phase 0).** The legacy CMS may edit layout, copy, imagery and
+theme. It may not accept a product id, name, price, cost, SKU, stock, discount, order,
+customer or shipping value; `/api/admin/content` rejects such a payload through
+`validateLegacyContentWrite()` and `scripts/check-admin-boundary.mjs` proves it. Product
+and merchandising data is written only by Store Admin. The Education Store (`edu.*`) is
+exempt and untouched. See `PHASE0-AUDIT.md` for the full field-by-field audit.
 
 Two independent admin identities exist and must never be mixed:
 
@@ -105,18 +117,23 @@ separate validation code.
 ### 2.1 Homepage — 🟢 Live (CMS-driven)
 
 - **Route:** `/`
-- **What it does:** renders the marketing homepage: hero, promotional tiles, product
-  carousels and section copy.
+- **What it does:** renders the marketing homepage: hero, promotional tiles, gallery and
+  section copy.
 - **How it works:** `src/lib/content.ts` reads `content_blocks` rows by key. It tries the
   Supabase REST endpoint first (`NEXT_PUBLIC_SUPABASE_*`, read-only, publishable key) and
   falls back to a direct `DATABASE_URL` query if REST fails. A database row **overrides**
   the defaults baked into code, so editing the content collection in `/admin` changes the
-  page even though the JSON in the repo is unchanged.
-- **Current data:** 6 content blocks exist.
+  page even though the JSON in the repo is unchanged. Archived rows (`archived_at`) are
+  ignored, so a collection can be reverted without deleting it.
+- **Current data:** 6 content blocks exist (`apple.footer`, `apple.gallery`,
+  `apple.hero_tiles`, `apple.hero_video`, `apple.promo_section`, `apple.ribbon`).
 - **Caveat:** this is the legacy CMS path, not the new store-admin settings. There is no
-  store-admin screen that edits homepage content.
+  store-admin screen that edits homepage content. The homepage has no product carousel
+  today; `product_collections` and `src/lib/storefront/collections.ts` are ready for the
+  first rail when collections are wired in a later phase, but no storefront component
+  consumes them yet (Phase 1 explicitly left collections alone).
 
-### 2.2 Accessory category pages — 🟡 Live (static data)
+### 2.2 Accessory category pages — 🟢 Live (database catalogue)
 
 - **Routes (six):**
   `/in/shop/iphone/accessories/mobile-cases`,
@@ -126,44 +143,70 @@ separate validation code.
   `/in/shop/iphone/accessories/power-adapter-cable`,
   `/in/shop/iphone/accessories/wired-earphones`
 - **What they do:** category listing pages with their own hero, filters and product grids.
-- **How they work:** each page imports its configuration and product list from
-  `src/components/sites/accessories/data/*`. Rendering is shared through
-  `AccessoryCategoryPage`.
-- **Caveat:** the product data files are the source of truth for what is displayed. The
-  `products` table holds matching rows so checkout can price them, but **the listing text
-  and imagery come from code**, not from the database.
+  Rendering is shared through `AccessoryCategoryPage`.
+- **How they work:** the server calls `getAccessoryCategoryView(slug)` or
+  `getAccessoryProductsView(slug)` in `src/lib/storefront/catalog.ts`. Live products come
+  from `categories` / `products` / `product_images` / `product_facets` / `product_specs` /
+  `stock`; database values win and the static bundle fills fields the database does not
+  carry (marketing copy, colour swatches, gallery extras, in-the-box lists). The static
+  keyword file is only used when the database is unreachable.
+- **Page furniture:** the five explicit routes keep their coded `CONFIG` (hero, filters,
+  navigation); the dynamic `[slug]` route also reads category furniture from the database.
+- **Availability:** inactive/deleted products and inactive categories are omitted. A
+  product whose database stock resolves to zero uses the card's existing **Out of stock**
+  state and disabled quick-add. No low-stock text exists in the card, so none is added.
+- **Also:** a category row that disappears while the database is reachable gives a 404 on
+  the dynamic route; the five explicit pages fall back to their static products so a
+  coding mistake cannot blank a live page.
 
-### 2.3 Cases & Protection — 🟢 Live (content-driven)
+### 2.3 Cases & Protection — 🟢 Live (database catalogue + CMS furniture)
 
 - **Routes:** `/shop/iphone/accessories/cases-protection` and
   `/in/shop/iphone/accessories/cases-protection`
 - **What it does:** the iPhone case range, with a richer layout than the generic accessory
   pages.
-- **How it works:** `CasesProtectionPage` accepts overrides loaded through
-  `getContentMany(...)` from `content_blocks`, with defaults from
-  `components/sites/cases-protection/data/products`.
-- **Caveat:** the `cases.*` content blocks can be edited through the legacy CMS admin.
+- **How it works:** `getCasesCategoryView()` reads the `cases-protection` category and its
+  active products from the database, merges each row over its static record, and returns
+  grid-card props. `CasesProtectionPage` still accepts `cases.*` overrides loaded through
+  `getContentMany(...)` from `content_blocks`, but those overrides hold page furniture only
+  (`category_links`, `page_header`). The inline product override was removed in Phase 0.
+- **Fallback:** if the database is unreachable the page renders
+  `STATIC_CASES_CONFIG` + the static case bundle exactly as before. If the database answers
+  but the category row is gone, the route 404s.
 
-### 2.4 Product detail — 🟡 Live (static data)
+### 2.4 Product detail — 🟢 Live (database catalogue)
 
 - **Routes:** `/shop/product/[productId]` and `/shop/buy/[productId]`
 - **What they do:** product detail, variant selection and an “add to bag / buy now” action.
-- **How they work:** `src/lib/products/registry.ts` (`getCaseProductById`,
-  `getAccessoryProductById`) resolves the product from the static catalogue. `/shop/buy/…`
-  resolves against the cases-protection data module.
-- **Important:** the page shows static copy and price display, but **the amount actually
-  charged is resolved from the database at checkout** (see §2.7). Today the IDs and prices
-  agree; if they drift, the storefront display is what will be wrong.
+- **How they work:** `getProductDetail(id)` reads the live row, decides case vs accessory
+  from the static case set or the `cases-protection` category, and merges database values
+  over the static record. `/shop/buy/…` remains case-only.
+- **Failure rules:** an unknown, inactive or deleted row on a reachable database → `404`.
+  An unreachable database (or no `DATABASE_URL`) → the static record renders exactly as
+  before, so an outage cannot blank the page. `/shop/product/…` still 404s when no static
+  record exists either.
+- **Prices:** the displayed amount is `price_paise / 100`, the same column checkout reads,
+  so the page price and the PayU amount cannot drift.
+- **Not read:** reviews/ratings (there is no rating UI on the page), `cost_paise`, internal
+  notes, audit rows or customer data. Compare-at is carried in the read model but no
+  component renders it yet.
+- **Out of stock:** the detail page has no availability state or disabled add button today,
+  so none was invented. The cart marks the line unavailable, excludes it from the total
+  and blocks the PayU button.
 
-### 2.5 Search — 🟡 Live (static data, client-side)
+### 2.5 Search — 🟢 Live (database catalogue, client-side matching)
 
 - **Route:** `/search`
 - **What it does:** query box, results, popular searches and recent-search history.
-- **How it works:** `SearchPageView` runs `searchProducts()` entirely in the browser over
-  `allSearchItems`, which is assembled from the static case catalogue, the accessory
-  registry and the Education Store content. Recent searches are stored in `localStorage`
-  under `gadzio_search_history_v1`, capped at 25 entries. No search query is sent to the
-  server and no analytics row is written.
+- **How it works:** the server page calls `getStorefrontRefs()` and passes the compact list
+  to `SearchPageView`. Matching stays in the browser (`scoreProducts`), over those
+  database refs plus the fixed `PAGE_SEARCH_ITEMS` navigation links. Education Store
+  content is unchanged. Recent searches are stored in `localStorage` under
+  `gadzio_search_history_v1`, capped at 25 entries. No search query is sent to the server
+  and no analytics row is written.
+- **Payload:** each ref carries only id, name, subtitle, `pricePaise`, `priceDisplay`,
+  image, category, `inStock` and display keywords. No cost, notes, audit or customer data.
+- **Fallback:** if the database is unreachable the page receives the static ref bundle.
 
 ### 2.6 Cart and bag — 🟢 Live
 
@@ -172,7 +215,14 @@ separate validation code.
 - **How it works:** `CartContext` keeps the cart in `localStorage`; `src/lib/cart/cart-id.ts`
   maintains a `cart_id` cookie so a cart can be identified across pages. Nothing is
   reserved in the database — a cart is a browser artefact until a PayU order is created.
-- **Caveat:** stock is not held while an item sits in a bag.
+- **Pricing:** the server passes the live catalogue refs to `CartPageView`. A line is
+  payable only while its product still exists and is in stock; its price and total come
+  from `pricePaise`, not the price stored in `localStorage`. Unknown, archived or
+  out-of-stock lines keep the existing **Unavailable** state, are excluded from the
+  displayed subtotal and disable checkout. Checkout re-prices from the database again
+  (§2.7), so the bag total is a display value only.
+- **Caveat:** stock is not held while an item sits in a bag. A line keeps the name and
+  image it had when added; only price and availability are refreshed.
 
 ### 2.7 Checkout and PayU — 🟢 Live (PayU only)
 
@@ -184,7 +234,9 @@ separate validation code.
      Customers → Settings.
   2. Each line is re-priced with `getProductFromDatabase`. This is authoritative: an
      unknown product ID fails closed, and a database error fails closed. The static
-     catalogue is only used when `DATABASE_URL` is unset.
+     catalogue is only used when `DATABASE_URL` is unset. The product detail, category,
+     cases, search and bag surfaces now read the same `price_paise`, so the amount the
+     customer saw is the amount PayU is asked to charge.
   3. `CheckoutForm` posts the cart to `/api/payu/initiate`, which validates and rate-limits
      the request, creates the order (`PENDING`), builds the PayU request hash and returns a
      hidden form. The browser auto-submits it to PayU.
@@ -249,6 +301,76 @@ for the OPPO/Android site. There is no backend behind any of them.
 `/in-edu/store` exists and is content-driven, and its products appear in search. Per the
 project rules it is **out of scope for the admin build** and must not be touched unless
 asked.
+
+### 2.13 Store Admin → storefront wiring (Phase 1) — 🟢 Live
+
+**Goal:** Store Admin is the owner of product data. A successful write there changes what
+the storefront shows on the next request, without new routes and without changing the
+page layout.
+
+**How a request flows**
+
+1. A server page calls the read layer (`getProductDetail`, `getAccessoryCategoryView`,
+   `getAccessoryProductsView`, `getCasesCategoryView`, `getStorefrontRefs`).
+2. The read layer runs one cached catalogue query (`unstable_cache`, tag
+   `storefront-catalog`, 30-second safety net) and merges database rows over the static
+   bundle. Per-product detail reads also carry `storefront-product:<id>`.
+3. A component receives plain props. No client component queries the database.
+4. Every catalogue-changing Store Admin write calls `revalidateCatalog(productId?)` after
+   its audit row, so the next visit reads fresh data. Every call revalidates the
+   `storefront-catalog` tag; a product-specific call also revalidates
+   `storefront-product:<id>`.
+5. On a database outage the read layer catches the failure and returns the static bundle,
+   so pages still render.
+
+**Admin edit → next-request storefront effect**
+
+| Store Admin action | Storefront result |
+|---|---|
+| Rename product / edit subtitle or description | New copy on detail, category grid, cases grid, search |
+| Edit price | New price on detail, grids, search, bag; PayU charges the same `price_paise` |
+| Add / reorder / archive images | New primary image and gallery; card hover image; search result image |
+| Edit specs, highlights, features, in-the-box | Detail page and grid props |
+| Edit facets / compatibility | Filters, compatibility lists and search keywords |
+| Create a product | Appears in its active category and search (if active) |
+| Archive / deactivate product | Disappears from categories/cases/search; detail 404s; bag marks it Unavailable |
+| Archive / deactivate category | Dynamic category route and Cases 404; the five explicit accessory routes keep their coded page and static product list |
+| Adjust stock / change stock settings / POS sale / void / return receipt | Out-of-stock products disable the card quick-add and are excluded from the bag total |
+| Approve/reject a review | Revalidates the catalogue, but no storefront component renders ratings yet |
+| CSV import (committed) | Imported changes appear on the next request |
+
+**Evidence**
+
+| Rule | Proof |
+|---|---|
+| Database wins, static fills gaps | `tests/storefront-catalog.test.mjs` merge tests |
+| Database down → static | `chooseCatalogSource` tests + live outage test: server started against an unreachable `DATABASE_URL` (cache cleared) returned 200 on product, category, cases, search and cart pages, rendered the static prices and omitted the database-only product |
+| Reachable database + missing row → 404 | `chooseCatalogSource` tests + `getProductDetail` null |
+| Inactive/archived hidden | read-query assertions + `deleted_at`/`is_active` predicates |
+| Stock in/low/out and threshold | `stockStateFrom` tests; out-of-stock card-state test |
+| Search payload has no cost/notes | exact key-set test + source scan |
+| Each admin write revalidates | source assertion over all 18 write routes |
+| Displayed price equals charged price | merge/ref tests + `db-catalog.ts` source assertion |
+| No route/visual change | only existing pages/components were rewired; smoke test hits the same routes |
+
+**Not wireable without a visual/UI change (left alone deliberately)**
+
+- Compare-at price: stored and read, but no existing component renders a struck-through
+  price.
+- Reviews/ratings: no storefront rating component exists; adding one would be new UI.
+  Store Admin review writes still invalidate the catalogue so a future UI is correct.
+- Low-stock hint: the data (`availableStock`, `lowStockThreshold`, `stockState`) is
+  available, but no card/detail component has a low-stock treatment. Only the existing
+  out-of-stock state is used.
+- Detail-page availability copy/button: the accessory detail page always prints
+  “In Stock” and never disables add-to-bag. Changing that is a copy/behaviour change, so
+  the cart remains the gate.
+- Cart line name/image: a bag stores the values it captured when the item was added.
+  Price and availability are refreshed from the database; the historical name/image is
+  not rewritten.
+
+**No migration was needed.** Phase 1 added no table or column; the next number remains
+`0034`.
 
 ---
 
@@ -364,6 +486,7 @@ missing reference) and lets staff mark them reviewed through
 | Variants | `.../variants` API | 🟢 Live | SKU, options, stock |
 | Images | `.../images` API | 🟢 Live | Ordered gallery, archive rather than hard delete |
 | Categories | `/categories` | 🟢 Live | CRUD |
+| Collections | `/collections` | 🟢 Live (no consumer yet) | Named, ordered product lists in `product_collections`; add, remove (archive), reorder |
 | Brands, units, conditions, attributes | `/catalog` tabs | 🟢 Live | CRUD through catalog APIs |
 | Stock | `/stock` | 🟢 Live | Per-product stock summary |
 | Stock adjust | `/stock/[productId]` | 🟢 Live | Append-only `stock_movements`, reason required |
@@ -376,9 +499,23 @@ missing reference) and lets staff mark them reviewed through
 (`src/lib/payu/db-catalog.ts`), which was the condition in the design. Price writes are
 therefore enabled. `cost_paise` is internal and never sent to the storefront.
 
-**Important:** catalog edits change what checkout charges, but **do not change the
-storefront listing pages** (§2.2–2.4), which render from code. That mismatch is the
-biggest remaining storefront/admin gap.
+**Collections:** `/store-admin/collections` and
+`/api/store-admin/catalog/collections` write `product_collections` (migration `0033`,
+RLS enabled, no policies). Writes require `store_admin`, call `assertSameOrigin`, and are
+audited as `catalog.collection.add/remove/reorder`; every write revalidates the
+`storefront-collections` cache tag and the root layout. `src/lib/storefront/collections.ts`
+reads one key server-side: database membership wins whole, and the caller's coded/CMS
+list is used only when the collection is empty. No storefront page consumes it yet.
+
+**Storefront wiring:** catalog edits now change what customers see on the next request —
+product detail, the six accessory category pages, both Cases & Protection routes, search
+and the bag refs all read the database through `src/lib/storefront/catalog.ts`. Every
+catalogue-changing write (product create/edit/price, variants, images, attributes,
+categories, CSV import, stock settings/adjust, POS sale, order void/cancel, return
+receipt, review status) calls `revalidateCatalog()` after its audit row. Reads carry the
+`storefront-catalog` tag plus `storefront-product:<id>`; `{ expire: 0 }` makes the next
+request a blocking refresh. See §2.13 for the exact edit → effect table and the few
+things deliberately left unwired because they have no existing UI.
 
 ### 3.4 Customers
 
@@ -494,14 +631,28 @@ lists/revokes their own sessions. Available to every role.
 |---|---|---|---|
 | Login | `/admin/login` | 🟢 Live | Email + password, optional TOTP |
 | Dashboard | `/admin` | 🟢 Live | Shows how many content collections have database overrides |
-| Content editor | `/admin/content/[key]` | 🟢 Live | Edits `content_blocks` for homepage, OPPO, Education Store, cases |
+| Content editor | `/admin/content/[key]` | 🟢 Live | Design/marketing `content_blocks` for homepage, OPPO, Education Store, cases. Commerce-shaped fields are rejected. |
 | Theme | `/admin/theme` | 🟢 Live | Theme settings read by `app/layout.tsx` |
 | Security | `/admin/security` | 🟢 Live | TOTP setup/enable/disable |
-| Media | `/api/admin/media` | 🟢 Live | Legacy media library |
+| Media | `/api/admin/media` | 🟢 Live | Uploads into the shared `store_media` source; `/api/media/<id>` resolves it |
 
 This panel is functional but **separate** from the store admin. It cannot see orders,
 products, customers or settings, and the store admin cannot see content blocks. The
-storefront reads whatever this panel writes.
+storefront reads whatever this panel writes — but only for design/marketing content.
+
+**Boundary rules (Phase 0)**
+
+- `/api/admin/content` runs `validateLegacyContentWrite()` before every save. A payload
+  carrying `price`, `cost_paise`, `sku`, `variants`, `product_id`, `stock`, `discount`,
+  `order_id`, `customer_id`, `shipping_method` or similar anywhere in a non-Education
+  block is refused with the offending path. `edu.*` is exempt by rule.
+- Removing a content override **archives it** (`archived_at = now()`), it does not delete
+  the row. Saving the block again clears the archive, so every edit is reversible.
+- The legacy media picker writes `store_media`, the same table and bucket Store Admin →
+  Media uses; existing `/api/admin/media/<id>` URLs still resolve, including legacy
+  `bytea` rows.
+- `scripts/check-admin-boundary.mjs` fails the build check if any of the above regresses
+  or if the legacy tree references `product_collections`.
 
 ---
 
@@ -553,7 +704,8 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migrations `0033`–`0035` | Reserved for notifications/outbox, background jobs and search indexes. Not written yet. |
+| Migrations `0034`–`0035` | Reserved for notifications/outbox, background jobs and search indexes. Not written yet. (`0033` is now `product_collections` + `content_blocks.archived_at`.) |
+| Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Email and SMS delivery | No provider client, no outbox, no worker. The settings exist so the configuration has a home when the sender is built. |
 | PayU refund API | Manual refunds by design. The admin records the refund and the owner moves money in the PayU dashboard. |
 | Courier API integration | Third-party courier; the owner supplies a tracking URL template. |
@@ -571,7 +723,7 @@ These are deliberate gaps, not bugs.
 | Area | Implementation |
 |---|---|
 | Database access | Server-side only, `DATABASE_URL`, `postgres` tagged templates. The Supabase publishable key is used **only** for read-only `content_blocks`. |
-| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`). Every table created since ships with RLS enabled in its own migration file. |
+| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`) and `product_collections` (`0033`). Every table created since ships with RLS enabled in its own migration file. |
 | Admin identities | Three completely separate stores: customer (`users`), store staff (`store_admins`), legacy CMS (`admin_users`). No cookie or session table is shared. |
 | Role checks | Every store-admin API route calls `requireStoreRole(...)`; verified by `scripts/check-store-admin-routes.mjs`. |
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
@@ -596,9 +748,12 @@ deployment environment — the check activates automatically once the variable e
 npm install
 npm run db:migrate          # applies migrations/*.sql in order
 npm run dev                 # http://localhost:3000
-npm test                    # 249 tests
+npm test                    # 300 tests
+node scripts/catalog-parity.mjs                 # read-only static ↔ database parity report
 node scripts/check-store-admin-routes.mjs
 node scripts/check-setting-lists.mjs
+node scripts/check-admin-boundary.mjs
+node scripts/migrate-cms-products.mjs           # dry run; add --commit to write
 ```
 
 Panels:
@@ -619,13 +774,17 @@ exhaust it; keep script connection pools at `max: 1`.
 |---|---|
 | Storefront pages | `src/app/page.tsx`, `src/app/in/shop/...`, `src/app/shop/...`, `src/app/search`, `src/app/checkout`, `src/app/order/*`, `src/app/account/*`, `src/app/auth` |
 | CMS content reader | `src/lib/content.ts` |
-| Static catalogue | `src/lib/products/registry.ts`, `src/components/sites/accessories/data/*`, `src/components/sites/cases-protection/data/*` |
+| Storefront catalogue read layer | `src/lib/storefront/catalog.ts`, `catalog-merge.ts`, `catalog-rules.ts`, `catalog-tags.ts`, `revalidate.ts`, `static-catalog.ts`, `src/lib/catalog/storefront.ts` |
+| Static catalogue | `src/lib/products/registry.ts`, `src/components/sites/accessories/data/*`, `src/components/sites/cases-protection/data/*` (fallback + marketing fields only) |
+| Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Cart | `src/lib/cart/*` |
 | Customer account | `src/lib/account/*`, `src/app/api/account/*` |
 | Store-admin auth | `src/lib/store-admin/auth.ts`, `src/app/api/store-admin/auth/*` |
 | Store-admin data | `src/lib/store-admin/*` |
+| Collections | `src/lib/store-admin/collections.ts`, `src/lib/store-admin/collection-rules.ts`, `src/lib/storefront/collections.ts`, `src/lib/storefront/collections-rules.ts`, `src/components/store-admin/CollectionManager.tsx` |
+| Admin boundary | `src/lib/admin/boundary.ts`, `scripts/check-admin-boundary.mjs`, `scripts/migrate-cms-products.mjs`, `src/lib/admin/cms-product-migration.ts`, `PHASE0-AUDIT.md` |
 | Store-admin pages | `src/app/(store-admin)/store-admin/**` |
 | Store-admin APIs | `src/app/api/store-admin/**` |
 | Settings engine | `src/lib/store-admin/settings-rules.ts`, `setting-lists.ts`, `notification-settings.ts`, `secret-status.ts` |
