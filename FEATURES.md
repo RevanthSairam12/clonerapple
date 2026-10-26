@@ -835,14 +835,14 @@ amount (Returns → record refund, which stays a manual money movement).
 |---|---|---|---|
 | Products list | `/products` | 🟢 Live | Filter, search, CSV export, status badges |
 | New product | `/products/new` | 🟢 Live | Full create form |
-| Edit product | `/products/[id]` | 🟢 Live | Details, price, cost, images, variants, attributes, specs |
+| Edit product | `/products/[id]` | 🟢 Live | Details, price, cost, images, variants, attributes, specs, **Inventory** card |
 | Price history | same page, `price` API | 🟢 Live | Every price write appends to `price_history` |
 | Variants | `.../variants` API | 🟢 Live | SKU, options, stock |
 | Images | `.../images` API | 🟢 Live | Ordered gallery, archive rather than hard delete |
 | Categories | `/categories` | 🟢 Live | CRUD |
 | Collections | `/collections` | 🟢 Live (no consumer yet) | Named, ordered product lists in `product_collections`; add, remove (archive), reorder |
 | Brands, units, conditions, attributes | `/catalog` tabs | 🟢 Live | CRUD through catalog APIs |
-| Stock | `/stock` | 🟢 Live | Per-product stock summary |
+| Stock | `/stock` | 🟢 Live | Per-product summary, tracked Yes/No, Adjust link, **Tracking off** filter |
 | Stock adjust | `/stock/[productId]` | 🟢 Live | Append-only `stock_movements`, reason required |
 | Low stock | `/low-stock` | 🟢 Live | Available ≤ the product's own `stock.low_stock_threshold` |
 | Catalogue data transfer | `/catalog/transfer` | 🟢 Live | CSV import/export, per-row error report |
@@ -852,6 +852,20 @@ amount (Returns → record refund, which stays a manual money movement).
 **Price editing gate:** the PayU flow now reads prices from the database
 (`src/lib/payu/db-catalog.ts`), which was the condition in the design. Price writes are
 therefore enabled. `cost_paise` is internal and never sent to the storefront.
+
+**Inventory controls:** the product page's **Inventory** card shows on hand, reserved
+and available (= on hand − reserved), a Track inventory toggle and the low-stock
+threshold, with an **Adjust stock** link to the movement ledger. The stock list shows
+tracked yes/no, the same counts, an Adjust button per row and a **Tracking off** filter;
+the products list badges every active product whose tracking is off as **Can be
+oversold** and shows a count banner. Turning tracking **on for a product with no stock
+row requires the current on-hand count**; it is stored as an opening `receipt`
+movement, so every unit still has a paper trail. Turning tracking **off** asks for
+confirmation and warns that the product can be oversold, and is audited as
+`catalog.stock.settings`. Reads need any store role; the write route keeps
+`requireStoreRole('store_admin')` and `assertSameOrigin`. Variants have no stock of
+their own: stock rows are product-level (`variant_id is null`), so there is no
+per-variant inventory control to duplicate.
 
 **Collections:** `/store-admin/collections` and
 `/api/store-admin/catalog/collections` write `product_collections` (migration `0033`,
@@ -1248,8 +1262,9 @@ exhaust it; keep script connection pools at `max: 1`.
 | Checkout rules (pure) | `src/lib/checkout/shipping-rules.ts`, `stock-rules.ts`, `settings.ts` |
 | Reservations + payment outcome (pure) | `src/lib/checkout/reservation-rules.ts` |
 | Reservation/reconcile repository | `src/lib/payu/orders.ts`, `src/lib/payu/reconcile.ts`, `src/lib/payu/refund-obligations.ts`, `src/app/api/payu/reconcile/route.ts` |
-| Waiting list | `src/lib/waitlist/{rules,store}.ts`, `src/app/api/waitlist/route.ts`, `src/app/waitlist/claim/page.tsx`, `src/components/waitlist/WaitlistPanel.tsx` |
+| Waiting-list removal | `src/lib/payu/waitlist-cleanup.ts`, `scripts/release-waitlist-holds.mjs` (tables kept, no UI) |
 | Reservation UI | `src/components/checkout/ReservationCountdown.tsx`, `src/app/order/processing/page.tsx` |
+| Inventory controls | `src/components/store-admin/{ProductInventoryCard,StockControls}.tsx`, `src/lib/store-admin/catalog-crud.ts`, `catalog-crud-rules.ts`, `tests/inventory-controls.test.mjs` |
 | Order numbering + automation | `src/lib/orders/numbering.ts`, `fulfilment-automation.ts`, `auto-cancel-rules.ts` |
 | Cart | `src/lib/cart/*` |
 | Customer account | `src/lib/account/*`, `src/app/api/account/*` |

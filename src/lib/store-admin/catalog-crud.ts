@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
+import type postgres from 'postgres';
+
 import { getSql } from '@/lib/admin/db';
 
 import {
@@ -207,6 +209,8 @@ export interface StockDetail {
   available: number;
   lowStockThreshold: number;
   trackInventory: boolean;
+  /** False until settings are saved for a product that has never had a row. */
+  hasStockRow: boolean;
   movements: StockMovementRow[];
 }
 
@@ -249,6 +253,7 @@ export async function getStockDetail(productId: string): Promise<CatalogWrite<St
         available: stockAvailable(onHand, reserved),
         lowStockThreshold: number(row.low_stock_threshold),
         trackInventory: Boolean(row.track_inventory),
+        hasStockRow: row.track_inventory !== null && row.track_inventory !== undefined,
         movements: movements.map((movement) => ({
           id: number(movement.id),
           delta: number(movement.delta),
@@ -884,7 +889,17 @@ export async function updateStockSettings(input: {
 }): Promise<CatalogWrite<StockSnapshot>> {
   const sql = getSql();
   if (!sql) return fail('unavailable', 'The catalogue is not available.');
+  return updateStockSettingsUsing(sql, input);
+}
 
+export async function updateStockSettingsUsing(
+  sql: postgres.Sql,
+  input: {
+    productId: string;
+    settings: StockSettingsInput;
+    staffId: string;
+  },
+): Promise<CatalogWrite<StockSnapshot>> {
   try {
     return await sql.begin(async (tx) => {
       const productRows = (await tx`
@@ -900,12 +915,20 @@ export async function updateStockSettings(input: {
       `) as Row[];
       const stock = rows[0];
       const before = {
-        onHand: number(stock?.on_hand),
-        reserved: number(stock?.reserved),
+        onHand: number(stock?.on_hand) || 0,
+        reserved: number(stock?.reserved) || 0,
         trackInventory: Boolean(stock?.track_inventory),
       };
 
+      const openingOnHand = stock ? null : input.settings.onHand;
+      if (!stock && input.settings.trackInventory && openingOnHand === null) {
+        return fail('invalid-input', 'Enter the current on-hand count to start tracking this product.');
+      }
+
       const stockId = text(stock?.id) || newId('stk');
+      const nextOnHand = stock ? before.onHand : openingOnHand ?? 0;
+      let movementId = 0;
+
       if (stock) {
         await tx`
           update stock
@@ -921,14 +944,29 @@ export async function updateStockSettings(input: {
             id, product_id, variant_id, on_hand, reserved, low_stock_threshold,
             track_inventory, updated_by
           ) values (
-            ${stockId}, ${input.productId}, null, 0, 0, ${input.settings.lowStockThreshold},
+            ${stockId}, ${input.productId}, null, ${nextOnHand}, 0, ${input.settings.lowStockThreshold},
             ${input.settings.trackInventory}, ${input.staffId}
           )
         `;
+
+        // The opening count is an append-only movement, exactly like a manual
+        // adjustment, so the count always has a paper trail. A zero opening
+        // balance is not a movement: there is nothing to record.
+        if (openingOnHand !== null && openingOnHand > 0) {
+          const movementRows = (await tx`
+            insert into stock_movements (product_id, variant_id, delta, reason, note, created_by)
+            values (
+              ${input.productId}, null, ${openingOnHand}, 'receipt',
+              'Opening count when stock tracking was enabled', ${input.staffId}
+            )
+            returning id
+          `) as Row[];
+          movementId = number(movementRows[0]?.id);
+        }
       }
 
       const inStock = input.settings.trackInventory
-        ? before.onHand - before.reserved > 0
+        ? nextOnHand - before.reserved > 0
         : true;
       await tx`
         update products set in_stock = ${inStock}, updated_at = now(), updated_by = ${input.staffId}
@@ -940,14 +978,14 @@ export async function updateStockSettings(input: {
         data: {
           before,
           after: {
-            onHand: before.onHand,
+            onHand: nextOnHand,
             reserved: before.reserved,
             trackInventory: input.settings.trackInventory,
           },
           inStock,
           productName: text(productRows[0]?.name),
           lowStockThreshold: input.settings.lowStockThreshold,
-          movementId: 0,
+          movementId,
         },
       };
     });

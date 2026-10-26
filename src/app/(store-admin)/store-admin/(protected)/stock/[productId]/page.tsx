@@ -81,6 +81,7 @@ export default async function StoreAdminStockDetailPage({
           onHand={detail.onHand}
           lowStockThreshold={detail.lowStockThreshold}
           trackInventory={detail.trackInventory}
+          hasStockRow={detail.hasStockRow}
           canEdit={canEdit}
         />
 

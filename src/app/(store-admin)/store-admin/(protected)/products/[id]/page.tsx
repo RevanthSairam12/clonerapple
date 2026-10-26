@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { ProductAttributes } from '@/components/store-admin/ProductAttributes';
 import { ProductEditor } from '@/components/store-admin/ProductEditor';
 import { ProductGallery } from '@/components/store-admin/ProductGallery';
+import { ProductInventoryCard } from '@/components/store-admin/ProductInventoryCard';
 import { ProductPriceEditor } from '@/components/store-admin/ProductPriceEditor';
 import { VariantEditor } from '@/components/store-admin/VariantEditor';
 import { getStoreSession } from '@/lib/store-admin/auth';
@@ -71,10 +72,6 @@ export default async function StoreAdminProductDetailPage({
     values.push(facet.value);
     facetGroups.set(facet.key, values);
   }
-
-  const availableStock = product.stock
-    ? product.stock.onHand - product.stock.reserved
-    : null;
 
   return (
     <div>
@@ -237,43 +234,11 @@ export default async function StoreAdminProductDetailPage({
       />
 
       <div className="sa-detail-grid">
-        <section className="sa-detail-card">
-          <h2 className="sa-card-title">Stock</h2>
-          <div className="sa-inline-actions">
-            <Link
-              className="sa-btn sa-btn-small"
-              href={`/store-admin/stock/${encodeURIComponent(product.id)}`}
-            >
-              Adjust stock
-            </Link>
-          </div>
-          {product.stock ? (
-            <dl className="sa-meta">
-              <div>
-                <dt>On hand</dt>
-                <dd>{product.stock.onHand}</dd>
-              </div>
-              <div>
-                <dt>Reserved</dt>
-                <dd>{product.stock.reserved}</dd>
-              </div>
-              <div>
-                <dt>Available</dt>
-                <dd>{availableStock}</dd>
-              </div>
-              <div>
-                <dt>Tracking</dt>
-                <dd>
-                  {product.stock.trackInventory
-                    ? 'Enabled'
-                    : 'Off — checkout ignores stock'}
-                </dd>
-              </div>
-            </dl>
-          ) : (
-            <p className="sa-empty">No stock row.</p>
-          )}
-        </section>
+        <ProductInventoryCard
+          productId={product.id}
+          stock={product.stock}
+          canEdit={canEdit}
+        />
 
         <section className="sa-detail-card">
           <h2 className="sa-card-title">In the box</h2>

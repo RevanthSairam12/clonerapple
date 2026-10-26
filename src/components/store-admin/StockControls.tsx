@@ -8,6 +8,8 @@ interface Props {
   onHand: number;
   lowStockThreshold: number;
   trackInventory: boolean;
+  /** False when no stock row exists yet; the first save needs an opening count. */
+  hasStockRow: boolean;
   canEdit: boolean;
 }
 
@@ -20,11 +22,13 @@ export function StockControls({
   onHand,
   lowStockThreshold,
   trackInventory,
+  hasStockRow,
   canEdit,
 }: Props) {
   const router = useRouter();
   const [tracking, setTracking] = useState(trackInventory);
   const [threshold, setThreshold] = useState(String(lowStockThreshold));
+  const [openingOnHand, setOpeningOnHand] = useState('');
   const [delta, setDelta] = useState('');
   const [reason, setReason] = useState('receipt');
   const [note, setNote] = useState('');
@@ -33,9 +37,28 @@ export function StockControls({
   const [notice, setNotice] = useState<string | null>(null);
 
   async function saveSettings() {
-    setBusy('settings');
     setError(null);
     setNotice(null);
+
+    if (hasStockRow && trackInventory && !tracking) {
+      const confirmed = window.confirm(
+        'Turn off stock tracking? Checkout will stop checking stock for this '
+          + 'product, so it can be oversold. Continue?',
+      );
+      if (!confirmed) return;
+    }
+
+    const needsOpeningCount = !hasStockRow && tracking;
+    let opening: number | undefined;
+    if (needsOpeningCount) {
+      opening = Number(openingOnHand);
+      if (!Number.isInteger(opening) || opening < 0) {
+        setError('Enter the current on-hand count as a whole number.');
+        return;
+      }
+    }
+
+    setBusy('settings');
     try {
       const response = await fetch(
         `/api/store-admin/stock/${encodeURIComponent(productId)}`,
@@ -45,6 +68,7 @@ export function StockControls({
           body: JSON.stringify({
             trackInventory: tracking,
             lowStockThreshold: Number(threshold || 0),
+            ...(opening === undefined ? {} : { onHand: opening }),
           }),
         },
       );
@@ -52,7 +76,12 @@ export function StockControls({
       if (!response.ok) {
         throw new Error(typeof body.error === 'string' ? body.error : 'Could not save the stock settings.');
       }
-      setNotice('Stock settings saved.');
+      setNotice(
+        body?.stock?.movementId > 0
+          ? 'Stock settings saved. The opening count was recorded as a receipt.'
+          : 'Stock settings saved.',
+      );
+      setOpeningOnHand('');
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save the stock settings.');
@@ -129,6 +158,22 @@ export function StockControls({
                 onChange={(event) => setThreshold(event.target.value)}
               />
             </label>
+            {!hasStockRow && tracking ? (
+              <label className="sa-field">
+                <span className="sa-label">
+                  Current on hand <span className="sa-hint">recorded as a receipt</span>
+                </span>
+                <input
+                  className="sa-input"
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="0"
+                  value={openingOnHand}
+                  onChange={(event) => setOpeningOnHand(event.target.value)}
+                />
+              </label>
+            ) : null}
           </div>
           <div className="sa-inline-actions">
             <button

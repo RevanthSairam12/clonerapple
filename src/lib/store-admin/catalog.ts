@@ -34,6 +34,8 @@ export interface CatalogProductSummary {
   currency: string;
   isActive: boolean;
   inStock: boolean;
+  /** Null when the product has no stock row yet, which checkout treats as off. */
+  trackInventory: boolean | null;
   sortOrder: number;
   updatedAt: string;
   categoryId: string;
@@ -264,6 +266,10 @@ function mapSummary(row: Row): CatalogProductSummary {
     currency: text(row.currency) || 'INR',
     isActive: Boolean(row.is_active),
     inStock: Boolean(row.in_stock),
+    trackInventory:
+      row.track_inventory === null || row.track_inventory === undefined
+        ? null
+        : Boolean(row.track_inventory),
     sortOrder: number(row.sort_order),
     updatedAt: iso(row.updated_at),
     categoryId: text(row.category_id),
@@ -312,9 +318,11 @@ export async function listCatalogOverview(): Promise<CatalogLoad<CatalogOverview
       sql`
         select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.currency,
                p.is_active, p.in_stock, p.sort_order, p.updated_at,
+               s.track_inventory,
                c.id as category_id, c.slug as category_slug, c.name as category_name
         from products p
         join categories c on c.id = p.category_id
+        left join stock s on s.product_id = p.id and s.variant_id is null
         where p.deleted_at is null
         order by c.sort_order, p.sort_order, p.name
       `,
@@ -498,6 +506,7 @@ export async function getCatalogProduct(
       ok: true,
       data: {
         ...mapSummary(productRow),
+        trackInventory: stock ? stock.trackInventory : null,
         description: text(productRow.description),
         material: text(productRow.material),
         brand: text(productRow.brand),

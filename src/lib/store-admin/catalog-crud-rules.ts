@@ -437,6 +437,13 @@ export function validateStockAdjustment(input: unknown): FieldResult<StockAdjust
 export interface StockSettingsInput {
   trackInventory: boolean;
   lowStockThreshold: number;
+  /**
+   * The opening count when tracking is switched on for a product that has no
+   * stock row yet. Null when the caller did not send one. Ignored once a row
+   * exists — later changes go through `adjustStock` so they are recorded as
+   * movements rather than overwriting the count.
+   */
+  onHand: number | null;
 }
 
 export function validateStockSettings(input: unknown): FieldResult<StockSettingsInput> {
@@ -446,7 +453,21 @@ export function validateStockSettings(input: unknown): FieldResult<StockSettings
   const body = input as Record<string, unknown>;
   const threshold = boundedInt(body.lowStockThreshold ?? 0, 0, 1_000_000, 'The low-stock threshold');
   if (!threshold.ok) return threshold;
-  return { ok: true, value: { trackInventory: body.trackInventory === true, lowStockThreshold: threshold.value } };
+
+  const rawOnHand = body.onHand;
+  const onHand = rawOnHand === undefined || rawOnHand === null || rawOnHand === ''
+    ? { ok: true as const, value: null }
+    : boundedInt(rawOnHand, 0, 1_000_000, 'The on-hand count');
+  if (!onHand.ok) return onHand;
+
+  return {
+    ok: true,
+    value: {
+      trackInventory: body.trackInventory === true,
+      lowStockThreshold: threshold.value,
+      onHand: onHand.value,
+    },
+  };
 }
 
 /** A sale is unavailable when tracking is on and nothing is left to sell. */

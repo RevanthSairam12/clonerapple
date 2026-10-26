@@ -24,6 +24,9 @@ export default async function StoreAdminProductsPage() {
   }
 
   const { categories, products } = result.data;
+  const oversellable = products.filter(
+    (product) => product.isActive && product.trackInventory !== true,
+  );
 
   return (
     <div>
@@ -48,6 +51,14 @@ export default async function StoreAdminProductsPage() {
         ))}
       </div>
 
+      {oversellable.length > 0 ? (
+        <p className="sa-notice">
+          {oversellable.length} active product{oversellable.length === 1 ? '' : 's'}{' '}
+          have stock tracking off and can be oversold. Open a product to turn
+          tracking on.
+        </p>
+      ) : null}
+
       <div className="sa-table-wrap">
         <table className="sa-table">
           <thead>
@@ -55,6 +66,7 @@ export default async function StoreAdminProductsPage() {
               <th>Product</th>
               <th>Category</th>
               <th className="sa-num">Price</th>
+              <th>Stock</th>
               <th>Status</th>
               <th>Updated</th>
             </tr>
@@ -77,6 +89,17 @@ export default async function StoreAdminProductsPage() {
                 <td>{product.categoryName}</td>
                 <td className="sa-num">
                   <span className="sa-price">{formatINR(product.pricePaise)}</span>
+                </td>
+                <td>
+                  {product.trackInventory ? (
+                    <span className="sa-status sa-status-on">Tracked</span>
+                  ) : product.isActive ? (
+                    <span className="sa-status sa-status-warn">
+                      Can be oversold
+                    </span>
+                  ) : (
+                    <span className="sa-status">Untracked</span>
+                  )}
                 </td>
                 <td>
                   <span

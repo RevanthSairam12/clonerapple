@@ -186,7 +186,27 @@ test('stock settings default to untracked', () => {
   const result = validateStockSettings({ lowStockThreshold: 4 });
   assert.equal(result.ok, true);
   assert.equal(result.value.trackInventory, false);
+  assert.equal(result.value.onHand, null);
   assert.equal(validateStockSettings({ lowStockThreshold: -1 }).ok, false);
+});
+
+test('an opening count is a non-negative whole number', () => {
+  const result = validateStockSettings({
+    trackInventory: true,
+    lowStockThreshold: 4,
+    onHand: 12,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.onHand, 12);
+  assert.equal(
+    validateStockSettings({ trackInventory: true, onHand: -1 }).ok,
+    false,
+  );
+  assert.equal(
+    validateStockSettings({ trackInventory: true, onHand: 1.5 }).ok,
+    false,
+  );
+  assert.equal(validateStockSettings({ trackInventory: true, onHand: '' }).value.onHand, null);
 });
 
 test('available stock never goes negative', () => {

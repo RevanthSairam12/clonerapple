@@ -4,7 +4,13 @@ import { listStockOverview } from '@/lib/store-admin/catalog-crud';
 
 export const dynamic = 'force-dynamic';
 
-export default async function StoreAdminStockPage() {
+export default async function StoreAdminStockPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
+  const { filter } = await searchParams;
+  const trackingOffOnly = filter === 'tracking-off';
   const result = await listStockOverview();
 
   if (!result.ok) {
@@ -26,6 +32,7 @@ export default async function StoreAdminStockPage() {
   );
   const out = tracked.filter((row) => row.available === 0);
   const untracked = rows.length - tracked.length;
+  const visible = trackingOffOnly ? rows.filter((row) => !row.trackInventory) : rows;
 
   return (
     <div>
@@ -60,27 +67,44 @@ export default async function StoreAdminStockPage() {
         </div>
       </div>
 
+      <nav className="sa-inline-actions" aria-label="Stock filters">
+        <Link
+          className={trackingOffOnly ? 'sa-btn sa-btn-small' : 'sa-btn sa-btn-small sa-btn-primary'}
+          href="/store-admin/stock"
+        >
+          All products
+        </Link>
+        <Link
+          className={trackingOffOnly ? 'sa-btn sa-btn-small sa-btn-primary' : 'sa-btn sa-btn-small'}
+          href="/store-admin/stock?filter=tracking-off"
+        >
+          Tracking off ({untracked})
+        </Link>
+      </nav>
+
       <div className="sa-table-wrap">
         <table className="sa-table">
           <thead>
             <tr>
               <th>Product</th>
               <th>Category</th>
+              <th>Tracked</th>
               <th className="sa-num">On hand</th>
               <th className="sa-num">Reserved</th>
               <th className="sa-num">Available</th>
               <th>Status</th>
+              <th>Adjust</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {visible.length === 0 ? (
               <tr>
-                <td colSpan={6} className="sa-empty">
-                  No products yet.
+                <td colSpan={8} className="sa-empty">
+                  {trackingOffOnly ? 'Every product is tracked.' : 'No products yet.'}
                 </td>
               </tr>
             ) : (
-              rows.map((row) => {
+              visible.map((row) => {
                 const state = !row.trackInventory
                   ? 'Untracked'
                   : row.available === 0
@@ -108,11 +132,24 @@ export default async function StoreAdminStockPage() {
                       <span className="sa-row-sub sa-mono">{row.productId}</span>
                     </td>
                     <td>{row.categoryName || '—'}</td>
+                    <td>
+                      <span className={row.trackInventory ? 'sa-chip' : 'sa-status sa-status-warn'}>
+                        {row.trackInventory ? 'Yes' : 'No'}
+                      </span>
+                    </td>
                     <td className="sa-num">{row.trackInventory ? row.onHand : '—'}</td>
                     <td className="sa-num">{row.trackInventory ? row.reserved : '—'}</td>
                     <td className="sa-num">{row.trackInventory ? row.available : '—'}</td>
                     <td>
                       <span className={tone}>{state}</span>
+                    </td>
+                    <td>
+                      <Link
+                        className="sa-btn sa-btn-small"
+                        href={`/store-admin/stock/${encodeURIComponent(row.productId)}`}
+                      >
+                        Adjust
+                      </Link>
                     </td>
                   </tr>
                 );
