@@ -286,13 +286,15 @@ separate validation code.
      `payment_review_required`, audited and shown in Payments review; nothing is
      auto-refunded and no partial claim is written.
   10. `/api/payu/webhook` accepts the same payloads server to server (rate limited to 100
-      per minute per IP). `/api/payu/reconcile` re-checks stale pending orders and cancels
-      unpaid ones older than `auto_cancel_unpaid_hours` (0 or empty keeps the 2-hour
-      abandoned-checkout rule), releasing stock once and writing an `order.auto_cancel`
-      audit row. The same run drains the notification outbox and, when retention is
-      switched on, scrubs old finished message bodies (§3.6). The production scheduler must
-      POST this endpoint every 10 minutes with `CRON_SECRET`; it fails closed (503) when the
-      secret is unset (§2.14).
+      per minute per IP). `/api/payu/reconcile` is the durable worker tick (§2.15): it
+      claims due order rows with a database lease, verifies them against PayU, releases
+      expired reservations and failed-payment grace holds, flags unresolved payments, runs
+      waiting-list expiry/allocation and cancels unpaid orders older than
+      `auto_cancel_unpaid_hours` (0 or empty keeps the 2-hour abandoned-checkout rule),
+      releasing stock once and writing an `order.auto_cancel` audit row. The same run drains
+      the notification outbox and, when retention is switched on, scrubs old finished
+      message bodies (§3.6). The production scheduler must POST this endpoint **every
+      minute** with `CRON_SECRET`; it fails closed (503) when the secret is unset (§2.14).
 - **No other payment method exists.** There is no cash-on-delivery path, no manual bank
   transfer path and no wallet. `payment_methods` in settings is not consulted, and
   `cod_enabled` ships off because checkout has no payment-method selector.
@@ -302,9 +304,10 @@ separate validation code.
 | Route | What it shows |
 |---|---|
 | `/order/success` | Order summary after a verified payment. Reads the order by `txnid`; requires the signed-in owner if the order belongs to a user. |
-| `/order/failed` | Failure page with a safe reason code (never a raw PayU response). |
-| `/order/cancelled` | Cancellation page. |
-| `/order/status` | Public-ish lookup by transaction ID. Shows only safe status labels from `getCustomerOrderStatus`. |
+| `/order/failed` | Failure page with a safe reason code (never a raw PayU response). Explains that the held unit went back on the shelf and a **new** checkout is needed to retry. |
+| `/order/cancelled` | Cancellation page, including the expired-reservation case. |
+| `/order/processing` | “Payment being verified”. Used when the outcome is not yet reliably known; the exact copy is fixed (§2.15). A GET refresh re-reads the order and redirects to success/failed/cancelled when the status resolves. It never starts another payment. |
+| `/order/status` | Public-ish lookup by transaction ID. Shows only safe status labels from `getCustomerOrderStatus`, including the processing explanation. |
 
 ### 2.9 Customer account — 🟢 Live
 
@@ -464,12 +467,16 @@ or admin can mark it reviewed (`payment_reviewed_at/by`). The flag write is audi
 no-op (the order is already PAID and the transaction returns early).
 
 **Reconciliation scheduling (required in production).** The deployment scheduler must
-`POST /api/payu/reconcile` **every 10 minutes** with
-`Authorization: Bearer $CRON_SECRET`. The optional `?staleMinutes=` (default 15) controls
-how old a pending order must be before PayU is asked about it. Each run re-verifies stale
-payments and cancels unpaid orders older than `auto_cancel_unpaid_hours` (0 or empty keeps
-2 hours), releasing their stock once and writing an `order.auto_cancel` audit row. Without
-the schedule, abandoned orders keep holding stock forever.
+`POST /api/payu/reconcile` **every minute** with
+`Authorization: Bearer $CRON_SECRET`. A checked-out unit is held for 120 seconds by
+default (§2.15), so a 10-minute tick would keep expired stock off the shelf for up to ten
+minutes. The optional `?staleMinutes=` (default 15) controls how old a pending order must
+be before PayU is asked about it; the reservation window and the reconcile lease decide
+everything else. Each run verifies due payments, releases expired reservations and ended
+failure grace, cancels unpaid orders older than `auto_cancel_unpaid_hours` (0 or empty
+keeps 2 hours), writing an `order.auto_cancel` audit row, and expires/allocates
+waiting-list invitations. Without the schedule, abandoned orders keep holding stock
+forever.
 
 Each run also drains up to **10 due notification outbox rows** (§3.6), so the same cron
 retries email and SMS that a provider rejected. Enqueued messages first get one best-effort
@@ -480,8 +487,9 @@ keeping event, status, masked recipient, reason and timestamps; the response rep
 `retention: { enabled, days, scrubbed }`. Off by default. `CRON_SECRET` behaviour is
 unchanged.
 
-- Host cron: `*/10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" https://<store-host>/api/payu/reconcile`
-- GitHub Actions `on: schedule` (`*/10 * * * *`) running the same `curl`.
+- Host cron: `* * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" https://<store-host>/api/payu/reconcile`
+- GitHub Actions `on: schedule` (`* * * * *`, or the shortest interval the account
+  allows) running the same `curl`.
 - Any scheduler that can send a POST. The route accepts POST only, so a GET-only cron
   service needs a POST-capable alternative (or a wrapper).
 - Prefer the header over `?secret=`, which can end up in access logs.
@@ -535,6 +543,172 @@ review flag used `0036`, so the next free number is `0037`.
 `orders.payment_review_reason`, `orders.payment_reviewed_at` and
 `orders.payment_reviewed_by` (references `store_admins(id)`), plus a partial index on the
 unreviewed flag. `orders` already has RLS; no new table is created.
+
+### 2.15 Flash-sale reservations, waiting list and payment reconciliation — 🟢 Live
+
+**Goal:** one unit cannot be sold twice, an abandoned checkout cannot hold stock forever,
+a payment that may have left the bank is never reported as failed, and a late capture after
+the unit was re-sold produces a tracked refund rather than an untracked charge.
+
+**Defaults and settings (Settings → Orders, all owner-editable, all clamped)**
+
+| Setting | Default | Range | Effect |
+|---|---|---|---|
+| `reservation_seconds` | **120** | 30–1800 | How long a checkout holds its claimed units. Shown as a countdown at checkout. A repeat request never extends it. |
+| `payment_failure_grace_seconds` | **120** | 0–900 | After a **definitive** failure/cancel, stock stays held this long so a quick retry on the same order can still succeed. Then it is released once and the order stays FAILED. |
+| `payment_unresolved_minutes` | 60 | 5–1440 | How long an ambiguous payment may keep its claim before the stock is released and the order is flagged for operations. The worker keeps checking afterwards. |
+| `waitlist_enabled` | on | toggle | Turns the product-page waiting list, invitations and allocation on/off. |
+| `waitlist_claim_minutes` | 15 | 5–1440 | How long one invited customer exclusively holds one unit. |
+| `waitlist_retry_minutes` | 30 | 0–10080 | Cooldown after a customer buys through an invitation before they can be re-invited. |
+
+Unknown, empty or junk values fall back to the default; out-of-band numbers are clamped
+(`src/lib/checkout/reservation-rules.ts`). All timing uses the **database's** `now()` (or a
+test-injected clock), never a browser-supplied timestamp.
+
+**Reservation lifecycle (`orders.reservation_state`, migration `0037`)**
+
+| State | Meaning |
+|---|---|
+| `NONE` | Legacy/POS row with no reservation window. |
+| `ACTIVE` | Units are claimed in `stock.on_hand` (a `sale` movement) and held until `reservation_expires_at`. One live reservation per account (`initiate` refuses a second checkout with `409 reservation_active`). |
+| `CONSUMED` | A trusted verification confirmed the capture; the claim became a sale. Never expires. |
+| `RELEASED` | A definitive failure/cancellation (after its grace) gave the units back with a `release` movement. |
+| `EXPIRED` | The window closed before payment was confirmed; units went back. |
+
+Once `RELEASED`/`EXPIRED`, the reservation and the original payment attempt are terminal:
+that `txnid` cannot be re-initiated, a delayed callback cannot revive the window, and a
+customer who wants the item starts a **new** checkout, which re-checks stock and may fail
+if the unit is gone.
+
+**Payment states.** The existing `orders.status` vocabulary is reused without duplication:
+`CREATED`/`PENDING` (awaiting/at the gateway), `PROCESSING` (the customer may have been
+charged; outcome not yet reliable — distinct from failed), `PAID`, `FAILED`, `CANCELLED`.
+The sale-state view reports `PROCESSING` separately so account pages can explain it.
+Only `PAID` is set after a trusted server-side answer: reverse-hash callback plus PayU's
+`verify_payment` (or the same verification from the worker). A client redirect, a browser
+success URL, a timeout or a closed tab is never proof.
+
+**Definitive vs ambiguous**
+
+| Gateway answer | Outcome |
+|---|---|
+| Verified capture, amount matches | `PAID`, reservation `CONSUMED`, fulfilment events queued. |
+| Verified failure / user cancelled (hash-authenticated callback) | `FAILED`/`CANCELLED` immediately; stock released after the grace window. |
+| `NOT_FOUND` / no gateway record | Abandoned: the worker cancels at the reservation deadline and releases (`EXPIRED`) — never because a browser closed. |
+| Network/HTTP/parse error, pending, success that failed verification | **Unknown**: order goes/stays `PROCESSING` and keeps its claim until `payment_unresolved_minutes`, then stock is released and the order flagged for review while checking continues. A `success` claim that cannot be verified is deliberately *not* `FAILED`. |
+
+**Durable reconciliation.** `orders.next_reconcile_at` is a moving lease; the worker claims
+due rows with `FOR UPDATE SKIP LOCKED` (index `idx_orders_reconcile_due`, plus
+`idx_orders_grace_due` for failed/cancelled rows still holding grace stock, migration
+`0038`). Retries back off 60 s → 120 s → 240 s … capped at 15 min, reset on a reliable
+answer; five consecutive gateway failures flag the order
+(`payment_review_required`). A restart or a second application instance cannot lose a row:
+a crashed claim simply becomes due again, and a processed row records `next_reconcile_at
+= null`. All transitions are conditional and idempotent inside one transaction, so
+duplicate callbacks and concurrent worker ticks cannot change inventory twice.
+
+**Race: capture vs expiry.** The verified-PAID transition locks the order and locks stock
+rows `for update`; if the claim is still `ACTIVE` it wins and consumes it. If the window
+already released the units, the transition tries to re-claim exactly the released
+quantities (ledger `sale` minus `release`). If they are still available it succeeds
+(one new `sale` movement). If they are gone, the order still becomes `PAID` — the money was
+taken — and:
+
+1. `orders.payment_review_required` is set with a fixed reason (Payments → Captured
+   payments needing attention),
+2. **one** `refund_obligations` row (unique while `PENDING`) records the amount owed, and
+3. `refund_pending` + `payment_review` messages queue for staff.
+
+Recording a manual refund against the order (Returns → refund, or the order detail) closes
+the obligation once refunds cover its amount (`status = RECORDED`, last refund id). The
+obligation is never deleted; a duplicate callback creates no second obligation and no
+second refund. **Bank-debit-unknown policy:** when the outcome is unknown the order is
+never auto-failed or auto-refunded; it is kept in `PROCESSING`, the customer is told not
+to pay again, and after the recovery window a human checks the PayU dashboard. The worker
+still transitions a later verified capture to `PAID`.
+
+**Customer experience.** The checkout form shows a live countdown from
+`reservationExpiresAt` and disables the Pay button while a payment is in flight
+(`ReservationCountdown`, duplicate-submit guard). Expiry is explained as “this checkout
+expired; start a new one”, and a stale tab cannot silently re-claim stock — the next
+initiate re-checks inventory. `/order/processing` shows exactly: *“Your payment is being
+verified. If your bank has debited the amount, please do not pay again while this
+transaction is being checked. We'll update your order status when confirmation is
+received.”* Its only action is a GET refresh that re-reads the order (never a new charge).
+`/order/failed` explains that the held unit was returned and a fresh valid checkout is
+needed; `/order/success` appears only after the trusted transition; unresolved stays
+processing.
+
+**Waiting list (`waiting_list_entries`, `stock_reservations`)**
+
+- Product detail shows a **Join the waiting list** panel when `waitlist_enabled` is on and
+  the product is sold out or fully reserved (`/api/waitlist`, signed-in only,
+  same-origin mutations, 20 joins / 10 min / user). One `ACTIVE`/`INVITED` entry per
+  customer and product, enforced by a partial unique index; rejoining returns the existing
+  entry (`alreadyOnList`).
+- Allocation is deterministic FIFO by `(created_at, id)`. One tick offers at most one unit
+  per product: it raises `stock.reserved` by the quantity (so availability drops without
+  touching `on_hand`, which only a sale moves) and writes a `HELD` `stock_reservations` row
+  with a **SHA-256 token hash** and `expires_at = now + waitlist_claim_minutes`. A partial
+  unique index allows only one `HELD` row per product, so two concurrent workers cannot
+  offer the same unit. Entries blocked by a live checkout, still inside their cooldown, or
+  not first in line are skipped, not removed.
+- The invitation email/SMS contains `/waitlist/claim?token=…`. Opening it requires the
+  signed-in owner, re-validates the invitation, and shows the claim deadline and held
+  quantity; it never promises that stock is guaranteed. The claim link starts a single
+  product checkout with `reservationToken`. `createOrder` re-checks ownership, expiry and
+  the hold under the stock row lock, consumes the hold (`CLAIMED`) and marks the entry
+  `PURCHASED`. A replayed, expired or someone-else's token fails closed
+  (`reservation_unavailable`); if the unit is gone, the claim cannot buy it.
+- `expireWaitlistInvitations` returns expired holds (`stock.reserved` −1, floored at zero,
+  guarded by the `HELD` status so a row is refunded once), marks the reservation `EXPIRED`
+  and the entry `EXPIRED` (or `CANCELLED` when the customer gave up), and the next tick
+  offers the unit to the next customer.
+
+**Notifications (reuses the outbox/matrix/templates).** New topics:
+`payment_processing`, `payment_failed`, `waitlist_joined`, `waitlist_invite`,
+`reservation_expired`, `refund_pending`, `payment_review` — added to
+`notification_channel_settings` by migration `0037` with the same conservative default
+(only staff in-app on), except customer email for `waitlist_invite`, which is on because
+an unheard invitation cannot be claimed. Every queue carries a `dedupe_key`, so a retried
+callback, reconcile tick or allocation pass never duplicates a message. Templates carry no
+card data, no raw gateway response and no full PII; the delivery-log masking and retention
+scrub of §3.6 still apply.
+
+**Migrations.** `0037_flash_sale_reservations.sql` adds the reservation/lease columns and
+constraints, `waiting_list_entries`, `stock_reservations` and `refund_obligations` (all
+RLS-enabled in the same file, no policies), the due indexes, the `PROCESSING` sale state
+and the new notification topics. `0038_failed_grace_index.sql` adds a partial index for
+failed/cancelled rows still holding grace stock. Both are additive; no existing row is
+rewritten or removed.
+
+**Evidence**
+
+| Rule | Proof |
+|---|---|
+| Two customers, one unit → one order | `tests/order-stock-integration.test.mjs`; `tests/flash-sale-reservation-integration.test.mjs` #1 and #9 (five concurrent buyers, one success) |
+| Reservation is atomic; expiry releases once; a fresh checkout works afterwards | `tests/flash-sale-reservation-integration.test.mjs` #1 |
+| Failed payment holds through its 120 s grace, then releases | same #2 |
+| Ambiguous payment stays `PROCESSING`, never prematurely failed, claim released at the window | same #3 |
+| Duplicate PAID callbacks make one ledger row | same #4 |
+| Verified capture racing expiry ends `PAID`/`CONSUMED` exactly once | same #5 |
+| The queue is durable across a restart (lease reclaim, attempts increment) | same #6 |
+| Waiting list: duplicate entry rejected, FIFO, one allocation, expiry returns stock and offers the next | same #7 |
+| A stale/expired invitation cannot buy a unit taken by someone else | same #8 |
+| Late capture after release creates exactly one pending refund obligation | `tests/late-payment-stock-integration.test.mjs` |
+| Pure decision rules (defaults, clamping, classification, backoff, phases) | `tests/reservation-rules.test.mjs` |
+| Waiting-list eligibility/FIFO/token/expiry rules | `tests/waitlist-rules.test.mjs` |
+| Signature/cron/auth surfaces unchanged | `tests/cron-auth.test.mjs`, existing PayU tests |
+
+**Deployment requirements.** Run `POST /api/payu/reconcile` every minute with
+`Authorization: Bearer $CRON_SECRET` (in-memory timers are not sufficient; the queue and
+all state live in Postgres, so any number of instances may share the schedule, but at
+least one must be running). Apply migrations `0037` and `0038`. Alert on: orders left in
+`PROCESSING` beyond `payment_unresolved_minutes`, `payment_review_required` rows,
+`refund_obligations` that stay `PENDING`, and consecutive reconcile failures
+(`consecutive_reconcile_failures >= 5`). The endpoint returns counts
+(`processed`, `markedPaid`, `released`, `flagged`, `waitingList`, `pendingRefundObligations`)
+for a scheduler-side check.
 
 ---
 
@@ -646,6 +820,11 @@ through `POST /api/store-admin/payments/review-flag` (same-origin checked, audit
 `payment.review_cleared`). Reviewing clears the flag and records who and when
 (`payment_reviewed_at/by`); it does not move stock or money, and the page says so.
 
+A third, read-only table, **Refunds owed**, lists every `refund_obligations` row still
+`PENDING` (§2.15): order, amount, fixed reason and how long it has waited, with the total
+owed in the panel head. It closes itself when refunds recorded against the order cover the
+amount (Returns → record refund, which stays a manual money movement).
+
 ### 3.3 Catalog
 
 | Screen | Route | Status | Notes |
@@ -735,12 +914,12 @@ the server would reject. Every write is audited.
 | Page | Route | What it edits | Downstream status |
 |---|---|---|---|
 | Business | `/settings` | Trade/legal name, support email/phone, address, country, timezone, time format, footer text, receipt footer, cookie notice, logo/favicon media ids | 🟡 Only `trade_name`, `address`, `phone`, `email`, `receipt_footer` are consumed (by `DocumentHeader`, the invoice/packing-slip footer and the POS receipt). The rest are stored only. |
-| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, default fulfilment status, return window, processing/cut-off text | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
+| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, reservation/failure-grace/unresolved windows, waiting-list toggle + claim window + re-invite cooldown, default fulfilment status, return window, processing/cut-off text | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote; the six reservation/waiting-list keys drive §2.15. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
 | Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🟡 `payu_enabled` gates initiate and `payment_note` renders under the checkout PayU helper. `cod_enabled` (default off), `manual_payments_enabled`, `payu_mode` and `payment_methods` are stored only — checkout has no method selector. |
 | Storefront | `/settings/storefront` | Login heading/subheading, login background media, support link, reCAPTCHA site key + status | 🔵 None consumed by the storefront. The store-admin login page renders its own copy. |
 | Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id | 🟢 These settings decide whether the outbox can deliver email or SMS. Secrets stay in environment variables; the page still shows only configured/missing badges. |
 | Shipping | `/settings/shipping` | Couriers + tracking templates, shipping methods and rates, live link tester | 🟢 Couriers + tracking templates used at delivery save; rates and free-over thresholds consumed by the checkout quote and the cart Shipping row |
-| Notifications | `/settings/notifications` | 72 toggles (12 events × 3 channels × 2 audiences), automated messages, email templates, delivery log | 🟢 Enabled cells queue real messages when their event fires; stored templates render them; the delivery log shows every send, skip and failure. |
+| Notifications | `/settings/notifications` | 114 toggles (19 events × 3 channels × 2 audiences), automated messages, email templates, delivery log | 🟢 Enabled cells queue real messages when their event fires; stored templates render them; the delivery log shows every send, skip and failure. |
 | Content | `/settings/content` | Store pages (8) and fixed SEO rows (14) | 🔵 Stored only — no route renders `store_pages`, no metadata reads `seo_pages` |
 | Analytics | `/settings/analytics` | Social links, analytics script IDs, integrations (storage/mail/payment/webhook) | 🔵 Stored only |
 | Reasons | `/settings/reasons` | Cancellation reasons, refund reasons, return reasons | 🟡 Cancellation reasons are used by the returns/cancel flow; refund and return reason lists are stored only. |
@@ -938,6 +1117,7 @@ A single view of every Phase 9 setting.
 | `order_prefix`, `order_start_number`, `invoice_prefix` | Settings → Orders | Order creation (`txnid` + `orders.order_number`), invoice references; POS keeps `RCP-######` | 🟢 |
 | `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`, `return_window_days` | Settings → Orders | Paid-order automation (`transitionOrderStatus`), reconcile, account return requests | 🟢 |
 | `shipping_enabled`, `free_shipping_over` | Settings → Orders / Shipping | Checkout shipping quote, cart Shipping row | 🟢 |
+| `reservation_seconds`, `payment_failure_grace_seconds`, `payment_unresolved_minutes`, `waitlist_enabled`, `waitlist_claim_minutes`, `waitlist_retry_minutes` | Settings → Orders | Reservation deadline, failure grace, unresolved window, waiting-list join/allocation/expiry/cooldown (§2.15) | 🟢 |
 | `pickup_enabled`, `processing_time_text`, `cutoff_text` | Settings → Orders | — (no checkout pickup control; text is copy only) | 🔵 |
 | `guest_checkout` | Customers → Settings | Checkout page + PayU initiate | 🟢 |
 | `checkout_marketing_optin` | Customers → Settings | Checkout UI + newsletter insert | 🟢 |
@@ -952,7 +1132,7 @@ A single view of every Phase 9 setting.
 | `maintenance_enabled`, `maintenance_message`, `maintenance_starts_at`, `maintenance_ends_at` | Settings → Storefront (owner only) | — | 🔵 |
 | `mail_driver`, `mail_status`, `mail_host`, `mail_port`, `mail_username`, `mail_encryption`, `mail_from_email`, `mail_from_name` | Settings → Mail | Notification outbox email delivery (SMTP); `MAIL_PASSWORD` stays in the environment | 🟢 |
 | `sms_gateway`, `sms_status`, `sms_sender_id` | Settings → Mail | Notification outbox SMS delivery (MSG91/Twilio); credentials stay in the environment | 🟢 |
-| Notification matrix (72 cells) | Settings → Notifications | Which outbox rows each business event creates | 🟢 |
+| Notification matrix (114 cells) | Settings → Notifications | Which outbox rows each business event creates | 🟢 |
 | Automated messages | Settings → Notifications | SMS/email copy rendered into outbox rows, with built-in fallbacks | 🟢 |
 | Email templates | Settings → Notifications | Email subject/heading/body/button/footer, with built-in fallbacks | 🟢 |
 | `store_pages` | Settings → Content | — | 🔵 |
@@ -962,13 +1142,14 @@ A single view of every Phase 9 setting.
 | Integrations (storage/mail/webhooks) | Settings → Analytics | — | 🔵 |
 | SMTP password, MSG91/Twilio token, reCAPTCHA secret, PayU key/salt | Environment only | Secret-presence badges | ⚪ |
 
-Summary: of the **51 keys** in `store_settings`, **27 are consumed** — `trade_name`,
+Summary: of the **57 keys** in `store_settings`, **33 are consumed** — `trade_name`,
 `address`, `phone`, `email`, `receipt_footer`, `order_prefix`, `order_start_number`,
 `invoice_prefix`, `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`,
 `return_window_days`, `shipping_enabled`, `free_shipping_over`, `payu_enabled`,
-`payment_note`, the eight mail keys and the three SMS keys — plus the `shipping_methods`
-table, the three `customer_settings` keys, the 72-cell notification matrix and both message
-tables. The remaining 24 are persisted and audited but read by nothing.
+`payment_note`, the six reservation/waiting-list keys, the eight mail keys and the three
+SMS keys — plus the `shipping_methods` table, the three `customer_settings` keys, the
+114-cell notification matrix and both message tables. The remaining 24 are persisted and
+audited but read by nothing.
 
 `store_settings` currently holds **1 row** — the smoke run from Phase 9 set `trade_name` to
 “Gadzio”. Every other key still shows its coded default.
@@ -981,7 +1162,7 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migration `0036` | Written: the notification outbox (`0035`) and the payment-review flag (`0036`); `0033` is `product_collections` + `content_blocks.archived_at` and `0034` is Phase 2 order numbering + stock release. The next free number is `0037`. |
+| Migrations after `0036` | `0037` is flash-sale reservations, the waiting list, refund obligations and the new notification topics; `0038` indexes failed/cancelled rows still inside their grace window (§2.15). The next free number is `0039`. |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
 | SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |
@@ -1002,23 +1183,23 @@ These are deliberate gaps, not bugs.
 | Area | Implementation |
 |---|---|
 | Database access | Server-side only, `DATABASE_URL`, `postgres` tagged templates. The Supabase publishable key is used **only** for read-only `content_blocks`. |
-| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`), `order_number_counters` (`0034`) and `notification_outbox` (`0035`). Every table created since ships with RLS enabled in its own migration file. |
+| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`), `order_number_counters` (`0034`), `notification_outbox` (`0035`), and `waiting_list_entries`, `stock_reservations`, `refund_obligations` (`0037`). Every table created since ships with RLS enabled in its own migration file. |
 | Admin identities | Three completely separate stores: customer (`users`), store staff (`store_admins`), legacy CMS (`admin_users`). No cookie or session table is shared. |
 | Role checks | Every store-admin API route calls `requireStoreRole(...)`; verified by `scripts/check-store-admin-routes.mjs`. |
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
 | Audit | `store_admin_audit` is append-only at the database level (trigger). PII is masked; IP and user agent are hashed. |
 | Secrets | Never stored in the database and never rendered. Settings pages show only “configured / missing” badges via `secret-status.ts`. The notification worker reads `MAIL_PASSWORD`, `MSG91_AUTH_KEY`, `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` from the environment; a missing credential is reported by name only, and provider errors are reduced to a code. |
 | Notification PII | The outbox stores the recipient because it must send; the admin log shows `recipient_masked` and never the subject or body. Audit rows for retries carry the message id only. No log line contains a full email or phone. Retention can clear `body` and `recipient` on finished rows after N days (off by default). |
-| Notification credentials | No template variable can read a password, temporary password, token or reset link; `staff_invite` carries a notice and a sign-in link only. A test renders all 72 combinations with secret markers. |
+| Notification credentials | No template variable can read a password, temporary password, token or reset link; `staff_invite` carries a notice and a sign-in link only. A test renders every channel/audience/topic combination with secret markers. |
 | Rate limiting | In-memory sliding window on PayU initiate, PayU webhook (100/min/IP) and customer order requests (10/15 min/user). |
 | Payment integrity | Reverse-hash verification plus a server-side PayU verification call before an order becomes paid; atomic idempotent transition prevents double capture. |
 | Order documents | Invoice/packing slip pages are behind the store-admin session and role check. |
 
 **Reconciliation must be scheduled.** `CRON_SECRET` is now required in production: with
 it unset, `/api/payu/reconcile` returns 503 instead of running unauthenticated, because a
-run now releases stock held by stale unpaid orders. Set the secret and call the endpoint
-over POST every 10 minutes (§2.14). In development an unset secret still allows a manual
-run.
+run releases stock held by expired reservations and stale unpaid orders. Set the secret
+and call the endpoint over POST **every minute** (§2.14, §2.15). In development an unset
+secret still allows a manual run.
 
 ---
 
@@ -1028,7 +1209,7 @@ run.
 npm install
 npm run db:migrate          # applies migrations/*.sql in order
 npm run dev                 # http://localhost:3000
-npm test                    # 385 tests
+npm test                    # 410 tests
 node scripts/catalog-parity.mjs                 # read-only static ↔ database parity report
 node scripts/check-store-admin-routes.mjs
 node scripts/check-setting-lists.mjs
@@ -1061,6 +1242,10 @@ exhaust it; keep script connection pools at `max: 1`.
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |
 | Checkout rules (pure) | `src/lib/checkout/shipping-rules.ts`, `stock-rules.ts`, `settings.ts` |
+| Reservations + payment outcome (pure) | `src/lib/checkout/reservation-rules.ts` |
+| Reservation/reconcile repository | `src/lib/payu/orders.ts`, `src/lib/payu/reconcile.ts`, `src/lib/payu/refund-obligations.ts`, `src/app/api/payu/reconcile/route.ts` |
+| Waiting list | `src/lib/waitlist/{rules,store}.ts`, `src/app/api/waitlist/route.ts`, `src/app/waitlist/claim/page.tsx`, `src/components/waitlist/WaitlistPanel.tsx` |
+| Reservation UI | `src/components/checkout/ReservationCountdown.tsx`, `src/app/order/processing/page.tsx` |
 | Order numbering + automation | `src/lib/orders/numbering.ts`, `fulfilment-automation.ts`, `auto-cancel-rules.ts` |
 | Cart | `src/lib/cart/*` |
 | Customer account | `src/lib/account/*`, `src/app/api/account/*` |
