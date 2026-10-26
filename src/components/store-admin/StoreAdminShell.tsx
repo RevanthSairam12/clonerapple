@@ -240,6 +240,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Catalog',
     items: [
       { href: '/store-admin/products', label: 'Products', icon: 'box' },
+      { href: '/store-admin/sale', label: 'Sale', icon: 'spark' },
       { href: '/store-admin/categories', label: 'Categories', icon: 'layers' },
       { href: '/store-admin/collections', label: 'Collections', icon: 'image' },
       { href: '/store-admin/stock', label: 'Stock', icon: 'scroll' },

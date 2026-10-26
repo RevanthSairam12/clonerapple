@@ -5477,3 +5477,71 @@ button.sa-chip:hover {
   height: 16px;
   accent-color: #0b6cf0;
 }
+
+/* ------------------------------------------------------------ sale mode */
+
+.sa-sale-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.sa-sale-badge::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sa-sale-badge.is-live {
+  background: #e3f6ea;
+  color: #11703a;
+}
+
+.sa-sale-badge.is-scheduled {
+  background: #fdf3dd;
+  color: #7a5200;
+}
+
+.sa-sale-badge.is-off {
+  background: #ececf0;
+  color: #5c5c66;
+}
+
+.sa-sale-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sa-sale-input .sa-input {
+  width: 110px;
+}
+
+.sa-row-error {
+  color: var(--sa-danger);
+}
+
+.sa-hero-sale {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.sa-filter-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 12px;
+}
+
+.sa-filter-nav .sa-chip.is-active {
+  background: var(--sa-ink);
+  color: #fff;
+}

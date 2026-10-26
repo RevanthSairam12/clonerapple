@@ -286,6 +286,8 @@ test('every charged price goes through the one resolver', async () => {
     'src/lib/store-admin/catalog-crud.ts',
     'src/lib/store-admin/catalog-transfer.ts',
     'src/lib/store-admin/pos.ts',
+    // The sale screen lists and edits the stored column; it never charges it.
+    'src/lib/store-admin/sale.ts',
   ]);
   const files = await findFiles(path.join(root, 'src'));
   const readers = files.filter((file) => {

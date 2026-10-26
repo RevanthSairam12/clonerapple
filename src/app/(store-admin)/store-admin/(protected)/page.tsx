@@ -1,7 +1,9 @@
 import Link from 'next/link';
 
 import { OverviewChart } from '@/components/store-admin/OverviewChart';
+import { SaleStatusBadge } from '@/components/store-admin/SaleStatusBadge';
 import { getStoreSession } from '@/lib/store-admin/auth';
+import { readSaleState } from '@/lib/storefront/sale-state';
 import { formatPaise } from '@/lib/store-admin/amount';
 import {
   getSalesAnalytics,
@@ -709,6 +711,7 @@ export default async function StoreAdminDashboard({
   const range = parseRange(params.range);
 
   const session = await getStoreSession();
+  const sale = await readSaleState();
   const sales = tab === 'sales' ? await getSalesAnalytics(range) : null;
   const users = tab === 'users' ? await getUsersAnalytics(range) : null;
   const transactions =
@@ -733,6 +736,13 @@ export default async function StoreAdminDashboard({
         <div className="sa-hero-copy">
           <p className="sa-hero-eyebrow">
             <span className="sa-status-chip">Live data</span>
+            <Link
+              className="sa-hero-sale"
+              href="/store-admin/sale"
+              title="Sale mode — decided by the database clock"
+            >
+              <SaleStatusBadge status={sale.status} />
+            </Link>
             {today}
           </p>
           <h1 className="sa-hero-title">Welcome back, {firstName}.</h1>

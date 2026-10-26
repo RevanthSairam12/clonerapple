@@ -750,12 +750,27 @@ scheduler-side check.
   the `new_price_paise` sentinel `0`. Regular changes record `'regular'` (also the column
   default). The products list shows a **Sale price** column and the price-history table
   shows the kind.
+- **The sale screen.** `/store-admin/sale` (sidebar **Sale**, beside Products; not under
+  Settings) carries the switch, the optional store-local window, the SALE LIVE /
+  SCHEDULED / OFF badge (also on Overview, linking there), a product table with an inline
+  sale price, discount %, tracked and available, and Adjust links. It filters by has/no
+  sale price, tracking off, and low or zero stock. Bulk percent-off and clear-all are
+  possible from the same screen, each writing a `sale`/`sale_cleared` history row per
+  changed product. Writes need `store_admin`; `store_viewer` sees the same data read-only.
+- **Why a dedicated table.** `sale_settings` is a typed one-row table rather than a
+  `store_settings` text row: the window is two `timestamptz` columns compared with
+  `now()` in the database, so there is no parsing of a text value and no chance of the
+  app clock leaking in. The settings engine stays for plain text/boolean preferences.
+- **Cache.** Every sale write calls `revalidateCatalog()`, so the 30-second storefront
+  cache refreshes on the next request; checkout always re-prices per request.
 - **CSV.** `sale_price` is an import and export column; a row is rejected when the sale
   price is not positive or is not lower than `price`, with the error reported against
   that row. Blank means no sale price, and an update with a blank cell clears it (with a
   `sale_cleared` history row).
 - **Evidence.** `tests/sale-pricing.test.mjs` (resolver, window boundaries, validation,
-  CSV, history markers, DB-clock source guard, resolver-only reader guard) and
+  CSV, history markers, DB-clock source guard, resolver-only reader guard),
+  `tests/sale-admin.test.mjs` (settings validation, bulk maths, pre-flight, labels, route
+  guards, timezone conversion against the database, bulk history) and
   `tests/catalog-csv.test.mjs`.
 - **Migrations.** `0039_sale_pricing.sql` adds `products.sale_price_paise`,
   `product_variants.sale_price_paise`, `price_history.price_kind` (default `regular`) and
@@ -780,7 +795,7 @@ scheduler-side check.
   - `store_owner` — everything, including staff and destructive settings.
 - **Every** API route in `src/app/api/store-admin/**` calls `requireStoreRole(...)`;
   every mutating route also calls `assertSameOrigin(request)`. The checker script verifies
-  this mechanically: 83/83 guarded.
+  this mechanically: 87/87 guarded.
 - **Current data:** 1 store admin (an owner).
 
 ### 3.1 Overview — 🟢 Live
@@ -881,6 +896,7 @@ amount (Returns → record refund, which stays a manual money movement).
 | Screen | Route | Status | Notes |
 |---|---|---|---|
 | Products list | `/products` | 🟢 Live | Filter, search, CSV export, status badges, **Sale price** column |
+| Sale | `/sale` | 🟢 Live | Switch + store-local window, SALE LIVE/SCHEDULED/OFF badge, inline and bulk sale prices, pre-flight stock/cost warnings |
 | New product | `/products/new` | 🟢 Live | Full create form |
 | Edit product | `/products/[id]` | 🟢 Live | Details, price + sale price, cost, images, variants, attributes, specs, **Inventory** card |
 | Price history | same page, `price` API | 🟢 Live | Every price write appends to `price_history`, tagged `regular` / `sale` / `sale_cleared` |
@@ -899,6 +915,17 @@ amount (Returns → record refund, which stays a manual money movement).
 **Price editing gate:** the PayU flow now reads prices from the database
 (`src/lib/payu/db-catalog.ts`), which was the condition in the design. Price writes are
 therefore enabled. `cost_paise` is internal and never sent to the storefront.
+
+**Sale screen:** `/store-admin/sale` is its own sidebar entry (Catalog group, after
+Products), not a Settings tab. The status badge is computed on the database clock and
+the same badge appears on Overview. Writes go through
+`PATCH /api/store-admin/sale` (switch + window) and `POST /api/store-admin/sale` (bulk
+percent or clear). Both call `assertSameOrigin`, require `requireStoreRole('store_admin')`,
+write a `sale.settings` / `sale.bulk` audit row and call `revalidateCatalog()`. The
+inline per-product sale price uses the existing price route, so it has the same
+validation, audit and `price_history` behaviour as the product page. Pre-flight warnings
+list products on sale whose tracking is off, whose available count is zero, or whose
+sale price is below cost; none of them blocks the write.
 
 **Inventory controls:** the product page's **Inventory** card shows on hand, reserved
 and available (= on hand − reserved), a Track inventory toggle and the low-stock
@@ -1304,7 +1331,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Static catalogue | `src/lib/products/registry.ts`, `src/components/sites/accessories/data/*`, `src/components/sites/cases-protection/data/*` (fallback + marketing fields only) |
 | Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
-| Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `migrations/0039_sale_pricing.sql`, `src/components/store-admin/ProductPriceEditor.tsx`, `tests/sale-pricing.test.mjs` |
+| Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin}.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |
 | Checkout rules (pure) | `src/lib/checkout/shipping-rules.ts`, `stock-rules.ts`, `settings.ts` |
