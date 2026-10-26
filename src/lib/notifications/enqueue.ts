@@ -3,13 +3,10 @@ import type postgres from 'postgres';
 
 import { getSql } from '@/lib/admin/db';
 import { maskCustomerEmail, maskCustomerPhone } from '@/lib/store-admin/masking';
-import {
-  DEFAULT_SETTINGS,
-  isStoreSettingKey,
-  type StoreSettings,
-} from '@/lib/store-admin/settings-rules';
+import type { StoreSettings } from '@/lib/store-admin/settings-rules';
 
 import { dedupeKey, uniqueRecipients } from './rules';
+import { readNotificationSettings } from './settings';
 import {
   defaultTemplate,
   renderEmail,
@@ -95,16 +92,6 @@ function appBaseUrl(): string {
   return (process.env.APP_BASE_URL || (
     process.env.NODE_ENV === 'production' ? 'https://gadzio.in' : 'http://localhost:3000'
   )).replace(/\/+$/, '');
-}
-
-async function readSettings(sql: Sql): Promise<StoreSettings> {
-  const rows = (await sql`select key, value from store_settings`) as Row[];
-  const settings: StoreSettings = { ...DEFAULT_SETTINGS };
-  for (const row of rows) {
-    const key = String(row.key ?? '');
-    if (isStoreSettingKey(key)) settings[key] = text(row.value);
-  }
-  return settings;
 }
 
 async function readEmailTemplate(sql: Sql, event: NotificationEvent): Promise<StoredEmail | null> {
@@ -325,7 +312,7 @@ export async function enqueueNotification(
 
     if (matrix.length === 0) return { ...EMPTY };
 
-    const settings = await readSettings(sql);
+    const settings = await readNotificationSettings(sql);
     const storedEmail = await readEmailTemplate(sql, event);
     const automated = await readAutomatedMessages(sql, event);
 

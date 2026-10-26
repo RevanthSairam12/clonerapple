@@ -1,0 +1,322 @@
+/**
+ * Live proof of the outbox worker's two hard guarantees:
+ * - two workers never deliver the same row;
+ * - retry stops at the attempt cap and a permanent failure is not retried.
+ *
+ * The worker's provider seam is replaced with a recording function, so no
+ * network call is made. Everything else — the FOR UPDATE SKIP LOCKED claim,
+ * the lease, status transitions and the masked delivery log — is the real SQL.
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createJiti } from 'jiti';
+import postgres from 'postgres';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+if (!process.env.DATABASE_URL) {
+  try {
+    const env = await readFile(path.join(here, '..', '.env.local'), 'utf8');
+    for (const line of env.split('\n')) {
+      const match = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
+      if (match && !process.env[match[1]]) process.env[match[1]] = match[2];
+    }
+  } catch {
+    // No .env.local; the test stays skipped.
+  }
+}
+
+function connectionDetails() {
+  const url = new URL(process.env.DATABASE_URL);
+  return {
+    isPooler: url.hostname.includes('pooler') && url.port === '6543',
+    transactionPooler: url.port === '6543',
+  };
+}
+
+const skip = !process.env.DATABASE_URL
+  ? 'DATABASE_URL is not set'
+  : connectionDetails().transactionPooler
+    ? 'temporary-schema isolation needs a session connection (not port 6543)'
+    : false;
+
+function client() {
+  const { isPooler } = connectionDetails();
+  return postgres(process.env.DATABASE_URL, {
+    max: 1,
+    ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
+    prepare: !isPooler,
+    onnotice: () => {},
+  });
+}
+
+const jiti = createJiti(import.meta.url, {
+  moduleCache: false,
+  alias: { '@': path.join(here, '..', 'src') },
+});
+const {
+  claimNotificationBatch,
+  getNotificationDeliveryLog,
+  processNotificationOutbox,
+  retryNotification,
+} = await jiti.import(
+  path.join(here, '..', 'src', 'lib', 'notifications', 'outbox.ts'),
+);
+
+let sequence = 0;
+
+async function insertRow(sql, overrides = {}) {
+  sequence += 1;
+  const row = {
+    id: `ntf_itest_${sequence}_${randomBytes(3).toString('hex')}`,
+    event_key: 'order_placed',
+    audience: 'customer',
+    channel: 'email',
+    entity_type: 'order',
+    entity_id: `ITEST${sequence}`,
+    recipient: 'buyer@example.test',
+    recipient_masked: 'b***@example.test',
+    subject: 'Subject',
+    body: '<p>Body</p>',
+    status: 'QUEUED',
+    reason: '',
+    attempts: 0,
+    // A minute in the past so a small client/server clock difference can never
+    // hide a row from `next_attempt_at <= now()`. Production rows use the
+    // database default instead of a client timestamp.
+    next_attempt_at: new Date(Date.now() - 60_000),
+    sent_at: null,
+    dedupe_key: `itest:${sequence}:${randomBytes(4).toString('hex')}`,
+    ...overrides,
+  };
+  await sql`
+    insert into notification_outbox (
+      id, event_key, audience, channel, entity_type, entity_id,
+      recipient, recipient_masked, subject, body, status, reason,
+      attempts, next_attempt_at, sent_at, dedupe_key
+    ) values (
+      ${row.id}, ${row.event_key}, ${row.audience}, ${row.channel},
+      ${row.entity_type}, ${row.entity_id}, ${row.recipient}, ${row.recipient_masked},
+      ${row.subject}, ${row.body}, ${row.status}, ${row.reason}, ${row.attempts},
+      ${row.next_attempt_at}, ${row.sent_at}, ${row.dedupe_key}
+    )
+  `;
+  return row;
+}
+
+async function statusOf(sql, id) {
+  const rows = await sql`
+    select status, reason, attempts, sent_at, next_attempt_at
+    from notification_outbox where id = ${id}
+  `;
+  return rows[0];
+}
+
+test('the outbox worker claims exclusively, retries with backoff, and stops', { skip }, async () => {
+  const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
+  const schema = `itest_outbox_${suffix}`;
+  const a = client();
+  const b = client();
+
+  try {
+    await a.unsafe(`create schema "${schema}"`);
+    await a.unsafe(`create table "${schema}".notification_outbox (like public.notification_outbox including all)`);
+    await a.unsafe(`set search_path to "${schema}"`);
+    await b.unsafe(`set search_path to "${schema}"`);
+    const pinned = await a`show search_path`;
+    assert.ok(String(pinned[0].search_path).includes(schema), 'connection A is pinned to the test schema');
+    const pinnedB = await b`show search_path`;
+    assert.ok(String(pinnedB[0].search_path).includes(schema), 'connection B is pinned to the test schema');
+
+    /* ------------------------------------ two claims never take the same row */
+    for (let index = 0; index < 6; index += 1) {
+      await insertRow(a, { entity_id: `CLAIM${index}${suffix}` });
+    }
+    const [claimA, claimB] = await Promise.all([
+      claimNotificationBatch(a, 10),
+      claimNotificationBatch(b, 10),
+    ]);
+    const claimedIds = [...claimA, ...claimB].map((row) => row.id);
+    assert.equal(claimedIds.length, 6, 'all six due rows were claimed');
+    assert.equal(new Set(claimedIds).size, 6, 'no row was handed to both workers');
+    assert.equal(claimA.length + claimB.length, 6);
+    const leased = await a`select status from notification_outbox`;
+    assert.ok(leased.every((row) => row.status === 'SENDING'));
+
+    /* ------------------------------------------- worker status transitions */
+    await a`delete from notification_outbox`;
+    const email = await insertRow(a, { entity_id: `EMAIL${suffix}` });
+    const sms = await insertRow(a, {
+      entity_id: `SMS${suffix}`,
+      channel: 'sms',
+      recipient: '9876543210',
+      recipient_masked: '98******10',
+      body: 'SMS body',
+    });
+    const staffInapp = await insertRow(a, {
+      entity_id: `STAFF${suffix}`,
+      channel: 'inapp',
+      audience: 'staff',
+      recipient: 'staff',
+      recipient_masked: 'staff',
+    });
+    const customerInapp = await insertRow(a, {
+      entity_id: `CUSTOMER${suffix}`,
+      channel: 'inapp',
+      audience: 'customer',
+      recipient: 'customer',
+      recipient_masked: 'customer',
+    });
+
+    const calls = [];
+    const deliver = async (input) => {
+      calls.push(input);
+      if (input.channel === 'sms') {
+        return { outcome: 'SKIPPED', reason: 'sms not configured (test)', permanent: false };
+      }
+      return { outcome: 'SENT', reason: '', permanent: false };
+    };
+
+    const processed = await processNotificationOutbox(10, { sql: a, deliver });
+    assert.equal(processed.ok, true);
+    assert.deepEqual(
+      {
+        claimed: processed.claimed,
+        sent: processed.sent,
+        skipped: processed.skipped,
+        retried: processed.retried,
+        failed: processed.failed,
+      },
+      { claimed: 4, sent: 2, skipped: 2, retried: 0, failed: 0 },
+    );
+    assert.equal(calls.length, 2, 'in-app rows never reach a provider');
+    assert.deepEqual(calls.map((call) => call.channel).sort(), ['email', 'sms']);
+    assert.equal((await statusOf(a, email.id)).status, 'SENT');
+    assert.equal((await statusOf(a, staffInapp.id)).status, 'SENT');
+    assert.equal((await statusOf(a, sms.id)).status, 'SKIPPED');
+    assert.match((await statusOf(a, sms.id)).reason, /sms not configured/);
+    assert.equal((await statusOf(a, customerInapp.id)).status, 'SKIPPED');
+    assert.match((await statusOf(a, customerInapp.id)).reason, /no customer in-app inbox/);
+    assert.equal((await statusOf(a, email.id)).attempts, 1);
+    assert.ok((await statusOf(a, email.id)).sent_at);
+
+    /* ------------------------------------------ retry, backoff and the cap */
+    await a`delete from notification_outbox`;
+    const retrying = await insertRow(a, { entity_id: `RETRY${suffix}` });
+    const retryPass = await processNotificationOutbox(10, {
+      sql: a,
+      deliver: async () => ({ outcome: 'FAILED', reason: 'provider down', permanent: false }),
+    });
+    assert.equal(retryPass.retried, 1);
+    const retryRow = await statusOf(a, retrying.id);
+    assert.equal(retryRow.status, 'QUEUED');
+    assert.equal(retryRow.attempts, 1);
+    assert.match(retryRow.reason, /provider down/);
+    const delayMs = new Date(retryRow.next_attempt_at).getTime() - Date.now();
+    assert.ok(delayMs > 30_000, `backoff should be at least a minute, was ${delayMs}ms`);
+
+    await a`update notification_outbox set next_attempt_at = now() where id = ${retrying.id}`;
+    const capped = await insertRow(a, { entity_id: `CAP${suffix}`, attempts: 4 });
+    const capPass = await processNotificationOutbox(10, {
+      sql: a,
+      deliver: async () => ({ outcome: 'FAILED', reason: 'still down', permanent: false }),
+    });
+    assert.equal(capPass.failed, 1, 'the fifth attempt is terminal');
+    const cappedRow = await statusOf(a, capped.id);
+    assert.equal(cappedRow.status, 'FAILED');
+    assert.equal(cappedRow.attempts, 5);
+    assert.match(cappedRow.reason, /stopped after 5 attempts/);
+
+    const permanent = await insertRow(a, { entity_id: `PERM${suffix}` });
+    const permanentPass = await processNotificationOutbox(10, {
+      sql: a,
+      deliver: async () => ({ outcome: 'FAILED', reason: 'invalid phone recipient', permanent: true }),
+    });
+    assert.equal(permanentPass.failed, 1);
+    assert.equal((await statusOf(a, permanent.id)).status, 'FAILED');
+    assert.equal((await statusOf(a, permanent.id)).attempts, 1);
+
+    /* ------------------------ two workers, no duplicate provider delivery */
+    await a`delete from notification_outbox`;
+    for (let index = 0; index < 4; index += 1) {
+      await insertRow(a, {
+        entity_id: `PARALLEL${index}${suffix}`,
+        recipient: `parallel-${index}@example.test`,
+      });
+    }
+    const parallelCalls = [];
+    const parallelDeliver = async (input) => {
+      parallelCalls.push(input.recipient);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { outcome: 'SENT', reason: '', permanent: false };
+    };
+    await Promise.all([
+      processNotificationOutbox(10, { sql: a, deliver: parallelDeliver }),
+      processNotificationOutbox(10, { sql: b, deliver: parallelDeliver }),
+    ]);
+    assert.equal(parallelCalls.length, 4, 'every row was delivered exactly once');
+    assert.equal(new Set(parallelCalls).size, 4);
+    const parallelRows = await a`select status, attempts from notification_outbox`;
+    assert.ok(parallelRows.every((row) => row.status === 'SENT' && Number(row.attempts) === 1));
+
+    /* ------------------------------- the admin log is masked and retryable */
+    await a`delete from notification_outbox`;
+    const failed = await insertRow(a, {
+      entity_id: `LOGFAIL${suffix}`,
+      status: 'FAILED',
+      attempts: 5,
+      reason: 'mail server rejected the message',
+      recipient: 'veryprivate@example.test',
+      recipient_masked: 'v***@example.test',
+      subject: 'Private subject',
+      body: '<p>Private body</p>',
+    });
+    const sent = await insertRow(a, {
+      entity_id: `LOGSENT${suffix}`,
+      status: 'SENT',
+      attempts: 1,
+      sent_at: new Date(),
+      recipient: 'another-private@example.test',
+      recipient_masked: 'a***@example.test',
+    });
+
+    const log = await getNotificationDeliveryLog({ sql: a });
+    assert.equal(log.ok, true);
+    assert.equal(log.counts.FAILED, 1);
+    assert.equal(log.counts.SENT, 1);
+    assert.equal(log.rows.length, 2);
+    for (const row of log.rows) {
+      assert.equal('recipient' in row, false, 'the full recipient never leaves the database');
+      assert.equal('body' in row, false, 'the body never reaches the log');
+      assert.equal('subject' in row, false);
+      assert.match(row.recipientMasked, /\*\*\*/);
+    }
+
+    const onlyFailed = await getNotificationDeliveryLog({ sql: a, status: 'FAILED' });
+    assert.equal(onlyFailed.rows.length, 1);
+    assert.equal(onlyFailed.rows[0].id, failed.id);
+
+    const retried = await retryNotification(failed.id, a);
+    assert.equal(retried.ok, true);
+    const retriedRow = await statusOf(a, failed.id);
+    assert.equal(retriedRow.status, 'QUEUED');
+    assert.equal(retriedRow.attempts, 0);
+    assert.equal(retriedRow.reason, '');
+
+    const cannotRetrySent = await retryNotification(sent.id, a);
+    assert.equal(cannotRetrySent.ok, false);
+  } finally {
+    try {
+      await a.unsafe('set search_path to public');
+      await a.unsafe(`drop schema if exists "${schema}" cascade`);
+    } catch (error) {
+      console.warn('[notifications-outbox-integration] cleanup did not finish:', error?.message ?? error);
+    }
+    await a.end({ timeout: 5 });
+    await b.end({ timeout: 5 });
+  }
+});

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { processNotificationOutbox } from '@/lib/notifications/outbox';
 import { authorizeCronRequest } from '@/lib/payu/cron-auth';
 import { reconcilePendingOrders } from '@/lib/payu/reconcile';
 
@@ -12,6 +13,11 @@ export const runtime = 'nodejs';
  * expires unpaid ones after `auto_cancel_unpaid_hours`, releasing their stock
  * claim. Missing `CRON_SECRET` fails closed in production (503) because stale
  * orders now hold stock.
+ *
+ * This is also the notification retry tick: after reconciling it drains a
+ * small batch of due outbox rows, so a message whose best-effort after()
+ * delivery failed is retried even when nobody is browsing the store. The cron
+ * secret is the same; no public notification route exists.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -31,11 +37,15 @@ export async function POST(req: NextRequest) {
 
     const staleMinutes = parseInt(url.searchParams.get('staleMinutes') || '15', 10);
     const summary = await reconcilePendingOrders(staleMinutes);
+    // Best-effort and bounded: a mail outage must not look like a failed
+    // reconciliation. processNotificationOutbox() never throws.
+    const notifications = await processNotificationOutbox(10);
 
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       summary,
+      notifications,
     });
   } catch (err: unknown) {
     console.error('[Reconciliation Endpoint Error]:', (err as Error).message);
