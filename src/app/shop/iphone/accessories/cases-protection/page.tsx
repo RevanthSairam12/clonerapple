@@ -3,9 +3,8 @@ import { notFound } from 'next/navigation';
 
 import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesProtectionPage';
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
-import { toCategoryConfig, toCollectionProduct } from '@/lib/catalog/adapter';
-import { getStorefrontCategory } from '@/lib/catalog/storefront';
 import { getContentMany } from '@/lib/content';
+import { getCasesCategoryView } from '@/lib/storefront/catalog';
 
 import '@/app/in/shop/iphone/accessories/cases-protection/cases.css';
 
@@ -25,8 +24,8 @@ export const metadata: Metadata = {
 };
 
 export default async function ShopCasesPage() {
-  const category = await getStorefrontCategory('cases-protection');
-  if (!category) notFound();
+  const view = await getCasesCategoryView();
+  if (!view) notFound();
 
   // Page furniture only — the grid comes from the `products` table.
   const c = await getContentMany({
@@ -41,8 +40,8 @@ export default async function ShopCasesPage() {
 
   return (
     <CasesProtectionPage
-      config={toCategoryConfig(category)}
-      products={category.products.map(toCollectionProduct)}
+      config={view.config}
+      products={view.products}
       overrides={overrides}
     />
   );

@@ -1,9 +1,13 @@
 import type { Metadata } from 'next';
 
 import { AccessoryCategoryPage } from '@/components/sites/accessories/AccessoryCategoryPage';
-import { CONFIG, PRODUCTS } from '@/components/sites/accessories/data/wired-earphones';
+import { CONFIG } from '@/components/sites/accessories/data/wired-earphones';
+import { getAccessoryProductsView } from '@/lib/storefront/catalog';
 
 import '@/components/sites/accessories/accessory-category.css';
+
+/** Product records come from the database; page furniture stays coded. */
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: CONFIG.seo.title,
@@ -21,6 +25,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function Page() {
-  return <AccessoryCategoryPage config={CONFIG} products={PRODUCTS} />;
+export default async function Page() {
+  const { products } = await getAccessoryProductsView(CONFIG.slug);
+  return <AccessoryCategoryPage config={CONFIG} products={products} />;
 }

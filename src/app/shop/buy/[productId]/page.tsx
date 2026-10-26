@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getProductById } from '@/components/sites/cases-protection/data/products';
 import { ProductDetailPage } from '@/components/shop/ProductDetailPage';
+import { getProductDetail } from '@/lib/storefront/catalog';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -11,12 +11,13 @@ export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { productId } = await params;
-  const product = getProductById(productId);
+  const detail = await getProductDetail(productId);
 
-  if (!product) {
+  if (!detail || detail.kind !== 'case') {
     return { title: 'Product Not Found | Gadzio Store' };
   }
 
+  const product = detail.product;
   return {
     title: `Buy ${product.name} | Gadzio Store`,
     description: product.description,
@@ -30,11 +31,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function BuyPage({ params }: Props) {
   const { productId } = await params;
-  const product = getProductById(productId);
+  const detail = await getProductDetail(productId);
 
-  if (!product) {
+  // This route has always sold the bespoke case range only.
+  if (!detail || detail.kind !== 'case') {
     notFound();
   }
 
-  return <ProductDetailPage product={product} />;
+  return <ProductDetailPage product={detail.product} />;
 }

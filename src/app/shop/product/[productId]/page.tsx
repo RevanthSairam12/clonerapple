@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { ProductDetailPage } from '@/components/shop/ProductDetailPage';
 import { AccessoryDetailPage } from '@/components/sites/accessories/AccessoryDetailPage';
-import { getCaseProductById, getAccessoryProductById } from '@/lib/products/registry';
+import { getProductDetail } from '@/lib/storefront/catalog';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -13,14 +13,15 @@ export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { productId } = await params;
-  const product = getCaseProductById(productId) ?? getAccessoryProductById(productId);
+  const detail = await getProductDetail(productId);
 
-  if (!product) {
+  if (!detail) {
     return {
       title: 'Product Not Found | Gadzio Store',
     };
   }
 
+  const product = detail.product;
   return {
     title: `${product.name} | Gadzio Store`,
     description: product.description,
@@ -36,18 +37,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ProductPage({ params }: Props) {
   const { productId } = await params;
+  const detail = await getProductDetail(productId);
+
+  if (!detail) notFound();
 
   // Original iPhone cases keep their polished, bespoke detail page.
-  const caseProduct = getCaseProductById(productId);
-  if (caseProduct) {
-    return <ProductDetailPage product={caseProduct} />;
+  if (detail.kind === 'case') {
+    return <ProductDetailPage product={detail.product} />;
   }
 
   // Every other accessory category renders the generic, data-driven page.
-  const accessoryProduct = getAccessoryProductById(productId);
-  if (accessoryProduct) {
-    return <AccessoryDetailPage product={accessoryProduct} />;
-  }
-
-  notFound();
+  return <AccessoryDetailPage product={detail.product} />;
 }

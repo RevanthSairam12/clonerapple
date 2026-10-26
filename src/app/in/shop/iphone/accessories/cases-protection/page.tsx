@@ -3,9 +3,8 @@ import { notFound } from 'next/navigation';
 
 import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesProtectionPage';
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
-import { toCategoryConfig, toCollectionProduct } from '@/lib/catalog/adapter';
-import { getStorefrontCategory } from '@/lib/catalog/storefront';
 import { getContent, getContentMany } from '@/lib/content';
+import { getCasesCategoryView } from '@/lib/storefront/catalog';
 
 import './cases.css';
 
@@ -44,8 +43,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function Page() {
-  const category = await getStorefrontCategory('cases-protection');
-  if (!category) notFound();
+  const view = await getCasesCategoryView();
+  if (!view) notFound();
 
   // Page furniture only. The product grid is never read from content_blocks:
   // products live in the `products` table and are edited in store admin.
@@ -61,8 +60,8 @@ export default async function Page() {
 
   return (
     <CasesProtectionPage
-      config={toCategoryConfig(category)}
-      products={category.products.map(toCollectionProduct)}
+      config={view.config}
+      products={view.products}
       overrides={overrides}
     />
   );

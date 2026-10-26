@@ -2,8 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { AccessoryCategoryPage } from '@/components/sites/accessories/AccessoryCategoryPage';
-import { toAccessoryProduct, toCategoryConfig } from '@/lib/catalog/adapter';
-import { getStorefrontCategory } from '@/lib/catalog/storefront';
+import { getAccessoryCategoryView } from '@/lib/storefront/catalog';
 
 import '@/components/sites/accessories/accessory-category.css';
 
@@ -16,14 +15,14 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const category = await getStorefrontCategory(slug);
+  const view = await getAccessoryCategoryView(slug);
 
-  if (!category) {
+  if (!view) {
     return { title: 'Category Not Found | Gadzio Store' };
   }
 
-  const seoTitle = category.seo.title || category.title;
-  const seoDescription = category.seo.description || category.subhead;
+  const seoTitle = view.config.seo.title || view.config.title;
+  const seoDescription = view.config.seo.description || view.config.subhead;
 
   return {
     title: seoTitle,
@@ -31,7 +30,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     openGraph: {
       title: seoTitle,
       description: seoDescription,
-      url: `https://gadzio.in/in/shop/iphone/accessories/${category.slug}`,
+      url: `https://gadzio.in/in/shop/iphone/accessories/${view.config.slug}`,
       siteName: 'Gadzio',
       locale: 'en_IN',
       type: 'website',
@@ -42,12 +41,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function Page({ params }: Props) {
   const { slug } = await params;
-  const category = await getStorefrontCategory(slug);
+  const view = await getAccessoryCategoryView(slug);
 
-  if (!category) notFound();
+  if (!view) notFound();
 
-  const config = toCategoryConfig(category);
-  const products = category.products.map(toAccessoryProduct);
-
-  return <AccessoryCategoryPage config={config} products={products} />;
+  return <AccessoryCategoryPage config={view.config} products={view.products} />;
 }
