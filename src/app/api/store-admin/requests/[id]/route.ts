@@ -3,6 +3,7 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { getOrderRequestDetail, transitionOrderRequest, REQUESTS_UNAVAILABLE_MESSAGE } from '@/lib/store-admin/order-requests';
 import { writeAudit } from '@/lib/store-admin/audit';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 import { canTransitionRequest, type RequestStatus } from '@/lib/account/request-rules';
 
 export const dynamic = 'force-dynamic';
@@ -41,8 +42,9 @@ export async function PATCH(request: NextRequest, context: Context) {
     return NextResponse.json({ error: 'That request status change is not allowed.' }, { status: 400 });
   }
   try {
-    const result = await transitionOrderRequest(id, status, adminNote, guard.session.adminId);
-    await writeAudit({ request, actorId: guard.session.adminId, actorEmail: guard.session.email, action: 'update_request', entity: 'order_request', entityId: id, before: { status: result.before }, after: { status }, reason: 'request_status_changed' });
+    const result = await transitionOrderRequest(id, status, adminNote, guard.session.adminId, guard.session.role);
+    await writeAudit({ request, actorId: guard.session.adminId, actorEmail: guard.session.email, action: 'update_request', entity: 'order_request', entityId: id, before: { status: result.before }, after: { status, stockMoved: result.stockMoved }, reason: status === 'RESOLVED' && before.data.type === 'cancel' ? 'cancellation_approved' : 'request_status_changed' });
+    if (result.stockMoved) revalidateCatalog();
     return NextResponse.json({ request: result.after });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not update request.' }, { status: 400 });

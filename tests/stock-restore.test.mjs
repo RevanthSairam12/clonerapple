@@ -35,17 +35,25 @@ test('invalid quantities never invent stock', () => {
 test('every order-linked restore path is ledger-guarded', () => {
   const stock = read('src/lib/payu/stock.ts');
   const returns = read('src/lib/store-admin/returns.ts');
+  const orders = read('src/lib/store-admin/orders.ts');
+  const requests = read('src/lib/store-admin/order-requests.ts');
   const pos = read('src/lib/store-admin/pos.ts');
 
   // Only stock.ts may add to on_hand for an order; the callers use the helper.
-  assert.doesNotMatch(returns, /on_hand\s*=\s*on_hand\s*\+/);
-  assert.doesNotMatch(pos, /on_hand\s*=\s*on_hand\s*\+/);
+  for (const file of [returns, orders, requests, pos]) {
+    assert.doesNotMatch(file, /on_hand\s*=\s*on_hand\s*\+/);
+  }
   assert.match(stock, /reason in \('return', 'release'\)/);
   assert.match(stock, /restoreableQuantity\(/);
 
-  assert.match(returns, /restoreSoldStock\(/, 'return receiving restocks through the ledger');
+  assert.match(returns, /restoreSoldStock\(/, 'return receiving and paid cancellations restock through the ledger');
+  assert.match(returns, /releaseClaimedStock\(/, 'unpaid cancellations release their claim');
   assert.match(pos, /restoreSoldStock\(/, 'POS void restocks through the ledger');
 
-  // Cancelling a paid order never restocks: only an unpaid claim is released.
-  assert.match(returns, /holdsUnpaidClaim/);
+  // The fulfilment screen and the customer-request approval both go through
+  // the same guarded cancellation path instead of writing CANCELED directly.
+  assert.match(orders, /restoreSoldStock\(/);
+  assert.match(orders, /releaseClaimedStock\(/);
+  assert.match(requests, /cancelOrderInTx\(/);
+  assert.match(requests, /reasonId: 'cancel_customer_request'/);
 });

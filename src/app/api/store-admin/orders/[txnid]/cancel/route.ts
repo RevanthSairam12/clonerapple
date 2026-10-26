@@ -74,6 +74,8 @@ export async function POST(
       reasonId: typeof body.reasonId === 'string' ? body.reasonId : null,
       previousStatus: result.previousStatus,
       paymentStatus: result.paymentStatus,
+      stockReleased: result.stockReleased,
+      stockRestored: result.stockRestored,
     },
     request,
   });

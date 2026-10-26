@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type postgres from 'postgres';
 
 import { getSql } from '@/lib/admin/db';
 import { releaseClaimedStock, restoreSoldStock } from '@/lib/payu/stock';
@@ -26,6 +27,7 @@ if (typeof window !== 'undefined') {
 }
 
 type Row = Record<string, unknown>;
+type Tx = postgres.TransactionSql;
 
 function text(value: unknown): string {
   return value === null || value === undefined ? '' : String(value);
@@ -819,7 +821,10 @@ export type CancelOrderMutation =
       txnid: string;
       previousStatus: string;
       paymentStatus: string;
+      /** True when an unpaid claim went back to the shelf. */
       stockReleased: boolean;
+      /** True when a paid order's claimed units went back through the ledger. */
+      stockRestored: boolean;
     }
   | {
       ok: false;
@@ -833,107 +838,145 @@ export type CancelOrderMutation =
       error: string;
     };
 
-/** Cancel an order before delivery with a catalogue reason. */
-export async function cancelOrder(input: {
+export interface CancelOrderInput {
   txnid: string;
   reasonId: unknown;
   note: unknown;
   actorId: string;
   role: 'store_owner' | 'store_admin' | 'store_viewer';
-}): Promise<CancelOrderMutation> {
+}
+
+/**
+ * Cancel an order before delivery with a catalogue reason.
+ *
+ * Both paid and unpaid orders give their stock back exactly once:
+ * - an unpaid order releases the claim it still holds;
+ * - a paid order restocks through the sale ledger, so a pre-Phase-2 order
+ *   (which has no `sale` movement) restores nothing and a repeated cancel
+ *   cannot add the same units twice.
+ */
+export async function cancelOrder(input: CancelOrderInput): Promise<CancelOrderMutation> {
+  const sql = getSql();
+  if (!sql) return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+
+  try {
+    return await cancelOrderUsing(sql, input);
+  } catch {
+    console.warn('[store-admin/returns] could not cancel the order');
+    return { ok: false as const, reason: 'unavailable' as const, error: 'Order records are not available.' };
+  }
+}
+
+/** Cancel on a caller-owned connection; used by tests and composed flows. */
+export async function cancelOrderUsing(
+  sql: postgres.Sql,
+  input: CancelOrderInput,
+): Promise<CancelOrderMutation> {
+  return await sql.begin((tx) => cancelOrderInTx(tx, input));
+}
+
+/**
+ * The cancellation transaction. Exported so a customer-request approval can
+ * update the request and cancel the order in one atomic step.
+ */
+export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<CancelOrderMutation> {
   const reasonId = typeof input.reasonId === 'string' ? input.reasonId.trim() : '';
   if (!reasonId) {
     return { ok: false, reason: 'invalid-input', error: 'Choose a cancellation reason.' };
   }
   const note = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';
 
-  const sql = getSql();
-  if (!sql) return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  const orderRows = (await tx`
+    select id, txnid, status, fulfilment_status
+    from orders
+    where txnid = ${input.txnid.trim()}
+    for update
+  `) as Row[];
+  const order = orderRows[0];
+  if (!order) return { ok: false as const, reason: 'not-found' as const, error: 'Order not found.' };
 
-  try {
-    return await sql.begin(async (tx) => {
-      const orderRows = (await tx`
-        select id, txnid, status, fulfilment_status
-        from orders
-        where txnid = ${input.txnid.trim()}
-        for update
-      `) as Row[];
-      const order = orderRows[0];
-      if (!order) return { ok: false as const, reason: 'not-found' as const, error: 'Order not found.' };
-
-      const allowed = cancellationAllowed({
-        paymentStatus: text(order.status),
-        fulfilmentStatus: text(order.fulfilment_status),
-      });
-      if (!allowed.ok) {
-        return { ok: false as const, reason: allowed.code, error: allowed.error };
-      }
-      if (text(order.fulfilment_status) === 'ON_THE_WAY' && input.role !== 'store_owner') {
-        return {
-          ok: false as const,
-          reason: 'owner-required' as const,
-          error: 'Only the owner can cancel an order that is already on the way.',
-        };
-      }
-
-      const reasonRows = (await tx`
-        select id, label from cancellation_reasons
-        where id = ${reasonId} and is_active
-        limit 1
-      `) as Row[];
-      const reason = reasonRows[0];
-      if (!reason) {
-        return { ok: false as const, reason: 'invalid-input' as const, error: 'Choose an active cancellation reason.' };
-      }
-
-      const previousStatus = text(order.fulfilment_status);
-      const paymentStatus = text(order.status);
-      const label = text(reason.label);
-
-      await tx`
-        update orders
-        set fulfilment_status = 'CANCELED',
-            status = case when status in ('CREATED', 'PENDING') then 'CANCELLED' else status end,
-            cancelled_at = now(),
-            cancel_reason = ${note ? `${label} — ${note}` : label},
-            cancellation_reason_id = ${text(reason.id)},
-            cancelled_by = ${input.actorId},
-            updated_at = now()
-        where id = ${text(order.id)}
-      `;
-
-      await tx`
-        update order_deliveries
-        set status = 'CANCELED', updated_at = now()
-        where order_id = ${text(order.id)}
-      `;
-
-      await tx`
-        insert into order_status_history (order_id, domain, actor, from_status, to_status, note)
-        values (${text(order.id)}, 'fulfilment', 'store_admin', ${previousStatus}, 'CANCELED', ${note || null})
-      `;
-
-      // An unpaid online order still holds its claimed stock. Paid orders are
-      // left alone: they are restocked by the return flow when goods come back.
-      const holdsUnpaidClaim =
-        paymentStatus === 'CREATED' || paymentStatus === 'PENDING' || paymentStatus === 'FAILED';
-      const stockReleased = holdsUnpaidClaim
-        ? await releaseClaimedStock(tx, text(order.id))
-        : false;
-
-      return {
-        ok: true as const,
-        orderId: text(order.id),
-        txnid: text(order.txnid),
-        previousStatus,
-        paymentStatus,
-        stockReleased,
-      };
-    });
-  } catch {
-    console.warn('[store-admin/returns] could not cancel the order');
-    return { ok: false as const, reason: 'unavailable' as const, error: 'Order records are not available.' };
+  const allowed = cancellationAllowed({
+    paymentStatus: text(order.status),
+    fulfilmentStatus: text(order.fulfilment_status),
+  });
+  if (!allowed.ok) {
+    return { ok: false as const, reason: allowed.code, error: allowed.error };
   }
+  if (text(order.fulfilment_status) === 'ON_THE_WAY' && input.role !== 'store_owner') {
+    return {
+      ok: false as const,
+      reason: 'owner-required' as const,
+      error: 'Only the owner can cancel an order that is already on the way.',
+    };
+  }
+
+  const reasonRows = (await tx`
+    select id, label from cancellation_reasons
+    where id = ${reasonId} and is_active
+    limit 1
+  `) as Row[];
+  const reason = reasonRows[0];
+  if (!reason) {
+    return { ok: false as const, reason: 'invalid-input' as const, error: 'Choose an active cancellation reason.' };
+  }
+
+  const orderId = text(order.id);
+  const previousStatus = text(order.fulfilment_status);
+  const paymentStatus = text(order.status);
+  const label = text(reason.label);
+
+  await tx`
+    update orders
+    set fulfilment_status = 'CANCELED',
+        status = case when status in ('CREATED', 'PENDING') then 'CANCELLED' else status end,
+        cancelled_at = now(),
+        cancel_reason = ${note ? `${label} — ${note}` : label},
+        cancellation_reason_id = ${text(reason.id)},
+        cancelled_by = ${input.actorId},
+        updated_at = now()
+    where id = ${orderId}
+  `;
+
+  await tx`
+    update order_deliveries
+    set status = 'CANCELED', updated_at = now()
+    where order_id = ${orderId}
+  `;
+
+  await tx`
+    insert into order_status_history (order_id, domain, actor, from_status, to_status, note)
+    values (${orderId}, 'fulfilment', 'store_admin', ${previousStatus}, 'CANCELED', ${note || null})
+  `;
+
+  let stockReleased = false;
+  let stockRestored = false;
+  if (paymentStatus === 'PAID') {
+    const itemRows = (await tx`
+      select product_id, quantity from order_items where order_id = ${orderId}
+    `) as Row[];
+    const restored = await restoreSoldStock(
+      tx,
+      orderId,
+      itemRows.map((item) => ({
+        productId: text(item.product_id),
+        quantity: Number(item.quantity),
+      })),
+      { createdBy: input.actorId },
+    );
+    stockRestored = restored.length > 0;
+  } else {
+    stockReleased = await releaseClaimedStock(tx, orderId);
+  }
+
+  return {
+    ok: true as const,
+    orderId,
+    txnid: text(order.txnid),
+    previousStatus,
+    paymentStatus,
+    stockReleased,
+    stockRestored,
+  };
 }
 
 export type ReasonMutation =

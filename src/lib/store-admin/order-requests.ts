@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { getSql } from '@/lib/admin/db';
+import { cancelOrderInTx } from './returns';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
 import { canTransitionRequest, type RequestStatus, type RequestType, validateCustomerRequestState } from '@/lib/account/request-rules';
 import { isWithinReturnWindow } from '@/lib/account/rules';
@@ -154,7 +155,24 @@ export async function createCustomerOrderRequest(userId: string, txnid: string, 
   return created.data;
 }
 
-export async function transitionOrderRequest(id: string, status: RequestStatus, adminNote: string, adminId: string) {
+class RequestCancelError extends Error {}
+
+/**
+ * Move an order request through its workflow.
+ *
+ * Resolving a `cancel` request is the customer-facing cancellation approval:
+ * the order is cancelled in the same transaction, so the request cannot be
+ * approved while the order stays live. The shared cancellation path releases
+ * an unpaid claim or restores a paid order through the sale ledger, and the
+ * ledger makes a duplicate approval harmless.
+ */
+export async function transitionOrderRequest(
+  id: string,
+  status: RequestStatus,
+  adminNote: string,
+  adminId: string,
+  role: 'store_owner' | 'store_admin' | 'store_viewer' = 'store_admin',
+) {
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
   const currentLoad = await getOrderRequestDetail(id);
@@ -162,16 +180,47 @@ export async function transitionOrderRequest(id: string, status: RequestStatus, 
   const current = currentLoad.data;
   if (!canTransitionRequest(current.status, status) && current.status !== status) throw new Error('That request status change is not allowed.');
   const note = adminNote.trim().slice(0, 500);
+  let stockMoved = false;
   try {
-    await sql`update order_requests set status = ${status}, admin_note = ${note || null}, resolved_by = case when ${status} in ('RESOLVED', 'REJECTED') then ${adminId} else resolved_by end, updated_at = now() where id = ${id}`;
-    await sql`insert into order_status_history (order_id, domain, actor, from_status, to_status, note) values (${current.orderId}, ${current.type === 'help' ? 'fulfilment' : 'refund'}, 'system', ${current.fulfilmentStatus}, ${current.fulfilmentStatus}, ${`Request ${current.id} marked ${status}.`})`;
+    await sql.begin(async (tx) => {
+      // Lock the request so two approvals cannot both decide it.
+      const lockedRows = (await tx`
+        select status, type from order_requests where id = ${id} for update
+      `) as Array<{ status: RequestStatus; type: RequestType }>;
+      const locked = lockedRows[0];
+      if (!locked) throw new Error('Request not found.');
+
+      const approvingCancel =
+        locked.type === 'cancel' && status === 'RESOLVED' && locked.status !== 'RESOLVED';
+
+      await tx`update order_requests set status = ${status}, admin_note = ${note || null}, resolved_by = case when ${status} in ('RESOLVED', 'REJECTED') then ${adminId} else resolved_by end, updated_at = now() where id = ${id}`;
+
+      if (approvingCancel) {
+        const cancelled = await cancelOrderInTx(tx, {
+          txnid: current.txnid,
+          reasonId: 'cancel_customer_request',
+          note,
+          actorId: adminId,
+          role,
+        });
+        // The order may already have been cancelled by staff. That is the
+        // intended outcome, so the approval still resolves.
+        if (!cancelled.ok && cancelled.reason !== 'already-cancelled') {
+          throw new RequestCancelError(cancelled.error);
+        }
+        if (cancelled.ok) stockMoved = cancelled.stockReleased || cancelled.stockRestored;
+      }
+
+      await tx`insert into order_status_history (order_id, domain, actor, from_status, to_status, note) values (${current.orderId}, ${current.type === 'help' ? 'fulfilment' : 'refund'}, 'system', ${current.fulfilmentStatus}, ${current.fulfilmentStatus}, ${`Request ${current.id} marked ${status}.`})`;
+    });
   } catch (error) {
+    if (error instanceof RequestCancelError) throw new Error(error.message);
     warnUnavailable('update', error);
     throw new Error('Requests are unavailable: apply migrations 0014-0016.');
   }
   const after = await getOrderRequestDetail(id);
   if (!after.ok) throw new Error('Could not read the updated request.');
-  return { before: current.status, after: after.data };
+  return { before: current.status, after: after.data, stockMoved };
 }
 
 export function canRequestReturn(

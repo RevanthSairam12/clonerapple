@@ -1,4 +1,7 @@
+import type postgres from 'postgres';
+
 import { getSql } from '../admin/db';
+import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
 
 import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
@@ -72,6 +75,7 @@ export const FULFILMENT_TRANSITIONS: Readonly<
 };
 
 type Row = Record<string, unknown>;
+type Tx = postgres.TransactionSql;
 
 function text(value: unknown): string {
   return value === null || value === undefined ? '' : String(value);
@@ -817,7 +821,15 @@ export type MutationFailure =
   | { ok: false; reason: 'unavailable' | 'not-found' | 'invalid-transition' | 'payment-required' | 'owner-required' | 'delivery-required' | 'invalid-input'; error: string };
 
 export type FulfilmentMutation =
-  | { ok: true; previousStatus: FulfilmentStatus; currentStatus: FulfilmentStatus; orderId: string; txnid: string }
+  | {
+      ok: true;
+      previousStatus: FulfilmentStatus;
+      currentStatus: FulfilmentStatus;
+      orderId: string;
+      txnid: string;
+      /** True when cancelling returned claimed stock to the shelf. */
+      stockMoved: boolean;
+    }
   | MutationFailure;
 
 function mutationFailure(
@@ -827,119 +839,161 @@ function mutationFailure(
   return { ok: false, reason, error };
 }
 
-export async function transitionFulfilment(input: {
+export interface TransitionFulfilmentInput {
   txnid: string;
   target: FulfilmentStatus;
   staffId: string;
   role: 'store_owner' | 'store_admin' | 'store_viewer';
   reason?: string | null;
-}): Promise<FulfilmentMutation> {
+}
+
+export async function transitionFulfilment(input: TransitionFulfilmentInput): Promise<FulfilmentMutation> {
   const sql = getSql();
   if (!sql) return mutationFailure('unavailable', 'Order records are not available.');
-  if (input.target === 'CANCELED' && !input.reason?.trim()) {
-    return mutationFailure('invalid-input', 'A cancellation reason is required.');
-  }
 
   try {
-    return await sql.begin(async (tx) => {
-      const rows = (await tx`
-        select id, txnid, status, fulfilment_status, scheduled_for, delivery_slot
-        from orders
-        where txnid = ${input.txnid.trim()}
-        for update
-      `) as Row[];
-      const order = rows[0];
-      if (!order) return mutationFailure('not-found', 'Order not found.');
-
-      const current = isFulfilmentStatus(order.fulfilment_status)
-        ? order.fulfilment_status
-        : 'PENDING';
-      const validation = validateFulfilmentTransition({
-        current,
-        target: input.target,
-        paymentStatus: text(order.status),
-        role: input.role,
-      });
-      if (!validation.ok) return mutationFailure(validation.code, validation.error);
-
-      if (input.target === 'ON_THE_WAY') {
-        const deliveryRows = (await tx`
-          select d.delivery_method, d.person_name, d.person_phone,
-                 d.courier_name, d.carrier, d.tracking_number, d.tracking_url,
-                 d.scheduled_for as delivery_scheduled_for,
-                 o.delivery_slot,
-                 e.details as latest_details
-          from order_deliveries d
-          join orders o on o.id = d.order_id
-          left join lateral (
-            select details from order_delivery_events
-            where delivery_id = d.id
-            order by event_at desc, id desc
-            limit 1
-          ) e on true
-          where d.order_id = ${text(order.id)}
-          limit 1
-        `) as Row[];
-        const delivery = deliveryRows[0];
-          const details = jsonObject(delivery?.latest_details);
-          const ready = validateDeliveryDetailsForOnTheWay(
-            delivery
-              ? {
-                 method: delivery.delivery_method === 'self' || delivery.delivery_method === 'courier'
-                   ? delivery.delivery_method
-                   : details.method === 'self' || details.method === 'courier' ? details.method : null,
-                 personName: nullableText(delivery.person_name) ?? nullableText(details.personName),
-                 personPhone: nullableText(delivery.person_phone) ?? nullableText(details.personPhone),
-                 courierName: nullableText(delivery.courier_name) ?? nullableText(delivery.carrier) ?? nullableText(details.courierName),
-                 carrier: nullableText(delivery.courier_name) ?? nullableText(delivery.carrier),
-                 trackingNumber: nullableText(delivery.tracking_number),
-                 trackingUrl: nullableText(delivery.tracking_url) ?? nullableText(details.trackingUrl),
-                scheduledFor: nullableIso(delivery.delivery_scheduled_for)?.slice(0, 10) ?? null,
-                 deliverySlot: nullableText(delivery.delivery_slot),
-              }
-            : null,
-        );
-        if (!ready.ok) return mutationFailure('delivery-required', ready.error);
-      }
-
-      await tx`
-        update orders
-        set fulfilment_status = ${input.target},
-            staff_id = ${input.staffId},
-            cancelled_at = case when ${input.target} = 'CANCELED' then now() else cancelled_at end,
-            cancel_reason = case when ${input.target} = 'CANCELED' then ${input.reason?.trim() ?? null} else cancel_reason end,
-            updated_at = now()
-        where id = ${text(order.id)}
-      `;
-
-      await tx`
-        update order_deliveries
-        set status = ${input.target},
-            delivered_at = case when ${input.target} = 'DELIVERED' then now() else delivered_at end,
-            updated_at = now()
-        where order_id = ${text(order.id)}
-      `;
-
-      await tx`
-        insert into order_status_history (
-          order_id, domain, actor, from_status, to_status
-        ) values (
-          ${text(order.id)}, 'fulfilment', 'system', ${current}, ${input.target}
-        )
-      `;
-
-      return {
-        ok: true,
-        previousStatus: current,
-        currentStatus: input.target,
-        orderId: text(order.id),
-        txnid: text(order.txnid),
-      };
-    });
+    return await transitionFulfilmentUsing(sql, input);
   } catch {
     console.warn('[store-admin/orders] fulfilment transition failed');
     return mutationFailure('unavailable', 'Order records are not available.');
   }
+}
+
+/** Fulfilment transition on a caller-owned connection; used by tests. */
+export async function transitionFulfilmentUsing(
+  sql: postgres.Sql,
+  input: TransitionFulfilmentInput,
+): Promise<FulfilmentMutation> {
+  return await sql.begin((tx) => transitionFulfilmentInTx(tx, input));
+}
+
+async function transitionFulfilmentInTx(
+  tx: Tx,
+  input: TransitionFulfilmentInput,
+): Promise<FulfilmentMutation> {
+  if (input.target === 'CANCELED' && !input.reason?.trim()) {
+    return mutationFailure('invalid-input', 'A cancellation reason is required.');
+  }
+
+  const rows = (await tx`
+    select id, txnid, status, fulfilment_status, scheduled_for, delivery_slot
+    from orders
+    where txnid = ${input.txnid.trim()}
+    for update
+  `) as Row[];
+  const order = rows[0];
+  if (!order) return mutationFailure('not-found', 'Order not found.');
+
+  const current = isFulfilmentStatus(order.fulfilment_status)
+    ? order.fulfilment_status
+    : 'PENDING';
+  const validation = validateFulfilmentTransition({
+    current,
+    target: input.target,
+    paymentStatus: text(order.status),
+    role: input.role,
+  });
+  if (!validation.ok) return mutationFailure(validation.code, validation.error);
+
+  if (input.target === 'ON_THE_WAY') {
+    const deliveryRows = (await tx`
+      select d.delivery_method, d.person_name, d.person_phone,
+             d.courier_name, d.carrier, d.tracking_number, d.tracking_url,
+             d.scheduled_for as delivery_scheduled_for,
+             o.delivery_slot,
+             e.details as latest_details
+      from order_deliveries d
+      join orders o on o.id = d.order_id
+      left join lateral (
+        select details from order_delivery_events
+        where delivery_id = d.id
+        order by event_at desc, id desc
+        limit 1
+      ) e on true
+      where d.order_id = ${text(order.id)}
+      limit 1
+    `) as Row[];
+    const delivery = deliveryRows[0];
+      const details = jsonObject(delivery?.latest_details);
+      const ready = validateDeliveryDetailsForOnTheWay(
+        delivery
+          ? {
+             method: delivery.delivery_method === 'self' || delivery.delivery_method === 'courier'
+               ? delivery.delivery_method
+               : details.method === 'self' || details.method === 'courier' ? details.method : null,
+             personName: nullableText(delivery.person_name) ?? nullableText(details.personName),
+             personPhone: nullableText(delivery.person_phone) ?? nullableText(details.personPhone),
+             courierName: nullableText(delivery.courier_name) ?? nullableText(delivery.carrier) ?? nullableText(details.courierName),
+             carrier: nullableText(delivery.courier_name) ?? nullableText(delivery.carrier),
+             trackingNumber: nullableText(delivery.tracking_number),
+             trackingUrl: nullableText(delivery.tracking_url) ?? nullableText(details.trackingUrl),
+            scheduledFor: nullableIso(delivery.delivery_scheduled_for)?.slice(0, 10) ?? null,
+             deliverySlot: nullableText(delivery.delivery_slot),
+          }
+        : null,
+    );
+    if (!ready.ok) return mutationFailure('delivery-required', ready.error);
+  }
+
+  await tx`
+    update orders
+    set fulfilment_status = ${input.target},
+        staff_id = ${input.staffId},
+        cancelled_at = case when ${input.target} = 'CANCELED' then now() else cancelled_at end,
+        cancel_reason = case when ${input.target} = 'CANCELED' then ${input.reason?.trim() ?? null} else cancel_reason end,
+        updated_at = now()
+    where id = ${text(order.id)}
+  `;
+
+  await tx`
+    update order_deliveries
+    set status = ${input.target},
+        delivered_at = case when ${input.target} = 'DELIVERED' then now() else delivered_at end,
+        updated_at = now()
+    where order_id = ${text(order.id)}
+  `;
+
+  await tx`
+    insert into order_status_history (
+      order_id, domain, actor, from_status, to_status
+    ) values (
+      ${text(order.id)}, 'fulfilment', 'system', ${current}, ${input.target}
+    )
+  `;
+
+  // A cancellation from this screen must give stock back exactly like the
+  // dedicated cancel action: a paid order through the sale ledger, an unpaid
+  // claim through the release ledger. Both paths are idempotent by design.
+  let stockMoved = false;
+  if (input.target === 'CANCELED') {
+    const orderId = text(order.id);
+    if (text(order.status) === 'PAID') {
+      const itemRows = (await tx`
+        select product_id, quantity from order_items where order_id = ${orderId}
+      `) as Row[];
+      const restored = await restoreSoldStock(
+        tx,
+        orderId,
+        itemRows.map((item) => ({
+          productId: text(item.product_id),
+          quantity: Number(item.quantity),
+        })),
+        { createdBy: input.staffId },
+      );
+      stockMoved = restored.length > 0;
+    } else {
+      stockMoved = await releaseClaimedStock(tx, orderId);
+    }
+  }
+
+  return {
+    ok: true,
+    previousStatus: current,
+    currentStatus: input.target,
+    orderId: text(order.id),
+    txnid: text(order.txnid),
+    stockMoved,
+  };
 }
 
 export type DeliveryMutation =

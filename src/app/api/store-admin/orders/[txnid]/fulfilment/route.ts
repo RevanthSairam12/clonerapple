@@ -8,6 +8,7 @@ import {
   transitionFulfilment,
   type FulfilmentStatus,
 } from '@/lib/store-admin/orders';
+import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,10 +82,12 @@ export async function POST(
     entity: 'order',
     entityId: result.orderId,
     before: { fulfilmentStatus: result.previousStatus },
-    after: { fulfilmentStatus: result.currentStatus },
+    after: { fulfilmentStatus: result.currentStatus, stockMoved: result.stockMoved },
     reason: result.currentStatus === 'CANCELED' ? 'cancellation_requested' : 'status_transition',
     request,
   });
+
+  if (result.currentStatus === 'CANCELED') revalidateCatalog();
 
   return NextResponse.json({
     ok: true,
