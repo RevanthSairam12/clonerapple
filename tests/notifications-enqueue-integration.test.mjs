@@ -411,3 +411,96 @@ test('enqueue follows the matrix, remembers why nothing was sent, and never dupl
     await a.end({ timeout: 5 });
   }
 });
+
+test('no outbox row for staff or password messages carries a credential', { skip }, async () => {
+  const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
+  const schema = `itest_secret_${suffix}`;
+  const a = client();
+  const secrets = [
+    'P@ssw0rd-SECRET-123',
+    'Temp-SECRET-456',
+    'tok-SECRET-789',
+    'reset-SECRET-000',
+  ];
+  const [password, temporaryPassword, token, resetToken] = secrets;
+
+  try {
+    await a.unsafe(`create schema "${schema}"`);
+    for (const table of TABLES) {
+      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
+    }
+    await a.unsafe(`set search_path to "${schema}"`);
+    const pinned = await a`show search_path`;
+    assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
+
+    await a`delete from store_settings`;
+    await a`
+      insert into store_settings (key, value) values
+        ('trade_name', 'Test Store'),
+        ('email', 'hello@store.test'),
+        ('phone', '9123456780')
+    `;
+    await setMatrix(a, [
+      ['email', 'admin', 'staff_invite', true],
+      ['sms', 'admin', 'staff_invite', true],
+      ['inapp', 'admin', 'staff_invite', true],
+      ['email', 'customer', 'staff_invite', true],
+      ['email', 'admin', 'password_reset', true],
+    ]);
+
+    // A stored template may reference a secret-like token; unknown variables
+    // are dropped, never read from the context object.
+    await a`
+      insert into email_templates (id, template_key, name, subject, heading, body, is_active)
+      values (
+        ${`tpl_${suffix}`}, 'staff_invite', 'Staff invite',
+        'Account ready {{token}}', 'Welcome',
+        'Password: {{password}} / {{temporary_password}} / {{reset_link}}', true
+      )
+    `;
+
+    const context = {
+      staffEmail: `staff-${suffix}@store.test`,
+      staffPhone: '9876543210',
+      staffLink: '/store-admin/login',
+      token,
+      password,
+      temporaryPassword,
+      resetToken,
+      resetLink: `https://shop.example.test/reset?token=${resetToken}`,
+    };
+
+    await enqueueNotification(
+      'staff_invite',
+      { type: 'staff', id: `staff_${suffix}` },
+      context,
+      a,
+    );
+    await enqueueNotification(
+      'password_reset',
+      { type: 'staff', id: `staff_${suffix}` },
+      context,
+      a,
+    );
+
+    const rows = await a`
+      select event_key, channel, subject, body from notification_outbox
+    `;
+    assert.ok(rows.length >= 4, 'the enabled cells produced rows');
+    for (const row of rows) {
+      const output = `${row.subject}\n${row.body}`;
+      for (const secret of secrets) {
+        assert.equal(
+          output.includes(secret),
+          false,
+          `${row.event_key}/${row.channel} row leaked ${secret}`,
+        );
+      }
+      assert.equal(output.includes('reset?token='), false);
+    }
+  } finally {
+    await a.unsafe('set search_path to public');
+    await a.unsafe(`drop schema if exists "${schema}" cascade`);
+    await a.end();
+  }
+});

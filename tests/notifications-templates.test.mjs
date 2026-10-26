@@ -101,10 +101,10 @@ test('a stored template body is treated as text, so markup cannot be injected', 
 
 test('unknown variables render empty and never read from the object', () => {
   const rendered = substitute(
-    '{{order_number}}|{{secret}}|{{constructor}}|{{__proto__}}|{{toString}}|{{unknown_name}}',
+    '{{order_number}}|{{secret}}|{{constructor}}|{{__proto__}}|{{toString}}|{{unknown_name}}|{{password}}|{{temporary_password}}|{{token}}|{{reset_link}}',
     values(),
   );
-  assert.equal(rendered, 'GDZ1001|||||');
+  assert.equal(rendered, 'GDZ1001|||||||||');
 });
 
 test('the documented template aliases resolve', () => {
@@ -177,4 +177,73 @@ test('shipping, refund, status and count values are formatted for messages', () 
   assert.equal(v.stock_available, '3');
   assert.equal(v.order_number, 'GDZ1001');
   assert.equal(v.txnid, 'GDZ1001');
+});
+
+test('no rendered template can carry a password, token or reset link', () => {
+  const secrets = [
+    'P@ssw0rd-SECRET-123',
+    'Temp-SECRET-456',
+    'tok-SECRET-789',
+    'reset-SECRET-000',
+  ];
+  const [password, temporaryPassword, token, resetToken] = secrets;
+  const resetLink = `https://shop.example.test/reset?token=${resetToken}`;
+
+  for (const event of NOTIFICATION_EVENTS) {
+    for (const channel of CHANNELS) {
+      for (const audience of AUDIENCES) {
+        // A caller that accidentally puts credential material on the context
+        // must not reach a template: only the whitelisted fields are read.
+        const context = valuesFor(audience, {
+          token,
+          password,
+          temporaryPassword,
+          resetToken,
+          resetLink,
+        });
+        const renderedValues = templateValues(context);
+        const parts = defaultTemplate(event, channel, audience);
+        const rendered = channel === 'email'
+          ? renderEmail(parts, renderedValues, 'https://shop.example.test')
+          : {
+              subject: renderText(parts.subject, renderedValues, true),
+              text: renderText(parts.body, renderedValues, true),
+              html: '',
+            };
+        const output = `${rendered.subject}\n${rendered.text}\n${rendered.html}`;
+
+        for (const secret of secrets) {
+          assert.equal(
+            output.includes(secret),
+            false,
+            `${event}/${channel}/${audience} leaked ${secret}`,
+          );
+        }
+        assert.equal(
+          output.includes('reset?token='),
+          false,
+          `${event}/${channel}/${audience} leaked a reset link`,
+        );
+      }
+    }
+  }
+});
+
+test('the staff invite names the sign-in page and never a credential', () => {
+  const parts = defaultTemplate('staff_invite', 'email', 'staff');
+  const rendered = renderEmail(
+    parts,
+    templateValues(valuesFor('staff', {
+      adminLink: '/store-admin/login',
+      token: 'tok-SECRET-789',
+      password: 'P@ssw0rd-SECRET-123',
+    })),
+    'https://shop.example.test',
+  );
+  const output = `${rendered.subject}\n${rendered.text}\n${rendered.html}`;
+
+  assert.match(output, /https:\/\/shop\.example\.test\/store-admin\/login/);
+  assert.match(output, /password the owner shared/i);
+  assert.doesNotMatch(output, /P@ssw0rd-SECRET-123/);
+  assert.doesNotMatch(output, /tok-SECRET-789/);
 });

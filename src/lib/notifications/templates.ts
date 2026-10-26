@@ -481,8 +481,10 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
     [STAFF]: {
       subject: 'Your staff account is ready',
       heading: 'Welcome to the team',
-      body: 'A staff account has been created for you at {{store_name}}. Sign in to Store Admin and change your password when prompted.',
-      sms: '{{store_name}}: your staff account is ready. Sign in and change your password.',
+      body: 'A staff account has been created for you at {{store_name}}. Sign in with the password the owner shared with you; you will be asked to change it.',
+      sms: '{{store_name}}: your staff account is ready. Sign in with the password the owner shared with you.',
+      buttonLabel: 'Sign in to Store Admin',
+      buttonUrl: '{{admin_link}}',
     },
   },
   low_stock: {
