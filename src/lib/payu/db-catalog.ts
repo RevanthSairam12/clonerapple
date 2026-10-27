@@ -8,6 +8,7 @@ import {
   resolveCartItems as resolveStaticCartItems,
   type CatalogItem,
 } from './catalog';
+import { InsufficientStockError } from './stock';
 import {
   priceCartLines,
   type CartPricingInput,
@@ -42,12 +43,19 @@ function knownBaseIds(cartItems: ReadonlyArray<CartPricingInput>): string[] {
   return [...ids];
 }
 
-async function loadPricingRows(ids: string[], saleLive: boolean): Promise<CatalogPriceRow[]> {
+interface PricingRead {
+  rows: CatalogPriceRow[];
+  /** Untracked products the storefront marks unavailable while no sale is live. */
+  unavailable: string[];
+}
+
+async function loadPricingRows(ids: string[], saleLive: boolean): Promise<PricingRead> {
   const sql = getSql();
-  if (!sql || ids.length === 0) return [];
+  if (!sql || ids.length === 0) return { rows: [], unavailable: [] };
 
   const rows = await sql`
     select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
+           p.in_stock, s.track_inventory,
            (
              select pi.url
              from product_images pi
@@ -61,13 +69,15 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Catalo
              limit 1
            ) as image_url
     from products p
+    left join stock s on s.product_id = p.id and s.variant_id is null
     where p.deleted_at is null
       and p.is_active
       and lower(p.id) = any(${ids}::text[])
     order by p.id
   `;
 
-  return (rows as Record<string, unknown>[]).map((row) => {
+  const unavailable: string[] = [];
+  const priced = (rows as Record<string, unknown>[]).map((row) => {
     const price = resolveEffectivePrice(
       {
         pricePaise: Number(row.price_paise),
@@ -77,19 +87,34 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Catalo
       },
       saleLive,
     );
+    const name = String(row.name ?? '');
+
+    // Same rule as the storefront: an untracked product's availability is
+    // `products.in_stock`. Normal mode fails closed on it here as well, so a
+    // request that bypasses the page cannot buy a product the shop has marked
+    // unavailable. Tracked rows defer to the locked claim in `createOrder`,
+    // which also lazily frees expired holds.
+    const hasStockRow = row.track_inventory !== null && row.track_inventory !== undefined;
+    if (!saleLive && !hasStockRow && row.in_stock === false) {
+      unavailable.push(name);
+    }
+
     return {
       id: String(row.id),
-      name: String(row.name ?? ''),
+      name,
       subtitle: row.subtitle === null || row.subtitle === undefined
         ? null
         : String(row.subtitle),
       // The amount PayU will charge: one resolver decides sale vs regular.
       price_paise: price.unitPaise,
+      regular_price_paise: price.onSale ? price.regularPaise : null,
       image_url: row.image_url === null || row.image_url === undefined
         ? null
         : String(row.image_url),
-    };
+    } satisfies CatalogPriceRow;
   });
+
+  return { rows: priced, unavailable };
 }
 
 /**
@@ -108,22 +133,38 @@ export async function resolveCartItemsFromDb(
     );
     return {
       ...staticCart,
+      items: staticCart.items.map((item) => ({
+        ...item,
+        unitPaise: Math.round(item.unitPrice * 100),
+      })),
       totalPaise: Math.round(staticCart.totalAmount * 100),
+      priceChanges: [],
     };
   }
 
   const ids = knownBaseIds(cartItems);
-  let rows: CatalogPriceRow[];
+  let read: PricingRead;
   try {
     const sale = await readSaleState();
-    rows = await loadPricingRows(ids, sale.live);
+    read = await loadPricingRows(ids, sale.live);
   } catch {
     // Never fall back to a code price after a database failure: the whole
     // point of this module is that the amount and the catalogue row agree.
     throw new Error('Checkout pricing is temporarily unavailable. Please try again.');
   }
 
-  return priceCartLines(cartItems, rows);
+  const cart = priceCartLines(cartItems, read.rows);
+
+  // Normal mode: the shop has marked this untracked product unavailable.
+  // Sale mode deliberately does not block on it; the locked claim at Pay still
+  // decides whether tracked units exist.
+  if (read.unavailable.length > 0) {
+    throw new InsufficientStockError(
+      `Out of stock: ${read.unavailable[0]}. Remove it from your bag to continue.`,
+    );
+  }
+
+  return cart;
 }
 
 /**

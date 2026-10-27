@@ -8,9 +8,11 @@ import { formatINR } from '@/lib/utils';
 
 export interface CollectionProductCardProps {
   product: CollectionProduct;
+  /** While a sale is live, stock never disables the quick-add button. */
+  saleLive?: boolean;
 }
 
-export function CollectionProductCard({ product }: CollectionProductCardProps) {
+export function CollectionProductCard({ product, saleLive = false }: CollectionProductCardProps) {
   const [selectedColorIdx, setSelectedColorIdx] = useState(0);
   const [imgError, setImgError] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
@@ -22,7 +24,7 @@ export function CollectionProductCard({ product }: CollectionProductCardProps) {
   const hasHover = Boolean(hoverImg && hoverImg !== product.image);
 
   // Truthful badges only
-  const isOutOfStock = product.inStock === false;
+  const isOutOfStock = !saleLive && product.inStock === false;
   const isPriceUnavailable = product.priceUnavailable === true;
   const isUnavailable = isOutOfStock || isPriceUnavailable;
   const isNew = Boolean(product.isNew || product.badge === 'New');

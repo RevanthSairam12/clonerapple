@@ -25,6 +25,14 @@ export type CartItemInput = Omit<CartItem, 'id' | 'quantity'> & {
   id?: string;
 };
 
+/** An authoritative price for one product, in integer paise. */
+export interface CartPriceUpdate {
+  /** The product id (any line id is normalised to its base id). */
+  id: string;
+  unitPaise: number;
+  regularPricePaise?: number | null;
+}
+
 interface CartContextValue {
   items: CartItem[];
   totalCount: number;
@@ -32,6 +40,11 @@ interface CartContextValue {
   addItem: (item: CartItemInput) => void;
   removeItem: (id: string) => void;
   updateQuantity: (id: string, qty: number) => void;
+  /**
+   * Replace stored line prices with the server's authoritative ones. Used
+   * after a `price_changed` conflict; the server still charges its own value.
+   */
+  syncPrices: (updates: CartPriceUpdate[]) => void;
   clearCart: () => void;
   isBagOpen: boolean;
   setIsBagOpen: (open: boolean) => void;
@@ -264,6 +277,53 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const syncPrices = useCallback((updates: CartPriceUpdate[]) => {
+    if (!Array.isArray(updates) || updates.length === 0) return;
+    const byId = new Map<string, CartPriceUpdate>();
+    for (const update of updates) {
+      const baseId = normalizeCartLineId(update?.id).baseId;
+      if (!baseId) continue;
+      const unitPaise = Number(update.unitPaise);
+      if (!Number.isSafeInteger(unitPaise) || unitPaise < 0) continue;
+      byId.set(baseId.toLowerCase(), { ...update, unitPaise });
+    }
+    if (byId.size === 0) return;
+
+    setItems((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        const baseId = normalizeCartLineId(item.productId || item.id).baseId;
+        const update = baseId ? byId.get(baseId.toLowerCase()) : undefined;
+        if (!update) return item;
+
+        const price = update.unitPaise / 100;
+        const regularPaise = Number(update.regularPricePaise);
+        const regularPrice =
+          Number.isSafeInteger(regularPaise) && regularPaise > update.unitPaise
+            ? regularPaise / 100
+            : undefined;
+
+        if (
+          item.price === price
+          && item.regularPrice === regularPrice
+        ) {
+          return item;
+        }
+        changed = true;
+        return {
+          ...item,
+          price,
+          priceDisplay: `₹${price.toLocaleString('en-IN')}`,
+          regularPrice,
+          wasPriceDisplay: regularPrice !== undefined
+            ? `₹${regularPrice.toLocaleString('en-IN')}`
+            : undefined,
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
   const clearCart = useCallback(() => {
     setItems([]);
     try {
@@ -296,6 +356,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       addItem,
       removeItem,
       updateQuantity,
+      syncPrices,
       clearCart,
       isBagOpen,
       setIsBagOpen,
@@ -311,6 +372,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       addItem,
       removeItem,
       updateQuantity,
+      syncPrices,
       clearCart,
       isBagOpen,
       toggleBag,

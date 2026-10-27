@@ -8,9 +8,11 @@ import { formatINR } from '@/lib/utils';
 
 export interface CollectionFeaturedTileProps {
   product: CollectionProduct;
+  /** While a sale is live, stock never disables the quick-add button. */
+  saleLive?: boolean;
 }
 
-export function CollectionFeaturedTile({ product }: CollectionFeaturedTileProps) {
+export function CollectionFeaturedTile({ product, saleLive = false }: CollectionFeaturedTileProps) {
   const [isAdded, setIsAdded] = useState(false);
   const { addItem } = useCart();
 
@@ -34,7 +36,7 @@ export function CollectionFeaturedTile({ product }: CollectionFeaturedTileProps)
     setTimeout(() => setIsAdded(false), 1500);
   };
 
-  const isOutOfStock = product.inStock === false;
+  const isOutOfStock = !saleLive && product.inStock === false;
 
   return (
     <div className="gz-collection-featured p-6 md:p-8 mb-8" aria-label="Featured Collection Product">

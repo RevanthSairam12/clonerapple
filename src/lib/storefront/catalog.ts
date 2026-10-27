@@ -31,6 +31,7 @@ import type { Product as CaseProduct } from '@/components/sites/cases-protection
 import type { CollectionProduct } from '@/components/collection/types';
 
 import { CATALOG_CACHE_TAG, productCacheTag } from './catalog-tags';
+import { readSaleState } from './sale-state';
 import {
   accessoryProductFromDatabase,
   caseProductFromDatabase,
@@ -242,9 +243,16 @@ export const getCasesCategoryView = cache(async (): Promise<CasesCategoryView | 
 
 /* ----------------------------------------------------------------- detail */
 
+/** Stock as the detail page rendered it; the click-time endpoint refreshes it. */
+export interface ProductStockState {
+  inStock: boolean;
+  trackInventory: boolean;
+  availableStock: number | null;
+}
+
 export type ProductDetail =
-  | { kind: 'case'; product: CaseProduct; source: CatalogSourceKind }
-  | { kind: 'accessory'; product: AccessoryProduct; source: CatalogSourceKind };
+  | { kind: 'case'; product: CaseProduct; stock: ProductStockState; source: CatalogSourceKind }
+  | { kind: 'accessory'; product: AccessoryProduct; stock: ProductStockState; source: CatalogSourceKind };
 
 /**
  * One product for `/shop/product/[id]` and `/shop/buy/[id]`.
@@ -259,13 +267,23 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
   if (!state.ready) {
     const staticProduct = getStaticProduct(id);
     if (!staticProduct) return null;
+    const stock: ProductStockState = {
+      inStock: true,
+      trackInventory: false,
+      availableStock: null,
+    };
     return staticProduct.kind === 'case'
-      ? { kind: 'case', product: staticProduct.product, source: 'static' }
-      : { kind: 'accessory', product: staticProduct.product, source: 'static' };
+      ? { kind: 'case', product: staticProduct.product, stock, source: 'static' }
+      : { kind: 'accessory', product: staticProduct.product, stock, source: 'static' };
   }
 
   if (!state.product) return null;
   const databaseProduct = state.product;
+  const stock: ProductStockState = {
+    inStock: databaseProduct.inStock,
+    trackInventory: databaseProduct.trackInventory,
+    availableStock: databaseProduct.availableStock,
+  };
 
   const staticCase = getStaticCaseProduct(databaseProduct.id);
   if (staticCase || databaseProduct.categorySlug === 'cases-protection') {
@@ -274,6 +292,7 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
       product: staticCase
         ? mergeCaseProduct(staticCase, databaseProduct)
         : caseProductFromDatabase(databaseProduct),
+      stock,
       source: 'db',
     };
   }
@@ -284,6 +303,7 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
     product: staticAccessory
       ? mergeAccessoryProduct(staticAccessory, databaseProduct)
       : accessoryProductFromDatabase(databaseProduct),
+    stock,
     source: 'db',
   };
 });
@@ -292,6 +312,8 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
 
 export interface StorefrontRefs {
   products: StorefrontProductRef[];
+  /** The sale switch on the database clock; false when it cannot be read. */
+  saleLive: boolean;
   source: CatalogSourceKind;
 }
 
@@ -301,9 +323,9 @@ export interface StorefrontRefs {
  * data can reach this shape.
  */
 export const getStorefrontRefs = cache(async (): Promise<StorefrontRefs> => {
-  const state = await getCatalogState();
+  const [state, sale] = await Promise.all([getCatalogState(), readSaleState()]);
   if (!state.ready) {
-    return { products: STATIC_PRODUCT_REFS, source: 'static' };
+    return { products: STATIC_PRODUCT_REFS, saleLive: sale.live, source: 'static' };
   }
 
   const categoryNames = new Map(
@@ -313,6 +335,7 @@ export const getStorefrontRefs = cache(async (): Promise<StorefrontRefs> => {
     products: state.snapshot!.products.map((product) =>
       refFromDatabase(product, categoryNames.get(product.categoryId)),
     ),
+    saleLive: sale.live,
     source: 'db',
   };
 });

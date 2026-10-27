@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { AccessoryCategoryPage } from '@/components/sites/accessories/AccessoryCategoryPage';
 import { getAccessoryCategoryView } from '@/lib/storefront/catalog';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 import '@/components/sites/accessories/accessory-category.css';
 
@@ -41,9 +42,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function Page({ params }: Props) {
   const { slug } = await params;
-  const view = await getAccessoryCategoryView(slug);
+  const [view, sale] = await Promise.all([
+    getAccessoryCategoryView(slug),
+    readSaleState(),
+  ]);
 
   if (!view) notFound();
 
-  return <AccessoryCategoryPage config={view.config} products={view.products} />;
+  return (
+    <AccessoryCategoryPage
+      config={view.config}
+      products={view.products}
+      saleLive={sale.live}
+    />
+  );
 }

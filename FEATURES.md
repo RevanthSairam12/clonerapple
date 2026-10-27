@@ -776,6 +776,74 @@ scheduler-side check.
   `product_variants.sale_price_paise`, `price_history.price_kind` (default `regular`) and
   the one-row `sale_settings` table (RLS enabled, no policies). Additive only.
 
+### 2.17 Stock behaviour at checkout — 🟢 Live
+
+**One rule, two modes.** `src/lib/storefront/availability-rules.ts` →
+
+```ts
+stockBlocked(inStock, saleLive) === !saleLive && !inStock
+```
+
+Normal mode lets stock disable a purchase. Sale mode deliberately never does in the UI: a
+limited-time sale is expected to be raced, and the authoritative check is the stock row
+lock at Pay. There is no third variant — the detail pages, the cart/bag, checkout, the
+collection/search cards and the click-time endpoint all import this function.
+
+- **Product page (normal mode, unavailable).** Both the sticky bar and the main button are
+  `disabled` and read **Stock not available**; the delivery block shows the same label
+  instead of the old hard-coded “In Stock”. Pressing Add in sale mode is never disabled,
+  whatever the stock flag says.
+- **Click-time re-check.** `useAvailability(productId, { saleLive, inStock })`
+  (`src/lib/storefront/use-availability.ts`) seeds from the server-rendered props, refreshes
+  on mount, and refreshes again when the customer presses Add to Bag. The detail pages
+  `await` that refresh and refuse with **Stock not available** when it comes back blocked,
+  so a sale that started after the page was rendered removes the block, and a unit taken by
+  someone else restores it. `GET /api/catalog/availability?ids=…`
+  (`src/app/api/catalog/availability/route.ts`) is the read: same-origin
+  (`assertSameOrigin`), rate-limited per IP (60/minute, `Retry-After` on 429), at most 50
+  ids, `Cache-Control: no-store`, and 503 when the database cannot answer. A failed check
+  is *not* treated as “in stock”: the hook keeps the last known state.
+- **Bag (`/cart`, `/bag`).** A line is payable when its catalogue row exists *and*
+  `stockBlocked` is false — so sale mode keeps an out-of-stock line payable, while a line
+  whose product is gone from the catalogue stays unavailable in both modes and still
+  blocks checkout. Suggested-product quick-adds use the same predicate.
+- **Checkout.** The page passes `saleLive` and a `stockById` map built from
+  `getStorefrontRefs()`; the form derives availability from it (the static PayU catalogue
+  is the fallback when the map is absent) and the Pay button is genuinely `disabled`, not
+  merely styled grey. An unknown id is unavailable.
+- **Where stock is actually checked.** Only at Buy Now / Checkout / Pay, on the server,
+  inside the order transaction: `createOrderUsing` locks every tracked row `for update`,
+  lazily releases reservations whose window has closed (so a sale-mode buyer can win a unit
+  whose hold has expired even when the reconcile worker is behind), and re-plans the
+  claim. Sale state never enters `stock.ts`, `stock-rules.ts` or `orders.ts` — a source
+  guard in the tests enforces that, because honouring sale mode at Pay would sell one unit
+  twice.
+- **Failure.** A failed claim rolls the whole transaction back: no order row, no
+  reservation, no stock movement. The message names the item — **“Out of stock: <name>. Remove
+  it from your bag to continue.”** — or, when units remain because someone else took some,
+  **“Only N left of <name>. Reduce the quantity or remove it from your bag.”** `claimPlannedStock`
+  re-reads the still-locked row on a miss so the count is real, not a flat sold-out. No
+  waitlist wording appears anywhere; the waiting list is removed (§2.15).
+- **Price boundary crossing.** Each cart line sends `expectedUnitPaise` — a display hint
+  only; it is never charged. `priceCartLines` compares it with the resolved database price
+  and records `priceChanges`. `/api/payu/initiate` answers **409** with
+  `code: 'price_changed'`, *“Prices have changed, please review your cart.”* and the priced
+  snapshot **before** reserving stock or creating an order. `CheckoutForm` calls the new
+  `syncPrices()` on the cart context to adopt the server prices and stops; the customer
+  re-reviews and presses Pay again. A sale ending before Pay therefore never charges the
+  old amount, and a sale starting never charges more than what is on screen.
+- **Fail-safe.** If `sale_settings` cannot be read, `readSaleState()` returns `SALE_OFF`
+  (`unreadable: true`): every surface falls back to regular prices **and** normal mode,
+  never to sale prices or sale-mode permissiveness.
+- **Evidence.** `tests/stock-behaviour.test.mjs` — pure rules (block matrix, price-change
+  detection, last-unit message), a guard that sale state cannot reach the Pay-side stock
+  code, source guards for the endpoint/pages/bag/checkout/listings/initiate, and a
+  throwaway-schema read proving the availability query reports `on_hand − reserved`,
+  untracked rows, inactive/missing rows, and a live/ended window on the database clock.
+  The race and lazy-expiry end-to-end behaviour is proven by
+  `tests/order-stock-integration.test.mjs` and
+  `tests/flash-sale-reservation-integration.test.mjs`.
+
 ---
 
 ## 3. Store admin (`/store-admin`)
@@ -1254,7 +1322,7 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migrations after `0036` | `0037` is flash-sale reservations, the waiting list, refund obligations and the new notification topics; `0038` indexes failed/cancelled rows still inside their grace window (§2.15). The next free number is `0039`. |
+| Migrations after `0036` | `0037` is flash-sale reservations, the waiting list, refund obligations and the new notification topics; `0038` indexes failed/cancelled rows still inside their grace window (§2.15); `0039` adds sale pricing and the `sale_settings` switch (§2.16). The next free number is `0040`. |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
 | SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |
@@ -1332,6 +1400,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
 | Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin}.test.mjs` |
+| Availability at checkout | `src/lib/storefront/{availability-rules,availability-server,use-availability}.ts`, `src/app/api/catalog/availability/route.ts`, `src/components/{shop/ProductDetailPage,sites/accessories/AccessoryDetailPage,cart/CartPageView,checkout/CheckoutForm}.tsx`, `src/lib/payu/db-pricing.ts`, `tests/stock-behaviour.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |
 | Checkout rules (pure) | `src/lib/checkout/shipping-rules.ts`, `stock-rules.ts`, `settings.ts` |

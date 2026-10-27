@@ -7,9 +7,11 @@ import { CollectionProductCard } from './CollectionProductCard';
 export interface CollectionProductGridProps {
   products: CollectionProduct[];
   onClearFilters: () => void;
+  /** While a sale is live, stock never disables a card's quick add. */
+  saleLive?: boolean;
 }
 
-export function CollectionProductGrid({ products, onClearFilters }: CollectionProductGridProps) {
+export function CollectionProductGrid({ products, onClearFilters, saleLive = false }: CollectionProductGridProps) {
   if (products.length === 0) {
     return (
       <div className="gz-collection-empty">
@@ -31,7 +33,7 @@ export function CollectionProductGrid({ products, onClearFilters }: CollectionPr
   return (
     <div className="gz-collection-grid" role="region" aria-label="Product list">
       {products.map((product) => (
-        <CollectionProductCard key={product.id} product={product} />
+        <CollectionProductCard key={product.id} product={product} saleLive={saleLive} />
       ))}
     </div>
   );

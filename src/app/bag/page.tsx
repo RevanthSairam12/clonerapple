@@ -12,12 +12,15 @@ export const metadata: Metadata = {
 };
 
 export default async function BagPage() {
-  const { products } = await getStorefrontRefs();
-  const policy = await readShippingPolicy();
+  const [{ products, saleLive }, policy] = await Promise.all([
+    getStorefrontRefs(),
+    readShippingPolicy(),
+  ]);
   return (
     <CartPageView
       initialProducts={products}
       shippingPolicy={policy.ok ? policy.policy : EMPTY_SHIPPING_POLICY}
+      saleLive={saleLive}
     />
   );
 }

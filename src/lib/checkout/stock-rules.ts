@@ -51,12 +51,12 @@ function availableOf(row: StockRowSnapshot): number {
 
 function soldOutMessage(line: StockClaimPlan): string {
   const name = line.productName?.trim() || 'This item';
-  return `${name} is out of stock. Remove it from your bag to continue.`;
+  return `Out of stock: ${name}. Remove it from your bag to continue.`;
 }
 
 function shortMessage(line: StockClaimPlan, available: number): string {
   const name = line.productName?.trim() || 'This item';
-  return `Only ${available} × ${name} can be ordered right now.`;
+  return `Only ${available} left of ${name}. Reduce the quantity or remove it from your bag.`;
 }
 
 /**

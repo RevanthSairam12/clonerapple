@@ -22,10 +22,20 @@ export function CasesProtectionPage({
   config,
   products,
   overrides,
+  saleLive = false,
 }: {
   config: CollectionConfig;
   products: CollectionProduct[];
   overrides?: CasesProtectionOverrides;
+  /** The sale switch on the database clock; a live sale never disables a card. */
+  saleLive?: boolean;
 }) {
-  return <CollectionPage config={config} products={products} overrides={overrides} />;
+  return (
+    <CollectionPage
+      config={config}
+      products={products}
+      overrides={overrides}
+      saleLive={saleLive}
+    />
+  );
 }

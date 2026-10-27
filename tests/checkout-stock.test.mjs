@@ -39,11 +39,11 @@ test('available stock is on_hand minus reserved', () => {
 test('out-of-stock and short quantities are rejected with a customer-safe message', () => {
   const soldOut = planStockClaim([line('p1', 1, 'USB-C Cable')], [row({ on_hand: 0 })]);
   assert.equal(soldOut.ok, false);
-  assert.match(soldOut.error, /USB-C Cable is out of stock/);
+  assert.match(soldOut.error, /Out of stock: USB-C Cable/);
 
   const short = planStockClaim([line('p1', 2, 'USB-C Cable')], [row({ on_hand: 1 })]);
   assert.equal(short.ok, false);
-  assert.match(short.error, /Only 1 × USB-C Cable/);
+  assert.match(short.error, /Only 1 left of USB-C Cable/);
 });
 
 test('duplicate lines for one product are aggregated before the check', () => {

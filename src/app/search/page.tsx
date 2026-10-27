@@ -18,6 +18,12 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 
 export default async function SearchPage({ searchParams }: Props) {
   const { q } = await searchParams;
-  const { products } = await getStorefrontRefs();
-  return <SearchPageView initialQuery={q || ''} initialProducts={products} />;
+  const { products, saleLive } = await getStorefrontRefs();
+  return (
+    <SearchPageView
+      initialQuery={q || ''}
+      initialProducts={products}
+      saleLive={saleLive}
+    />
+  );
 }

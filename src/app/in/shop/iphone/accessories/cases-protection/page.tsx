@@ -5,6 +5,7 @@ import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesPr
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
 import { getContent, getContentMany } from '@/lib/content';
 import { getCasesCategoryView } from '@/lib/storefront/catalog';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 import './cases.css';
 
@@ -43,7 +44,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function Page() {
-  const view = await getCasesCategoryView();
+  const [view, sale] = await Promise.all([getCasesCategoryView(), readSaleState()]);
   if (!view) notFound();
 
   // Page furniture only. The product grid is never read from content_blocks:
@@ -63,6 +64,7 @@ export default async function Page() {
       config={view.config}
       products={view.products}
       overrides={overrides}
+      saleLive={sale.live}
     />
   );
 }

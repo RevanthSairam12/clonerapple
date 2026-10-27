@@ -5,6 +5,7 @@ import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesPr
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
 import { getContentMany } from '@/lib/content';
 import { getCasesCategoryView } from '@/lib/storefront/catalog';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 import '@/app/in/shop/iphone/accessories/cases-protection/cases.css';
 
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ShopCasesPage() {
-  const view = await getCasesCategoryView();
+  const [view, sale] = await Promise.all([getCasesCategoryView(), readSaleState()]);
   if (!view) notFound();
 
   // Page furniture only — the grid comes from the `products` table.
@@ -43,6 +44,7 @@ export default async function ShopCasesPage() {
       config={view.config}
       products={view.products}
       overrides={overrides}
+      saleLive={sale.live}
     />
   );
 }

@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useCart } from '@/lib/cart/CartContext';
+import { useCart, type CartPriceUpdate } from '@/lib/cart/CartContext';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { stockBlocked } from '@/lib/storefront/availability-rules';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { decideCheckoutView } from '@/lib/checkout/checkout-decision';
 import {
@@ -53,10 +54,21 @@ interface Props {
   shippingPolicy?: ShippingPolicy;
   /** Payments → "Checkout payment note". Empty by default. */
   paymentNote?: string;
+  /**
+   * The sale switch on the database clock. A live sale never disables a line
+   * for stock; the authoritative check happens at Pay.
+   */
+  saleLive?: boolean;
+  /**
+   * Storefront availability keyed by lowercase product id. A missing id means
+   * the product is not in the catalogue. When omitted, the static PayU
+   * catalogue is used, which is what this form did before stock was wired.
+   */
+  stockById?: Record<string, boolean>;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '' }: Props) {
-  const { items: bagItems, removeItem, isHydrated } = useCart();
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '', saleLive = false, stockById }: Props) {
+  const { items: bagItems, removeItem, syncPrices, isHydrated } = useCart();
 
   const decision = decideCheckoutView({
     isHydrated,
@@ -82,6 +94,8 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           productId: b.productId,
           name: b.name + (b.subtitle ? ` (${b.subtitle})` : ''),
           price: b.price,
+          ...(b.regularPrice !== undefined ? { regularPrice: b.regularPrice } : {}),
+          ...(b.wasPriceDisplay ? { wasPriceDisplay: b.wasPriceDisplay } : {}),
           quantity: b.quantity,
           image: b.image,
         }))
@@ -89,13 +103,18 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         ? initialItems ?? []
         : [];
 
-  // A line is only payable when its id exists in the authoritative PayU
-  // catalog. Stale/education ids and anything else are marked unavailable and
-  // excluded from the amount sent to the gateway.
+  // A line is only payable when the catalogue still sells it. The storefront
+  // stock state decides (sale mode ignores stock); a missing catalogue id is
+  // unavailable. Without `stockById` the static PayU catalogue is the fallback.
+  const lineAvailable = (item: CartItem): boolean => {
+    const baseId = (getCartLineBaseId(item.productId || item.id) || '').trim().toLowerCase();
+    if (!stockById) return Boolean(getProductFromCatalog(baseId));
+    const inStock = stockById[baseId];
+    if (typeof inStock !== 'boolean') return false;
+    return !stockBlocked(inStock, saleLive);
+  };
   const unavailableIds = new Set(
-    items
-       .filter((item) => !getProductFromCatalog(getCartLineBaseId(item.productId || item.id) || ''))
-       .map((item) => item.id)
+    items.filter((item) => !lineAvailable(item)).map((item) => item.id)
   );
   const hasUnavailable = unavailableIds.size > 0;
   const payableItems = items.filter((item) => !unavailableIds.has(item.id));
@@ -235,7 +254,13 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          items: items.map((i) => ({ id: i.productId || i.id, quantity: i.quantity })),
+          // `expectedUnitPaise` is a display hint only: the server charges its
+          // own resolved price and answers 409 when the two disagree.
+          items: items.map((i) => ({
+            id: i.productId || i.id,
+            quantity: i.quantity,
+            expectedUnitPaise: Math.round(i.price * 100),
+          })),
           customer: {
             firstname: firstName.trim(),
             email: email.trim().toLowerCase(),
@@ -249,6 +274,23 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
 
       const data = await res.json();
       if (!res.ok || !data.success) {
+        // A sale started or ended while the customer was checking out. Adopt
+        // the server's prices and stop: no order, no reservation, no charge.
+        if (res.status === 409 && data.code === 'price_changed') {
+          const updates: CartPriceUpdate[] = Array.isArray(data.items)
+            ? data.items
+                .filter((line: { id?: unknown }) => typeof line?.id === 'string')
+                .map((line: { id: string; unitPaise: number; regularPricePaise?: number | null }) => ({
+                  id: line.id,
+                  unitPaise: Number(line.unitPaise),
+                  regularPricePaise: line.regularPricePaise ?? null,
+                }))
+            : [];
+          syncPrices(updates);
+          setIsSubmitting(false);
+          setErrorMessage('Prices have changed, please review your cart.');
+          return;
+        }
         throw new Error(data.error || 'Failed to initiate payment.');
       }
 
@@ -583,7 +625,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           <button
             type="submit"
             id="payu-pay-now-btn"
-            disabled={isSubmitting}
+            disabled={isSubmitting || hasUnavailable}
             aria-disabled={isSubmitting || hasUnavailable}
             aria-describedby={hasUnavailable ? 'checkout-unavailable-note' : undefined}
             className={`w-full py-4 rounded-full text-base font-semibold text-white transition flex items-center justify-center space-x-2 ${

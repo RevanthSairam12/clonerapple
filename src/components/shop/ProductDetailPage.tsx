@@ -6,15 +6,27 @@ import { useRouter } from 'next/navigation';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart } from '@/lib/cart/CartContext';
+import {
+  STOCK_NOT_AVAILABLE,
+  stockBlocked,
+} from '@/lib/storefront/availability-rules';
+import { useAvailability } from '@/lib/storefront/use-availability';
 import type { Product, ColorSwatch } from '@/components/sites/cases-protection/data/products';
 
 interface Props {
   product: Product;
+  /** The sale switch as the server read it; the endpoint refreshes it. */
+  saleLive?: boolean;
+  /** Storefront stock state for this product, from the catalogue row. */
+  inStock?: boolean;
 }
 
-export function ProductDetailPage({ product }: Props) {
+export function ProductDetailPage({ product, saleLive = false, inStock = true }: Props) {
   const router = useRouter();
   const { addItem } = useCart();
+  const availability = useAvailability(product.id, { saleLive, inStock });
+  const unavailable = availability.blocked;
+  const [availabilityNotice, setAvailabilityNotice] = useState<string | null>(null);
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
   const [selectedSize, setSelectedSize] = useState(
     product.compatibility.includes('iPhone 18 Pro Max')
@@ -118,7 +130,19 @@ export function ProductDetailPage({ product }: Props) {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const handleAddToBag = () => {
+  const handleAddToBag = async () => {
+    if (unavailable) {
+      setAvailabilityNotice(STOCK_NOT_AVAILABLE);
+      return;
+    }
+    // Click-time re-check: stock may have gone, or a sale may have started,
+    // since this page was rendered.
+    const latest = await availability.refresh();
+    if (latest && stockBlocked(latest.inStock, latest.saleLive)) {
+      setAvailabilityNotice(STOCK_NOT_AVAILABLE);
+      return;
+    }
+    setAvailabilityNotice(null);
     setIsAddingToBag(true);
 
     const activeImage =
@@ -178,11 +202,16 @@ export function ProductDetailPage({ product }: Props) {
             <button
               type="button"
               onClick={handleAddToBag}
-              className={`text-xs font-semibold px-5 py-2 rounded-xl transition-all active:scale-95 shadow-sm cursor-pointer ${
-                isAdded ? 'bg-[#34c759] text-white' : 'bg-[#0071e3] hover:bg-[#0077ed] text-white'
+              disabled={isAddingToBag || unavailable}
+              className={`text-xs font-semibold px-5 py-2 rounded-xl transition-all active:scale-95 shadow-sm ${
+                unavailable
+                  ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
+                  : isAdded
+                    ? 'bg-[#34c759] text-white cursor-pointer'
+                    : 'bg-[#0071e3] hover:bg-[#0077ed] text-white cursor-pointer'
               }`}
             >
-              {isAdded ? 'Added ✓' : 'Add to Bag'}
+              {unavailable ? STOCK_NOT_AVAILABLE : isAdded ? 'Added ✓' : 'Add to Bag'}
             </button>
           </div>
         </div>
@@ -417,7 +446,9 @@ export function ProductDetailPage({ product }: Props) {
               </div>
               <div className="text-[14px] leading-[1.45]">
                 <div className="font-semibold text-[#1d1d1f]">Delivery:</div>
-                <div className="text-[#1d1d1f]">In Stock</div>
+                <div className="text-[#1d1d1f]">
+                  {unavailable ? STOCK_NOT_AVAILABLE : 'In Stock'}
+                </div>
                 <div className="text-[#1d1d1f]">Free Shipping</div>
                 <button
                   type="button"
@@ -464,14 +495,18 @@ export function ProductDetailPage({ product }: Props) {
             <button
               type="button"
               onClick={handleAddToBag}
-              disabled={isAddingToBag}
-              className={`w-full py-3.5 rounded-xl text-[15px] font-semibold transition-all active:scale-[0.99] shadow-sm mb-3 flex items-center justify-center cursor-pointer ${
-                isAdded
-                  ? 'bg-[#34c759] text-white'
-                  : 'bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white'
+              disabled={isAddingToBag || unavailable}
+              className={`w-full py-3.5 rounded-xl text-[15px] font-semibold transition-all active:scale-[0.99] shadow-sm mb-3 flex items-center justify-center ${
+                unavailable
+                  ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
+                  : isAdded
+                    ? 'bg-[#34c759] text-white cursor-pointer'
+                    : 'bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white cursor-pointer'
               }`}
             >
-              {isAdded ? (
+              {unavailable ? (
+                <span>{STOCK_NOT_AVAILABLE}</span>
+              ) : isAdded ? (
                 <span className="flex items-center gap-2">
                   <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -490,6 +525,12 @@ export function ProductDetailPage({ product }: Props) {
                 <span>Add to Bag</span>
               )}
             </button>
+
+            {availabilityNotice ? (
+              <p className="mb-4 text-sm font-semibold text-[#b42318]" role="alert">
+                {availabilityNotice}
+              </p>
+            ) : null}
 
             {/* Added Confirmation Banner */}
             {isAdded && (

@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { AccessoryCategoryPage } from '@/components/sites/accessories/AccessoryCategoryPage';
 import { CONFIG } from '@/components/sites/accessories/data/airpods-case';
 import { getAccessoryProductsView } from '@/lib/storefront/catalog';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 import '@/components/sites/accessories/accessory-category.css';
 
@@ -26,6 +27,15 @@ export const metadata: Metadata = {
 };
 
 export default async function Page() {
-  const { products } = await getAccessoryProductsView(CONFIG.slug);
-  return <AccessoryCategoryPage config={CONFIG} products={products} />;
+  const [{ products }, sale] = await Promise.all([
+    getAccessoryProductsView(CONFIG.slug),
+    readSaleState(),
+  ]);
+  return (
+    <AccessoryCategoryPage
+      config={CONFIG}
+      products={products}
+      saleLive={sale.live}
+    />
+  );
 }

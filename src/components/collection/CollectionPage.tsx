@@ -16,6 +16,8 @@ import './collection.css';
 export interface CollectionPageProps {
   config: CollectionConfig;
   products: CollectionProduct[];
+  /** The sale switch on the database clock; a live sale never disables a card. */
+  saleLive?: boolean;
   /** Optional overrides from CMS for header, category links, or products */
   overrides?: {
     header?: { title?: string; sortLabel?: string };
@@ -24,7 +26,7 @@ export interface CollectionPageProps {
   };
 }
 
-export function CollectionPage({ config, products, overrides }: CollectionPageProps) {
+export function CollectionPage({ config, products, saleLive = false, overrides }: CollectionPageProps) {
   // Merge any CMS overrides
   const resolvedTitle = overrides?.header?.title || config.title;
   const resolvedLinks = useMemo(() => {
@@ -290,6 +292,7 @@ export function CollectionPage({ config, products, overrides }: CollectionPagePr
             <CollectionProductGrid
               products={filteredProducts}
               onClearFilters={clearAllFilters}
+              saleLive={saleLive}
             />
 
             {/* 8. Pagination: only renders if total products > 24 */}

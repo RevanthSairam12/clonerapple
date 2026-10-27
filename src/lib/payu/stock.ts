@@ -69,9 +69,20 @@ export async function claimPlannedStock(
       returning product_id
     `;
     if (updated.length === 0) {
+      // The guarded update lost the race. Re-read the locked row (this
+      // transaction still holds it) so the message can say how many units are
+      // actually left instead of a flat "out of stock".
+      const remaining = await tx<Array<{ available: number | string }>>`
+        select greatest(on_hand - reserved, 0)::int as available
+        from stock
+        where product_id = ${claim.productId} and variant_id is null
+      `;
+      const available = Number(remaining[0]?.available ?? 0);
       const name = claim.productName?.trim() || 'This item';
       throw new InsufficientStockError(
-        `${name} is out of stock. Remove it from your bag to continue.`,
+        available > 0
+          ? `Only ${available} left of ${name}. Reduce the quantity or remove it from your bag.`
+          : `Out of stock: ${name}. Remove it from your bag to continue.`,
       );
     }
     await tx`

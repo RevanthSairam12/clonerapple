@@ -6,6 +6,7 @@ import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { EMPTY_SHIPPING_POLICY } from '@/lib/checkout/shipping-rules';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
+import { getStorefrontRefs } from '@/lib/storefront/catalog';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
@@ -19,7 +20,15 @@ export default async function CheckoutPage({ searchParams }: Props) {
   const session = await getUserSession();
   const settings = await readCustomerSettings();
   const checkoutConfiguration = await readCheckoutConfiguration();
+  const { products, saleLive } = await getStorefrontRefs();
   const { productId: rawProductId, qty } = await searchParams;
+
+  // The same availability the bag and detail pages show. Checkout re-checks
+  // under the stock row lock; this only stops an obviously unsellable order.
+  const stockById: Record<string, boolean> = {};
+  for (const product of products) {
+    stockById[product.id.trim().toLowerCase()] = product.inStock;
+  }
 
   // Guest checkout is off unless the owner enables it under
   // Customers → Customer settings. When it is off, an account is required.
@@ -84,6 +93,8 @@ export default async function CheckoutPage({ searchParams }: Props) {
         marketingOptInEnabled={isOn(settings.checkout_marketing_optin)}
         shippingPolicy={checkoutConfiguration.ok ? checkoutConfiguration.policy : EMPTY_SHIPPING_POLICY}
         paymentNote={checkoutConfiguration.ok ? checkoutConfiguration.settings.payment_note : ''}
+        saleLive={saleLive}
+        stockById={stockById}
       />
     </div>
   );

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ProductDetailPage } from '@/components/shop/ProductDetailPage';
 import { getProductDetail } from '@/lib/storefront/catalog';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -31,12 +32,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function BuyPage({ params }: Props) {
   const { productId } = await params;
-  const detail = await getProductDetail(productId);
+  const [detail, sale] = await Promise.all([
+    getProductDetail(productId),
+    readSaleState(),
+  ]);
 
   // This route has always sold the bespoke case range only.
   if (!detail || detail.kind !== 'case') {
     notFound();
   }
 
-  return <ProductDetailPage product={detail.product} />;
+  return (
+    <ProductDetailPage
+      product={detail.product}
+      saleLive={sale.live}
+      inStock={detail.stock.inStock}
+    />
+  );
 }

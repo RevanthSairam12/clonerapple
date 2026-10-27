@@ -156,7 +156,38 @@ export async function POST(req: NextRequest) {
     try {
       cart = await resolveCartItemsFromDb(rawItems);
     } catch (err: unknown) {
+      // Normal mode's storefront availability is enforced here too, so a
+      // crafted request cannot buy what the shop has marked unavailable.
+      if (err instanceof InsufficientStockError) {
+        return NextResponse.json(
+          { success: false, error: err.message, code: 'out_of_stock' },
+          { status: 409 },
+        );
+      }
       return NextResponse.json({ error: (err as Error).message }, { status: 400 });
+    }
+
+    // The client's displayed unit prices are advisory: they are never charged.
+    // If any of them no longer matches the database price (a sale started or
+    // ended between the bag and this request), stop before reserving stock or
+    // creating an order and make the customer review the new prices.
+    if (cart.priceChanges.length > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Prices have changed, please review your cart.',
+          code: 'price_changed',
+          items: cart.items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unitPaise: item.unitPaise,
+            totalPaise: item.unitPaise * item.quantity,
+            regularPricePaise: item.regularPricePaise ?? null,
+          })),
+        },
+        { status: 409 },
+      );
     }
 
     // 2. Validate and sanitize customer details
@@ -252,7 +283,10 @@ export async function POST(req: NextRequest) {
       });
     } catch (error: unknown) {
       if (error instanceof InsufficientStockError) {
-        return NextResponse.json({ error: error.message }, { status: 409 });
+        return NextResponse.json(
+          { success: false, error: error.message, code: 'out_of_stock' },
+          { status: 409 },
+        );
       }
       throw error;
     }

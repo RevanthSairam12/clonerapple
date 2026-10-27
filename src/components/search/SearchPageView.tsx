@@ -41,7 +41,7 @@ const ACCESSORY_NAV: { label: string; href: string }[] = [
   { label: 'AirPods Cases', href: '/in/shop/iphone/accessories/airpods-case' },
 ];
 
-function toCollectionProduct(item: SearchResultItem): CollectionProduct {
+function toCollectionProduct(item: SearchResultItem, saleLive: boolean): CollectionProduct {
   // Editorial/page results and any other item without a numeric price must not
   // be turned into a ₹0 product. They render as "Unavailable" and cannot be
   // added to the bag.
@@ -51,7 +51,8 @@ function toCollectionProduct(item: SearchResultItem): CollectionProduct {
       : null;
   // Availability is the live catalogue's word: a product the database marks out
   // of stock, or one that arrives without a real price, has no payable entry.
-  const available = price !== null && item.inStock !== false;
+  // A live sale deliberately ignores the stock flag in the UI.
+  const available = price !== null && (saleLive || item.inStock !== false);
 
   return {
     id: item.id,
@@ -81,9 +82,11 @@ interface Props {
   initialQuery?: string;
   /** Server-fetched catalogue rows; avoids a client fetch on first paint. */
   initialProducts?: StorefrontProductRef[];
+  /** The sale switch on the database clock; a live sale never disables a card. */
+  saleLive?: boolean;
 }
 
-export function SearchPageView({ initialQuery = '', initialProducts }: Props) {
+export function SearchPageView({ initialQuery = '', initialProducts, saleLive = false }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [activeCategory, setActiveCategory] = useState('All');
   const router = useRouter();
@@ -273,7 +276,7 @@ export function SearchPageView({ initialQuery = '', initialProducts }: Props) {
                   {productResults.map((item) => (
                     <CollectionProductCard
                       key={item.id}
-                      product={toCollectionProduct(item)}
+                      product={toCollectionProduct(item, saleLive)}
                     />
                   ))}
                 </div>

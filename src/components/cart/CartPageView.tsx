@@ -9,6 +9,7 @@ import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
 import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
+import { stockBlocked } from '@/lib/storefront/availability-rules';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface UserAuth {
@@ -26,9 +27,14 @@ interface Props {
   initialProducts: StorefrontProductRef[];
   /** Server-computed Store Admin shipping rules; the same quote checkout charges. */
   shippingPolicy: ShippingPolicy;
+  /**
+   * The sale switch on the database clock. While a sale is live the bag never
+   * disables a line for stock: the authoritative check happens at Pay.
+   */
+  saleLive: boolean;
 }
 
-export function CartPageView({ initialProducts, shippingPolicy }: Props) {
+export function CartPageView({ initialProducts, shippingPolicy, saleLive }: Props) {
   const { items, totalCount, updateQuantity, removeItem, addItem } = useCart();
 
   const productsById = useMemo(() => {
@@ -60,10 +66,15 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
       findRef(getCartLineBaseId(item.productId || item.id) || ''),
     [findRef],
   );
-  const availableItems = items.filter((item) => {
-    const ref = refFor(item);
-    return Boolean(ref && ref.inStock);
-  });
+  // The same rule the detail pages and checkout use. A line whose product is
+  // gone from the catalogue stays unavailable even during a sale.
+  const lineAvailable = useCallback(
+    (ref: StorefrontProductRef | null) =>
+      Boolean(ref) && !stockBlocked(Boolean(ref?.inStock), saleLive),
+    [saleLive],
+  );
+
+  const availableItems = items.filter((item) => lineAvailable(refFor(item)));
   const hasUnavailable = availableItems.length !== items.length;
   const payableCount = availableItems.reduce((sum, item) => sum + item.quantity, 0);
   const payableAmount = availableItems.reduce((sum, item) => {
@@ -116,7 +127,7 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
     // is not addable — the card renders an "Unavailable" label instead.
     const ref = findRef(getCartLineBaseId(item.id) || '');
     const price = ref ? ref.pricePaise / 100 : item.price;
-    if (!ref || !ref.inStock) return;
+    if (!ref || stockBlocked(ref.inStock, saleLive)) return;
     if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
 
     addItem({
@@ -251,7 +262,7 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
               <div className="lg:col-span-8 divide-y divide-[#e5e5ea] border-y border-[#e5e5ea]">
                 {items.map((item) => {
                   const ref = refFor(item);
-                  const isAvailable = Boolean(ref && ref.inStock);
+                  const isAvailable = lineAvailable(ref);
                   const linePrice = ref ? ref.pricePaise / 100 : item.price;
                   const lineWasPrice = ref?.regularPricePaise
                     ? (ref.regularPricePaise / 100) * item.quantity
@@ -308,7 +319,9 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
                       {isAvailable ? (
                         <p className="text-xs text-[#34c759] font-medium mt-2 flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 rounded-full bg-[#34c759]" />
-                          In stock and ready to ship
+                          {ref?.inStock
+                            ? 'In stock and ready to ship'
+                            : 'Available at the sale price today'}
                         </p>
                       ) : (
                         <p className="text-xs text-[#e30000] font-medium mt-2">
@@ -536,7 +549,7 @@ export function CartPageView({ initialProducts, shippingPolicy }: Props) {
                       typeof item.price === 'number' &&
                       Number.isFinite(item.price) &&
                       item.price > 0 &&
-                      Boolean(suggestedRef?.inStock);
+                      lineAvailable(suggestedRef);
                 return (
                   <div
                     key={item.id}

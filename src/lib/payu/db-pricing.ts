@@ -12,6 +12,12 @@ import { normalizeCartLineId } from '@/lib/cart/cart-id';
 export interface CartPricingInput {
   id: string;
   quantity: number;
+  /**
+   * The unit price the customer was shown, in paise. Advisory only: it is
+   * never charged. A mismatch against the database price is reported as a
+   * `price_changed` conflict so the customer re-confirms the new price.
+   */
+  expectedUnitPaise?: number | null;
 }
 
 export interface CatalogPriceRow {
@@ -19,6 +25,8 @@ export interface CatalogPriceRow {
   name: string;
   subtitle?: string | null;
   price_paise: number | string;
+  /** The pre-sale price, only when the resolved price is a sale price. */
+  regular_price_paise?: number | string | null;
   image_url?: string | null;
 }
 
@@ -28,9 +36,21 @@ export interface PricedCartItem {
   quantity: number;
   /** Rupees, matching the PayU amount unit. */
   unitPrice: number;
+  /** Integer paise, the exact unit price before the one division by 100. */
+  unitPaise: number;
   /** Rupees. */
   totalPrice: number;
+  /** The pre-sale unit price in paise, when this line is on sale. */
+  regularPricePaise?: number;
   image?: string;
+}
+
+/** One line whose displayed price no longer matches the database price. */
+export interface PriceChange {
+  id: string;
+  name: string;
+  expectedPaise: number;
+  actualPaise: number;
 }
 
 export interface PricedCart {
@@ -40,6 +60,12 @@ export interface PricedCart {
   /** Integer paise, the exact value the total is derived from. */
   totalPaise: number;
   productSummary: string;
+  /**
+   * Lines the client showed at a different price. Empty when the client sent
+   * no expectation. The caller decides what a change means; pricing itself
+   * always uses the database value.
+   */
+  priceChanges: PriceChange[];
 }
 
 function displayName(row: CatalogPriceRow): string {
@@ -72,6 +98,7 @@ export function priceCartLines(
   const knownIds = [...byId.values()].map((row) => row.id);
 
   const items: PricedCartItem[] = [];
+  const priceChanges: PriceChange[] = [];
   let totalPaise = 0;
 
   for (const cartItem of cartItems) {
@@ -96,20 +123,38 @@ export function priceCartLines(
       throw new Error(`Product '${rawId}' has an invalid price.`);
     }
 
+    const rawRegularPaise = row.regular_price_paise === null || row.regular_price_paise === undefined
+      ? null
+      : Math.round(Number(row.regular_price_paise));
+    const regularPricePaise =
+      rawRegularPaise !== null && Number.isSafeInteger(rawRegularPaise) && rawRegularPaise > unitPaise
+        ? rawRegularPaise
+        : undefined;
+
     const linePaise = unitPaise * quantity;
     totalPaise += linePaise;
 
+    const name = displayName(row);
     items.push({
       id: row.id,
-      name: displayName(row),
+      name,
       quantity,
       unitPrice: unitPaise / 100,
+      unitPaise,
       totalPrice: linePaise / 100,
+      ...(regularPricePaise !== undefined ? { regularPricePaise } : {}),
       image:
         typeof row.image_url === 'string' && row.image_url.trim()
           ? row.image_url
           : undefined,
     });
+
+    // Same order as the input array: priceCartLines pushes exactly one item
+    // per valid input line.
+    const expected = Number(cartItem.expectedUnitPaise);
+    if (Number.isSafeInteger(expected) && expected >= 0 && expected !== unitPaise) {
+      priceChanges.push({ id: row.id, name, expectedPaise: expected, actualPaise: unitPaise });
+    }
   }
 
   const names = items.map((item) => `${item.name} (x${item.quantity})`).join(', ');
@@ -122,5 +167,6 @@ export function priceCartLines(
     totalAmount: totalPaise / 100,
     totalPaise,
     productSummary: productSummary.replace(/[^a-zA-Z0-9\s,.-]/g, ' ').trim(),
+    priceChanges,
   };
 }
