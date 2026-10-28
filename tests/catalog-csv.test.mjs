@@ -226,7 +226,7 @@ test('the compare-at price cannot sit below the price', () => {
   const { errors } = validate([
     { name: 'Cheap', category: 'Power', price: '100', compare_at_price: '90' },
   ]);
-  assert.equal(errors.some((error) => error.message.includes('below the price')), true);
+  assert.equal(errors.some((error) => error.message.includes('at least the selling price')), true);
 });
 
 test('duplicate ids and slugs inside one file are refused', () => {

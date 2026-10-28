@@ -4,6 +4,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import {
+  formatRupees,
+  parseRupeesToPaise,
+  salePriceProblem,
+} from '@/lib/store-admin/money';
 import { discountPercent } from '@/lib/storefront/pricing';
 
 interface Props {
@@ -17,6 +22,8 @@ interface Props {
   availableLabel: string;
   lowStock: boolean;
   isActive: boolean;
+  /** Viewers see the stored sale price but get no editable controls. */
+  canEdit: boolean;
 }
 
 /**
@@ -35,6 +42,7 @@ export function SaleProductRow({
   availableLabel,
   lowStock,
   isActive,
+  canEdit,
 }: Props) {
   const router = useRouter();
   const [value, setValue] = useState(
@@ -43,7 +51,7 @@ export function SaleProductRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
 
   const discount = salePricePaise === null ? 0 : discountPercent(pricePaise, salePricePaise);
 
@@ -51,18 +59,16 @@ export function SaleProductRow({
     setBusy(true);
     setError(null);
     setWarning(null);
-    setSaved(false);
+    setSaved(null);
     try {
-      let next: number | null = null;
-      if (value.trim()) {
-        next = Math.round(Number(value) * 100);
-        if (!Number.isFinite(next) || next <= 0) {
-          throw new Error('Enter a positive amount, or blank to clear.');
-        }
-        if (next >= pricePaise) {
-          throw new Error('The sale price must be lower than the regular price.');
-        }
+      const parsed = parseRupeesToPaise(value);
+      if (!parsed.ok) throw new Error(parsed.message);
+      const next = parsed.paise;
+      if (next !== null) {
+        const problem = salePriceProblem(next, pricePaise);
+        if (problem) throw new Error(problem);
       }
+
       const response = await fetch(
         `/api/store-admin/catalog/products/${encodeURIComponent(productId)}/price`,
         {
@@ -78,7 +84,12 @@ export function SaleProductRow({
       if (Array.isArray(body.warnings) && typeof body.warnings[0] === 'string') {
         setWarning(body.warnings[0]);
       }
-      setSaved(true);
+      setValue(next === null ? '' : (next / 100).toFixed(2));
+      setSaved(
+        next === null
+          ? 'Sale price cleared.'
+          : `Sale price saved: ${formatRupees(next)}.`,
+      );
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save the sale price.');
@@ -94,31 +105,46 @@ export function SaleProductRow({
           {name}
         </Link>
         {!isActive ? <span className="sa-row-sub">Inactive</span> : null}
-        {error ? <span className="sa-row-sub sa-row-error">{error}</span> : null}
-        {warning ? <span className="sa-row-sub">{warning}</span> : null}
-        {saved && !warning && !error ? <span className="sa-row-sub">Saved</span> : null}
+        {error ? (
+          <span className="sa-row-sub sa-row-error" role="alert">
+            {error}
+          </span>
+        ) : null}
+        {saved ? (
+          <span className="sa-row-sub">
+            {saved}
+            {warning ? ` ${warning}` : ''}
+          </span>
+        ) : null}
       </td>
       <td className="sa-num">{priceLabel}</td>
       <td className="sa-num">
-        <div className="sa-sale-input">
-          <span>₹</span>
-          <input
-            className="sa-input"
-            type="number"
-            min={0}
-            step="0.01"
-            placeholder="—"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            aria-label={`Sale price for ${name}`}
-          />
-          <button className="sa-btn sa-btn-small" type="button" disabled={busy} onClick={save}>
-            {busy ? '…' : 'Save'}
-          </button>
-        </div>
-        {salePricePaise !== null ? (
-          <span className="sa-row-sub">Stored {regularSaleLabel}</span>
-        ) : null}
+        {canEdit ? (
+          <>
+            <div className="sa-sale-input">
+              <span>₹</span>
+              <input
+                className="sa-input"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="—"
+                value={value}
+                disabled={busy}
+                onChange={(event) => setValue(event.target.value)}
+                aria-label={`Sale price for ${name}`}
+              />
+              <button className="sa-btn sa-btn-small" type="button" disabled={busy} onClick={save}>
+                {busy ? '…' : 'Save'}
+              </button>
+            </div>
+            {salePricePaise !== null ? (
+              <span className="sa-row-sub">Stored {regularSaleLabel}</span>
+            ) : null}
+          </>
+        ) : (
+          <span className="sa-price">{regularSaleLabel ?? '—'}</span>
+        )}
       </td>
       <td className="sa-num">{discount > 0 ? `${discount}%` : '—'}</td>
       <td>

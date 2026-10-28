@@ -649,8 +649,12 @@ export async function updateProductPricingUsing(
       const nextSale =
         patch.salePricePaise !== undefined ? patch.salePricePaise : beforeSale;
 
-      const pairError = checkPricePair(nextPrice, nextCompare);
-      if (pairError) return fail('invalid-input', pairError);
+      // A sale-only patch must not be blocked by a compare-at value it did not
+      // touch. The pair rule runs only when one of the pair is being written.
+      if (patch.pricePaise !== undefined || patch.compareAtPaise !== undefined) {
+        const pairError = checkPricePair(nextPrice, nextCompare);
+        if (pairError) return fail('invalid-input', pairError);
+      }
 
       const sale = checkSalePrice({
         salePaise: nextSale,

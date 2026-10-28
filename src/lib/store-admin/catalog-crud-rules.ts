@@ -1,6 +1,12 @@
 /** Pure validation for catalogue writes. No database, no framework. */
 
 import { slugify } from './catalog-rules';
+import {
+  MAX_PRICE_PAISE,
+  belowCostWarning,
+  formatRupees,
+  salePriceProblem,
+} from './money';
 
 export type FieldResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -29,6 +35,23 @@ function boundedInt(
   const parsed = typeof value === 'string' ? Number(value.trim()) : Number(value);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
     return { ok: false, error: `${label} must be a whole number between ${min} and ${max}.` };
+  }
+  return { ok: true, value: parsed };
+}
+
+/** Money fields are paise on the wire, but errors talk in rupees. */
+function boundedPaise(
+  value: unknown,
+  min: number,
+  max: number,
+  label: string,
+): FieldResult<number> {
+  const parsed = typeof value === 'string' ? Number(value.trim()) : Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return {
+      ok: false,
+      error: `${label} must be between ${formatRupees(min)} and ${formatRupees(max)}.`,
+    };
   }
   return { ok: true, value: parsed };
 }
@@ -204,7 +227,7 @@ export interface NewProductInput {
   initialOnHand: number;
 }
 
-export const PRICE_MAX_PAISE = 1_000_000_00; // ₹10,00,000
+export const PRICE_MAX_PAISE = MAX_PRICE_PAISE;
 
 export function validateNewProductInput(input: unknown): FieldResult<NewProductInput> {
   if (!input || typeof input !== 'object') {
@@ -226,12 +249,12 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
   const categoryId = optionalId(body.categoryId);
   if (!categoryId) return { ok: false, error: 'Pick a category for the product.' };
 
-  const pricePaise = boundedInt(body.pricePaise, 1, PRICE_MAX_PAISE, 'The selling price');
+  const pricePaise = boundedPaise(body.pricePaise, 1, PRICE_MAX_PAISE, 'Selling price');
   if (!pricePaise.ok) return pricePaise;
 
   let compareAtPaise: number | null = null;
   if (body.compareAtPaise !== undefined && body.compareAtPaise !== null && body.compareAtPaise !== '') {
-    const parsed = boundedInt(body.compareAtPaise, 0, PRICE_MAX_PAISE, 'The compare-at price');
+    const parsed = boundedPaise(body.compareAtPaise, 0, PRICE_MAX_PAISE, 'Compare-at price');
     if (!parsed.ok) return parsed;
     compareAtPaise = parsed.value;
   }
@@ -309,7 +332,7 @@ export function validatePricePatch(input: unknown): FieldResult<PricePatch> {
   const value: PricePatch = {};
 
   if (body.pricePaise !== undefined) {
-    const price = boundedInt(body.pricePaise, 1, PRICE_MAX_PAISE, 'The selling price');
+    const price = boundedPaise(body.pricePaise, 1, PRICE_MAX_PAISE, 'Selling price');
     if (!price.ok) return price;
     value.pricePaise = price.value;
   }
@@ -318,7 +341,7 @@ export function validatePricePatch(input: unknown): FieldResult<PricePatch> {
     if (body.compareAtPaise === null || body.compareAtPaise === '') {
       value.compareAtPaise = null;
     } else {
-      const compareAt = boundedInt(body.compareAtPaise, 0, PRICE_MAX_PAISE, 'The compare-at price');
+      const compareAt = boundedPaise(body.compareAtPaise, 0, PRICE_MAX_PAISE, 'Compare-at price');
       if (!compareAt.ok) return compareAt;
       value.compareAtPaise = compareAt.value;
     }
@@ -328,7 +351,7 @@ export function validatePricePatch(input: unknown): FieldResult<PricePatch> {
     if (body.salePricePaise === null || body.salePricePaise === '') {
       value.salePricePaise = null;
     } else {
-      const sale = boundedInt(body.salePricePaise, 1, PRICE_MAX_PAISE, 'The sale price');
+      const sale = boundedPaise(body.salePricePaise, 1, PRICE_MAX_PAISE, 'Sale price');
       if (!sale.ok) return sale;
       value.salePricePaise = sale.value;
     }
@@ -356,19 +379,10 @@ export function checkSalePrice(args: {
 }): { error: string | null; warning: string | null } {
   const { salePaise, regularPaise, costPaise } = args;
   if (salePaise === null) return { error: null, warning: null };
-  if (!Number.isInteger(salePaise) || salePaise <= 0) {
-    return { error: 'The sale price must be a positive whole number of paise.', warning: null };
-  }
-  if (salePaise >= regularPaise) {
-    return { error: 'The sale price must be lower than the selling price.', warning: null };
-  }
-  if (costPaise !== null && salePaise < costPaise) {
-    return {
-      error: null,
-      warning: 'The sale price is below cost. It will still be saved.',
-    };
-  }
-  return { error: null, warning: null };
+
+  const error = salePriceProblem(salePaise, regularPaise);
+  if (error) return { error, warning: null };
+  return { error: null, warning: belowCostWarning(salePaise, costPaise) };
 }
 
 /* -------------------------------------------------------------- variants */
@@ -414,7 +428,7 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
 
   let priceOverridePaise: number | null = null;
   if (body.priceOverridePaise !== undefined && body.priceOverridePaise !== null && body.priceOverridePaise !== '') {
-    const parsed = boundedInt(body.priceOverridePaise, 1, PRICE_MAX_PAISE, 'The price override');
+    const parsed = boundedPaise(body.priceOverridePaise, 1, PRICE_MAX_PAISE, 'Price override');
     if (!parsed.ok) return parsed;
     priceOverridePaise = parsed.value;
   }

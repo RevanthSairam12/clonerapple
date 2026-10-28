@@ -175,6 +175,25 @@ export default async function StoreAdminSalePage({
         </section>
       </div>
 
+      <section className="sa-detail-card">
+        <h2 className="sa-card-title">How to start a sale</h2>
+        <ol className="sa-plain-list">
+          <li>Set a regular price above zero on the product.</li>
+          <li>
+            Enter a sale price below that regular price here, or use Bulk sale
+            prices to take a percent off every product.
+          </li>
+          <li>
+            Review the stock and cost notes. A sale price below cost still
+            saves; the warning never blocks it.
+          </li>
+          <li>
+            Switch Sale mode on, or set a window, and confirm the badge says
+            SALE LIVE.
+          </li>
+        </ol>
+      </section>
+
       {canEdit ? <SaleBulkActions productCount={products.length} /> : null}
 
       <nav className="sa-filter-nav" aria-label="Sale product filters">
@@ -219,6 +238,7 @@ export default async function StoreAdminSalePage({
                 availableLabel={product.available === null ? '—' : String(product.available)}
                 lowStock={product.tracked && isLowStock(product.available, product.lowStockThreshold)}
                 isActive={product.isActive}
+                canEdit={canEdit}
               />
             ))}
           </tbody>

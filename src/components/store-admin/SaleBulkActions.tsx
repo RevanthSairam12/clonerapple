@@ -33,9 +33,11 @@ export function SaleBulkActions({ productCount }: { productCount: number }) {
       const skipped = Number(payload.skipped ?? 0);
       const skippedNote = skipped > 0 ? ` ${skipped} product${skipped === 1 ? '' : 's'} skipped (no usable price).` : '';
       setNotice(
-        body.action === 'clear'
-          ? `Cleared ${changed} sale price${changed === 1 ? '' : 's'}.${skippedNote}`
-          : `Set sale prices on ${changed} product${changed === 1 ? '' : 's'}.${skippedNote}`,
+        changed === 0
+          ? `No sale prices changed.${skippedNote}`
+          : body.action === 'clear'
+            ? `Cleared ${changed} sale price${changed === 1 ? '' : 's'}.${skippedNote}`
+            : `Set sale prices on ${changed} product${changed === 1 ? '' : 's'}.${skippedNote}`,
       );
       router.refresh();
     } catch (caught) {

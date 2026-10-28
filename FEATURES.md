@@ -745,16 +745,24 @@ scheduler-side check.
   throwing or guessing a sale.
 - **Admin editing.** The product page's **Price** card stores a sale price beside the
   selling price; blank clears it. Validation: positive and lower than the regular price
-  (blocked); below `cost_paise` (warned, still saved). Every sale price write appends a
-  `price_history` row with `price_kind = 'sale'`; a clear records `'sale_cleared'` with
-  the `new_price_paise` sentinel `0`. Regular changes record `'regular'` (also the column
+  (blocked, with the regular price named in the message); below `cost_paise` (warned,
+  still saved and explicitly confirmed as saved). Every money field on every admin
+  surface — product card, sale table, bulk actions and CSV — uses
+  `src/lib/store-admin/money.ts`: it accepts `499.50`, `₹1,299.50` and `1,29,900.50`,
+  rejects negatives and more than two decimals, and converts with integer arithmetic
+  (no floating-point or 100× drift). Every sale price write appends a `price_history`
+  row with `price_kind = 'sale'`; a clear records `'sale_cleared'` with the
+  `new_price_paise` sentinel `0`. Regular changes record `'regular'` (also the column
   default). The products list shows a **Sale price** column and the price-history table
   shows the kind.
 - **The sale screen.** `/store-admin/sale` (sidebar **Sale**, beside Products; not under
   Settings) carries the switch, the optional store-local window, the SALE LIVE /
   SCHEDULED / OFF badge (also on Overview, linking there), a product table with an inline
-  sale price, discount %, tracked and available, and Adjust links. It filters by has/no
-  sale price, tracking off, and low or zero stock. Bulk percent-off and clear-all are
+  sale price, discount %, tracked and available, and Adjust links. A four-step **How to
+  start a sale** block sits above the table. Inline editing is absent for
+  `store_viewer` (stored value only), so the screen never offers a write the API would
+  reject. It filters by has/no sale price, tracking off, and low or zero stock. Bulk
+  percent-off and clear-all are
   possible from the same screen, each writing a `sale`/`sale_cleared` history row per
   changed product. Writes need `store_admin`; `store_viewer` sees the same data read-only.
 - **Why a dedicated table.** `sale_settings` is a typed one-row table rather than a

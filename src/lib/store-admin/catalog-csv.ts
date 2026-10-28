@@ -5,6 +5,7 @@
 
 import { slugify } from './catalog-rules';
 import { PRICE_MAX_PAISE } from './catalog-crud-rules';
+import { formatRupees, parseRupeesToPaise } from './money';
 
 export const MAX_IMPORT_ROWS = 5000;
 
@@ -136,16 +137,18 @@ export function normalizeHeader(value: string): string {
 
 /* ------------------------------------------------------------- row values */
 
-const MONEY_RE = /^\d+(?:\.\d{1,2})?$/;
 const INTEGER_RE = /^-?\d+$/;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const URL_RE = /^(?:https?:\/\/|\/)[^\s"'<>]{1,500}$/i;
 
-/** "₹1,29,900.50" → 12990050. `null` when the text is not money. */
+/**
+ * "₹1,29,900.50" → 12990050. `null` when the text is blank or not money.
+ * Uses the same parser as every other admin money field, so CSV and on-screen
+ * entry cannot disagree about decimals or grouped digits.
+ */
 export function parseMoneyToPaise(text: string): number | null {
-  const cleaned = text.replace(/[₹,\s]/g, '');
-  if (!MONEY_RE.test(cleaned)) return null;
-  return Math.round(Number(cleaned) * 100);
+  const parsed = parseRupeesToPaise(text);
+  return parsed.ok ? parsed.paise : null;
 }
 
 export function parseInteger(text: string): number | null {
@@ -323,7 +326,7 @@ export function validateImportRows(
     const priceText = cell(header, row, 'price');
     const pricePaise = parseMoneyToPaise(priceText);
     if (pricePaise === null || pricePaise < 1 || pricePaise > PRICE_MAX_PAISE) {
-      fail('price', 'The price must be a positive amount.');
+      fail('price', 'Price must be a positive amount above zero.');
     }
 
     let compareAtPaise: number | null = null;
@@ -331,10 +334,13 @@ export function validateImportRows(
     if (compareText) {
       compareAtPaise = parseMoneyToPaise(compareText);
       if (compareAtPaise === null || compareAtPaise < 1 || compareAtPaise > PRICE_MAX_PAISE) {
-        fail('compare_at_price', 'The compare-at price must be a positive amount.');
+        fail('compare_at_price', 'Compare-at price must be a positive amount above zero.');
         compareAtPaise = null;
       } else if (pricePaise !== null && compareAtPaise < pricePaise) {
-        fail('compare_at_price', 'The compare-at price cannot be below the price.');
+        fail(
+          'compare_at_price',
+          `Compare-at price must be at least the selling price (${formatRupees(pricePaise)}).`,
+        );
       }
     }
 
@@ -343,10 +349,14 @@ export function validateImportRows(
     if (saleText) {
       salePricePaise = parseMoneyToPaise(saleText);
       if (salePricePaise === null || salePricePaise < 1 || salePricePaise > PRICE_MAX_PAISE) {
-        fail('sale_price', 'The sale price must be a positive amount.');
+        fail('sale_price', 'Sale price must be a positive amount above zero.');
         salePricePaise = null;
       } else if (pricePaise !== null && salePricePaise >= pricePaise) {
-        fail('sale_price', 'The sale price must be lower than the price.');
+        fail(
+          'sale_price',
+          `Sale price must be lower than the regular price (${formatRupees(pricePaise)}).`,
+        );
+        salePricePaise = null;
       }
     }
 

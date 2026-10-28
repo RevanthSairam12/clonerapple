@@ -3,6 +3,13 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import {
+  MAX_PRICE_PAISE,
+  formatRupees,
+  parseRupeesToPaise,
+  salePriceProblem,
+} from '@/lib/store-admin/money';
+
 interface Props {
   productId: string;
   pricePaise: number;
@@ -49,26 +56,41 @@ export function ProductPriceEditor({
     setNotice(null);
     setWarnings([]);
     try {
-      const priceValue = Math.round(Number(price) * 100);
-      if (!Number.isInteger(priceValue) || priceValue <= 0) {
-        throw new Error('Enter a selling price above zero.');
+      const parsedPrice = parseRupeesToPaise(price);
+      if (!parsedPrice.ok) throw new Error(parsedPrice.message);
+      if (parsedPrice.paise === null || parsedPrice.paise <= 0) {
+        throw new Error('Selling price must be a positive amount above zero.');
       }
+      if (parsedPrice.paise > MAX_PRICE_PAISE) {
+        throw new Error(`Selling price must be ${formatRupees(MAX_PRICE_PAISE)} or less.`);
+      }
+      const priceValue = parsedPrice.paise;
+
       let compareValue: number | null = null;
-      if (compareAt.trim()) {
-        compareValue = Math.round(Number(compareAt) * 100);
-        if (!Number.isFinite(compareValue) || compareValue <= 0) {
-          throw new Error('The compare-at price must be a positive amount, or blank.');
+      const parsedCompare = parseRupeesToPaise(compareAt);
+      if (!parsedCompare.ok) throw new Error(parsedCompare.message);
+      if (parsedCompare.paise !== null) {
+        if (parsedCompare.paise <= 0) {
+          throw new Error('Compare-at price must be above zero, or blank.');
         }
+        if (parsedCompare.paise > MAX_PRICE_PAISE) {
+          throw new Error(`Compare-at price must be ${formatRupees(MAX_PRICE_PAISE)} or less.`);
+        }
+        if (parsedCompare.paise < priceValue) {
+          throw new Error(
+            `Compare-at price must be at least the selling price (${formatRupees(priceValue)}).`,
+          );
+        }
+        compareValue = parsedCompare.paise;
       }
+
       let saleValue: number | null = null;
-      if (sale.trim()) {
-        saleValue = Math.round(Number(sale) * 100);
-        if (!Number.isFinite(saleValue) || saleValue <= 0) {
-          throw new Error('The sale price must be a positive amount, or blank.');
-        }
-        if (saleValue >= priceValue) {
-          throw new Error('The sale price must be lower than the selling price.');
-        }
+      const parsedSale = parseRupeesToPaise(sale);
+      if (!parsedSale.ok) throw new Error(parsedSale.message);
+      if (parsedSale.paise !== null) {
+        const problem = salePriceProblem(parsedSale.paise, priceValue);
+        if (problem) throw new Error(problem);
+        saleValue = parsedSale.paise;
       }
 
       const response = await fetch(
@@ -91,7 +113,20 @@ export function ProductPriceEditor({
       if (Array.isArray(body.warnings)) {
         setWarnings(body.warnings.filter((entry: unknown) => typeof entry === 'string'));
       }
-      setNotice(body.changed ? 'Price saved and recorded in the history.' : 'No change.');
+
+      setPrice((priceValue / 100).toFixed(2));
+      setCompareAt(compareValue === null ? '' : (compareValue / 100).toFixed(2));
+      setSale(saleValue === null ? '' : (saleValue / 100).toFixed(2));
+
+      if (!body.changed) {
+        setNotice('No change.');
+      } else if (saleValue !== null && saleValue !== salePricePaise) {
+        setNotice(`Sale price saved: ${formatRupees(saleValue)}.`);
+      } else if (saleValue === null && salePricePaise !== null) {
+        setNotice('Sale price cleared.');
+      } else {
+        setNotice('Price saved and recorded in the history.');
+      }
       setReason('');
       router.refresh();
     } catch (caught) {
@@ -117,7 +152,7 @@ export function ProductPriceEditor({
       ) : null}
       {warnings.map((warning) => (
         <p className="sa-warning" role="status" key={warning}>
-          {warning}
+          Saved with a warning: {warning}
         </p>
       ))}
 
@@ -128,10 +163,12 @@ export function ProductPriceEditor({
               <span className="sa-label">Selling price ₹</span>
               <input
                 className="sa-input"
-                type="number"
-                min={0}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="1499.00"
                 value={price}
+                disabled={busy}
                 onChange={(event) => setPrice(event.target.value)}
               />
             </label>
@@ -144,10 +181,12 @@ export function ProductPriceEditor({
               </span>
               <input
                 className="sa-input"
-                type="number"
-                min={0}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="1299.50"
                 value={sale}
+                disabled={busy}
                 onChange={(event) => setSale(event.target.value)}
               />
             </label>
@@ -157,10 +196,12 @@ export function ProductPriceEditor({
               </span>
               <input
                 className="sa-input"
-                type="number"
-                min={0}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="1599.00"
                 value={compareAt}
+                disabled={busy}
                 onChange={(event) => setCompareAt(event.target.value)}
               />
             </label>
