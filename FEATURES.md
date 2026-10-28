@@ -730,12 +730,13 @@ scheduler-side check.
   percentage helper (floored whole percent).
 - **Every surface.** The resolver feeds the storefront read model
   (`src/lib/catalog/storefront.ts` → detail pages, accessory/cases pages, collection
-  grids, search refs and the bag), the PayU path (`src/lib/payu/db-catalog.ts` →
-  `/api/payu/initiate`, checkout display, direct-buy checkout) and POS
-  (`src/lib/store-admin/pos.ts`). Order lines, receipts, invoices and notifications store
-  and render the charged amount, so they never re-price later. Display components show
-  the sale price with the regular struck through only while a sale is live; with sale
-  mode off they render the regular price alone.
+  grids, search refs and the bag) and the PayU path (`src/lib/payu/db-catalog.ts` →
+  `/api/payu/initiate`, checkout display, direct-buy checkout). POS deliberately does
+  **not** use the resolver: the cashier types the price charged, and the catalogue price
+  is shown only as a reference (§3.2 POS). Order lines, receipts, invoices and
+  notifications store and render the charged amount, so they never re-price later.
+  Display components show the sale price with the regular struck through only while a
+  sale is live; with sale mode off they render the regular price alone.
 - **The clock.** `src/lib/storefront/sale.ts` → `saleStatusAt(window, databaseNow)`.
   `starts_at` is inclusive, `ends_at` exclusive; the switch alone decides when there is
   no window. `src/lib/storefront/sale-state.ts` reads the one-row `sale_settings` table
@@ -936,13 +937,28 @@ token, use HTTP, or embed credentials are rejected at save time and again at app
 #### POS — 🟢 Live
 - **Routes:** `/store-admin/pos`, `/store-admin/pos/end-of-day`,
   `/store-admin/pos/receipt/[txnid]`.
-- **What it does:** in-store selling. Search the catalogue, build a basket, take a payment
-  (cash/UPI/card recorded manually), print a receipt, close the shift.
+- **What it does:** in-store selling. Search the catalogue, build a basket, type the
+  selling price on every line, take a payment (cash/UPI/card recorded manually), print a
+  receipt, close the shift.
 - **How it works:** `POST /api/store-admin/pos/sales` creates an order with
   `channel = 'pos'`, decrements stock and writes payment rows. `pos_shifts` records the
   opening/closing float and totals. The catalogue comes from the database through
-  `/api/store-admin/pos/catalog`.
+  `/api/store-admin/pos/catalog`, and its price is a **reference only**: a new line's
+  Price box starts empty and focused and is never pre-filled. `order_items.unit_price_paise`
+  stores the integer paise the cashier typed; `reference_price_paise` keeps the regular
+  catalogue price at that moment for comparison. The sale resolver, storefront prices and
+  online checkout are never read or written by this path, so sale mode starting or ending
+  mid-bill does not change a typed price.
+- **Confirmations:** a blank price blocks the sale with “Enter the selling price”. A zero
+  price needs an explicit free-item confirmation. A price above 10× list or below cost
+  asks “Confirm this price?”; the answer can only confirm or edit the price, never block a
+  confirmed one. The prompt is controlled by Settings → Orders → **Confirm unusual POS
+  prices** (`pos_confirm_unusual_price`, on by default).
+- **Audit:** each sale writes `pos.price_entered` with the product, reference price and
+  charged price; customer contact values are not copied into the audit row.
 - **Caveat:** POS orders never touch PayU and are not visible to the customer account.
+  A zero-total free sale has no `order_payments` row (that table requires a positive
+  amount); the order is still PAID with its receipt number.
 
 #### Returns and requests — 🟢 Live
 - `/store-admin/returns` and `/store-admin/returns/[id]` — approve, receive, refund,
@@ -1084,7 +1100,7 @@ the server would reject. Every write is audited.
 | Page | Route | What it edits | Downstream status |
 |---|---|---|---|
 | Business | `/settings` | Trade/legal name, support email/phone, address, country, timezone, time format, footer text, receipt footer, cookie notice, logo/favicon media ids | 🟡 Only `trade_name`, `address`, `phone`, `email`, `receipt_footer` are consumed (by `DocumentHeader`, the invoice/packing-slip footer and the POS receipt). The rest are stored only. |
-| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, reservation/failure-grace/unresolved windows, waiting-list toggle + claim window + re-invite cooldown, default fulfilment status, return window, processing/cut-off text | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote; the six reservation/waiting-list keys drive §2.15. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
+| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, reservation/failure-grace/unresolved windows, waiting-list toggle + claim window + re-invite cooldown, default fulfilment status, return window, processing/cut-off text, confirm unusual POS prices | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote; the six reservation/waiting-list keys drive §2.15. `pos_confirm_unusual_price` gates the POS typo confirmation. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
 | Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🟡 `payu_enabled` gates initiate and `payment_note` renders under the checkout PayU helper. `cod_enabled` (default off), `manual_payments_enabled`, `payu_mode` and `payment_methods` are stored only — checkout has no method selector. |
 | Storefront | `/settings/storefront` | Login heading/subheading, login background media, support link, reCAPTCHA site key + status | 🔵 None consumed by the storefront. The store-admin login page renders its own copy. |
 | Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id | 🟢 These settings decide whether the outbox can deliver email or SMS. Secrets stay in environment variables; the page still shows only configured/missing badges. |
@@ -1410,6 +1426,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
 | Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin}.test.mjs` |
+| POS entered prices | `src/lib/store-admin/{pos,pos-rules}.ts`, `src/components/store-admin/PosTill.tsx`, `src/app/api/store-admin/pos/sales/route.ts`, `migrations/0040_pos_entered_prices.sql`, `tests/pos-entered-prices.test.mjs` |
 | Availability at checkout | `src/lib/storefront/{availability-rules,availability-server,use-availability}.ts`, `src/app/api/catalog/availability/route.ts`, `src/components/{shop/ProductDetailPage,sites/accessories/AccessoryDetailPage,cart/CartPageView,checkout/CheckoutForm}.tsx`, `src/lib/payu/db-pricing.ts`, `tests/stock-behaviour.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |

@@ -1,4 +1,7 @@
-/** Pure POS rules: totals, receipt numbers, shift maths and void rules. */
+/** Pure POS rules: prices, totals, receipt numbers, shift maths and void rules. */
+
+import { MAX_PRICE_PAISE, formatRupees } from './money';
+import { formatPaise } from './amount';
 
 export type PosPaymentMethod = 'cash' | 'upi' | 'card_machine';
 
@@ -82,6 +85,112 @@ export function validatePosCart(lines: unknown): { ok: true; lines: PosCartLine[
     clean.push({ id, quantity: Math.floor(Number(record.quantity)) });
   }
   return { ok: true, lines: clean };
+}
+
+/* ------------------------------------------------------- entered price */
+
+/** Only these roles may type the price charged at the till. */
+export function canEnterPosPrice(role: unknown): boolean {
+  return role === 'store_admin' || role === 'store_owner';
+}
+
+export type PosPriceParse =
+  | { ok: true; paise: number | null }
+  | { ok: false; error: string };
+
+/**
+ * Read a line price sent by the till. The browser sends integer paise; an
+ * absent value means "not entered yet" and blocks the sale, while zero is a
+ * valid price that the caller must confirm as a free item.
+ */
+export function parsePosUnitPrice(value: unknown): PosPriceParse {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, paise: null };
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return {
+      ok: false,
+      error: 'Enter the selling price as a whole number of paise (for example 49950).',
+    };
+  }
+  if (value < 0) {
+    return { ok: false, error: 'The selling price cannot be negative.' };
+  }
+  if (value > MAX_PRICE_PAISE) {
+    return { ok: false, error: `Enter a price of ${formatRupees(MAX_PRICE_PAISE)} or less.` };
+  }
+  return { ok: true, paise: value };
+}
+
+export interface PosPricedCartLine extends PosCartLine {
+  unitPricePaise: number;
+}
+
+export interface PosPriceWarning {
+  productId: string;
+  productName: string;
+  message: string;
+}
+
+export type PosPricedCart =
+  | { ok: true; lines: PosPricedCartLine[] }
+  | { ok: false; error: string };
+
+/**
+ * Pair the clean cart with the prices the till sent. Every line must carry a
+ * price; zero is allowed here and checked against the free-item confirmation
+ * separately.
+ */
+export function validatePosPrices(rawLines: unknown, cartLines: readonly PosCartLine[]): PosPricedCart {
+  if (!Array.isArray(rawLines) || rawLines.length !== cartLines.length) {
+    return { ok: false, error: 'Every line must carry the price entered at the till.' };
+  }
+  const priced: PosPricedCartLine[] = [];
+  for (let index = 0; index < cartLines.length; index += 1) {
+    const line = cartLines[index];
+    const record = (rawLines[index] ?? {}) as Record<string, unknown>;
+    const parsed = parsePosUnitPrice(record.unitPricePaise);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    if (parsed.paise === null) {
+      return { ok: false, error: `Enter the selling price for ${line.id}.` };
+    }
+    priced.push({ ...line, unitPricePaise: parsed.paise });
+  }
+  return { ok: true, lines: priced };
+}
+
+/** Zero-priced lines that have not been explicitly confirmed as free items. */
+export function unconfirmedFreeLines(
+  lines: readonly PosPricedCartLine[],
+  confirmedIds: unknown,
+): PosPricedCartLine[] {
+  const confirmed = new Set(
+    Array.isArray(confirmedIds)
+      ? confirmedIds.filter((id): id is string => typeof id === 'string')
+      : [],
+  );
+  return lines.filter((line) => line.unitPricePaise === 0 && !confirmed.has(line.id));
+}
+
+/**
+ * A typo guard, not a rule: a price above ten times the regular price or
+ * below cost is accepted only after the till asks the cashier to confirm it.
+ * A free item (zero) is handled by its own confirmation.
+ */
+export function unusualPriceWarning(input: {
+  unitPricePaise: number;
+  regularPricePaise: number;
+  costPaise: number | null;
+}): string | null {
+  const { unitPricePaise, regularPricePaise, costPaise } = input;
+  if (unitPricePaise <= 0) return null;
+  if (regularPricePaise > 0 && unitPricePaise > regularPricePaise * 10) {
+    return `This price is more than 10 times the list price (${formatPaise(regularPricePaise)}).`;
+  }
+  if (costPaise !== null && Number.isInteger(costPaise) && costPaise > 0 && unitPricePaise < costPaise) {
+    return `This price is below cost (${formatPaise(costPaise)}).`;
+  }
+  return null;
 }
 
 /* --------------------------------------------------- receipt numbers */

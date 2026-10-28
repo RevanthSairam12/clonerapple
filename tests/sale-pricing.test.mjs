@@ -267,17 +267,21 @@ test('CSV import keeps a per-row error and does not fail the whole validation pa
 
 /* ------------------------------------------------- shared resolver guard */
 
-test('every charged price goes through the one resolver', async () => {
+test('every online charged price goes through the one resolver', async () => {
   for (const file of [
     'src/lib/catalog/storefront.ts',
     'src/lib/payu/db-catalog.ts',
-    'src/lib/store-admin/pos.ts',
   ]) {
     const source = await readFile(path.join(root, file), 'utf8');
     assert.match(source, /resolveEffectivePrice/, `${file} must use the resolver`);
   }
 
-  // Any file that reads the sale column must be on this list. The three
+  // POS is deliberately outside the resolver: the cashier types the charged
+  // price, and the server must never resolve or read a sale price for POS.
+  const pos = await readFile(path.join(root, 'src/lib/store-admin/pos.ts'), 'utf8');
+  assert.doesNotMatch(pos, /resolveEffectivePrice|readSaleState|sale_price_paise/);
+
+  // Any file that reads the sale column must be on this list. The two
   // customer-facing readers resolve it; the admin readers only display it.
   const allowed = new Set([
     'src/lib/catalog/storefront.ts',
@@ -285,7 +289,6 @@ test('every charged price goes through the one resolver', async () => {
     'src/lib/store-admin/catalog.ts',
     'src/lib/store-admin/catalog-crud.ts',
     'src/lib/store-admin/catalog-transfer.ts',
-    'src/lib/store-admin/pos.ts',
     // The sale screen lists and edits the stored column; it never charges it.
     'src/lib/store-admin/sale.ts',
   ]);

@@ -3,17 +3,23 @@ import { randomBytes } from 'node:crypto';
 import { getSql } from '@/lib/admin/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { restoreSoldStock } from '@/lib/payu/stock';
-import { resolveEffectivePrice } from '@/lib/storefront/pricing';
-import { readSaleState, readSaleStateUsing } from '@/lib/storefront/sale-state';
 import { maskCustomerPhone } from './masking';
 import {
+  canEnterPosPrice,
   canVoidPosSale,
   cashVariancePaise,
   expectedCashPaise,
   formatReceiptNo,
+  unconfirmedFreeLines,
+  unusualPriceWarning,
   validatePosCart,
+  validatePosPrices,
   type PosPaymentMethod,
+  type PosPriceWarning,
 } from './pos-rules';
+import { DEFAULT_SETTINGS, normalizeToggle } from './settings-rules';
+
+type Sql = NonNullable<ReturnType<typeof getSql>>;
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: POS repository must be server-only.');
@@ -50,7 +56,8 @@ export interface PosCatalogProduct {
   id: string;
   name: string;
   subtitle: string;
-  pricePaise: number;
+  /** The regular catalogue price, shown only as a reference at the till. */
+  listPricePaise: number;
   currency: string;
   onHand: number | null;
   trackInventory: boolean;
@@ -77,12 +84,16 @@ export interface PosSaleLine {
   productId: string;
   productName: string;
   quantity: number;
+  /** The price charged, typed by the cashier. */
   unitPricePaise: number;
+  /** The regular catalogue price at the moment of sale, for reference only. */
+  referencePricePaise: number | null;
   lineTotalPaise: number;
   currency: string;
 }
 
 export interface PosSaleResultData {
+  orderId: string;
   txnid: string;
   receiptNo: string;
   paymentId: number;
@@ -99,16 +110,24 @@ export type PosSaleResult =
   | { ok: true; data: PosSaleResultData }
   | {
       ok: false;
-      reason: 'unavailable' | 'not-found' | 'invalid-input' | 'no-open-shift' | 'out-of-stock';
+      reason:
+        | 'unavailable'
+        | 'not-found'
+        | 'invalid-input'
+        | 'no-open-shift'
+        | 'out-of-stock'
+        | 'forbidden'
+        | 'unusual-price';
       error: string;
+      warnings?: PosPriceWarning[];
     };
 
 /* -------------------------------------------------------- catalogue */
 
 /**
  * The catalogue products for the POS search, read from the database through
- * the owner connection. Prices are the same server-side source checkout
- * resolves through — the browser never supplies a price.
+ * the owner connection. The list price is a reference only: the cashier types
+ * the price charged, and the server never resolves a sale price for POS.
  */
 export type PosCatalogLoad =
   | { ok: true; products: PosCatalogProduct[] }
@@ -119,9 +138,8 @@ export async function getPosCatalog(): Promise<PosCatalogLoad> {
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable' };
   try {
-    const sale = await readSaleState();
     const rows = (await sql`
-      select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise, p.currency,
+      select p.id, p.name, p.subtitle, p.price_paise, p.currency,
              s.on_hand, s.track_inventory
       from products p
       left join stock s on s.product_id = p.id and s.variant_id is null
@@ -134,15 +152,7 @@ export async function getPosCatalog(): Promise<PosCatalogLoad> {
         id: text(row.id),
         name: text(row.name),
         subtitle: text(row.subtitle),
-        pricePaise: resolveEffectivePrice(
-          {
-            pricePaise: integer(row.price_paise),
-            salePricePaise: row.sale_price_paise === null || row.sale_price_paise === undefined
-              ? null
-              : integer(row.sale_price_paise),
-          },
-          sale.live,
-        ).unitPaise,
+        listPricePaise: integer(row.price_paise),
         currency: text(row.currency) || 'INR',
         onHand: row.on_hand === null || row.on_hand === undefined ? null : integer(row.on_hand),
         trackInventory: Boolean(row.track_inventory),
@@ -370,28 +380,58 @@ export async function getCurrentShift(staffId: string): Promise<
 /* ------------------------------------------------------------- sale */
 
 /**
- * Create one POS sale in a single locked transaction:
- * order (channel 'pos', payment PAID, fulfilment DELIVERED) + order_items +
- * order_payments + receipt number + stock decrement + stock movements.
+ * Create one POS sale in a single locked transaction: order (channel 'pos',
+ * payment PAID, fulfilment DELIVERED) + order_items + order_payments + receipt
+ * number + stock decrement + stock movements.
  *
- * Prices are read from the `products` table inside the same transaction, so
- * the price shown by the POS catalogue (`getPosCatalog`, which reads
- * `products.price_paise`) and the price charged here are one source of truth.
- * The client sends product ids and quantities only — a price never crosses
- * the wire.
+ * The price charged is the integer paise the cashier typed for each line. The
+ * product's regular price is stored beside it as a reference only. Nothing
+ * here reads the sale resolver, so starting or ending sale mode mid-bill has
+ * no effect on a price already entered. Product identity, quantity and stock
+ * still come from the database, under row locks.
  */
-export async function createPosSale(input: {
+export interface CreatePosSaleInput {
   lines: unknown;
   method: PosPaymentMethod;
   providerRef: string | null;
   customerPhone: string | null;
   staffId: string;
-}): Promise<PosSaleResult> {
-  const cart = validatePosCart(input.lines);
-  if (!cart.ok) return { ok: false, reason: 'invalid-input', error: cart.error };
+  role: 'store_owner' | 'store_admin' | 'store_viewer';
+  /** Set only after the till asked the cashier to confirm an unusual price. */
+  confirmUnusualPrices?: boolean;
+  /** Product ids the cashier explicitly confirmed as free (zero-priced) items. */
+  confirmedFreeItemIds?: unknown;
+}
+
+export async function createPosSale(input: CreatePosSaleInput): Promise<PosSaleResult> {
+  if (!canEnterPosPrice(input.role)) {
+    return {
+      ok: false,
+      reason: 'forbidden',
+      error: 'Only a store admin or store owner can enter a selling price.',
+    };
+  }
 
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  return createPosSaleUsing(sql, input);
+}
+
+/** The database-injected form, used by integration tests with a temp schema. */
+export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): Promise<PosSaleResult> {
+  if (!canEnterPosPrice(input.role)) {
+    return {
+      ok: false,
+      reason: 'forbidden',
+      error: 'Only a store admin or store owner can enter a selling price.',
+    };
+  }
+
+  const cart = validatePosCart(input.lines);
+  if (!cart.ok) return { ok: false, reason: 'invalid-input', error: cart.error };
+
+  const priced = validatePosPrices(input.lines, cart.lines);
+  if (!priced.ok) return { ok: false, reason: 'invalid-input', error: priced.error };
 
   const txnid = `POS-${randomBytes(9).toString('hex').toUpperCase()}`;
   const orderId = `ord_${randomBytes(12).toString('hex')}`;
@@ -412,29 +452,15 @@ export async function createPosSale(input: {
       }
       const shiftId = number(shift.id);
 
-      // Receipt number: allocated under the counter row lock, never reused.
-      const counterRows = (await tx`
-        update receipt_counters
-        set next_number = next_number + 1
-        where name = 'pos_receipt'
-        returning next_number
-      `) as Row[];
-      if (!counterRows[0]) {
-        return { ok: false as const, reason: 'unavailable' as const, error: 'Receipt numbering is not available.' };
-      }
-      const receiptNo = formatReceiptNo(number(counterRows[0].next_number) - 1);
-
-      // Price every line from the database catalogue inside this transaction.
-      // An inactive or missing product stops the whole sale rather than
-      // silently pricing it from a stale static catalogue. The sale switch is
-      // read inside the same transaction, on the database clock.
-      const sale = await readSaleStateUsing(tx);
+      // Read every product before writing anything. The entered price is the
+      // charged price; the regular price is captured as a reference snapshot.
       const lines: PosSaleLine[] = [];
-      for (let index = 0; index < cart.lines.length; index += 1) {
-        const cartLine = cart.lines[index];
+      const warnings: PosPriceWarning[] = [];
+      for (let index = 0; index < priced.lines.length; index += 1) {
+        const cartLine = priced.lines[index];
         const baseId = normalizeCartLineId(cartLine.id).baseId || cartLine.id;
         const productRows = (await tx`
-          select id, name, price_paise, sale_price_paise
+          select id, name, price_paise, cost_paise
           from products
           where id = ${baseId} and is_active and deleted_at is null
           limit 1
@@ -447,32 +473,105 @@ export async function createPosSale(input: {
             error: `Product '${cartLine.id}' is not in the active catalogue.`,
           };
         }
-        const unitPricePaise = resolveEffectivePrice(
-          {
-            pricePaise: integer(product.price_paise),
-            salePricePaise: product.sale_price_paise === null
-              || product.sale_price_paise === undefined
-              ? null
-              : integer(product.sale_price_paise),
-          },
-          sale.live,
-        ).unitPaise;
+        const regularPricePaise = integer(product.price_paise);
+        const costPaise = product.cost_paise === null || product.cost_paise === undefined
+          ? null
+          : integer(product.cost_paise);
+        const productId = text(product.id);
+        const productName = text(product.name);
+        const warning = unusualPriceWarning({
+          unitPricePaise: cartLine.unitPricePaise,
+          regularPricePaise,
+          costPaise,
+        });
+        if (warning) {
+          warnings.push({ productId, productName, message: warning });
+        }
         lines.push({
           lineNumber: index + 1,
-          productId: text(product.id),
-          productName: text(product.name),
+          productId,
+          productName,
           quantity: cartLine.quantity,
-          unitPricePaise,
-          lineTotalPaise: unitPricePaise * cartLine.quantity,
+          unitPricePaise: cartLine.unitPricePaise,
+          referencePricePaise: regularPricePaise,
+          lineTotalPaise: cartLine.unitPricePaise * cartLine.quantity,
           currency: 'INR',
         });
       }
+
+      // Zero is allowed only after an explicit free-item confirmation.
+      const zeroCandidates = priced.lines.map((line) => ({
+        ...line,
+        id: normalizeCartLineId(line.id).baseId || line.id,
+      }));
+      const unconfirmedZero = unconfirmedFreeLines(zeroCandidates, input.confirmedFreeItemIds);
+      if (unconfirmedZero.length > 0) {
+        const names = unconfirmedZero.map((line) =>
+          lines.find((saleLine) => saleLine.productId === line.id)?.productName ?? line.id,
+        );
+        return {
+          ok: false as const,
+          reason: 'invalid-input' as const,
+          error: `Confirm the free item (${names.join(', ')}) before completing the sale.`,
+        };
+      }
+
+      // The typo guard is a confirmation, never a block. The setting can turn
+      // the prompt off; the price is still recorded exactly as typed.
+      if (warnings.length > 0 && !input.confirmUnusualPrices) {
+        const settingRows = (await tx`
+          select value from store_settings where key = 'pos_confirm_unusual_price'
+        `) as Row[];
+        const settingValue = settingRows[0]
+          ? text(settingRows[0].value)
+          : DEFAULT_SETTINGS.pos_confirm_unusual_price;
+        if (normalizeToggle(settingValue) === 'on') {
+          return {
+            ok: false as const,
+            reason: 'unusual-price' as const,
+            error: 'Confirm this price before completing the sale.',
+            warnings,
+          };
+        }
+      }
+
+      // Lock and check stock before the order is written. Holding these row
+      // locks until commit serialises two tills racing for the last unit.
+      for (const line of lines) {
+        const stockRows = (await tx`
+          select on_hand, track_inventory from stock
+          where product_id = ${line.productId} and variant_id is null
+          for update
+        `) as Row[];
+        const stockRow = stockRows[0];
+        if (stockRow && Boolean(stockRow.track_inventory) && integer(stockRow.on_hand) < line.quantity) {
+          return {
+            ok: false as const,
+            reason: 'out-of-stock' as const,
+            error: `Not enough stock for ${line.productName}.`,
+          };
+        }
+      }
+
+      // Receipt number: allocated under the counter row lock, never reused.
+      const counterRows = (await tx`
+        update receipt_counters
+        set next_number = next_number + 1
+        where name = 'pos_receipt'
+        returning next_number
+      `) as Row[];
+      if (!counterRows[0]) {
+        return { ok: false as const, reason: 'unavailable' as const, error: 'Receipt numbering is not available.' };
+      }
+      const receiptNo = formatReceiptNo(number(counterRows[0].next_number) - 1);
+
       const subtotalPaise = lines.reduce((sum, line) => sum + line.lineTotalPaise, 0);
       const itemsSnapshot = lines.map((line) => ({
         id: line.productId,
         name: line.productName,
         quantity: line.quantity,
         unitPrice: line.unitPricePaise / 100,
+        referencePrice: line.referencePricePaise === null ? null : line.referencePricePaise / 100,
         totalPrice: line.lineTotalPaise / 100,
       }));
 
@@ -500,55 +599,61 @@ export async function createPosSale(input: {
         await tx`
           insert into order_items (
             order_id, line_number, product_id, product_name,
-            quantity, unit_price_paise, line_total_paise, currency
+            quantity, unit_price_paise, reference_price_paise,
+            line_total_paise, currency
           ) values (
             ${createdId}, ${line.lineNumber}, ${line.productId}, ${line.productName},
-            ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise}, 'INR'
+            ${line.quantity}, ${line.unitPricePaise}, ${line.referencePricePaise},
+            ${line.lineTotalPaise}, 'INR'
           )
         `;
       }
 
-      const paymentRows = (await tx`
-        insert into order_payments (
-          order_id, channel, method, amount_paise, status,
-          provider_ref, paid_at, received_by_staff_id, pos_shift_id
-        ) values (
-          ${createdId}, 'pos', ${input.method}, ${subtotalPaise}, 'PAID',
-          ${input.providerRef}, now(), ${input.staffId}, ${shiftId}
-        )
-        returning id
-      `) as Row[];
+      // A free-item sale has a zero total. `order_payments` requires a
+      // positive amount, so it carries no payment row; the order is still
+      // PAID and keeps its cashier, receipt number and payment method.
+      let paymentId = 0;
+      if (subtotalPaise > 0) {
+        const paymentRows = (await tx`
+          insert into order_payments (
+            order_id, channel, method, amount_paise, status,
+            provider_ref, paid_at, received_by_staff_id, pos_shift_id
+          ) values (
+            ${createdId}, 'pos', ${input.method}, ${subtotalPaise}, 'PAID',
+            ${input.providerRef}, now(), ${input.staffId}, ${shiftId}
+          )
+          returning id
+        `) as Row[];
+        paymentId = number(paymentRows[0]?.id);
+      }
 
       await tx`
         insert into order_status_history (order_id, domain, actor, from_status, to_status)
         values (${createdId}, 'payment', 'store_admin', null, 'PAID')
       `;
 
-      // Stock: tracked products decrement with a guard; untracked products
-      // skip the decrement but still write the movement row.
+      // Stock: tracked products decrement; untracked products skip the
+      // decrement but still write the movement row. The pre-check above holds
+      // the row lock, so this update cannot lose a race.
       for (const line of lines) {
-        const stockRows = (await tx`
-          select on_hand, track_inventory from stock
-          where product_id = ${line.productId} and variant_id is null
-          for update
+        const updated = (await tx`
+          update stock
+          set on_hand = on_hand - ${line.quantity},
+              updated_at = now(), updated_by = ${input.staffId}
+          where product_id = ${line.productId}
+            and variant_id is null
+            and track_inventory
+            and on_hand >= ${line.quantity}
+          returning on_hand
         `) as Row[];
-        const stockRow = stockRows[0];
-        if (stockRow && Boolean(stockRow.track_inventory)) {
-          const updated = (await tx`
-            update stock
-            set on_hand = on_hand - ${line.quantity},
-                updated_at = now(), updated_by = ${input.staffId}
-            where product_id = ${line.productId}
-              and variant_id is null
-              and on_hand >= ${line.quantity}
-            returning on_hand
+        if (!updated[0]) {
+          const trackedRows = (await tx`
+            select 1 from stock
+            where product_id = ${line.productId} and variant_id is null and track_inventory
+            limit 1
           `) as Row[];
-          if (!updated[0]) {
-            return {
-              ok: false as const,
-              reason: 'out-of-stock' as const,
-              error: `Not enough stock for ${line.productName}.`,
-            };
+          if (trackedRows[0]) {
+            throw new Error('POS_STOCK_CHANGED');
           }
         }
         await tx`
@@ -560,9 +665,10 @@ export async function createPosSale(input: {
       return {
         ok: true as const,
         data: {
+          orderId: createdId,
           txnid: text(orderRows[0].txnid),
           receiptNo,
-          paymentId: number(paymentRows[0]?.id),
+          paymentId,
           providerRef: input.providerRef,
           lines,
           subtotalPaise,
@@ -573,7 +679,10 @@ export async function createPosSale(input: {
         },
       };
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'POS_STOCK_CHANGED') {
+      return { ok: false, reason: 'out-of-stock', error: 'Stock changed while the sale was being recorded. Try again.' };
+    }
     console.warn('[store-admin/pos] the sale transaction failed');
     return { ok: false, reason: 'unavailable', error: 'The sale could not be recorded.' };
   }
@@ -790,7 +899,8 @@ export async function getPosReceipt(txnid: string): Promise<ReceiptLoad> {
 
     const itemRows = (await sql`
       select line_number, product_id, product_name, quantity,
-             unit_price_paise, line_total_paise, currency
+             unit_price_paise, reference_price_paise,
+             line_total_paise, currency
       from order_items
       where order_id = ${text(order.id)}
       order by line_number asc
@@ -809,6 +919,9 @@ export async function getPosReceipt(txnid: string): Promise<ReceiptLoad> {
       productName: text(row.product_name),
       quantity: integer(row.quantity) || 1,
       unitPricePaise: integer(row.unit_price_paise),
+      referencePricePaise: row.reference_price_paise === null || row.reference_price_paise === undefined
+        ? null
+        : integer(row.reference_price_paise),
       lineTotalPaise: integer(row.line_total_paise),
       currency: text(row.currency) || 'INR',
     }));

@@ -21,6 +21,8 @@ export async function POST(request: Request) {
     method?: unknown;
     providerRef?: unknown;
     customerPhone?: unknown;
+    confirmUnusualPrices?: unknown;
+    confirmedFreeItemIds?: unknown;
   };
   try {
     body = await request.json();
@@ -44,6 +46,9 @@ export async function POST(request: Request) {
     customerPhone:
       typeof body.customerPhone === 'string' ? body.customerPhone.trim() : null,
     staffId: guard.session.adminId,
+    role: guard.session.role,
+    confirmUnusualPrices: body.confirmUnusualPrices === true,
+    confirmedFreeItemIds: body.confirmedFreeItemIds,
   });
 
   if (!result.ok) {
@@ -58,8 +63,19 @@ export async function POST(request: Request) {
       after: { method: body.method },
       request,
     });
-    const status = result.reason === 'invalid-input' ? 400 : 409;
-    return NextResponse.json({ error: result.error }, { status });
+    const status =
+      result.reason === 'invalid-input'
+        ? 400
+        : result.reason === 'forbidden'
+          ? 403
+          : 409;
+    return NextResponse.json(
+      {
+        error: result.error,
+        ...(result.warnings ? { needsConfirmation: true, warnings: result.warnings } : {}),
+      },
+      { status },
+    );
   }
 
   await writeAudit({
@@ -67,7 +83,7 @@ export async function POST(request: Request) {
     actorEmail: guard.session.email,
     action: 'order.payment.pos',
     entity: 'order',
-    entityId: '',
+    entityId: result.data.orderId,
     after: {
       txnid: result.data.txnid,
       receiptNo: result.data.receiptNo,
@@ -76,6 +92,29 @@ export async function POST(request: Request) {
       lines: result.data.lines.length,
     },
     reason: 'pos_sale_recorded',
+    request,
+  });
+
+  // One row per sale: what the cashier charged and the list price it was
+  // compared against. No customer contact value is copied into the log.
+  await writeAudit({
+    actorId: guard.session.adminId,
+    actorEmail: guard.session.email,
+    action: 'pos.price_entered',
+    entity: 'order',
+    entityId: result.data.orderId,
+    after: {
+      txnid: result.data.txnid,
+      receiptNo: result.data.receiptNo,
+      lines: result.data.lines.map((line) => ({
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity,
+        referencePricePaise: line.referencePricePaise,
+        chargedPricePaise: line.unitPricePaise,
+      })),
+    },
+    reason: 'pos_price_entered',
     request,
   });
 

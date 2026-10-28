@@ -185,6 +185,16 @@ const FIELD_DEFINITIONS = [
     options: TOGGLE_OPTIONS,
   },
   {
+    key: 'pos_confirm_unusual_price',
+    label: 'Confirm unusual POS prices',
+    kind: 'toggle',
+    limit: 3,
+    default: 'on',
+    section: 'orders',
+    options: TOGGLE_OPTIONS,
+    help: 'Ask the cashier to confirm a typed price above 10× list or below cost. The sale can always proceed.',
+  },
+  {
     key: 'pickup_enabled',
     label: 'Store pickup enabled',
     kind: 'toggle',

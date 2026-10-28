@@ -145,6 +145,10 @@ function parseItems(value: unknown): OrderItem[] {
       productName: text(row.product_name ?? row.name),
       quantity,
       unitPricePaise,
+      referencePricePaise:
+        row.reference_price_paise === undefined || row.reference_price_paise === null
+          ? null
+          : integer(row.reference_price_paise),
       lineTotalPaise,
       currency: text(row.currency) || 'INR',
     };
@@ -258,7 +262,10 @@ export interface OrderItem {
   productId: string;
   productName: string;
   quantity: number;
+  /** The price actually charged. */
   unitPricePaise: number;
+  /** Regular catalogue price at the time of a POS sale; null for web lines. */
+  referencePricePaise: number | null;
   lineTotalPaise: number;
   currency: string;
 }
@@ -708,7 +715,8 @@ export async function getOrderDetail(
     const [itemRows, historyRows, addressRows, deliveryRows, eventRows] = await Promise.all([
       sql`
         select line_number, product_id, product_name, quantity,
-               unit_price_paise, line_total_paise, currency
+               unit_price_paise, reference_price_paise,
+               line_total_paise, currency
         from order_items
         where order_id = ${orderId}
         order by line_number asc
@@ -760,6 +768,9 @@ export async function getOrderDetail(
           productName: text(row.product_name),
           quantity: integer(row.quantity) || 1,
           unitPricePaise: integer(row.unit_price_paise),
+          referencePricePaise: row.reference_price_paise === null || row.reference_price_paise === undefined
+            ? null
+            : integer(row.reference_price_paise),
           lineTotalPaise: integer(row.line_total_paise),
           currency: text(row.currency) || 'INR',
         }))

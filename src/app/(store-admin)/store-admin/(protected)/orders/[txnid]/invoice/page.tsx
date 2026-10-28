@@ -173,6 +173,12 @@ export default async function OrderInvoicePage({ params }: Props) {
                 <td>
                   {item.productName}
                   {item.productId ? <span className="sa-row-sub">{item.productId}</span> : null}
+                  {item.referencePricePaise !== null &&
+                  item.referencePricePaise !== item.unitPricePaise ? (
+                    <span className="sa-row-sub">
+                      List price at sale {formatRupees(item.referencePricePaise, item.currency || currency)}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="sa-num">{item.quantity}</td>
                 <td className="sa-num">{formatRupees(item.unitPricePaise, item.currency || currency)}</td>

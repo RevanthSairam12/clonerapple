@@ -20,7 +20,10 @@ export default async function PosPage() {
       <div className="sa-detail-head">
         <div>
           <h1 className="sa-page-title">Point of sale</h1>
-          <p className="sa-page-sub">Ring up counter sales. Prices come from the catalogue, never from this screen.</p>
+          <p className="sa-page-sub">
+            Ring up counter sales. Type the selling price on every line; the catalogue price is a
+            reference only and never fills the box by itself.
+          </p>
         </div>
         <Link className="sa-back-inline" href="/store-admin/pos/end-of-day">End of day →</Link>
       </div>
