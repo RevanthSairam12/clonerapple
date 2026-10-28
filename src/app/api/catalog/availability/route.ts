@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { getSql } from '@/lib/admin/db';
+import { toPublicAvailability } from '@/lib/storefront/availability-rules';
 import { readAvailabilityUsing } from '@/lib/storefront/availability-server';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 
@@ -67,7 +68,7 @@ export async function GET(request: Request) {
 
   try {
     const availability = await readAvailabilityUsing(sql, ids);
-    return NextResponse.json(availability, {
+    return NextResponse.json(toPublicAvailability(availability), {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch {

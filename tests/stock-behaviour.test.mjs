@@ -60,7 +60,7 @@ const jiti = createJiti(import.meta.url, {
   alias: { '@': path.join(root, 'src') },
 });
 
-const { stockBlocked, STOCK_NOT_AVAILABLE } = await jiti.import(
+const { stockBlocked, STOCK_NOT_AVAILABLE, toPublicAvailability } = await jiti.import(
   path.join(root, 'src/lib/storefront/availability-rules.ts'),
 );
 const { priceCartLines } = await jiti.import(
@@ -85,6 +85,39 @@ test('normal mode blocks an unavailable product; sale mode never does', () => {
   assert.equal(stockBlocked(false, true), false, 'a live sale ignores stock in the UI');
   assert.equal(stockBlocked(true, true), false);
   assert.equal(STOCK_NOT_AVAILABLE, 'Stock not available');
+});
+
+test('the public availability payload carries no quantities — only inStock and low', () => {
+  const read = {
+    saleLive: true,
+    databaseNow: '2026-10-28T00:00:00.000Z',
+    products: [
+      { id: 'plenty', inStock: true, tracked: true, available: 9, lowStockThreshold: 2 },
+      { id: 'low', inStock: true, tracked: true, available: 2, lowStockThreshold: 2 },
+      { id: 'empty', inStock: false, tracked: true, available: 0, lowStockThreshold: 2 },
+      { id: 'gated', inStock: false, tracked: true, available: 3, lowStockThreshold: 5 },
+      { id: 'untracked', inStock: true, tracked: false, available: null, lowStockThreshold: null },
+    ],
+  };
+
+  const published = toPublicAvailability(read);
+
+  assert.equal(published.saleLive, true);
+  assert.deepEqual(published.products, [
+    { id: 'plenty', inStock: true, low: false },
+    { id: 'low', inStock: true, low: true },
+    { id: 'empty', inStock: false, low: false },
+    { id: 'gated', inStock: false, low: false },
+    { id: 'untracked', inStock: true, low: false },
+  ]);
+  for (const product of published.products) {
+    assert.deepEqual(Object.keys(product).sort(), ['id', 'inStock', 'low']);
+  }
+  const wire = JSON.stringify(published);
+  for (const secret of ['available', 'onHand', 'reserved', 'threshold', 'databaseNow']) {
+    assert.equal(wire.includes(secret), false, `${secret} must not reach the public payload`);
+  }
+  assert.equal(wire.includes('"tracked"'), false, 'tracked must not reach the public payload');
 });
 
 test('a changed unit price is reported without changing what is charged', () => {
@@ -181,6 +214,9 @@ test('the click-time endpoint is same-origin, rate-limited and never cached', as
   assert.match(route, /limit: 60/);
   assert.match(route, /'Cache-Control': 'no-store'/);
   assert.match(route, /readAvailabilityUsing\(sql, ids\)/);
+  // The raw read carries counts; the endpoint may only publish the projection.
+  assert.match(route, /toPublicAvailability\(availability\)/);
+  assert.doesNotMatch(route, /NextResponse\.json\(availability,/);
   assert.match(route, /status: 429/);
   assert.match(route, /status: 503/);
   assert.match(route, /MAX_IDS = 50/);

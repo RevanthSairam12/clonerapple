@@ -25,6 +25,49 @@ export interface AvailabilityRead {
   products: ProductAvailability[];
 }
 
+/** The only product fields the public click-time endpoint may return. */
+export interface PublicProductAvailability {
+  id: string;
+  inStock: boolean;
+  /** True only for a tracked product above zero but at/below its threshold. */
+  low: boolean;
+}
+
+export interface PublicAvailabilityRead {
+  saleLive: boolean;
+  products: PublicProductAvailability[];
+}
+
+/** Low stock is a shelf state, never a count: out of stock is not low. */
+export function isLowStock(product: ProductAvailability): boolean {
+  return (
+    product.inStock
+    && product.tracked
+    && product.available !== null
+    && product.available > 0
+    && product.lowStockThreshold !== null
+    && product.available <= product.lowStockThreshold
+  );
+}
+
+/**
+ * Strip exact quantities before the click-time read leaves the server.
+ *
+ * The endpoint only needs to answer "can this be bought?" and "is it low?".
+ * `on_hand - reserved`, the threshold and the tracking flag stay internal so a
+ * public caller cannot use the endpoint to count the store's stock.
+ */
+export function toPublicAvailability(read: AvailabilityRead): PublicAvailabilityRead {
+  return {
+    saleLive: read.saleLive,
+    products: read.products.map((product) => ({
+      id: product.id,
+      inStock: product.inStock,
+      low: isLowStock(product),
+    })),
+  };
+}
+
 /**
  * The one rule for "does stock block this purchase right now?".
  * Sale mode ignores stock; normal mode respects the storefront state.

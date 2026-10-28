@@ -801,8 +801,10 @@ collection/search cards and the click-time endpoint all import this function.
   someone else restores it. `GET /api/catalog/availability?ids=…`
   (`src/app/api/catalog/availability/route.ts`) is the read: same-origin
   (`assertSameOrigin`), rate-limited per IP (60/minute, `Retry-After` on 429), at most 50
-  ids, `Cache-Control: no-store`, and 503 when the database cannot answer. A failed check
-  is *not* treated as “in stock”: the hook keeps the last known state.
+  ids, `Cache-Control: no-store`, and 503 when the database cannot answer. The payload is
+  only `{ saleLive, products: [{ id, inStock, low }] }`: exact counts, `reserved`, the
+  threshold and the tracking flag never leave the server. A failed check is *not* treated
+  as “in stock”: the hook keeps the last known state.
 - **Bag (`/cart`, `/bag`).** A line is payable when its catalogue row exists *and*
   `stockBlocked` is false — so sale mode keeps an out-of-stock line payable, while a line
   whose product is gone from the catalogue stays unavailable in both modes and still
