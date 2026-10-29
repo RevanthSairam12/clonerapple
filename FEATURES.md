@@ -1,20 +1,22 @@
 # Gadzio — Feature Reference
 
-**Verified:** 26 October 2026, against the code in this repository and the database
+**Verified:** 29 October 2026, against the code in this repository and the database
 reached through `.env.local`.
 
 **Evidence collected at that moment**
 
 | Check | Result |
 |---|---|
-| `npm test` | **385 tests, 385 pass, 0 fail** |
-| `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported |
-| `node scripts/check-store-admin-routes.mjs` | **All 86 store-admin routes are guarded** |
-| `node scripts/check-setting-lists.mjs` | all 12 settings tables readable, 72 notification cells |
+| `npm test` | **581 tests, 581 pass, 0 fail** (≈213 s with the database suites) |
+| `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported (last run 26 October 2026) |
+| `node scripts/check-store-admin-routes.mjs` | **All 94 store-admin routes are guarded** |
+| `node scripts/check-setting-lists.mjs` | all 14 settings tables readable, 114 notification cells |
 | `node scripts/check-admin-boundary.mjs` | legacy CMS holds no commerce field; 11 Education collections exempt |
+| `node scripts/check-account-routes.mjs` | **All 8 account API routes check the customer session and ownership boundary** |
 | `npm run typecheck` / `npm run build` | both succeed |
-| Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render |
-| Migrations applied | `schema_migrations` holds every migration file through `0036_order_payment_review.sql`; Phase 1 added no migration |
+| `npm audit` | 0 vulnerabilities |
+| Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render (last run 26 October 2026) |
+| Migrations applied | `schema_migrations` holds every migration file through `0041_coupons.sql` |
 | Database contents | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
 ---
@@ -230,6 +232,9 @@ separate validation code.
   a method rate, a method's own free-over threshold, the store-wide free-shipping
   threshold, or `FREE` when shipping is disabled or no method is configured. It is a
   display value — initiate recomputes it server-side.
+- **Coupon.** A collapsed **Have a coupon code?** box sits in the summary. The discount
+  row and the Total come from `POST /api/coupons/validate` (§2.18); only the code is kept
+  in the browser, and the bag never applies a discount of its own.
 - **Caveat:** stock is not held while an item sits in a bag. It is claimed when checkout
   creates the order (§2.7). A line keeps the name and image it had when added; only price
   and availability are refreshed.
@@ -271,6 +276,12 @@ separate validation code.
   7. If the customer ticked the offer box **and** `checkout_marketing_optin` is on, the
      email is also inserted into `newsletter_subscribers`. Failure to record it never
      blocks the payment.
+  7a. **Coupon.** The form re-checks the code and sends `couponCode` plus
+     `expectedTotalPaise` (a comparison value). The route locks the coupon row inside the
+     order transaction, re-validates under the same stock locks, allocates the discount to
+     the lines and charges the server total; the client-sent total is only compared. A
+     refusal returns 409 `coupon_invalid` (drop the code and show the message) or
+     `coupon_unavailable` (no order created, pay without the code). See §2.18.
   8. PayU calls back to `/api/payu/success`, `/api/payu/failure`, `/api/payu/cancel`.
      `src/lib/payu/process-response.ts` verifies the reverse hash, calls PayU’s
      verification API for the transaction, then performs an **atomic, idempotent** status
@@ -865,6 +876,94 @@ collection/search cards and the click-time endpoint all import this function.
   `tests/order-stock-integration.test.mjs` and
   `tests/flash-sale-reservation-integration.test.mjs`.
 
+### 2.18 Coupons, limits and the redemption ledger — 🟢 Live
+
+**One decision, made on the server.** `src/lib/coupons/rules.ts` is pure: it receives the
+coupon definition, the resolved cart lines and a context whose clock (`now()`), paid-order
+history and redemption counts come from PostgreSQL. `evaluateCoupon` returns either the
+money to charge or a safe refusal. Both the preview endpoint and the order transaction
+call it, so the discount the customer sees is the discount that is charged.
+
+- **Types.** `PERCENT` (whole 1–100, floored to paise, optional maximum discount),
+  `FIXED` (paise, capped at the eligible value) and `FREE_SHIPPING` (cuts shipping only,
+  never line value). One code per order — there is no stacking path in the schema, the
+  request or the rules.
+- **Scopes.** `ORDER`, `PRODUCTS`, `CATEGORIES`, `BRANDS`; targets live in
+  `coupon_targets` (exactly one of product/category/brand per row). A line outside the
+  scope pays full price, and its allocated discount is zero.
+- **Sale prices.** By default a coupon skips lines charged at a live sale price. When the
+  whole eligible scope is on sale the code is refused with *“This code is not valid on
+  sale items.”* `allow_with_sale_price` lifts the restriction.
+- **Minimum order** is compared with the pre-discount subtotal on the database clock.
+  `starts_at` is inclusive and `ends_at` exclusive: at the end instant the code is
+  already expired.
+- **The ₹1 floor.** `MIN_PAYABLE_PAISE = 100`. The discount is reduced — never the order
+  rejected — to keep the payable at or above it, and the customer is told *“The discount
+  was adjusted to keep the order payable.”* A cart whose own subtotal is below ₹1 is
+  refused instead of being sent to PayU.
+- **Allocation.** The order discount is spread across the eligible lines with the
+  largest-remainder method; `order_items.discount_paise` is that share, the shares sum
+  exactly to `orders.discount_paise`, and returns/refunds compare against
+  `line_total_paise − discount_paise`.
+- **Customer eligibility.** `only_new_customers` reads PAID order history by user id or
+  normalized email; `allowed_customer_groups` reads `users.customer_group` (a guest fails
+  closed); `restricted_to_emails` matches case-insensitively.
+- **Preview endpoint.** `POST /api/coupons/validate` is same-origin, rate-limited to 10 per
+  minute per IP **and** per signed-in user, `Cache-Control: no-store`, and writes nothing.
+  It returns only `{ valid, code, subtotalPaise, discountPaise, shippingPaise, totalPaise,
+  currency, message }` — no coupon id, limits, targets, group/email rules or other
+  customers' use. Unknown, malformed, paused, not-started and out-of-scope codes all answer
+  *“This code is not valid for your cart.”* Only expired, minimum-order and already-used
+  reasons are specific, because those help the customer without revealing anything.
+- **Checkout is the authority.** `CheckoutForm` re-checks the code immediately before Pay,
+  then posts `couponCode` (the only coupon input accepted) and `expectedTotalPaise` (a
+  comparison value, never a charge). `/api/payu/initiate` locks the coupon row
+  `for update` inside the same transaction and under the same stock locks, counts uses,
+  evaluates again, allocates the discount to the lines, writes `coupon_id`,
+  `coupon_code`, `coupon_snapshot`, `discount_paise` and the per-line shares, and charges
+  the server total. A client-sent discount, total or coupon id is ignored.
+- **Limits under a row lock.** `total_redemption_limit` and `per_customer_limit` are
+  checked after the coupon row is locked and count `RESERVED` + `CONSUMED` rows. Two
+  buyers competing for the last use serialise on that lock: the second reads the first
+  redemption and is refused. `tests/coupon-db-integration.test.mjs` proves it with two
+  connections.
+- **Lifecycle.** Creating the order inserts a `RESERVED` row (unique per coupon + order,
+  so a retry cannot double-count). A verified PAID payment moves it to `CONSUMED`; a
+  duplicate callback finds nothing and is a no-op. Failure, cancellation, expiry or a
+  superseding checkout moves `RESERVED → RELEASED` with a reason, and a released row is
+  never consumed later. A verified late payment tries `RELEASED → CONSUMED` when both
+  limits still allow it; when they do not, the order stays paid and is flagged
+  `payment_review_required` with a `coupon.late_restore_review` audit row — a human
+  reviews the discount. Refunds do **not** give a use back unless the store setting
+  `refunds_restore_coupon` is on and the refund covers the whole order.
+- **Storefront.** The bag and checkout show a collapsed **Have a coupon code?** box. The
+  applied code is a chip with Remove; the summary shows Subtotal, Shipping, Discount (with
+  the code) and Total, all from the server's answer. Only the code is kept in
+  `localStorage`; the discount never is. The code is re-validated on load, after a
+  debounced cart change and again at Pay. If the server refuses, the discount disappears,
+  the box shows the server's message and Pay is blocked until the customer sees the new
+  total. The order success page, account order detail and receipt show the same
+  breakdown.
+- **Failure mode.** If the coupon tables or settings cannot be read, the preview answers
+  “temporarily unavailable” and never invents a discount; `/api/payu/initiate` creates no
+  order and answers `coupon_unavailable` when a code was sent, so checkout proceeds
+  normally once the code is removed. An unverified discount is never applied.
+- **POS never uses coupons.** No POS route or rule file mentions a coupon; a source guard
+  in the tests enforces it.
+- **Settings.** Payments → **Coupons** holds `coupons_enabled` (on by default; off hides
+  the box and refuses codes at Pay without touching existing orders) and
+  `refunds_restore_coupon` (off by default).
+- **Evidence.** `tests/coupon-rules.test.mjs` (percent floor and cap, fixed, free shipping,
+  scopes, sale exclusion, minimum order, ₹1 floor, never-negative, allocation, messages,
+  admin parsing/audit masking, code generation), `tests/coupon-db-integration.test.mjs`
+  (limits, customer history, the row-lock race, the full lifecycle, late-payment restore
+  and review flag, refund restore) and `tests/coupon-guards.test.mjs` (migration RLS,
+  route guards/audit, preview leaks, storefront wiring, POS isolation, notifications).
+- **Migration.** `0041_coupons.sql` creates `coupons`, `coupon_targets` and
+  `coupon_redemptions`, all with RLS enabled and no policies; adds `orders.coupon_id`,
+  `orders.coupon_snapshot`, `order_items.discount_paise` and its bounds check. Additive
+  only.
+
 ---
 
 ## 3. Store admin (`/store-admin`)
@@ -1001,6 +1100,7 @@ amount (Returns → record refund, which stays a manual money movement).
 |---|---|---|---|
 | Products list | `/products` | 🟢 Live | Filter, search, CSV export, status badges, **Sale price** column |
 | Sale | `/sale` | 🟢 Live | Switch + store-local window, SALE LIVE/SCHEDULED/OFF badge, inline and bulk sale prices, pre-flight stock/cost warnings |
+| Coupons | `/coupons`, `/coupons/new`, `/coupons/[id]` | 🟢 Live | List/filter/CSV, create/edit, pause/resume/duplicate/archive, bulk generate, usage log and totals |
 | New product | `/products/new` | 🟢 Live | Full create form |
 | Edit product | `/products/[id]` | 🟢 Live | Details, price + sale price, cost, images, variants, attributes, specs, **Inventory** card |
 | Price history | same page, `price` API | 🟢 Live | Every price write appends to `price_history`, tagged `regular` / `sale` / `sale_cleared` |
@@ -1030,6 +1130,19 @@ inline per-product sale price uses the existing price route, so it has the same
 validation, audit and `price_history` behaviour as the product page. Pre-flight warnings
 list products on sale whose tracking is off, whose available count is zero, or whose
 sale price is below cost; none of them blocks the write.
+
+**Coupons screen:** `/store-admin/coupons` is a Catalog sidebar entry after Sale. The
+list shows a derived badge computed in SQL on `now()` (Active, Scheduled, Expired, Used
+up, Paused, Archived), uses/limit, minimum order, window, search and status filter, CSV
+export and a **New coupon** button. The detail page shows the four numbers that matter —
+used, remaining, discount given and order revenue — the target list and the complete
+redemption log (including released rows and their reason). Create, edit, pause, resume,
+duplicate (fresh generated code, paused) and archive go through
+`/api/store-admin/coupons/**`; bulk generate creates 1–500 unique codes with a shared
+definition, copies them or downloads a CSV. Reads need `store_viewer`, writes
+`store_admin`; every route calls `assertSameOrigin` and `writeAudit`, and the audit
+records counts of restricted emails/groups, never the addresses. An archived coupon is
+read-only.
 
 **Inventory controls:** the product page's **Inventory** card shows on hand, reserved
 and available (= on hand − reserved), a Track inventory toggle and the low-stock
@@ -1088,15 +1201,24 @@ things deliberately left unwired because they have no existing UI.
 
 ### 3.5 Reports and Expenses
 
-- **Reports:** `/reports` hub and `/reports/[report]`. Ten reports exist:
+- **Reports:** `/reports` hub and `/reports/[report]`. Eleven reports exist:
   Order, Item-wise, Day-wise, Transaction statement, Payment reconciliation, Expense,
-  Stock, Low-stock, Customer, Category & brand. Each supports date range, channel,
-  status, category and brand filters where relevant, plus CSV export.
+  Stock, Low-stock, Customer, Category & brand, and **Coupon usage**. Each supports date
+  range, channel, status, category and brand filters where relevant, plus CSV export.
 - **Revenue definition:** order-level revenue — Overview, Sales list Amount, and the
   Order, Day-wise and Customer reports — is the order total as charged
   (items − discount + shipping), with the rupee `amount` fallback for orders created
   before migration `0014`. The Item-wise and Category & brand reports sum line totals,
   which are product revenue and exclude shipping by construction; their notes say so.
+- **Coupon usage** (`/reports/coupon-usage`, CSV at
+  `/api/store-admin/reports/coupon-usage/export`): one row per redemption in the date
+  range, optionally filtered to one code. `Redemptions` counts every ledger row
+  (`RESERVED` and `CONSUMED`) because both hold a use; `Discount` and `Order revenue`
+  count **`CONSUMED` only** — revenue is the order total, which is already net of the
+  discount, and the discount column is the coupon's own share of that order. `RELEASED`
+  rows stay visible with their state so a cancelled checkout is never read as money.
+  Customer emails are masked in the page and the CSV. The list is capped at 2,000 rows and
+  says when it is truncated.
 - **Expenses:** `/expenses`, `/expenses/new`, `/expenses/[id]`, with
   `/api/store-admin/expenses/categories`. Expenses feed the expense report and the
   profit view. Currently 0 rows.
@@ -1323,6 +1445,7 @@ A single view of every Phase 9 setting.
 | `shipping_methods` (rates, free-over, ETA) | Settings → Shipping | Checkout shipping quote, cart Shipping row | 🟢 |
 | `payu_enabled`, `payment_note` | Settings → Payments | PayU initiate gate, checkout helper text | 🟢 |
 | `payment_methods`, `cod_enabled`, `manual_payments_enabled`, `payu_mode` | Settings → Payments | — (no payment-method selector; COD ships off) | 🔵 |
+| `coupons_enabled`, `refunds_restore_coupon` | Settings → Payments → Coupons | Validate endpoint, PayU initiate, bag/checkout coupon box; refund release of a consumed use | 🟢 |
 | `refund_reasons`, `return_reasons` | Settings → Reasons | — | 🔵 |
 | `login_heading`, `login_subheading`, `login_background_media_id`, `login_support_link`, `recaptcha_site_key`, `recaptcha_status` | Settings → Storefront | — | 🔵 |
 | `maintenance_enabled`, `maintenance_message`, `maintenance_starts_at`, `maintenance_ends_at` | Settings → Storefront (owner only) | — | 🔵 |
@@ -1338,14 +1461,15 @@ A single view of every Phase 9 setting.
 | Integrations (storage/mail/webhooks) | Settings → Analytics | — | 🔵 |
 | SMTP password, MSG91/Twilio token, reCAPTCHA secret, PayU key/salt | Environment only | Secret-presence badges | ⚪ |
 
-Summary: of the **57 keys** in `store_settings`, **33 are consumed** — `trade_name`,
+Summary: of the **59 keys** in `store_settings`, **35 are consumed** — `trade_name`,
 `address`, `phone`, `email`, `receipt_footer`, `order_prefix`, `order_start_number`,
 `invoice_prefix`, `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`,
 `return_window_days`, `shipping_enabled`, `free_shipping_over`, `payu_enabled`,
-`payment_note`, the six reservation/waiting-list keys, the eight mail keys and the three
-SMS keys — plus the `shipping_methods` table, the three `customer_settings` keys, the
-114-cell notification matrix and both message tables. The remaining 24 are persisted and
-audited but read by nothing.
+`payment_note`, `coupons_enabled`, `refunds_restore_coupon`, the six
+reservation/waiting-list keys, the eight mail keys and the three SMS keys — plus the
+`shipping_methods` table, the three `customer_settings` keys, the 114-cell notification
+matrix and both message tables. The remaining 24 are persisted and audited but read by
+nothing.
 
 `store_settings` currently holds **1 row** — the smoke run from Phase 9 set `trade_name` to
 “Gadzio”. Every other key still shows its coded default.
@@ -1358,7 +1482,7 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migrations after `0036` | `0037` is flash-sale reservations, the waiting list, refund obligations and the new notification topics; `0038` indexes failed/cancelled rows still inside their grace window (§2.15); `0039` adds sale pricing and the `sale_settings` switch (§2.16). The next free number is `0040`. |
+| Migrations after `0036` | `0037` is flash-sale reservations, the waiting list, refund obligations and the new notification topics; `0038` indexes failed/cancelled rows still inside their grace window (§2.15); `0039` adds sale pricing and the `sale_settings` switch (§2.16); `0040` lets POS charge the till price; `0041` adds coupons and their redemption ledger (§2.18). The next free number is `0042`. |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
 | SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |
@@ -1379,7 +1503,7 @@ These are deliberate gaps, not bugs.
 | Area | Implementation |
 |---|---|
 | Database access | Server-side only, `DATABASE_URL`, `postgres` tagged templates. The Supabase publishable key is used **only** for read-only `content_blocks`. |
-| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`), `order_number_counters` (`0034`), `notification_outbox` (`0035`), and `waiting_list_entries`, `stock_reservations`, `refund_obligations` (`0037`). Every table created since ships with RLS enabled in its own migration file. |
+| RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`), `order_number_counters` (`0034`), `notification_outbox` (`0035`), `waiting_list_entries`, `stock_reservations`, `refund_obligations` (`0037`), `sale_settings` (`0039`) and `coupons`, `coupon_targets`, `coupon_redemptions` (`0041`). Every table created since ships with RLS enabled in its own migration file, with no policies. |
 | Admin identities | Three completely separate stores: customer (`users`), store staff (`store_admins`), legacy CMS (`admin_users`). No cookie or session table is shared. |
 | Role checks | Every store-admin API route calls `requireStoreRole(...)`; verified by `scripts/check-store-admin-routes.mjs`. |
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
@@ -1387,9 +1511,11 @@ These are deliberate gaps, not bugs.
 | Secrets | Never stored in the database and never rendered. Settings pages show only “configured / missing” badges via `secret-status.ts`. The notification worker reads `MAIL_PASSWORD`, `MSG91_AUTH_KEY`, `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` from the environment; a missing credential is reported by name only, and provider errors are reduced to a code. |
 | Notification PII | The outbox stores the recipient because it must send; the admin log shows `recipient_masked` and never the subject or body. Audit rows for retries carry the message id only. No log line contains a full email or phone. Retention can clear `body` and `recipient` on finished rows after N days (off by default). |
 | Notification credentials | No template variable can read a password, temporary password, token or reset link; `staff_invite` carries a notice and a sign-in link only. A test renders every channel/audience/topic combination with secret markers. |
-| Rate limiting | In-memory sliding window on PayU initiate, PayU webhook (100/min/IP) and customer order requests (10/15 min/user). |
+| Rate limiting | In-memory sliding window on PayU initiate, PayU webhook (100/min/IP), customer order requests (10/15 min/user) and coupon validation (10/min/IP **and** per signed-in user). |
 | Payment integrity | Reverse-hash verification plus a server-side PayU verification call before an order becomes paid; atomic idempotent transition prevents double capture. |
+| Coupon integrity | The discount and total are computed server-side under the coupon row lock and the same stock locks; the browser sends only a code and a comparison total. Limits cannot be probed — the preview returns only totals and a safe message, and every refusal except expired/minimum/already-used is the same generic sentence. |
 | Order documents | Invoice/packing slip pages are behind the store-admin session and role check. |
+| Coupon store-admin surface | Every `/api/store-admin/coupons/**` and coupon-report route calls `requireStoreRole(...)` (reads `store_viewer`, writes `store_admin`); mutations also call `assertSameOrigin(request)`. Every action writes a `store_admin_audit` row; restricted email lists are recorded as a count, never as addresses. |
 
 **Reconciliation must be scheduled.** `CRON_SECRET` is now required in production: with
 it unset, `/api/payu/reconcile` returns 503 instead of running unauthenticated, because a
@@ -1405,11 +1531,15 @@ secret still allows a manual run.
 npm install
 npm run db:migrate          # applies migrations/*.sql in order
 npm run dev                 # http://localhost:3000
-npm test                    # 427 tests
+npm test                    # 581 tests
+npm run typecheck
+npm run build
 node scripts/catalog-parity.mjs                 # read-only static ↔ database parity report
 node scripts/check-store-admin-routes.mjs
 node scripts/check-setting-lists.mjs
 node scripts/check-admin-boundary.mjs
+node scripts/check-account-routes.mjs
+npm audit
 node scripts/migrate-cms-products.mjs           # dry run; add --commit to write
 ```
 
@@ -1437,6 +1567,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | DB pricing | `src/lib/payu/db-catalog.ts` |
 | Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/catalog/storefront.ts` (`applySaleDisplay`), `src/lib/storefront/catalog.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin,sale-boundary-display}.test.mjs` |
 | POS entered prices | `src/lib/store-admin/{pos,pos-rules}.ts`, `src/components/store-admin/PosTill.tsx`, `src/app/api/store-admin/pos/sales/route.ts`, `migrations/0040_pos_entered_prices.sql`, `tests/pos-entered-prices.test.mjs` |
+| Coupons | `src/lib/coupons/{rules,codes,store,errors}.ts`, `src/lib/store-admin/{coupons,coupon-rules}.ts`, `src/components/cart/{CouponBox.tsx}`, `src/lib/cart/useCoupon.ts`, `src/app/api/coupons/validate/route.ts`, `src/app/api/store-admin/coupons/**`, `src/app/api/store-admin/reports/coupon-usage/export/route.ts`, `src/app/(store-admin)/store-admin/(protected)/coupons/**`, `src/app/(store-admin)/store-admin/(protected)/reports/coupon-usage/page.tsx`, `src/components/store-admin/{CouponForm,CouponActions}.tsx`, `migrations/0041_coupons.sql`, `tests/{coupon-rules,coupon-db-integration,coupon-guards}.test.mjs` |
 | Availability at checkout | `src/lib/storefront/{availability-rules,availability-server,use-availability}.ts`, `src/app/api/catalog/availability/route.ts`, `src/components/{shop/ProductDetailPage,sites/accessories/AccessoryDetailPage,cart/CartPageView,checkout/CheckoutForm}.tsx`, `src/lib/payu/db-pricing.ts`, `tests/stock-behaviour.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |
