@@ -2,6 +2,10 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { getSql } from '@/lib/admin/db';
+import {
+  releaseConsumedCouponOnRefund,
+  releaseCouponInTx,
+} from '@/lib/coupons/store';
 import { closeRefundObligationsInTx } from '@/lib/payu/refund-obligations';
 import { releaseClaimedStock, restoreSoldStock } from '@/lib/payu/stock';
 
@@ -166,7 +170,12 @@ function returnListSelect(extraColumns = ''): string {
            (select count(*)::int from return_items ri where ri.return_id = r.id) as item_count,
            coalesce((select sum(ri.quantity)::int from return_items ri where ri.return_id = r.id), 0) as quantity,
            coalesce((
-             select sum(ri.quantity * oi.unit_price_paise)::bigint
+             select sum(
+               round(
+                 greatest(0, oi.line_total_paise - oi.discount_paise)::numeric
+                 * ri.quantity / nullif(oi.quantity, 0)
+               )
+             )::bigint
              from return_items ri join order_items oi on oi.id = ri.order_item_id
              where ri.return_id = r.id
            ), 0) as expected_paise,
@@ -703,8 +712,15 @@ export async function recordRefund(input: {
         }
         returnId = text(returnRow.id);
 
+        // A coupon discount is allocated to the line. The return compares
+        // against the net line value, not the pre-discount unit price.
         const expectedRows = (await tx`
-          select coalesce(sum(ri.quantity * oi.unit_price_paise)::bigint, 0) as expected
+          select coalesce(sum(
+            round(
+              greatest(0, oi.line_total_paise - oi.discount_paise)::numeric
+              * ri.quantity / nullif(oi.quantity, 0)
+            )
+          )::bigint, 0) as expected
           from return_items ri
           join order_items oi on oi.id = ri.order_item_id
           where ri.return_id = ${returnId}
@@ -746,6 +762,17 @@ export async function recordRefund(input: {
           ${method}, ${providerRef}, ${reason}, ${note}, ${input.actorId}
         )
       `;
+
+      // A refund gives the coupon use back only when the store explicitly
+      // asks for that, and only once the refunds cover the captured total.
+      if (check.remainingPaise === 0) {
+        const settingRows = (await tx`
+          select value from store_settings where key = 'refunds_restore_coupon'
+        `) as Row[];
+        if (text(settingRows[0]?.value) === 'on') {
+          await releaseConsumedCouponOnRefund(tx, orderId, 'refund covers the order');
+        }
+      }
 
       // A late captured payment that could not be fulfilled leaves one pending
       // obligation. This refund may settle it; closing is amount-based and
@@ -948,6 +975,13 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
         updated_at = now()
     where id = ${orderId}
   `;
+
+  // An unpaid cancellation also gives the coupon use back, at the same point
+  // the stock hold is released. A paid order keeps its CONSUMED use; a refund
+  // only restores it when the store setting explicitly asks for that.
+  if (paymentStatus !== 'PAID') {
+    await releaseCouponInTx(tx, orderId, 'cancelled by store staff');
+  }
 
   // An unpaid claim leaves the shelf in this transaction, so its reservation
   // must stop looking live. A later verified capture then follows the

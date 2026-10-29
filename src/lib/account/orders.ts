@@ -18,6 +18,12 @@ export interface AccountOrderListItem {
   paymentStatus: string;
   amount: number;
   currency: string;
+  /** Money breakdown in paise; total matches the amount PayU charged. */
+  subtotalPaise: number;
+  discountPaise: number;
+  shippingPaise: number;
+  totalPaise: number;
+  couponCode: string | null;
   itemCount: number;
   createdAt: Date;
 }
@@ -65,8 +71,30 @@ type OrderRow = {
   status: string;
   fulfilment_status: string;
   sale_state: AccountOrderStatus;
+  subtotal_paise: string | number | null;
+  discount_paise: string | number | null;
+  shipping_paise: string | number | null;
+  total_paise: string | number | null;
+  coupon_code: string | null;
   created_at: string | Date;
 };
+
+function paise(value: unknown, fallbackRupees: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : Math.round(fallbackRupees * 100);
+}
+
+function moneyFields(row: OrderRow) {
+  const amountRupees = Number(row.amount) || 0;
+  const totalPaise = paise(row.total_paise, amountRupees);
+  return {
+    subtotalPaise: paise(row.subtotal_paise, totalPaise / 100),
+    discountPaise: Math.max(0, paise(row.discount_paise, 0)),
+    shippingPaise: Math.max(0, paise(row.shipping_paise, 0)),
+    totalPaise,
+    couponCode: row.coupon_code ? String(row.coupon_code) : null,
+  };
+}
 
 type ItemRow = {
   product_id: string;
@@ -133,7 +161,8 @@ export async function listCustomerOrders(userId: string, options: ListOrdersOpti
   const status = String(options.status || 'ALL').toUpperCase();
   const search = String(options.search || '').trim().slice(0, 64);
   const rows = await sql<OrderRow[]>`
-    select id, txnid, user_id, items, amount, currency, status, fulfilment_status, sale_state, created_at
+    select id, txnid, user_id, items, amount, currency, status, fulfilment_status, sale_state,
+           subtotal_paise, discount_paise, shipping_paise, total_paise, coupon_code, created_at
     from order_sale_state
     where user_id = ${userId}
       and (${status === 'ALL'} or sale_state = ${status})
@@ -156,6 +185,7 @@ export async function listCustomerOrders(userId: string, options: ListOrdersOpti
       paymentStatus: row.status,
       amount: Number(row.amount),
       currency: row.currency,
+      ...moneyFields(row),
       itemCount: countItems(row.items),
       createdAt: new Date(row.created_at),
     })),
@@ -174,7 +204,8 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
   const sql = getSql();
   if (!sql) return null;
   const rows = await sql<OrderRow[]>`
-    select id, txnid, user_id, items, amount, currency, status, fulfilment_status, sale_state, created_at
+    select id, txnid, user_id, items, amount, currency, status, fulfilment_status, sale_state,
+           subtotal_paise, discount_paise, shipping_paise, total_paise, coupon_code, created_at
     from order_sale_state
     where txnid = ${txnid} and user_id = ${userId}
     limit 1
@@ -220,6 +251,7 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     fulfilmentStatus,
     amount: Number(order.amount),
     currency: order.currency,
+    ...moneyFields(order),
     itemCount: countItems(order.items),
     createdAt: new Date(order.created_at),
     deliveredAt,

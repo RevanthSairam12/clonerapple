@@ -146,11 +146,31 @@ export default async function OrderSuccessPage({ searchParams }: Props) {
         </div>
 
         {/* Total Calculation */}
-        <div className="flex justify-between items-baseline pt-2 mb-8">
-          <span className="text-base font-semibold">Total Paid</span>
-          <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
-            ₹{order.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-          </span>
+        <div className="mb-8 space-y-2 border-t border-[#e5e5ea] pt-4 text-sm">
+          <div className="flex justify-between">
+            <span className="text-[#86868b]">Subtotal</span>
+            <span>₹{(order.subtotalPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+          </div>
+          {order.discountPaise > 0 && (
+            <div className="flex justify-between text-emerald-700">
+              <span>Discount{order.couponCode ? ` (${order.couponCode})` : ''}</span>
+              <span>−₹{(order.discountPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-[#86868b]">Shipping</span>
+            <span>
+              {order.shippingPaise === 0
+                ? 'Free'
+                : `₹${(order.shippingPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+            </span>
+          </div>
+          <div className="flex justify-between items-baseline pt-2">
+            <span className="text-base font-semibold">Total Paid</span>
+            <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
+              ₹{order.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
