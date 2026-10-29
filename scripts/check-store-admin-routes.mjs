@@ -74,6 +74,10 @@ const EXPECTED_READ_ONLY_ROUTES = [
   // Phase 9: the audit log is append-only and has no write path at all.
   'audit/route.ts',
   'audit/export/route.ts',
+  // Phase 11: the coupon list CSV and the coupon usage report CSV are reads
+  // for every store role; each writes only an audit row.
+  'coupons/export/route.ts',
+  'reports/coupon-usage/export/route.ts',
 ];
 
 /** The only mutation in the customer area: an owner-only, audited reveal. */
@@ -146,6 +150,14 @@ const EXPECTED_MUTATING_ROUTES = [
   // Phase 10: acknowledging a captured payment whose stock could not be
   // re-claimed is an audited mutation, though it moves no money.
   'payments/review-flag/route.ts',
+  // Phase 11: coupon create/edit, pause/resume/archive, duplicate and bulk
+  // generation. The list and detail routes also serve GET and therefore sit
+  // here rather than in the read-only list.
+  'coupons/route.ts',
+  'coupons/[id]/route.ts',
+  'coupons/[id]/status/route.ts',
+  'coupons/[id]/duplicate/route.ts',
+  'coupons/bulk/route.ts',
 ];
 
 const EXPECTED_ROUTES = [

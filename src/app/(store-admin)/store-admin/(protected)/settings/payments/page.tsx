@@ -41,6 +41,22 @@ export default async function StoreAdminPaymentSettingsPage() {
 
       <section className="sa-detail-card">
         <div className="sa-detail-head">
+          <h2>Coupons</h2>
+        </div>
+        <p className="sa-note">
+          The coupon box can be switched off without deleting any code. A refund restores a
+          coupon use only when that setting is on; it is off by default.
+        </p>
+        <SettingsForm
+          fields={fieldsForSection('coupons')}
+          initial={settings}
+          canEdit={canEdit}
+          note="Codes themselves live under Catalog → Coupons."
+        />
+      </section>
+
+      <section className="sa-detail-card">
+        <div className="sa-detail-head">
           <h2>Gateway secrets</h2>
         </div>
         <table className="sa-table">

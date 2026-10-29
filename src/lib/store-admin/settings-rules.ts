@@ -58,6 +58,11 @@ export const SETTING_SECTIONS = [
     description: 'Which payment methods the store accepts.',
   },
   {
+    key: 'coupons',
+    label: 'Coupons',
+    description: 'Discount codes and whether a refund gives the use back.',
+  },
+  {
     key: 'mail',
     label: 'Email and SMS',
     description: 'Outbound channels. Credentials stay in environment variables.',
@@ -281,6 +286,28 @@ const FIELD_DEFINITIONS = [
     limit: 160,
     default: 'Order before 4 pm for same-day dispatch.',
     section: 'orders',
+  },
+
+  // ----------------------------------------------------------- coupons
+  {
+    key: 'coupons_enabled',
+    label: 'Coupon codes at checkout',
+    kind: 'toggle',
+    limit: 3,
+    default: 'on',
+    section: 'coupons',
+    options: TOGGLE_OPTIONS,
+    help: 'Turn the coupon box off without deleting any code. Existing orders keep their discount.',
+  },
+  {
+    key: 'refunds_restore_coupon',
+    label: 'Refunds restore coupon use',
+    kind: 'toggle',
+    limit: 3,
+    default: 'off',
+    section: 'coupons',
+    options: TOGGLE_OPTIONS,
+    help: 'Off by default. When on, a refund that covers the whole order gives the coupon use back.',
   },
 
   // ---------------------------------------------------------- payments

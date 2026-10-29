@@ -20,8 +20,9 @@ const GROUP_NOTE: Record<ReportGroup, string> = {
 /**
  * Reports hub.
  *
- * Ten fixed reports plus the expense ledger. Each card opens the report with
- * the last 30 days selected, so the first click always produces a table.
+ * Ten fixed reports, the coupon usage report and the expense ledger. Each card
+ * opens the report with the last 30 days selected, so the first click always
+ * produces a table.
  */
 export default function StoreAdminReportsPage() {
   const range = defaultReportRange();
@@ -70,6 +71,38 @@ export default function StoreAdminReportsPage() {
           </section>
         );
       })}
+
+      <section className="sa-report-section">
+        <div className="sa-report-heading">
+          <h2 className="sa-section-title">Discounts</h2>
+          <p className="sa-card-note">
+            What each coupon took off, which orders used it and how much of it was paid.
+          </p>
+        </div>
+        <div className="sa-report-grid">
+          <Link
+            className="sa-report-card"
+            href={`/store-admin/reports/coupon-usage?from=${range.fromDay}&to=${range.toDay}`}
+          >
+            <span className="sa-report-kicker">Coupons</span>
+            <h3 className="sa-report-title">Coupon usage</h3>
+            <p className="sa-report-desc">
+              One row per redemption with the order, masked customer, discount and state, plus
+              discount and revenue totals for the range.
+            </p>
+            <span className="sa-report-open">Open report →</span>
+          </Link>
+          <Link className="sa-report-card" href="/store-admin/coupons">
+            <span className="sa-report-kicker">Coupons</span>
+            <h3 className="sa-report-title">Coupon codes</h3>
+            <p className="sa-report-desc">
+              Create, pause and retire codes, generate single-use batches and read each code&rsquo;s
+              usage log.
+            </p>
+            <span className="sa-report-open">Manage coupons →</span>
+          </Link>
+        </div>
+      </section>
 
       <section className="sa-report-section">
         <div className="sa-report-heading">
