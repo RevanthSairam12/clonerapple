@@ -7,6 +7,11 @@
  * net) and tags the entries so every successful Store Admin write can call
  * `revalidateCatalog()` and make the next request see the new value.
  *
+ * The cached entries carry catalogue rows only, priced at the **regular**
+ * price. The sale switch is read fresh on every request and applied through
+ * `applySaleDisplay()`, so a sale starting or ending is reflected immediately
+ * rather than up to 30 seconds later.
+ *
  * Fallback rule: if the database is unreachable (or DATABASE_URL is unset),
  * every function returns the static bundle exactly as the storefront rendered
  * before this layer existed. If the database is reachable, a missing/inactive
@@ -20,6 +25,7 @@ import { unstable_cache } from 'next/cache';
 
 import { toCategoryConfig } from '@/lib/catalog/adapter';
 import {
+  applySaleDisplay,
   readStorefrontCatalog,
   type StorefrontCatalogSnapshot,
   type StorefrontCategory,
@@ -128,8 +134,18 @@ function findCategory(
   );
 }
 
-function accessoryProductsFromCategory(category: StorefrontCategory): AccessoryProduct[] {
-  return category.products.map((product) => {
+/**
+ * The sale switch, read once per request. The cached snapshot never holds it,
+ * so every caller gets the state as of this request.
+ */
+const getSaleState = cache(async () => readSaleState());
+
+function accessoryProductsFromCategory(
+  category: StorefrontCategory,
+  saleLive: boolean,
+): AccessoryProduct[] {
+  return category.products.map((row) => {
+    const product = applySaleDisplay(row, saleLive);
     const staticProduct = getStaticAccessoryProduct(product.id);
     return staticProduct
       ? mergeAccessoryProduct(staticProduct, product)
@@ -137,8 +153,12 @@ function accessoryProductsFromCategory(category: StorefrontCategory): AccessoryP
   });
 }
 
-function caseProductsFromCategory(category: StorefrontCategory): CollectionProduct[] {
-  return category.products.map((product) => {
+function caseProductsFromCategory(
+  category: StorefrontCategory,
+  saleLive: boolean,
+): CollectionProduct[] {
+  return category.products.map((row) => {
+    const product = applySaleDisplay(row, saleLive);
     const staticProduct = getStaticCaseCollectionProduct(product.id);
     return collectionProductFromDatabase(product, staticProduct ?? null);
   });
@@ -160,7 +180,7 @@ export interface AccessoryCategoryView {
  */
 export const getAccessoryCategoryView = cache(
   async (slug: string): Promise<AccessoryCategoryView | null> => {
-    const state = await getCatalogState();
+    const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
     if (!state.ready) {
       const staticCategory = getStaticAccessoryCategory(slug);
       return staticCategory
@@ -173,7 +193,7 @@ export const getAccessoryCategoryView = cache(
 
     return {
       config: toCategoryConfig(category),
-      products: accessoryProductsFromCategory(category),
+      products: accessoryProductsFromCategory(category, sale.live),
       source: 'db',
     };
   },
@@ -194,7 +214,7 @@ export const getAccessoryProductsView = cache(
   async (slug: string): Promise<AccessoryProductsView> => {
     const staticCategory: StaticAccessoryCategory | undefined =
       getStaticAccessoryCategory(slug);
-    const state = await getCatalogState();
+    const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
 
     if (!state.ready) {
       return { products: staticCategory?.products ?? [], source: 'static' };
@@ -205,7 +225,7 @@ export const getAccessoryProductsView = cache(
       return { products: staticCategory?.products ?? [], source: 'static' };
     }
 
-    return { products: accessoryProductsFromCategory(category), source: 'db' };
+    return { products: accessoryProductsFromCategory(category, sale.live), source: 'db' };
   },
 );
 
@@ -222,7 +242,7 @@ export interface CasesCategoryView {
  * and adds the static bundle as the outage fallback.
  */
 export const getCasesCategoryView = cache(async (): Promise<CasesCategoryView | null> => {
-  const state = await getCatalogState();
+  const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
   if (!state.ready) {
     return {
       config: STATIC_CASES_CONFIG,
@@ -236,7 +256,7 @@ export const getCasesCategoryView = cache(async (): Promise<CasesCategoryView | 
 
   return {
     config: toCategoryConfig(category),
-    products: caseProductsFromCategory(category),
+    products: caseProductsFromCategory(category, sale.live),
     source: 'db',
   };
 });
@@ -262,7 +282,7 @@ export type ProductDetail =
  * - Row present → database values win; static fills the marketing gaps.
  */
 export const getProductDetail = cache(async (id: string): Promise<ProductDetail | null> => {
-  const state = await getProductState(id);
+  const [state, sale] = await Promise.all([getProductState(id), getSaleState()]);
 
   if (!state.ready) {
     const staticProduct = getStaticProduct(id);
@@ -278,7 +298,9 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
   }
 
   if (!state.product) return null;
-  const databaseProduct = state.product;
+  // The cached row is regular-priced; the sale switch is applied here, on
+  // this request, so the detail page can never show a stale badge or price.
+  const databaseProduct = applySaleDisplay(state.product, sale.live);
   const stock: ProductStockState = {
     inStock: databaseProduct.inStock,
     trackInventory: databaseProduct.trackInventory,
@@ -323,7 +345,7 @@ export interface StorefrontRefs {
  * data can reach this shape.
  */
 export const getStorefrontRefs = cache(async (): Promise<StorefrontRefs> => {
-  const [state, sale] = await Promise.all([getCatalogState(), readSaleState()]);
+  const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
   if (!state.ready) {
     return { products: STATIC_PRODUCT_REFS, saleLive: sale.live, source: 'static' };
   }
@@ -333,7 +355,7 @@ export const getStorefrontRefs = cache(async (): Promise<StorefrontRefs> => {
   );
   return {
     products: state.snapshot!.products.map((product) =>
-      refFromDatabase(product, categoryNames.get(product.categoryId)),
+      refFromDatabase(applySaleDisplay(product, sale.live), categoryNames.get(product.categoryId)),
     ),
     saleLive: sale.live,
     source: 'db',

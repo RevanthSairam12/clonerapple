@@ -365,13 +365,18 @@ page layout.
    `getAccessoryProductsView`, `getCasesCategoryView`, `getStorefrontRefs`).
 2. The read layer runs one cached catalogue query (`unstable_cache`, tag
    `storefront-catalog`, 30-second safety net) and merges database rows over the static
-   bundle. Per-product detail reads also carry `storefront-product:<id>`.
-3. A component receives plain props. No client component queries the database.
-4. Every catalogue-changing Store Admin write calls `revalidateCatalog(productId?)` after
+   bundle. Per-product detail reads also carry `storefront-product:<id>`. The cached rows
+   hold the **regular** price only; the sale switch is never part of a cache entry.
+3. The sale switch is read once per request (`readSaleState()`, on the database clock) and
+   applied to each row by `applySaleDisplay()`. A sale starting or ending is therefore
+   visible on the next request with no wait and no cache clearing; the 30 seconds only
+   ever delays a catalogue edit.
+4. A component receives plain props. No client component queries the database.
+5. Every catalogue-changing Store Admin write calls `revalidateCatalog(productId?)` after
    its audit row, so the next visit reads fresh data. Every call revalidates the
    `storefront-catalog` tag; a product-specific call also revalidates
    `storefront-product:<id>`.
-5. On a database outage the read layer catches the failure and returns the static bundle,
+6. On a database outage the read layer catches the failure and returns the static bundle,
    so pages still render.
 
 **Admin edit → next-request storefront effect**
@@ -770,8 +775,11 @@ scheduler-side check.
   `store_settings` text row: the window is two `timestamptz` columns compared with
   `now()` in the database, so there is no parsing of a text value and no chance of the
   app clock leaking in. The settings engine stays for plain text/boolean preferences.
-- **Cache.** Every sale write calls `revalidateCatalog()`, so the 30-second storefront
-  cache refreshes on the next request; checkout always re-prices per request.
+- **Cache.** The switch itself is never cached. Cached catalogue rows carry the regular
+  price; every read applies the switch read for that request, so starting or ending a sale
+  changes the displayed price and badge on the very next request. Every sale write also
+  calls `revalidateCatalog()` for price/column edits, and checkout always re-prices per
+  request.
 - **CSV.** `sale_price` is an import and export column; a row is rejected when the sale
   price is not positive or is not lower than `price`, with the error reported against
   that row. Blank means no sale price, and an update with a blank cell clears it (with a
@@ -779,7 +787,9 @@ scheduler-side check.
 - **Evidence.** `tests/sale-pricing.test.mjs` (resolver, window boundaries, validation,
   CSV, history markers, DB-clock source guard, resolver-only reader guard),
   `tests/sale-admin.test.mjs` (settings validation, bulk maths, pre-flight, labels, route
-  guards, timezone conversion against the database, bulk history) and
+  guards, timezone conversion against the database, bulk history),
+  `tests/sale-boundary-display.test.mjs` (the cached snapshot never holds the sale switch;
+  the displayed price and badge flip on the next request when a sale starts or ends) and
   `tests/catalog-csv.test.mjs`.
 - **Migrations.** `0039_sale_pricing.sql` adds `products.sale_price_paise`,
   `product_variants.sale_price_paise`, `price_history.price_kind` (default `regular`) and
@@ -1425,7 +1435,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | Static catalogue | `src/lib/products/registry.ts`, `src/components/sites/accessories/data/*`, `src/components/sites/cases-protection/data/*` (fallback + marketing fields only) |
 | Parity report | `scripts/catalog-parity.mjs` |
 | DB pricing | `src/lib/payu/db-catalog.ts` |
-| Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin}.test.mjs` |
+| Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/catalog/storefront.ts` (`applySaleDisplay`), `src/lib/storefront/catalog.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin,sale-boundary-display}.test.mjs` |
 | POS entered prices | `src/lib/store-admin/{pos,pos-rules}.ts`, `src/components/store-admin/PosTill.tsx`, `src/app/api/store-admin/pos/sales/route.ts`, `migrations/0040_pos_entered_prices.sql`, `tests/pos-entered-prices.test.mjs` |
 | Availability at checkout | `src/lib/storefront/{availability-rules,availability-server,use-availability}.ts`, `src/app/api/catalog/availability/route.ts`, `src/components/{shop/ProductDetailPage,sites/accessories/AccessoryDetailPage,cart/CartPageView,checkout/CheckoutForm}.tsx`, `src/lib/payu/db-pricing.ts`, `tests/stock-behaviour.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |

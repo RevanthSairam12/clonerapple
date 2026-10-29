@@ -364,16 +364,17 @@ test('search/bag rows carry only public display fields', () => {
 
 /* -------------------------------------------------------------- cache tags */
 
-test('the catalogue cache has a 30-second safety net, so a sale boundary is not instant', async () => {
+test('the catalogue cache is a 30-second safety net that never holds the sale switch', async () => {
   const source = await readFile(
     path.join(root, 'src', 'lib', 'storefront', 'catalog.ts'),
     'utf8',
   );
   assert.match(source, /unstable_cache\(/);
   assert.match(source, /revalidate:\s*30/);
-  // The sale switch is read when the cache entry is filled, not pushed on a
-  // scheduled start/end; there is no write to call revalidateCatalog().
-  assert.match(source, /readSaleState\(\)/);
+  // The cached rows are regular-priced; the switch is read per request and
+  // applied with applySaleDisplay(), so a sale boundary is exact.
+  assert.match(source, /const getSaleState = cache\(async \(\) => readSaleState\(\)\)/);
+  assert.match(source, /applySaleDisplay\(/);
 });
 
 test('catalogue tags are stable and case-insensitive per product', () => {

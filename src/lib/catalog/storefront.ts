@@ -110,6 +110,11 @@ export interface StorefrontCategory {
   navHref: string;
   seo: { title: string; description: string };
   facets: StorefrontFacetDef[];
+  /**
+   * Products as the database defines them, priced at the **regular** price
+   * with `onSale: false`. Callers apply `applySaleDisplay(product, sale.live)`
+   * per request so a cached snapshot never bakes in the sale switch.
+   */
   products: StorefrontProduct[];
 }
 
@@ -315,7 +320,7 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
 
 /* ------------------------------------------------------------------ query */
 
-interface CatalogLoad {
+export interface CatalogLoad {
   categories: Row[];
   products: Row[];
   images: Row[];
@@ -325,10 +330,10 @@ interface CatalogLoad {
   stock: Row[];
 }
 
-async function loadCatalog(): Promise<CatalogLoad | null> {
-  const sql = getSql();
-  if (!sql) return null;
-
+/** The read itself, so tests can run it against a throwaway schema. */
+export async function loadCatalogUsing(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+): Promise<CatalogLoad> {
   const [categories, products, images, facets, specs, variants, stock] = await Promise.all([
     sql`
       select c.id, c.slug, c.name, c.title, c.subhead, c.breadcrumb_leaf,
@@ -390,6 +395,12 @@ async function loadCatalog(): Promise<CatalogLoad | null> {
     variants: variants as Row[],
     stock: stock as Row[],
   };
+}
+
+async function loadCatalog(): Promise<CatalogLoad | null> {
+  const sql = getSql();
+  if (!sql) return null;
+  return loadCatalogUsing(sql);
 }
 
 function groupByProduct(rows: Row[]): Map<string, Row[]> {
@@ -471,12 +482,38 @@ export interface StorefrontCatalogSnapshot {
 export async function readStorefrontCatalog(): Promise<StorefrontCatalogSnapshot | null> {
   const load = await loadCatalog();
   if (!load) return null;
-  // The sale switch is tiny and read on every cache fill, so prices are never
-  // more than the 30s catalogue cache behind a toggle. `readSaleState` never
-  // throws: an unreadable switch means regular prices and normal mode.
-  const sale = await readSaleState();
-  const { categories, byProductId } = mapAll(load, sale.live);
+  // The cached snapshot carries catalogue rows only: every price is resolved
+  // with the sale switch OFF. The sale flag is applied per request by
+  // `applySaleDisplay()`, so a cached entry can never hold a stale switch and
+  // a sale starting or ending is visible on the very next request.
+  return snapshotFromLoad(load);
+}
+
+/** Map one catalogue read into the cacheable snapshot, regular prices only. */
+export function snapshotFromLoad(load: CatalogLoad): StorefrontCatalogSnapshot {
+  const { categories, byProductId } = mapAll(load, false);
   return { categories, products: [...byProductId.values()] };
+}
+
+/**
+ * Re-resolve one product's displayed price and sale badge against the sale
+ * state read for this request. The stored catalogue figures are the source;
+ * nothing here mutates the cached snapshot.
+ */
+export function applySaleDisplay(product: StorefrontProduct, saleLive: boolean): StorefrontProduct {
+  const price = resolveEffectivePrice(
+    { pricePaise: product.regularPricePaise, salePricePaise: product.salePricePaise },
+    saleLive,
+  );
+  // Skip the allocation when the answer is already what the snapshot holds.
+  if (price.unitPaise === product.pricePaise && price.onSale === product.onSale) return product;
+  return {
+    ...product,
+    price: price.unitPaise / 100,
+    pricePaise: price.unitPaise,
+    priceDisplay: formatPaise(price.unitPaise),
+    onSale: price.onSale,
+  };
 }
 
 /**
@@ -539,6 +576,7 @@ export async function listStorefrontCategories(): Promise<StorefrontCategory[]> 
       }
       return [];
     }
+    // Uncached read: the sale flag is applied here, not baked into a cache.
     const sale = await readSaleState();
     return mapAll(load, sale.live).categories;
   } catch {
