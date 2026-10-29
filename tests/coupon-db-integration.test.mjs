@@ -79,6 +79,10 @@ const { MIN_PAYABLE_PAISE } = await jiti.import(
   path.join(root, 'src', 'lib', 'coupons', 'rules.ts'),
 );
 
+const { archiveCouponOnDelete } = await jiti.import(
+  path.join(root, 'src', 'lib', 'store-admin', 'coupons.ts'),
+);
+
 /* ------------------------------------------------------------- fixtures */
 
 const SCHEMA = `itest_coupons_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`;
@@ -283,6 +287,55 @@ test('a scoped coupon loads its targets and only discounts matching lines', { sk
   assert.deepEqual(evaluation.allocations, [0, 1000]);
 });
 
+test('category and brand targets load and match a mixed cart', { skip }, async () => {
+  const byCategory = await insertCoupon({ code: 'CAT10', scope: 'CATEGORIES' });
+  await sql`
+    insert into coupon_targets (coupon_id, category_id)
+    values (${byCategory.id}, ${'cat_a'})
+  `;
+  const categoryResult = await lookupCouponForCart(sql, 'CAT10', cart({
+    lines: [
+      line({ productId: 'p1', categoryId: 'cat_a' }),
+      line({ productId: 'p2', categoryId: 'cat_b' }),
+    ],
+  }));
+  assert.equal(categoryResult.evaluation.ok, true);
+  assert.equal(categoryResult.evaluation.discountPaise, 1000);
+  assert.deepEqual(categoryResult.evaluation.eligibleLineIndexes, [0]);
+
+  const byBrand = await insertCoupon({ code: 'BRAND10', scope: 'BRANDS' });
+  await sql`
+    insert into coupon_targets (coupon_id, brand_id)
+    values (${byBrand.id}, ${'brand_b'})
+  `;
+  const brandResult = await lookupCouponForCart(sql, 'BRAND10', cart({
+    lines: [
+      line({ productId: 'p3', brandId: 'brand_a' }),
+      line({ productId: 'p4', brandId: 'brand_b' }),
+    ],
+  }));
+  assert.equal(brandResult.evaluation.ok, true);
+  assert.equal(brandResult.evaluation.discountPaise, 1000);
+  assert.deepEqual(brandResult.evaluation.eligibleLineIndexes, [1]);
+});
+
+test('sale-priced lines are skipped and the cart sees the sale message', { skip }, async () => {
+  await insertCoupon({ code: 'NOSALE', value: 10 });
+  const saleLine = line({ productId: 'sale', unitPaise: 20000, onSale: true });
+  const fullLine = line({ productId: 'full', unitPaise: 30000, onSale: false });
+
+  const mixed = await lookupCouponForCart(sql, 'NOSALE', cart({ lines: [saleLine, fullLine] }));
+  assert.equal(mixed.evaluation.ok, true);
+  assert.equal(mixed.evaluation.discountPaise, 3000);
+  assert.deepEqual(mixed.evaluation.eligibleLineIndexes, [1]);
+  assert.equal(mixed.evaluation.message, 'Not valid on sale items.');
+
+  const onlySale = await lookupCouponForCart(sql, 'NOSALE', cart({ lines: [saleLine] }));
+  assert.equal(onlySale.evaluation.ok, false);
+  assert.equal(onlySale.evaluation.reason, 'sale_items_excluded');
+  assert.equal(onlySale.evaluation.message, 'This code is not valid on sale items.');
+});
+
 /* --------------------------------------------------------------- limits */
 
 test('a RESERVED use counts against the total limit, a RELEASED one does not', { skip }, async () => {
@@ -483,6 +536,45 @@ test('a duplicate reservation for the same order is not double-counted', { skip 
 
   const rows = await sql`select count(*)::int as total from coupon_redemptions where order_id = 'order_dup'`;
   assert.equal(rows[0].total, 1);
+});
+
+/* ------------------------------------------------ retirement and deletion */
+
+test('DELETE archives an unused coupon and refuses one with any redemption', { skip }, async () => {
+  const unused = await insertCoupon({ code: 'UNUSED1' });
+  const archived = await archiveCouponOnDelete(unused.id, sql);
+  assert.equal(archived.ok, true);
+  assert.equal(archived.data.deleted, false);
+  assert.equal(archived.data.after.status, 'archived');
+
+  const archivedRow = (await sql`
+    select status, archived_at from coupons where id = ${unused.id}
+  `)[0];
+  assert.equal(String(archivedRow.status), 'archived');
+  assert.ok(archivedRow.archived_at, 'the archive timestamp is written');
+
+  const used = await insertCoupon({ code: 'USED1' });
+  await reserve(used, 'order_used');
+  const refused = await archiveCouponOnDelete(used.id, sql);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'conflict');
+  assert.match(refused.error, /Archive it instead/);
+  assert.equal(
+    String((await sql`select status from coupons where id = ${used.id}`)[0].status),
+    'active',
+    'a coupon with usage is left untouched',
+  );
+
+  // A RELEASED use is still history, so the row still cannot be deleted.
+  await releaseCouponInTx(sql, 'order_used', 'reservation expired');
+  assert.equal((await archiveCouponOnDelete(used.id, sql)).ok, false);
+
+  const missing = await archiveCouponOnDelete('coupon_missing', sql);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, 'not-found');
+
+  const remaining = await sql`select count(*)::int as n from coupons`;
+  assert.equal(remaining[0].n, 2, 'no coupon row is ever removed');
 });
 
 /* ------------------------------------------------ the checkout authority */
