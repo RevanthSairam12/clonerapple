@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
+import { CouponRejectedError, TotalChangedError } from '@/lib/coupons/errors';
+import {
+  couponRejectionMessage,
+  isValidCouponCode,
+  normalizeCouponCode,
+} from '@/lib/coupons/rules';
 import { getPayUConfig, assertPayUConfigured } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
 import { createOrder, findActiveReservationForUser, getOrderByTxnid } from '@/lib/payu/orders';
@@ -237,10 +243,44 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Server-computed shipping. Shipping disabled or no active method means
-    //    no charge, which is what checkout did before shipping was wired.
+    //    no charge, which is what checkout did before shipping was wired. A
+    //    free-shipping coupon is applied inside the order transaction.
     const shippingQuote = quoteShipping(cart.totalPaise, checkoutConfiguration.policy);
     const subtotalPaise = cart.totalPaise;
-    const totalPaise = subtotalPaise + shippingQuote.shippingPaise;
+
+    // The coupon code is the only coupon input accepted from the browser.
+    // The discount and the total are computed under the coupon row lock.
+    const rawCouponCode = body.couponCode;
+    let couponCode: string | null = null;
+    if (rawCouponCode !== undefined && rawCouponCode !== null && rawCouponCode !== '') {
+      if (typeof rawCouponCode !== 'string' || !isValidCouponCode(rawCouponCode)) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'coupon_invalid',
+            error: couponRejectionMessage('invalid_code'),
+          },
+          { status: 409 },
+        );
+      }
+      if (settings.coupons_enabled === 'off') {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'coupon_invalid',
+            error: couponRejectionMessage('inactive'),
+          },
+          { status: 409 },
+        );
+      }
+      couponCode = normalizeCouponCode(rawCouponCode);
+    }
+
+    const expectedTotal = body.expectedTotalPaise;
+    const expectedTotalPaise =
+      typeof expectedTotal === 'number' && Number.isSafeInteger(expectedTotal)
+        ? expectedTotal
+        : null;
 
     // 4. Prepare PayU Config
     const config = getPayUConfig();
@@ -248,12 +288,11 @@ export async function POST(req: NextRequest) {
 
     // 5. Number the order from Order settings, or fall back to the previous
     //    random transaction id when the prefix is empty. The amount charged is
-    //    the server total including the server-computed shipping.
+    //    the server total including the server-computed shipping and coupon.
     const numbering = readOrderNumberSettings({
       order_prefix: settings.order_prefix,
       order_start_number: settings.order_start_number,
     });
-    const amountStr = (totalPaise / 100).toFixed(2);
 
     let created;
     try {
@@ -264,8 +303,15 @@ export async function POST(req: NextRequest) {
         items: cart.items,
         subtotalPaise,
         shippingPaise: shippingQuote.shippingPaise,
-        totalPaise,
+        totalPaise: subtotalPaise + shippingQuote.shippingPaise,
         currency: 'INR',
+        coupon: couponCode
+          ? {
+              code: couponCode,
+              customerGroup: null,
+              expectedTotalPaise,
+            }
+          : null,
         customerName: firstname,
         customerEmail: rawEmail,
         customerPhone: phone,
@@ -288,10 +334,44 @@ export async function POST(req: NextRequest) {
           { status: 409 },
         );
       }
+      if (error instanceof CouponRejectedError) {
+        return NextResponse.json(
+          { success: false, error: error.message, code: 'coupon_invalid' },
+          { status: 409 },
+        );
+      }
+      if (error instanceof TotalChangedError) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: error.message,
+            code: 'price_changed',
+            totals: error.totals,
+          },
+          { status: 409 },
+        );
+      }
+      // A coupon that cannot be checked must never be charged blind: the
+      // order is not created and the customer is told to remove the code.
+      // Without a coupon the normal error path below applies.
+      if (couponCode) {
+        console.warn('[payu/initiate] coupon lookup failed; no order was created');
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'coupon_unavailable',
+            error: 'The coupon could not be checked. Remove it and pay without the code.',
+          },
+          { status: 409 },
+        );
+      }
       throw error;
     }
 
     const txnid = created.order.txnid;
+    // The order transaction is the authority: this is the amount PayU is
+    // asked for, matching the total the customer was shown.
+    const amountStr = created.order.amount.toFixed(2);
 
     // Availability changed when tracked stock was claimed.
     if (created.stockClaimed) revalidateCatalog();

@@ -55,6 +55,7 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Pricin
 
   const rows = await sql`
     select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
+           p.category_id, p.brand_id,
            p.in_stock, s.track_inventory,
            (
              select pi.url
@@ -111,6 +112,13 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Pricin
       image_url: row.image_url === null || row.image_url === undefined
         ? null
         : String(row.image_url),
+      category_id: row.category_id === null || row.category_id === undefined
+        ? null
+        : String(row.category_id),
+      brand_id: row.brand_id === null || row.brand_id === undefined
+        ? null
+        : String(row.brand_id),
+      on_sale: price.onSale,
     } satisfies CatalogPriceRow;
   });
 

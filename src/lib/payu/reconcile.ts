@@ -252,7 +252,7 @@ export async function reconcileOrderUsing(
             orderStatus: 'PAID',
             refundPaise: res.refundObligationAmountPaise,
           });
-        } else if (res.paymentReviewRequired) {
+        } else if (res.paymentReviewRequired || res.couponReviewRequired) {
           queueOrderEvent('payment_review', res.order, { orderStatus: 'PAID' });
         }
       }
@@ -269,6 +269,22 @@ export async function reconcileOrderUsing(
             previousStatus: res.previousStatus,
             status: res.order.status,
             stockReclaimed: false,
+          },
+          route: '/api/payu/reconcile',
+        });
+      }
+
+      if (res.couponReviewRequired && sideEffects) {
+        await writeAudit({
+          action: 'coupon.late_restore_review',
+          entity: 'order',
+          entityId: res.order.txnid,
+          status: 'flagged',
+          reason: 'coupon_limit_unavailable_for_restore',
+          after: {
+            previousStatus: res.previousStatus,
+            status: res.order.status,
+            couponCode: res.order.couponCode,
           },
           route: '/api/payu/reconcile',
         });

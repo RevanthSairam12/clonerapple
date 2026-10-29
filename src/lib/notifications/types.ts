@@ -69,6 +69,10 @@ export interface NotificationContext {
   orderTotalPaise?: number | null;
   shippingPaise?: number | null;
   refundPaise?: number | null;
+  /** The coupon code shown to the customer, or null when none was used. */
+  couponCode?: string | null;
+  /** What that coupon took off the order, in paise. */
+  discountPaise?: number | null;
   orderStatus?: string | null;
   trackingNumber?: string | null;
   /** Must already be an https URL; the renderer rejects anything else. */

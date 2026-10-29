@@ -42,6 +42,10 @@ export const TEMPLATE_VARIABLES = [
   'support_email',
   'return_window_days',
   'refund_amount',
+  // The coupon code and what it took off. No other coupon detail (scope,
+  // limits, targets or other customers) is ever available to a template.
+  'coupon_code',
+  'discount_amount',
   'item_count',
   'product_name',
   'stock_available',
@@ -153,6 +157,8 @@ export function templateValues(input: {
   orderTotalPaise?: number | null;
   shippingPaise?: number | null;
   refundPaise?: number | null;
+  discountPaise?: number | null;
+  couponCode?: string | null;
   orderStatus?: string | null;
   trackingNumber?: string | null;
   trackingLink?: string | null;
@@ -189,6 +195,8 @@ export function templateValues(input: {
     support_email: text(input.supportEmail),
     return_window_days: returnWindow,
     refund_amount: money(input.refundPaise),
+    coupon_code: text(input.couponCode),
+    discount_amount: money(input.discountPaise),
     item_count: numberText(input.itemCount),
     product_name: text(input.productName),
     stock_available: numberText(input.stockAvailable),

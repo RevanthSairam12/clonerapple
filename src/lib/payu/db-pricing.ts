@@ -28,6 +28,11 @@ export interface CatalogPriceRow {
   /** The pre-sale price, only when the resolved price is a sale price. */
   regular_price_paise?: number | string | null;
   image_url?: string | null;
+  /** Scope metadata for coupon matching. */
+  category_id?: string | null;
+  brand_id?: string | null;
+  /** True when this row is charged at a live sale price. */
+  on_sale?: boolean;
 }
 
 export interface PricedCartItem {
@@ -43,6 +48,11 @@ export interface PricedCartItem {
   /** The pre-sale unit price in paise, when this line is on sale. */
   regularPricePaise?: number;
   image?: string;
+  /** Scope metadata for coupon matching. */
+  categoryId?: string | null;
+  brandId?: string | null;
+  /** True when this line is charged at a live sale price. */
+  onSale?: boolean;
 }
 
 /** One line whose displayed price no longer matches the database price. */
@@ -147,6 +157,9 @@ export function priceCartLines(
         typeof row.image_url === 'string' && row.image_url.trim()
           ? row.image_url
           : undefined,
+      categoryId: row.category_id ? String(row.category_id) : null,
+      brandId: row.brand_id ? String(row.brand_id) : null,
+      onSale: row.on_sale === true,
     });
 
     // Same order as the input array: priceCartLines pushes exactly one item

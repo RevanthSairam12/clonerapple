@@ -30,6 +30,7 @@ export function orderNotificationContext(
     Order,
     'txnid' | 'orderNumber' | 'items' | 'amount' | 'status'
     | 'customerName' | 'customerEmail' | 'customerPhone'
+    | 'couponCode' | 'discountPaise'
   >,
   extras: OrderNotificationExtras = {},
 ): NotificationContext {
@@ -57,6 +58,8 @@ export function orderNotificationContext(
     trackingNumber: extras.trackingNumber ?? null,
     trackingLink: extras.trackingLink ?? null,
     refundPaise: extras.refundPaise ?? null,
+    couponCode: order.couponCode ?? null,
+    discountPaise: order.discountPaise ?? 0,
     itemCount,
     customerLink: `/order/status?txnid=${encodedTxnid}`,
     staffLink: `/store-admin/orders/${encodedTxnid}`,

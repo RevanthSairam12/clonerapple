@@ -342,6 +342,8 @@ export async function enqueueNotification(
         orderTotalPaise: context.orderTotalPaise,
         shippingPaise: context.shippingPaise,
         refundPaise: context.refundPaise,
+        couponCode: context.couponCode,
+        discountPaise: context.discountPaise,
         orderStatus: context.orderStatus,
         trackingNumber: context.trackingNumber,
         trackingLink: context.trackingLink,

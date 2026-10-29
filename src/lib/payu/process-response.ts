@@ -213,7 +213,7 @@ export async function processPayUCallback(data: PayUResponseData, source: 'retur
         orderStatus: 'PAID',
         refundPaise: transition.refundObligationAmountPaise,
       });
-    } else if (transition.paymentReviewRequired) {
+    } else if (transition.paymentReviewRequired || transition.couponReviewRequired) {
       queueOrderEvent('payment_review', transition.order, { orderStatus: 'PAID' });
     }
   } else if (transition.transitioned && targetStatus === 'PROCESSING') {

@@ -16,6 +16,23 @@ import {
   type OrderNumberSettings,
 } from '@/lib/orders/numbering';
 import { planFulfilmentAutomation } from '@/lib/orders/fulfilment-automation';
+import { CouponRejectedError, TotalChangedError } from '@/lib/coupons/errors';
+import {
+  couponRejectionMessage,
+  couponSnapshot,
+  normalizeCouponCode,
+  type CouponDefinition,
+  type CouponEvaluation,
+  type CouponLine,
+} from '@/lib/coupons/rules';
+import {
+  consumeCouponInTx,
+  evaluateCouponFromDatabase,
+  insertReservedRedemption,
+  loadCouponDefinition,
+  releaseCouponInTx,
+  restoreCouponAfterLatePayment,
+} from '@/lib/coupons/store';
 import type { FulfilmentStatus } from '@/lib/store-admin/order-rules';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { DEFAULT_SETTINGS } from '@/lib/store-admin/settings-rules';
@@ -58,6 +75,10 @@ export interface OrderItemSnapshot {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  /** Scope metadata used only while a coupon is being evaluated. */
+  categoryId?: string | null;
+  brandId?: string | null;
+  onSale?: boolean;
 }
 
 /** A single `order_items` row derived from a resolved cart line. */
@@ -107,6 +128,13 @@ export interface Order {
   userId: string | null;
   items: OrderItemSnapshot[];
   amount: number;
+  /** The money breakdown, integer paise. `amount` is `totalPaise / 100`. */
+  subtotalPaise: number;
+  discountPaise: number;
+  shippingPaise: number;
+  totalPaise: number;
+  couponId: string | null;
+  couponCode: string | null;
   currency: string;
   status: OrderStatus;
   customerName: string;
@@ -140,6 +168,12 @@ interface RawOrderRow {
   user_id: string | null;
   items: OrderItemSnapshot[] | string;
   amount: string | number;
+  subtotal_paise?: string | number | null;
+  discount_paise?: string | number | null;
+  shipping_paise?: string | number | null;
+  total_paise?: string | number | null;
+  coupon_id?: string | null;
+  coupon_code?: string | null;
   currency: string;
   status: OrderStatus;
   customer_name: string;
@@ -207,6 +241,18 @@ function mapRowToOrder(row: RawOrderRow): Order {
     userId: row.user_id,
     items,
     amount: Number(row.amount),
+    subtotalPaise: Math.max(
+      0,
+      Math.round(Number(row.subtotal_paise ?? Number(row.amount) * 100)),
+    ),
+    discountPaise: Math.max(0, Math.round(Number(row.discount_paise ?? 0))),
+    shippingPaise: Math.max(0, Math.round(Number(row.shipping_paise ?? 0))),
+    totalPaise: Math.max(
+      0,
+      Math.round(Number(row.total_paise ?? Number(row.amount) * 100)),
+    ),
+    couponId: row.coupon_id ? String(row.coupon_id) : null,
+    couponCode: row.coupon_code ? String(row.coupon_code) : null,
     currency: row.currency,
     status: row.status,
     customerName: row.customer_name,
@@ -244,8 +290,20 @@ export interface CreateOrderParams {
   /** Server-computed money breakdown, always integer paise. */
   subtotalPaise: number;
   shippingPaise: number;
+  /** Provisional items + shipping. Recomputed when a coupon applies. */
   totalPaise: number;
   currency?: string;
+  /**
+   * A coupon to lock, re-validate and apply inside this transaction. The code
+   * is the only client input; the discount and total are computed here.
+   */
+  coupon?: {
+    code: string;
+    /** The signed-in customer's group, if any. Guests pass null. */
+    customerGroup?: string | null;
+    /** Advisory display total; a mismatch aborts before the order is written. */
+    expectedTotalPaise?: number | null;
+  } | null;
   customerName: string;
   customerEmail: string;
   customerPhone: string;
@@ -388,6 +446,7 @@ export async function releaseExpiredReservationsForProducts(
     const orderId = String(row.id);
     const previousStatus = String(row.status) as OrderStatus;
     const stockReleased = await releaseClaimedStock(tx, orderId);
+    await releaseCouponInTx(tx, orderId, 'reservation expired');
 
     const grace = previousStatus === 'FAILED' || previousStatus === 'CANCELLED';
     const processing = previousStatus === 'PROCESSING';
@@ -444,9 +503,10 @@ export async function createOrderUsing(
   const itemLines = buildOrderItemLines(params.items);
 
   const subtotalPaise = Math.max(0, Math.trunc(params.subtotalPaise));
-  const shippingPaise = Math.max(0, Math.trunc(params.shippingPaise));
-  const totalPaise = Math.max(0, Math.trunc(params.totalPaise));
-  if (totalPaise !== subtotalPaise + shippingPaise) {
+  let shippingPaise = Math.max(0, Math.trunc(params.shippingPaise));
+  let totalPaise = Math.max(0, Math.trunc(params.totalPaise));
+  let discountPaise = 0;
+  if (!params.coupon?.code && totalPaise !== subtotalPaise + shippingPaise) {
     throw new Error('Order total does not match its money breakdown.');
   }
 
@@ -476,6 +536,7 @@ export async function createOrderUsing(
       `;
       for (const row of superseded) {
         await releaseClaimedStock(tx, String(row.id));
+        await releaseCouponInTx(tx, String(row.id), 'superseded by a new checkout');
         await tx`
           update orders
           set reservation_state = 'RELEASED',
@@ -528,6 +589,69 @@ export async function createOrderUsing(
     }
     if (!txnid) throw new Error('An order needs a transaction id.');
 
+    // 2b. Coupon. The row is locked before its uses are counted, so two
+    //     concurrent buyers cannot both take the last redemption. The code is
+    //     the only client input; every amount below is computed here.
+    let couponDefinition: CouponDefinition | null = null;
+    let couponEvaluation: CouponEvaluation | null = null;
+    let couponLineDiscounts: number[] = itemLines.map(() => 0);
+    if (params.coupon?.code) {
+      const code = normalizeCouponCode(params.coupon.code);
+      const locked = await loadCouponDefinition(tx, code, { forUpdate: true });
+      if (!locked) {
+        throw new CouponRejectedError(
+          'not_found',
+          couponRejectionMessage('not_found'),
+        );
+      }
+
+      const lines: CouponLine[] = itemLines.map((line, index) => ({
+        productId: line.productId,
+        categoryId: params.items[index]?.categoryId ?? null,
+        brandId: params.items[index]?.brandId ?? null,
+        quantity: line.quantity,
+        unitPaise: line.unitPricePaise,
+        linePaise: line.lineTotalPaise,
+        onSale: params.items[index]?.onSale === true,
+      }));
+
+      const evaluation = await evaluateCouponFromDatabase(tx, locked, {
+        lines,
+        subtotalPaise,
+        shippingPaise,
+        customer: {
+          userId: params.userId ?? null,
+          email: params.customerEmail,
+          group: params.coupon.customerGroup ?? null,
+        },
+      });
+
+      if (!evaluation.ok) {
+        throw new CouponRejectedError(evaluation.reason, evaluation.message);
+      }
+
+      couponDefinition = locked;
+      couponEvaluation = evaluation;
+      discountPaise = evaluation.discountPaise;
+      shippingPaise = evaluation.shippingPaise;
+      totalPaise = evaluation.totalPaise;
+      couponLineDiscounts = evaluation.allocations;
+
+      const expected = params.coupon.expectedTotalPaise;
+      if (
+        typeof expected === 'number'
+        && Number.isSafeInteger(expected)
+        && expected !== totalPaise
+      ) {
+        throw new TotalChangedError({
+          subtotalPaise,
+          discountPaise,
+          shippingPaise,
+          totalPaise,
+        });
+      }
+    }
+
     // 3. Persist the order and its snapshot.
     const rows = await tx<RawOrderRow[]>`
       INSERT INTO orders (
@@ -546,6 +670,9 @@ export async function createOrderUsing(
         discount_paise,
         shipping_paise,
         total_paise,
+        coupon_id,
+        coupon_code,
+        coupon_snapshot,
         pricing_snapshot,
         customer_name,
         customer_email,
@@ -568,9 +695,14 @@ export async function createOrderUsing(
         ${params.paymentMethod ?? 'payu'},
         'PENDING',
         ${subtotalPaise},
-        0,
+        ${discountPaise},
         ${shippingPaise},
         ${totalPaise},
+        ${couponDefinition?.id ?? null},
+        ${couponDefinition?.code ?? null},
+        ${couponDefinition && couponEvaluation
+          ? tx.json(couponSnapshot(couponDefinition, discountPaise) as any)
+          : null},
         ${tx.json((params.pricingSnapshot ?? {}) as any)},
         ${params.customerName},
         ${params.customerEmail},
@@ -612,16 +744,29 @@ export async function createOrderUsing(
 
     // Normalised order_items rows: composite cart ids are reduced to catalog
     // base ids here, so every later lookup by product id works.
-    for (const line of itemLines) {
+    for (const [index, line] of itemLines.entries()) {
       await tx`
         INSERT INTO order_items (
           order_id, line_number, product_id, product_name, quantity,
-          unit_price_paise, line_total_paise, currency
+          unit_price_paise, line_total_paise, discount_paise, currency
         ) VALUES (
           ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
-          ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise}, ${line.currency}
+          ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
+          ${couponLineDiscounts[index] ?? 0}, ${line.currency}
         )
       `;
+    }
+
+    // The use is held from this moment. It counts against both limits until
+    // the payment is verified (CONSUMED) or the hold is released.
+    if (couponDefinition) {
+      await insertReservedRedemption(tx, {
+        couponId: couponDefinition.id,
+        orderId: rows[0].id,
+        customerUserId: params.userId ?? null,
+        customerEmail: params.customerEmail,
+        discountPaise,
+      });
     }
 
     // 4. Claim the planned units. The guarded updates write `sale` movements
@@ -687,6 +832,8 @@ export interface TransitionResult {
   stockReclaimed: boolean;
   /** True when a late payment could not re-claim stock and needs a human. */
   paymentReviewRequired: boolean;
+  /** True when a late payment could not restore its coupon use. */
+  couponReviewRequired: boolean;
   /** Created when the captured payment cannot be fulfilled. */
   refundObligationCreated: boolean;
   refundObligationAmountPaise: number;
@@ -706,6 +853,7 @@ function noopTransition(
     stockReleased: false,
     stockReclaimed: false,
     paymentReviewRequired: false,
+    couponReviewRequired: false,
     refundObligationCreated: false,
     refundObligationAmountPaise: 0,
     fulfilmentSteps: [],
@@ -718,6 +866,14 @@ function noopTransition(
  */
 export const LATE_PAYMENT_REVIEW_REASON =
   'Payment captured after the order was cancelled; the released stock could not be re-claimed. Review stock and any refund manually.';
+
+/**
+ * Reason stored when a verified late payment cannot restore its coupon use
+ * because another customer has taken the last redemption since. The order
+ * stays paid; a human reviews the discount.
+ */
+export const COUPON_LATE_REVIEW_REASON =
+  'Payment captured after the coupon use was released and the limit no longer allows restoring it. The order is paid; review the discount manually.';
 
 /**
  * Apply Order settings to a freshly paid order. Every step is a legal
@@ -791,6 +947,25 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
     });
     console.warn(
       `[payu] late payment for ${result.order.txnid} could not re-claim stock; flagged for review`,
+    );
+  }
+
+  if (result.couponReviewRequired) {
+    await writeAudit({
+      action: 'coupon.late_restore_review',
+      entity: 'order',
+      entityId: result.order.txnid,
+      status: 'flagged',
+      reason: 'coupon_limit_unavailable_for_restore',
+      after: {
+        previousStatus: result.previousStatus,
+        status: result.order.status,
+        couponCode: result.order.couponCode,
+      },
+      route: 'payment-verification',
+    });
+    console.warn(
+      `[payu] late payment for ${result.order.txnid} could not restore its coupon use; flagged for review`,
     );
   }
 
@@ -940,11 +1115,35 @@ export async function transitionOrderStatusUsing(
       )
     `;
 
+    // The coupon use follows the stock hold: a paid order consumes it in
+    // place; a release decided above gives it back. A duplicate callback finds
+    // no RESERVED row and changes nothing.
+    let couponReviewRequired = false;
+    if (isBecomingPaid) {
+      const restore = await restoreCouponAfterLatePayment(tx, current.id);
+      if (restore === 'limit-unavailable') {
+        couponReviewRequired = true;
+      } else {
+        await consumeCouponInTx(tx, current.id);
+      }
+    }
+
     // Only a release decided above moves stock here. A timed failure keeps its
     // claim until the grace deadline, which the reconciler enforces.
     let stockReleased = false;
     if (releaseNow) {
       stockReleased = await releaseClaimedStock(tx, current.id);
+      await releaseCouponInTx(tx, current.id, releaseReason);
+    }
+
+    if (couponReviewRequired) {
+      await tx`
+        UPDATE orders
+        SET payment_review_required = true,
+            payment_review_reason = ${COUPON_LATE_REVIEW_REASON},
+            updated_at = now()
+        WHERE id = ${current.id}
+      `;
     }
 
     // A payment that arrives after its units were given back must not silently
@@ -1024,6 +1223,7 @@ export async function transitionOrderStatusUsing(
       stockReleased,
       stockReclaimed,
       paymentReviewRequired,
+      couponReviewRequired,
       refundObligationCreated,
       refundObligationAmountPaise,
       fulfilmentSteps,
@@ -1201,6 +1401,7 @@ export async function releaseOrderReservation(
     }
 
     const stockReleased = await releaseClaimedStock(tx, current.id);
+    await releaseCouponInTx(tx, current.id, input.reason);
     const nextStatus = input.cancelOrder
       && (current.status === 'CREATED' || current.status === 'PENDING' || current.status === 'PROCESSING')
       ? 'CANCELLED'
