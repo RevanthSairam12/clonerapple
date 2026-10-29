@@ -7,7 +7,7 @@ reached through `.env.local`.
 
 | Check | Result |
 |---|---|
-| `npm test` | **581 tests, 581 pass, 0 fail** (≈213 s with the database suites) |
+| `npm test` | **592 tests, 592 pass, 0 fail** (≈210 s with the database suites) |
 | `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported (last run 26 October 2026) |
 | `node scripts/check-store-admin-routes.mjs` | **All 94 store-admin routes are guarded** |
 | `node scripts/check-setting-lists.mjs` | all 14 settings tables readable, 114 notification cells |
@@ -891,9 +891,11 @@ call it, so the discount the customer sees is the discount that is charged.
 - **Scopes.** `ORDER`, `PRODUCTS`, `CATEGORIES`, `BRANDS`; targets live in
   `coupon_targets` (exactly one of product/category/brand per row). A line outside the
   scope pays full price, and its allocated discount is zero.
-- **Sale prices.** By default a coupon skips lines charged at a live sale price. When the
-  whole eligible scope is on sale the code is refused with *“This code is not valid on
-  sale items.”* `allow_with_sale_price` lifts the restriction.
+- **Sale prices.** By default a coupon skips lines charged at a live sale price. With sale
+  mode live and a mixed cart, only the full-price lines are discounted and the box notes
+  *“Not valid on sale items.”*; when the whole eligible scope is on sale the code is
+  refused with *“This code is not valid on sale items.”* `allow_with_sale_price` lifts the
+  restriction.
 - **Minimum order** is compared with the pre-discount subtotal on the database clock.
   `starts_at` is inclusive and `ends_at` exclusive: at the end instant the code is
   already expired.
@@ -901,6 +903,10 @@ call it, so the discount the customer sees is the discount that is charged.
   rejected — to keep the payable at or above it, and the customer is told *“The discount
   was adjusted to keep the order payable.”* A cart whose own subtotal is below ₹1 is
   refused instead of being sent to PayU.
+- **No benefit, no record.** A code that would change nothing — free shipping on an order
+  that already ships free, or a value that floors to zero paise — is refused with *“This
+  code does not take anything off this order.”* and no redemption row is written. A scoped
+  code with no eligible line is refused generically, also before any write.
 - **Allocation.** The order discount is spread across the eligible lines with the
   largest-remainder method; `order_items.discount_paise` is that share, the shares sum
   exactly to `orders.discount_paise`, and returns/refunds compare against
@@ -948,17 +954,30 @@ call it, so the discount the customer sees is the discount that is charged.
   “temporarily unavailable” and never invents a discount; `/api/payu/initiate` creates no
   order and answers `coupon_unavailable` when a code was sent, so checkout proceeds
   normally once the code is removed. An unverified discount is never applied.
+- **Retiring a code.** Archiving is the only retirement path and a coupon row is never
+  removed. `DELETE /api/store-admin/coupons/[id]` refuses with **409** (`code:
+  coupon_in_use`, *“This coupon has usage history and cannot be deleted. Archive it
+  instead.”*) when the coupon has **any** redemption — RESERVED, CONSUMED or RELEASED. An
+  unused coupon is archived instead of deleted and the route answers `200 { archived: true,
+  deleted: false }`. Either path writes a `coupon.archive` audit row, and the explicit
+  **Archive** action on the detail page goes through the same status route as before.
 - **POS never uses coupons.** No POS route or rule file mentions a coupon; a source guard
   in the tests enforces it.
 - **Settings.** Payments → **Coupons** holds `coupons_enabled` (on by default; off hides
   the box and refuses codes at Pay without touching existing orders) and
   `refunds_restore_coupon` (off by default).
 - **Evidence.** `tests/coupon-rules.test.mjs` (percent floor and cap, fixed, free shipping,
-  scopes, sale exclusion, minimum order, ₹1 floor, never-negative, allocation, messages,
-  admin parsing/audit masking, code generation), `tests/coupon-db-integration.test.mjs`
-  (limits, customer history, the row-lock race, the full lifecycle, late-payment restore
-  and review flag, refund restore) and `tests/coupon-guards.test.mjs` (migration RLS,
-  route guards/audit, preview leaks, storefront wiring, POS isolation, notifications).
+  scopes with mixed carts, sale exclusion and its exact message, minimum order, ₹1 floor,
+  zero-benefit refusal, never-negative, allocation, messages, admin parsing/audit masking,
+  code generation), `tests/coupon-db-integration.test.mjs` (limits, customer history,
+  scopes by product/category/brand on a mixed cart, the row-lock race, the full lifecycle,
+  late-payment restore and review flag, refund restore, archive-on-delete for unused and
+  used codes), `tests/coupon-order-integration.test.mjs` (real `createOrderUsing`: free
+  shipping zeroes shipping, the order total and the PayU amount and the refund cap; sale
+  lines skipped; scoped allocations; a no-benefit code writes no order and no redemption)
+  and `tests/coupon-guards.test.mjs` (migration RLS, route guards/audit, DELETE
+  semantics, preview leaks and message pass-through, storefront wiring, POS isolation,
+  notifications).
 - **Migration.** `0041_coupons.sql` creates `coupons`, `coupon_targets` and
   `coupon_redemptions`, all with RLS enabled and no policies; adds `orders.coupon_id`,
   `orders.coupon_snapshot`, `order_items.discount_paise` and its bounds check. Additive
@@ -1142,7 +1161,8 @@ duplicate (fresh generated code, paused) and archive go through
 definition, copies them or downloads a CSV. Reads need `store_viewer`, writes
 `store_admin`; every route calls `assertSameOrigin` and `writeAudit`, and the audit
 records counts of restricted emails/groups, never the addresses. An archived coupon is
-read-only.
+read-only. `DELETE` on a coupon never removes the row: it answers 409 when the code has
+any redemption and archives an unused code instead (§2.18).
 
 **Inventory controls:** the product page's **Inventory** card shows on hand, reserved
 and available (= on hand − reserved), a Track inventory toggle and the low-stock
@@ -1531,7 +1551,7 @@ secret still allows a manual run.
 npm install
 npm run db:migrate          # applies migrations/*.sql in order
 npm run dev                 # http://localhost:3000
-npm test                    # 581 tests
+npm test                    # 592 tests
 npm run typecheck
 npm run build
 node scripts/catalog-parity.mjs                 # read-only static ↔ database parity report
@@ -1567,7 +1587,7 @@ exhaust it; keep script connection pools at `max: 1`.
 | DB pricing | `src/lib/payu/db-catalog.ts` |
 | Sale pricing | `src/lib/storefront/{pricing,sale,sale-state}.ts`, `src/lib/catalog/storefront.ts` (`applySaleDisplay`), `src/lib/storefront/catalog.ts`, `src/lib/store-admin/{sale,sale-admin-rules}.ts`, `src/app/(store-admin)/store-admin/(protected)/sale/page.tsx`, `src/app/api/store-admin/sale/route.ts`, `src/components/store-admin/{SaleStatusBadge,SaleSettingsForm,SaleBulkActions,SaleProductRow,ProductPriceEditor}.tsx`, `migrations/0039_sale_pricing.sql`, `tests/{sale-pricing,sale-admin,sale-boundary-display}.test.mjs` |
 | POS entered prices | `src/lib/store-admin/{pos,pos-rules}.ts`, `src/components/store-admin/PosTill.tsx`, `src/app/api/store-admin/pos/sales/route.ts`, `migrations/0040_pos_entered_prices.sql`, `tests/pos-entered-prices.test.mjs` |
-| Coupons | `src/lib/coupons/{rules,codes,store,errors}.ts`, `src/lib/store-admin/{coupons,coupon-rules}.ts`, `src/components/cart/{CouponBox.tsx}`, `src/lib/cart/useCoupon.ts`, `src/app/api/coupons/validate/route.ts`, `src/app/api/store-admin/coupons/**`, `src/app/api/store-admin/reports/coupon-usage/export/route.ts`, `src/app/(store-admin)/store-admin/(protected)/coupons/**`, `src/app/(store-admin)/store-admin/(protected)/reports/coupon-usage/page.tsx`, `src/components/store-admin/{CouponForm,CouponActions}.tsx`, `migrations/0041_coupons.sql`, `tests/{coupon-rules,coupon-db-integration,coupon-guards}.test.mjs` |
+| Coupons | `src/lib/coupons/{rules,codes,store,errors}.ts`, `src/lib/store-admin/{coupons,coupon-rules}.ts`, `src/components/cart/{CouponBox.tsx}`, `src/lib/cart/useCoupon.ts`, `src/app/api/coupons/validate/route.ts`, `src/app/api/store-admin/coupons/**`, `src/app/api/store-admin/reports/coupon-usage/export/route.ts`, `src/app/(store-admin)/store-admin/(protected)/coupons/**`, `src/app/(store-admin)/store-admin/(protected)/reports/coupon-usage/page.tsx`, `src/components/store-admin/{CouponForm,CouponActions}.tsx`, `migrations/0041_coupons.sql`, `tests/{coupon-rules,coupon-db-integration,coupon-order-integration,coupon-guards}.test.mjs` |
 | Availability at checkout | `src/lib/storefront/{availability-rules,availability-server,use-availability}.ts`, `src/app/api/catalog/availability/route.ts`, `src/components/{shop/ProductDetailPage,sites/accessories/AccessoryDetailPage,cart/CartPageView,checkout/CheckoutForm}.tsx`, `src/lib/payu/db-pricing.ts`, `tests/stock-behaviour.test.mjs` |
 | PayU | `src/lib/payu/*`, `src/app/api/payu/*` |
 | Stock claim/release | `src/lib/payu/stock.ts` |
