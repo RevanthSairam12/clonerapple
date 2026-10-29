@@ -100,6 +100,7 @@ export type CouponRejectReason =
   | 'min_order'
   | 'sale_items_excluded'
   | 'no_eligible_items'
+  | 'no_discount'
   | 'below_minimum_payable';
 
 export type CouponEvaluation =
@@ -172,6 +173,8 @@ export function couponRejectionMessage(
       return 'You have already used this code.';
     case 'sale_items_excluded':
       return 'This code is not valid on sale items.';
+    case 'no_discount':
+      return 'This code does not take anything off this order.';
     case 'not_eligible_customer':
       return 'This code is not valid for this account.';
     case 'used_up':
@@ -350,6 +353,7 @@ export function evaluateCoupon(input: {
   if (eligibleSubtotal <= 0) return reject('no_eligible_items');
 
   let shippingPaise = Math.max(0, Math.trunc(context.shippingPaise));
+  const originalShippingPaise = shippingPaise;
   let rawDiscount = 0;
 
   if (coupon.type === 'PERCENT') {
@@ -380,6 +384,14 @@ export function evaluateCoupon(input: {
   );
 
   if (totalPaise < MIN_PAYABLE_PAISE) return reject('below_minimum_payable');
+
+  // A code that changes nothing — no line discount and no shipping saving —
+  // would consume a use and show the customer no benefit. Free shipping on an
+  // order that already ships free, or a percentage that floors to zero paise,
+  // is refused here so the checkout never records a zero-value redemption.
+  if (discountPaise === 0 && shippingPaise === originalShippingPaise) {
+    return reject('no_discount');
+  }
 
   const allocations = allocateDiscount(
     discountPaise,

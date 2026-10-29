@@ -257,6 +257,21 @@ test('free shipping removes the shipping charge and no line value', () => {
   assert.deepEqual(result.allocations, [0]);
 });
 
+test('a code that takes nothing off the order is refused, not recorded', () => {
+  // Free shipping when the shipping quote is already zero: the customer gets
+  // no benefit, so the code must not turn into a zero-value redemption.
+  const freeShipping = run(
+    definition({ type: 'FREE_SHIPPING', value: 0 }),
+    [line({ unitPaise: 20000 })],
+    { shippingPaise: 0 },
+  );
+  assert.equal(reasonOf(freeShipping), 'no_discount');
+  assert.equal(freeShipping.message, 'This code does not take anything off this order.');
+
+  const zeroFixed = run(definition({ type: 'FIXED', value: 0 }), [line()]);
+  assert.equal(reasonOf(zeroFixed), 'no_discount');
+});
+
 /* ----------------------------------------------------------------- scope */
 
 test('scope matching is by product, category or brand id', () => {
@@ -278,13 +293,19 @@ test('scope matching is by product, category or brand id', () => {
     definition({ scope: 'CATEGORIES', targets: [{ categoryId: 'c1' }], value: 10 }),
     lines,
   );
+  assert.equal(byCategory.ok, true);
   assert.deepEqual(byCategory.eligibleLineIndexes, [0]);
+  assert.deepEqual(byCategory.allocations, [1000, 0]);
+  assert.equal(byCategory.discountPaise, 1000);
 
   const byBrand = run(
     definition({ scope: 'BRANDS', targets: [{ brandId: 'b2' }], value: 10 }),
     lines,
   );
+  assert.equal(byBrand.ok, true);
   assert.deepEqual(byBrand.eligibleLineIndexes, [1]);
+  assert.deepEqual(byBrand.allocations, [0, 1000]);
+  assert.equal(byBrand.discountPaise, 1000);
 
   assert.equal(lineMatchesScope(lines[0], 'ORDER', []), true);
 });
@@ -313,7 +334,8 @@ test('sale-priced lines are excluded unless the code allows them', () => {
   assert.equal(excluded.ok, true);
   assert.deepEqual(excluded.eligibleLineIndexes, [1]);
   assert.deepEqual(excluded.allocations, [0, 3000]);
-  assert.match(excluded.message, /sale/i);
+  // This is the exact sentence the bag and checkout box render.
+  assert.equal(excluded.message, 'Not valid on sale items.');
 
   const allowed = run(definition({ value: 10, allowWithSalePrice: true }), lines);
   assert.deepEqual(allowed.eligibleLineIndexes, [0, 1]);
@@ -321,6 +343,7 @@ test('sale-priced lines are excluded unless the code allows them', () => {
 
   const onlySale = run(definition({ value: 10 }), [lines[0]]);
   assert.equal(reasonOf(onlySale), 'sale_items_excluded');
+  assert.equal(onlySale.message, 'This code is not valid on sale items.');
 });
 
 /* ------------------------------------------------------------ the floor */
