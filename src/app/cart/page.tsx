@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import { CartPageView } from '@/components/cart/CartPageView';
-import { readShippingPolicy } from '@/lib/checkout/settings';
+import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { EMPTY_SHIPPING_POLICY } from '@/lib/checkout/shipping-rules';
 import { getStorefrontRefs } from '@/lib/storefront/catalog';
+import { getUserSession } from '@/lib/user-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,15 +13,18 @@ export const metadata: Metadata = {
 };
 
 export default async function CartPage() {
-  const [{ products, saleLive }, policy] = await Promise.all([
+  const [{ products, saleLive }, configuration, session] = await Promise.all([
     getStorefrontRefs(),
-    readShippingPolicy(),
+    readCheckoutConfiguration(),
+    getUserSession(),
   ]);
   return (
     <CartPageView
       initialProducts={products}
-      shippingPolicy={policy.ok ? policy.policy : EMPTY_SHIPPING_POLICY}
+      shippingPolicy={configuration.ok ? configuration.policy : EMPTY_SHIPPING_POLICY}
       saleLive={saleLive}
+      customerEmail={session?.email || null}
+      couponsEnabled={configuration.ok && configuration.settings.coupons_enabled === 'on'}
     />
   );
 }

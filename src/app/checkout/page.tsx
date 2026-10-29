@@ -95,6 +95,7 @@ export default async function CheckoutPage({ searchParams }: Props) {
         paymentNote={checkoutConfiguration.ok ? checkoutConfiguration.settings.payment_note : ''}
         saleLive={saleLive}
         stockById={stockById}
+        couponsEnabled={checkoutConfiguration.ok && isOn(checkoutConfiguration.settings.coupons_enabled)}
       />
     </div>
   );

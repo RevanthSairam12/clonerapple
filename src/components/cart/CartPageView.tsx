@@ -8,6 +8,8 @@ import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
+import { useCoupon } from '@/lib/cart/useCoupon';
+import { CouponBox } from '@/components/cart/CouponBox';
 import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
 import { stockBlocked } from '@/lib/storefront/availability-rules';
 import type { SearchResultItem } from '@/lib/search/searchService';
@@ -32,9 +34,13 @@ interface Props {
    * disables a line for stock: the authoritative check happens at Pay.
    */
   saleLive: boolean;
+  /** Signed-in customer email, used to check account-restricted codes early. */
+  customerEmail?: string | null;
+  /** Payments → Coupons. Off hides the box; the server refuses codes anyway. */
+  couponsEnabled?: boolean;
 }
 
-export function CartPageView({ initialProducts, shippingPolicy, saleLive }: Props) {
+export function CartPageView({ initialProducts, shippingPolicy, saleLive, customerEmail = null, couponsEnabled = true }: Props) {
   const { items, totalCount, updateQuantity, removeItem, addItem } = useCart();
 
   const productsById = useMemo(() => {
@@ -83,6 +89,25 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive }: Prop
   }, 0);
   // The same quote the initiate route computes from the database subtotal.
   const shippingAmount = quoteShipping(Math.round(payableAmount * 100), shippingPolicy).shippingPaise / 100;
+
+  // Coupon preview against the lines checkout will actually charge for. The
+  // server re-evaluates the same rules at Pay; this only shows the numbers.
+  const coupon = useCoupon({
+    items: availableItems.map((item) => {
+      const ref = refFor(item);
+      return {
+        id: getCartLineBaseId(item.productId || item.id) || item.productId || item.id,
+        quantity: item.quantity,
+        price: ref ? ref.pricePaise / 100 : item.price,
+      };
+    }),
+    subtotalPaise: Math.round(payableAmount * 100),
+    shippingPaise: Math.round(shippingAmount * 100),
+    email: customerEmail || user?.email || '',
+    enabled: couponsEnabled && availableItems.length > 0,
+  });
+  const discountAmount = coupon.totals.discountPaise / 100;
+  const totalAmount = coupon.totals.totalPaise / 100;
 
   // Check user session
   useEffect(() => {
@@ -393,18 +418,32 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive }: Prop
                     </div>
                     <div className="flex justify-between text-[#86868b]">
                       <span>Shipping</span>
-                      <span className={shippingAmount > 0 ? 'text-[#1d1d1f] font-semibold' : 'text-[#34c759] font-semibold'}>
-                        {shippingAmount > 0
-                          ? `₹${shippingAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                      <span className={coupon.totals.shippingPaise > 0 ? 'text-[#1d1d1f] font-semibold' : 'text-[#34c759] font-semibold'}>
+                        {coupon.totals.shippingPaise > 0
+                          ? `₹${(coupon.totals.shippingPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
                           : 'FREE'}
                       </span>
                     </div>
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-emerald-700">
+                        <span>Discount{coupon.applied ? ` (${coupon.applied.code})` : ''}</span>
+                        <span className="font-semibold">
+                          −₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
                   </div>
+
+                  {couponsEnabled && (
+                    <div className="mb-4">
+                      <CouponBox coupon={coupon} />
+                    </div>
+                  )}
 
                   <div className="flex justify-between items-baseline mb-6">
                     <span className="font-semibold text-base text-[#1d1d1f]">Total Payable</span>
                     <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
-                      ₹{(payableAmount + shippingAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 

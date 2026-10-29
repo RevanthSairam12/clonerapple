@@ -12,6 +12,8 @@ import {
   quoteShipping,
   type ShippingPolicy,
 } from '@/lib/checkout/shipping-rules';
+import { useCoupon } from '@/lib/cart/useCoupon';
+import { CouponBox } from '@/components/cart/CouponBox';
 
 interface CartItem {
   id: string;
@@ -65,9 +67,11 @@ interface Props {
    * catalogue is used, which is what this form did before stock was wired.
    */
   stockById?: Record<string, boolean>;
+  /** Payments → Coupons. Off hides the box; the server refuses codes anyway. */
+  couponsEnabled?: boolean;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '', saleLive = false, stockById }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '', saleLive = false, stockById, couponsEnabled = true }: Props) {
   const { items: bagItems, removeItem, syncPrices, isHydrated } = useCart();
 
   const decision = decideCheckoutView({
@@ -187,7 +191,22 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   const subtotalAmount = payableItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
   const shippingAmount =
     quoteShipping(Math.round(subtotalAmount * 100), shippingPolicy).shippingPaise / 100;
-  const totalAmount = subtotalAmount + shippingAmount;
+
+  // The coupon preview runs the same server rules checkout will run under the
+  // row lock. The shown total is only ever the server's answer.
+  const coupon = useCoupon({
+    items: payableItems.map((i) => ({
+      id: getCartLineBaseId(i.productId || i.id) || i.productId || i.id,
+      quantity: i.quantity,
+      price: i.price,
+    })),
+    subtotalPaise: Math.round(subtotalAmount * 100),
+    shippingPaise: Math.round(shippingAmount * 100),
+    email,
+    enabled: couponsEnabled && payableItems.length > 0,
+  });
+  const discountAmount = coupon.totals.discountPaise / 100;
+  const totalAmount = coupon.totals.totalPaise / 100;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -234,6 +253,16 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     setIsSubmitting(true);
 
     try {
+      // Re-check the code against the cart as it stands right now. If it no
+      // longer holds, nothing is sent: the customer must see the new total
+      // before paying instead of being charged something they did not agree to.
+      const checkedCoupon = couponsEnabled ? await coupon.revalidate() : null;
+      if (couponsEnabled && coupon.appliedCode && !checkedCoupon) {
+        setIsSubmitting(false);
+        setErrorMessage('The coupon was removed. Please review your updated total and pay again.');
+        return;
+      }
+
       let shippingAddressId = selectedAddressId;
       // Guests have no address book; the address rides along with the order.
       if (!shippingAddressId && saveNewAddress && userSession) {
@@ -261,6 +290,11 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
             quantity: i.quantity,
             expectedUnitPaise: Math.round(i.price * 100),
           })),
+          // Only the code is sent. The discount and the amount are computed
+          // server-side inside the order transaction; `expectedTotalPaise` is
+          // a comparison guard, never a charge amount.
+          couponCode: checkedCoupon?.code,
+          expectedTotalPaise: checkedCoupon?.totalPaise,
           customer: {
             firstname: firstName.trim(),
             email: email.trim().toLowerCase(),
@@ -289,6 +323,22 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           syncPrices(updates);
           setIsSubmitting(false);
           setErrorMessage('Prices have changed, please review your cart.');
+          return;
+        }
+        // The server refused the code at Pay. The discount is already gone
+        // from this page; drop the stored code too so paying again is clean.
+        if (res.status === 409 && data.code === 'coupon_invalid') {
+          coupon.remove();
+          setIsSubmitting(false);
+          setErrorMessage(data.error || 'This code is not valid for your cart.');
+          return;
+        }
+        // Coupons could not be checked. Nothing was created and nothing is
+        // charged; paying again without the code goes through normally.
+        if (res.status === 409 && data.code === 'coupon_unavailable') {
+          coupon.remove();
+          setIsSubmitting(false);
+          setErrorMessage('The coupon could not be checked. Review your total and pay again without the code.');
           return;
         }
         throw new Error(data.error || 'Failed to initiate payment.');
@@ -491,7 +541,38 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                .join(', ')} is unavailable. Remove it to continue to payment.
           </div>
         )}
-        <div className="border-t border-[#e5e5ea] mt-4 pt-4 flex justify-between items-baseline font-semibold">
+        <div className="mt-4 space-y-2 border-t border-[#e5e5ea] pt-4 text-sm">
+          <div className="flex justify-between text-[#86868b]">
+            <span>Subtotal</span>
+            <span className="font-medium text-[#1d1d1f]">
+              ₹{subtotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+          <div className="flex justify-between text-[#86868b]">
+            <span>Shipping</span>
+            <span className={coupon.totals.shippingPaise > 0 ? 'font-semibold text-[#1d1d1f]' : 'font-semibold text-[#34c759]'}>
+              {coupon.totals.shippingPaise > 0
+                ? `₹${(coupon.totals.shippingPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                : 'FREE'}
+            </span>
+          </div>
+          {discountAmount > 0 && (
+            <div className="flex justify-between text-emerald-700">
+              <span>Discount{coupon.applied ? ` (${coupon.applied.code})` : ''}</span>
+              <span className="font-semibold">
+                −₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {couponsEnabled && (
+          <div className="py-3">
+            <CouponBox coupon={coupon} compact />
+          </div>
+        )}
+
+        <div className="border-t border-[#e5e5ea] pt-4 flex justify-between items-baseline font-semibold">
           <span>Total Payable</span>
           <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
             ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
