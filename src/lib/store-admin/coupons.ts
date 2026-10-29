@@ -765,6 +765,88 @@ export async function setCouponStatus(
   }
 }
 
+export interface CouponDeleteSnapshot {
+  before: CouponAdminRow;
+  after: CouponAdminRow;
+  /** Always false: DELETE archives, it never removes a row. */
+  deleted: false;
+}
+
+/**
+ * The DELETE path. A coupon row is never removed: any redemption — RESERVED,
+ * CONSUMED or RELEASED — is a permanent usage record, so a code that has one
+ * is refused with a conflict and staff must archive it explicitly. A coupon
+ * that has never been redeemed is archived here instead, which retires the
+ * code without destroying its target list or audit trail.
+ *
+ * `connection` exists so the integration tests can run this against a
+ * throwaway schema; production always uses the configured pool.
+ */
+export async function archiveCouponOnDelete(
+  id: string,
+  connection?: postgres.Sql,
+): Promise<CatalogWrite<CouponDeleteSnapshot>> {
+  const sql = connection ?? getSql();
+  if (!sql) return fail('unavailable', 'Coupons are not available.');
+
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = (await tx`
+        select * from coupons where id = ${id} for update
+      `) as Row[];
+      if (rows.length === 0) return fail('not-found', 'That coupon does not exist.');
+
+      const current = mapRow({ ...rows[0], used: 0, target_count: 0 });
+      if (current.status === 'archived') {
+        return fail('conflict', 'This coupon is already archived.');
+      }
+
+      const usageRows = (await tx`
+        select count(*)::int as total
+        from coupon_redemptions
+        where coupon_id = ${id}
+      `) as Row[];
+      if (Number(usageRows[0]?.total ?? 0) > 0) {
+        return fail(
+          'conflict',
+          'This coupon has usage history and cannot be deleted. Archive it instead.',
+        );
+      }
+
+      const archivedAt = new Date();
+      await tx`
+        update coupons
+        set status = 'archived', archived_at = ${archivedAt}, updated_at = now()
+        where id = ${id}
+      `;
+
+      return {
+        ok: true,
+        data: {
+          before: current,
+          after: {
+            ...current,
+            status: 'archived',
+            archivedAt: archivedAt.toISOString(),
+            updatedAt: archivedAt.toISOString(),
+            badge: couponListBadge({
+              status: 'archived',
+              startsAt: current.startsAt,
+              endsAt: current.endsAt,
+              used: 0,
+              totalLimit: current.totalRedemptionLimit,
+            }),
+          },
+          deleted: false,
+        },
+      };
+    });
+  } catch {
+    console.warn('[store-admin/coupons] could not archive a coupon on delete');
+    return fail('unavailable', 'The coupon could not be deleted.');
+  }
+}
+
 /**
  * Copy a coupon as a paused draft with a fresh generated code, so a duplicate
  * never starts taking money the moment it is created.

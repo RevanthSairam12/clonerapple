@@ -114,6 +114,37 @@ test('the route guard script lists every new route', async () => {
   }
 });
 
+test('DELETE archives an unused coupon and refuses one that was used', async () => {
+  const route = await source('src/app/api/store-admin/coupons/[id]/route.ts');
+  assert.match(route, /export async function DELETE/);
+  assert.match(route, /archiveCouponOnDelete\(id\)/);
+  assert.match(route, /code: 'coupon_in_use'/);
+  assert.match(route, /deleted: false/);
+  assert.match(route, /action: 'coupon\.archive'/);
+
+  const lib = await source('src/lib/store-admin/coupons.ts');
+  assert.match(lib, /from coupon_redemptions\s+where coupon_id/);
+  assert.match(lib, /Archive it instead/);
+  assert.match(lib, /set status = 'archived', archived_at =/);
+  // DELETE never removes a row; no hard delete exists in the coupon store.
+  assert.doesNotMatch(lib, /delete from coupons/i);
+});
+
+test('the coupon box shows the server message, including the sale note', async () => {
+  const box = await source('src/components/cart/CouponBox.tsx');
+  assert.match(box, /\{coupon\.message\}/);
+
+  const rules = await source('src/lib/coupons/rules.ts');
+  assert.match(rules, /'Not valid on sale items\.'/);
+  assert.match(rules, /'This code does not take anything off this order\.'/);
+  assert.match(rules, /return reject\('no_discount'\)/);
+
+  // The preview answers with the evaluation's own message, so the sentence the
+  // rules produce is the sentence the bag renders.
+  const validate = await source('src/app/api/coupons/validate/route.ts');
+  assert.match(validate, /message: result\.evaluation\.message/);
+});
+
 test('the coupon audit never records the restricted email addresses', async () => {
   const rules = await source('src/lib/store-admin/coupon-rules.ts');
   assert.match(rules, /restrictedEmails: values\.restrictedToEmails\?\.length \?\? 0/);

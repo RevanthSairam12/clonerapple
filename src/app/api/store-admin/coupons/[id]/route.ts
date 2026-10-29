@@ -4,13 +4,15 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { couponAuditFromRow, parseCouponInput } from '@/lib/store-admin/coupon-rules';
-import { getCoupon, updateCoupon } from '@/lib/store-admin/coupons';
+import { archiveCouponOnDelete, getCoupon, updateCoupon } from '@/lib/store-admin/coupons';
 
 /**
- * One coupon: detail with usage (any store role) and edits (store_admin+).
+ * One coupon: detail with usage (any store role), edits and DELETE
+ * (store_admin+).
  *
- * There is no DELETE. Archiving is the only retirement path, so a code that
- * has ever been redeemed keeps its permanent usage record.
+ * DELETE never removes a row. A code with any redemption keeps its permanent
+ * usage record and is refused with 409; an unused code is archived instead,
+ * so the target list and audit trail survive too.
  */
 
 export const dynamic = 'force-dynamic';
@@ -78,4 +80,46 @@ export async function PATCH(request: Request, { params }: Props) {
   });
 
   return NextResponse.json({ coupon: after });
+}
+
+export async function DELETE(request: Request, { params }: Props) {
+  const originViolation = assertSameOrigin(request);
+  if (originViolation) return originViolation;
+
+  const guard = await requireStoreRole('store_admin');
+  if (!guard.ok) return guard.response;
+
+  const { id } = await params;
+  const result = await archiveCouponOnDelete(id);
+  if (!result.ok) {
+    if (result.reason === 'not-found') {
+      return NextResponse.json({ error: result.error }, { status: 404 });
+    }
+    if (result.reason === 'conflict') {
+      return NextResponse.json(
+        { error: result.error, code: 'coupon_in_use' },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ error: 'The coupon could not be deleted.' }, { status: 503 });
+  }
+
+  const { before, after } = result.data;
+  await writeAudit({
+    actorId: guard.session.adminId,
+    actorEmail: guard.session.email,
+    action: 'coupon.archive',
+    entity: 'coupon',
+    entityId: after.id,
+    before: couponAuditFromRow(before),
+    after: couponAuditFromRow(after),
+    reason: 'staff_deleted',
+    request,
+  });
+
+  // 200 with the archived coupon: nothing was removed, the code was retired.
+  return NextResponse.json(
+    { coupon: after, archived: true, deleted: false },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
 }
