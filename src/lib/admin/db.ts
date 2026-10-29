@@ -11,7 +11,20 @@ import postgres from 'postgres';
 
 type Sql = ReturnType<typeof postgres>;
 
-let sql: Sql | null = null;
+/**
+ * One pool per process, not one per evaluated module.
+ *
+ * `next dev` compiles server code into more than one graph (pages, route
+ * handlers, instrumentation) and re-evaluates modules on edits. A module-local
+ * singleton therefore opens an extra pool per graph and per edit, and none of
+ * the old ones is ever closed. The session pooler allows 15 clients in total,
+ * so a few of those pools surface as `EMAXCONNSESSION: max clients reached`
+ * on ordinary page loads. A `globalThis` slot survives re-evaluation and is
+ * shared by every graph in the process; in production it is simply the one
+ * process-wide pool.
+ */
+const globalForSql = globalThis as typeof globalThis & { __gadzioSql?: Sql | null };
+
 let warned = false;
 
 export function getSql(): Sql | null {
@@ -24,7 +37,7 @@ export function getSql(): Sql | null {
     }
     return null;
   }
-  if (!sql) {
+  if (!globalForSql.__gadzioSql) {
     // Supabase's Transaction pooler (…pooler.supabase.com:6543) runs PgBouncer
     // in transaction mode, which does not support prepared statements — the
     // postgres driver enables them by default, so turn them off for pooler
@@ -32,7 +45,7 @@ export function getSql(): Sql | null {
     const url = new URL(process.env.DATABASE_URL);
     const isPooler = url.hostname.includes('pooler') && url.port === '6543';
 
-    sql = postgres(process.env.DATABASE_URL, {
+    globalForSql.__gadzioSql = postgres(process.env.DATABASE_URL, {
       max: 5,
       // Supabase and most hosted Postgres require TLS.
       ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
@@ -40,5 +53,5 @@ export function getSql(): Sql | null {
       onnotice: () => {},
     });
   }
-  return sql;
+  return globalForSql.__gadzioSql;
 }
