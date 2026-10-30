@@ -1,9 +1,11 @@
+import { MaintenanceStatusBadge } from '@/components/store-admin/MaintenanceStatusBadge';
 import { SettingsForm } from '@/components/store-admin/SettingsForm';
 import { SettingsNav } from '@/components/store-admin/SettingsNav';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { secretStatus } from '@/lib/store-admin/secret-status';
 import { getStoreSettings } from '@/lib/store-admin/settings';
 import { DEFAULT_SETTINGS, fieldsForSection } from '@/lib/store-admin/settings-rules';
+import { getMaintenanceState, maintenanceStatus } from '@/lib/storefront/maintenance';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +14,7 @@ export default async function StoreAdminStorefrontSettingsPage() {
   const result = await getStoreSettings();
   const settings = result.ok ? result.settings : DEFAULT_SETTINGS;
   const canEdit = session?.role === 'store_admin' || session?.role === 'store_owner';
+  const maintenance = await getMaintenanceState();
   const secrets = secretStatus([
     { label: 'reCAPTCHA secret key', envVar: 'RECAPTCHA_SECRET_KEY' },
   ]);
@@ -25,6 +28,17 @@ export default async function StoreAdminStorefrontSettingsPage() {
       </p>
 
       <SettingsNav active="/store-admin/settings/storefront" />
+
+      <section className="sa-detail-card">
+        <div className="sa-detail-head">
+          <h2>Maintenance status</h2>
+        </div>
+        <MaintenanceStatusBadge status={maintenanceStatus(maintenance)} preview />
+        <p className="sa-note">
+          While maintenance is on, customers see the maintenance page and checkout cannot start.
+          Only an owner can change it, on Settings → Business &amp; maintenance.
+        </p>
+      </section>
 
       <SettingsForm
         fields={fieldsForSection('storefront')}

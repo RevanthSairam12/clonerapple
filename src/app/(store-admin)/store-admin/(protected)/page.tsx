@@ -1,7 +1,9 @@
 import Link from 'next/link';
 
+import { MaintenanceStatusBadge } from '@/components/store-admin/MaintenanceStatusBadge';
 import { OverviewChart } from '@/components/store-admin/OverviewChart';
 import { SaleStatusBadge } from '@/components/store-admin/SaleStatusBadge';
+import { getMaintenanceState, maintenanceStatus } from '@/lib/storefront/maintenance';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { formatPaise } from '@/lib/store-admin/amount';
@@ -712,6 +714,7 @@ export default async function StoreAdminDashboard({
 
   const session = await getStoreSession();
   const sale = await readSaleState();
+  const maintenance = await getMaintenanceState();
   const sales = tab === 'sales' ? await getSalesAnalytics(range) : null;
   const users = tab === 'users' ? await getUsersAnalytics(range) : null;
   const transactions =
@@ -743,6 +746,7 @@ export default async function StoreAdminDashboard({
             >
               <SaleStatusBadge status={sale.status} />
             </Link>
+            <MaintenanceStatusBadge status={maintenanceStatus(maintenance)} />
             {today}
           </p>
           <h1 className="sa-hero-title">Welcome back, {firstName}.</h1>

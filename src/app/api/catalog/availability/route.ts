@@ -4,6 +4,7 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { getSql } from '@/lib/admin/db';
 import { toPublicAvailability } from '@/lib/storefront/availability-rules';
 import { readAvailabilityUsing } from '@/lib/storefront/availability-server';
+import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 
 /**
@@ -30,6 +31,9 @@ function clientIp(request: Request): string {
 export async function GET(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
+
+  const closed = await requireStorefrontOpen();
+  if (closed) return closed;
 
   const limited = checkRateLimit(`catalog-availability:${clientIp(request)}`, {
     limit: 60,

@@ -24,6 +24,7 @@ import { hasUsableNumbering, readOrderNumberSettings } from '@/lib/orders/number
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
 import { subscribeToNewsletter } from '@/lib/store-admin/subscribers';
+import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const runtime = 'nodejs';
@@ -76,6 +77,11 @@ export async function POST(req: NextRequest) {
   try {
     const originViolation = assertSameOrigin(req);
     if (originViolation) return originViolation;
+
+    // Maintenance closes checkout: no order row is created, no stock is held.
+    const closed = await requireStorefrontOpen();
+    if (closed) return closed;
+
     const ip = getClientIp(req);
 
     // Rate limit per IP: max 20 initiate requests per 5 minutes

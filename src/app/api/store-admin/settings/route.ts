@@ -1,3 +1,4 @@
+import { revalidatePath } from 'next/cache';
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/admin/api-guard';
@@ -69,6 +70,12 @@ export async function PUT(request: Request) {
     const status =
       result.reason === 'invalid-input' ? 400 : result.reason === 'forbidden' ? 403 : 503;
     return NextResponse.json({ error: result.error }, { status });
+  }
+
+  // Maintenance takes effect on the next request, not after a cache window.
+  if (result.changes.some((change) => change.key.startsWith('maintenance_'))) {
+    revalidatePath('/', 'layout');
+    revalidatePath('/maintenance');
   }
 
   for (const change of result.changes) {

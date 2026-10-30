@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/admin/db';
+import { clearMaintenanceCache } from '@/lib/storefront/maintenance';
 
 import {
   DEFAULT_SETTINGS,
@@ -124,6 +125,11 @@ export async function updateStoreSettings(
             updated_at = now()
         `;
         changes.push({ key: item.key, before, after: item.value });
+      }
+      // A maintenance change must be visible on the next request rather than
+      // at the end of the cache window.
+      if (changes.some((change) => change.key.startsWith('maintenance_'))) {
+        clearMaintenanceCache();
       }
       return { ok: true as const, changes };
     });

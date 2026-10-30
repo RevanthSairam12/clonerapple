@@ -14,6 +14,7 @@ import {
 } from '@/lib/coupons/store';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { getUserSession } from '@/lib/user-auth';
 
 export const runtime = 'nodejs';
@@ -42,6 +43,9 @@ function invalid(message: string, status = 200) {
 export async function POST(req: NextRequest) {
   const originViolation = assertSameOrigin(req);
   if (originViolation) return originViolation;
+
+  const closed = await requireStorefrontOpen();
+  if (closed) return closed;
 
   const ip = getClientIp(req);
   const ipLimit = checkRateLimit(`coupon-validate-ip:${ip}`, {

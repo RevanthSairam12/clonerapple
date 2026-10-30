@@ -985,6 +985,43 @@ call it, so the discount the customer sees is the discount that is charged.
 
 ---
 
+### 2.19 Maintenance mode — 🟢 Live
+
+Owner-only, on Settings → Business & maintenance. Before this change the four keys were
+stored and editable but **nothing read them**; the storefront had no maintenance page.
+
+- **When it is on.** `maintenance_enabled = on` **and**, if a window is set, the database
+  clock (`now()`) is inside `maintenance_starts_at` … `maintenance_ends_at` (inclusive
+  start, exclusive end). With no window, the toggle alone decides. The window is typed as
+  `datetime-local`; Postgres resolves it with `… at time zone <store timezone>`, so both
+  sides of the comparison are absolute.
+- **What customers see.** Blocked page requests are answered **503** with a
+  `Retry-After` header and the maintenance page body (`renderMaintenanceDocument`), so
+  search engines keep the URL. `/maintenance` is also a real page (noindex, same copy,
+  same view model) that staff can preview. Blocked purchase APIs
+  (`/api/payu/initiate`, `/api/coupons/validate`, `/api/catalog/availability`,
+  `/api/account/*`) answer 503 JSON with the same message; `/api/payu/initiate` creates
+  no order and holds no stock.
+- **What is blocked.** `/`, `/shop/*`, `/in/shop/*`, `/search`, `/cart`, `/bag`,
+  `/checkout`, `/auth`, `/account/*` and the purchase APIs above.
+- **What always works.** `/store-admin` and `/api/store-admin/*`, `/admin` and
+  `/api/admin/*`, every PayU callback (`success`, `failure`, `cancel`, `webhook`,
+  `reconcile`), the order result pages (`/order/success|failed|cancelled|processing|status`),
+  `/api/media/*`, `/maintenance`, `_next`, favicon, robots and static assets. An
+  in-flight payment therefore settles and shows its result; `tests/maintenance-integration.test.mjs`
+  pays an order through the callback path with maintenance on.
+- **Fail open.** No database, a query error or an unparseable row all leave the store up.
+- **Cheap.** One query per 5 seconds (`MAINTENANCE_CACHE_MS`), cleared immediately when a
+  maintenance setting is saved; the settings route also revalidates the layout.
+- **Admin.** A LIVE / SCHEDULED / OFF badge and a “Preview maintenance page” link appear
+  on Settings → Storefront; the same small badge is on the Overview. The toggle stays
+  owner-only, audited like every other setting.
+- **Tests.** `tests/maintenance.test.mjs` (23 tests: window boundaries, every blocked and
+  allowed path, fail-open parsing, badge, copy escaping, owner-only, callback wiring) and
+  `tests/maintenance-integration.test.mjs`.
+
+---
+
 ## 3. Store admin (`/store-admin`)
 
 ### 3.0 Sign-in, sessions and roles — 🟢 Live
