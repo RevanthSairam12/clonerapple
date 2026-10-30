@@ -1,7 +1,8 @@
 /**
  * Notification readiness check. Needs no running server.
  *
- *   node scripts/check-notifications.mjs                   # inspect, never send
+ *   node scripts/check-notifications.mjs                   # inspect, fail if not ready
+ *   node scripts/check-notifications.mjs --informational   # inspect, exit 0 despite findings
  *   node scripts/check-notifications.mjs --send-to me@x.com  # also send one test email
  *
  * What it does:
@@ -254,6 +255,5 @@ console.log(`\nEmail previews: ${path.relative(root, previewDir)}${path.sep}inde
 
 const failed = rows.filter((row) => !row.ok);
 console.log(`\n${rows.length - failed.length} passed, ${failed.length} failed.`);
-// Not-ready-to-send is a finding, not a script fault; only a broken template or
-// an unsafe render fails the process.
-process.exit(failures > 0 ? 1 : 0);
+// Informational runs retain all findings while allowing inspection in automation.
+process.exit(args.includes('--informational') ? 0 : failed.length > 0 ? 1 : 0);
