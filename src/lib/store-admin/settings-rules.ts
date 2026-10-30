@@ -445,6 +445,15 @@ const FIELD_DEFINITIONS = [
     options: TOGGLE_OPTIONS,
   },
   { key: 'sms_sender_id', label: 'SMS sender id', kind: 'text', limit: 20, default: '', section: 'mail' },
+  {
+    key: 'sms_dlt_template_id',
+    label: 'MSG91 DLT template id',
+    kind: 'text',
+    limit: 40,
+    default: '',
+    section: 'mail',
+    help: 'India only. Carriers drop SMS that do not match a DLT-registered template. Paste the template id from your MSG91 / DLT portal. MSG91 sending stays off without it.',
+  },
 
   // -------------------------------------------------------- storefront
   {

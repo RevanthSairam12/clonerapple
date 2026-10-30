@@ -37,6 +37,7 @@ const SMS = {
   sms_gateway: 'msg91',
   sms_status: 'on',
   sms_sender_id: 'GADZIO',
+  sms_dlt_template_id: '1007000000000000000',
 };
 
 test('SMTP needs the driver, the switch, a host, a sender and the password', () => {
@@ -54,6 +55,10 @@ test('SMS needs a gateway, the switch, a sender and the right credentials', () =
   assert.match(smsConfigProblem({ ...SMS, sms_gateway: 'none' }, { MSG91_AUTH_KEY: 'x' }), /no gateway/);
   assert.match(smsConfigProblem({ ...SMS, sms_sender_id: '' }, { MSG91_AUTH_KEY: 'x' }), /sender id/);
   assert.match(smsConfigProblem(SMS, {}), /MSG91_AUTH_KEY is missing/);
+  assert.match(
+    smsConfigProblem({ ...SMS, sms_dlt_template_id: '' }, { MSG91_AUTH_KEY: 'x' }),
+    /DLT template id/,
+  );
   assert.equal(smsConfigProblem(SMS, { MSG91_AUTH_KEY: 'x' }), null);
 
   const twilio = { ...SMS, sms_gateway: 'twilio' };

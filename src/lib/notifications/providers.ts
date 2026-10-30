@@ -108,6 +108,11 @@ export function smsConfigProblem(
   if (settings.sms_gateway === 'msg91' && !env.MSG91_AUTH_KEY?.trim()) {
     return 'sms not configured (MSG91_AUTH_KEY is missing)';
   }
+  // Indian carriers silently drop SMS that do not match a DLT-registered
+  // template, and MSG91 still answers 200. Refuse to claim a send is possible.
+  if (settings.sms_gateway === 'msg91' && !settings.sms_dlt_template_id.trim()) {
+    return 'sms not configured (MSG91 needs an India DLT template id)';
+  }
   if (settings.sms_gateway === 'twilio') {
     if (!env.TWILIO_ACCOUNT_SID?.trim()) {
       return 'sms not configured (TWILIO_ACCOUNT_SID is missing)';
@@ -153,6 +158,24 @@ function smtpFailure(error: unknown): DeliveryResult {
   return failed('mail send failed', false);
 }
 
+/**
+ * The one place SMTP connection options are built, so the connection check and
+ * a real send can never disagree about host, port, encryption or login.
+ */
+export function smtpOptions(settings: StoreSettings, env: NodeJS.ProcessEnv = process.env) {
+  const username = settings.mail_username.trim();
+  return {
+    host: settings.mail_host.trim(),
+    port: Number(settings.mail_port),
+    secure: settings.mail_encryption === 'ssl',
+    requireTLS: settings.mail_encryption === 'tls',
+    auth: username ? { user: username, pass: env.MAIL_PASSWORD ?? '' } : undefined,
+    connectionTimeout: PROVIDER_TIMEOUT_MS,
+    greetingTimeout: PROVIDER_TIMEOUT_MS,
+    socketTimeout: PROVIDER_TIMEOUT_MS,
+  };
+}
+
 async function sendEmail(input: DeliveryInput, settings: StoreSettings): Promise<DeliveryResult> {
   const problem = mailConfigProblem(settings);
   if (problem) return skipped(problem);
@@ -160,21 +183,7 @@ async function sendEmail(input: DeliveryInput, settings: StoreSettings): Promise
   const recipient = normalizeEmail(input.recipient);
   if (!recipient) return failed('invalid email recipient', true);
 
-  const port = Number(settings.mail_port);
-  const encryption = settings.mail_encryption;
-  const username = settings.mail_username.trim();
-  const password = process.env.MAIL_PASSWORD ?? '';
-
-  const transport = nodemailer.createTransport({
-    host: settings.mail_host.trim(),
-    port,
-    secure: encryption === 'ssl',
-    requireTLS: encryption === 'tls',
-    auth: username ? { user: username, pass: password } : undefined,
-    connectionTimeout: PROVIDER_TIMEOUT_MS,
-    greetingTimeout: PROVIDER_TIMEOUT_MS,
-    socketTimeout: PROVIDER_TIMEOUT_MS,
-  });
+  const transport = nodemailer.createTransport(smtpOptions(settings, process.env));
 
   try {
     const fromEmail = normalizeEmail(settings.mail_from_email);
@@ -208,6 +217,7 @@ async function sendMsg91(input: DeliveryInput, settings: StoreSettings): Promise
     mobiles: mobile,
     message: input.body,
     sender: settings.sms_sender_id.trim(),
+    DLT_TE_ID: settings.sms_dlt_template_id.trim(),
     route: '4',
     country: '91',
   });
