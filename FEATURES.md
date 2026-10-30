@@ -1065,6 +1065,16 @@ Before this, no real message had ever been sent and there was no way to prove th
   the matrix, writes an HTML preview of every email to `tmp/notification-previews/`
   (git-ignored) and prints a pass/fail table. It sends nothing unless `--send-to <address>`.
 - **Tests.** `tests/notification-checks.test.mjs`.
+- **Actual readiness run, 31 October 2026:** 3 passed, 5 failed; no message sent.
+  Database access, 102 template renders and one customer-email matrix cell passed.
+  Email is blocked by a non-SMTP driver, missing SMTP host and `MAIL_PASSWORD`.
+  SMS is off; `MSG91_AUTH_KEY` and Twilio credentials are missing. No staff-email
+  or customer-SMS cells are enabled. To activate delivery, configure SMTP driver,
+  host, port, encryption, login and From identity plus `MAIL_PASSWORD`; enable the
+  intended matrix cells. For SMS, enable one gateway and its environment credentials,
+  and configure approved sender/DLT template for MSG91. Re-run connection checks,
+  then deliberately send to an owner-selected test recipient. A script exit code of
+  zero does not mean these readiness checks passed.
 
 **Deliverability (DNS for the From-address domain).** SPF: one TXT record listing your SMTP
 provider’s include. DKIM: publish the selector TXT/CNAME records your provider gives you and
@@ -1313,16 +1323,21 @@ things deliberately left unwired because they have no existing UI.
   Order, Item-wise, Day-wise, Transaction statement, Payment reconciliation, Expense,
   Stock, Low-stock, Customer, Category & brand, and **Coupon usage**. Each supports date
   range, channel, status, category and brand filters where relevant, plus CSV export.
+  The Transaction statement additionally offers an exact, case-insensitive payment
+  method filter (for example `cash`, `upi` or `card`), shared by its table and CSV.
 - **Revenue definition:** order-level revenue — Overview, Sales list Amount, and the
   Order, Day-wise and Customer reports — is the order total as charged
   (items − discount + shipping), with the rupee `amount` fallback for orders created
-  before migration `0014`. The Item-wise and Category & brand reports sum line totals,
-  which are product revenue and exclude shipping by construction; their notes say so.
+  before migration `0014`. Only `PAID` orders whose fulfilment is not `CANCELED`
+  qualify; failed, pending, processing and cancelled orders never count. The Item-wise
+  and Category & brand reports sum line totals **minus line discounts**, excluding
+  shipping. Refunds are separate from gross revenue; sales Net subtracts refunds on
+  qualifying orders by refund-recorded day, never expenses or refunds of excluded sales.
 - **Coupon usage** (`/reports/coupon-usage`, CSV at
   `/api/store-admin/reports/coupon-usage/export`): one row per redemption in the date
   range, optionally filtered to one code. `Redemptions` counts every ledger row
   (`RESERVED` and `CONSUMED`) because both hold a use; `Discount` and `Order revenue`
-  count **`CONSUMED` only** — revenue is the order total, which is already net of the
+  count **`CONSUMED` uses on qualifying captured orders only** — revenue is the order total, which is already net of the
   discount, and the discount column is the coupon's own share of that order. `RELEASED`
   rows stay visible with their state so a cancelled checkout is never read as money.
   Customer emails are masked in the page and the CSV. The list is capped at 2,000 rows and
@@ -1330,6 +1345,64 @@ things deliberately left unwired because they have no existing UI.
 - **Expenses:** `/expenses`, `/expenses/new`, `/expenses/[id]`, with
   `/api/store-admin/expenses/categories`. Expenses feed the expense report and the
   profit view. Currently 0 rows.
+
+- **Clock and report definitions (Task 4).** Date filters include both selected store
+  days (start inclusive, next midnight exclusive). Defaults use database `now()`;
+  buckets and displayed report dates use the `timezone` setting, including DST.
+  A missing database clock is an error, not a substitute host-clock date.
+
+  | Report / Overview block | How this is calculated |
+  |---|---|
+  | Order | All orders by creation day/week/month; captured totals include shipping and subtract discounts; Net subtracts qualifying refunds by recorded day. |
+  | Item-wise | Captured line quantities and charged line totals minus discounts by order creation day; no shipping or monetary refund subtraction; approved/received/refunded return quantities use request creation day. |
+  | Day-wise | Captured order totals and AOV by creation day, sign-ups by account creation day, qualifying refunds by recorded day; no expenses. |
+  | Transaction statement | Cash view: manual/POS payment rows plus PayU order fallback, without duplicate fallback when payment rows exist; settled receipts minus all recorded refunds, including cancelled sales. |
+  | Payment reconciliation | Orders created in range with payment activity; Expected is PAID order total, Recorded is manual/POS payments marked PAID, Refunded includes all order refunds; gateway references are compared separately. |
+  | Expense | Non-deleted expenses by spent-on date and category; no sales, shipping, coupons or refunds. |
+  | Stock | Current product-level on-hand/reserved/available; retail value uses list price and cost value omits missing costs; date range does not rewind inventory. |
+  | Low-stock | Current tracked availability at/below threshold; reorder is max(1, twice threshold minus availability); last movement is shown in store time. |
+  | Customer | Captured orders by creation day, grouped by account, else email, else individual walk-in order; new buyers have no earlier captured order; gross charged revenue includes shipping and discounts, no refunds/expenses. |
+  | Category & brand | Captured line totals minus line discounts by creation day, each rolled up independently; no shipping, monetary refunds or expenses, and the two rollups must not be added together. |
+  | Coupon usage | Redemptions by redemption creation day; held uses count RESERVED/CONSUMED, money counts only CONSUMED uses on captured orders; charged revenue includes shipping, no refund subtraction. |
+  | Overview Sales | Captured order totals, units and AOV by order creation day; same gross revenue definition as reports; qualifying refunds shown separately by recorded day. |
+  | Overview Customers | Sign-ups and sessions by their creation day; buyers/repeat buyers and top customer revenue from captured orders created in range. |
+  | Overview Payments / status funnel | Order creation-day status counts and amounts; all fulfilment-cancelled orders appear as CANCELLED so unpaid cancellations are not pending and PAID agrees with Sales; all refunds use recorded day; not a tracked browsing/conversion funnel. Method buckets use settled payment methods (mixed for multiple instruments), then gateway mode, then order method; they attribute the charged order total, not cash collected. |
+
+  The persistent known-total checks are in
+  `tests/reports-correctness-integration.test.mjs`, with independent JavaScript
+  expectations, IST midnight/month boundaries, typed POS prices, coupons, refunds,
+  returns, filters, pagination, CSV reconciliation and formatting. Pure timezone,
+  DST and clock checks are in `tests/report-timezone.test.mjs`.
+
+  **Recovered baseline and corrected results (31 October 2026):** the same independent
+  dataset at committed baseline `42c363f` passed 18/80 leaf checks and failed 62.
+  The corrected implementation passes those original checks; additional regressions
+  cover historical-sale returns, unpaid cancellations, actual gateway instruments,
+  split instruments, payment-attempt dates and payment-method filtering.
+  Money below is integer paise.
+
+  | Check | Expected | Baseline actual | Corrected actual |
+  |---|---:|---:|---:|
+  | Order cancelled count | 3 | 2 | 3 |
+  | Order qualifying refunds | 248000 | 538000 | 248000 |
+  | Order net revenue | 3104665 | 2814665 | 3104665 |
+  | April 1 inclusive order count | 7 | 6 | 7 |
+  | Item net line revenue | 3342765 | 3491217 | 3342765 |
+  | Transaction settled payment count | 13 | 14 | 13 |
+  | Underpaid POS reconciliation | Unmatched | Matched | Unmatched |
+  | Customer distinct buyer count | 10 | 7 | 10 |
+  | Coupon captured consumed discount | 148452 | 158452 | 148452 |
+  | Overview today captured revenue | 152450 | 124900 | 152450 |
+  | Overview seven-day captured payment count | 7 | 9 | 7 |
+
+  The fixture uses throwaway tables and local sequences. Earlier fixture runs used
+  copied serial defaults and may have advanced public sequence counters, but inserted
+  no public-table rows. No counter reset was performed. After sequence isolation,
+  the final full suite passes **747/747, zero failures and zero skips** after the
+  isolation and edge-case fixes; typecheck, production build, all route/boundary/
+  settings checks and dependency audit pass (95 guarded store-admin routes,
+  8 guarded account routes, zero vulnerabilities). Notification delivery readiness
+  remains configuration-blocked as recorded in §2.21, not falsely marked passing.
 
 ### 3.6 Settings — 🟢 Live screens, mixed downstream effect
 
@@ -1339,7 +1412,7 @@ the server would reject. Every write is audited.
 
 | Page | Route | What it edits | Downstream status |
 |---|---|---|---|
-| Business | `/settings` | Trade/legal name, support email/phone, address, country, timezone, time format, footer text, receipt footer, cookie notice, logo/favicon media ids | 🟡 Only `trade_name`, `address`, `phone`, `email`, `receipt_footer` are consumed (by `DocumentHeader`, the invoice/packing-slip footer and the POS receipt). The rest are stored only. |
+| Business | `/settings` | Trade/legal name, support email/phone, address, country, timezone, time format, footer text, receipt footer, cookie notice, logo/favicon media ids | 🟡 `trade_name`, `address`, `phone`, `email`, `receipt_footer` feed documents/receipts; `timezone` controls report and Overview date boundaries and displayed report dates. Other fields remain stored only. |
 | Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, reservation/failure-grace/unresolved windows, waiting-list toggle + claim window + re-invite cooldown, default fulfilment status, return window, processing/cut-off text, confirm unusual POS prices | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote; the six reservation/waiting-list keys drive §2.15. `pos_confirm_unusual_price` gates the POS typo confirmation. `pickup_enabled` is shown disabled (“Store pickup is not available yet”) and can only be `off` (§2.20); processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
 | Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🟡 `payu_enabled` gates initiate and `payment_note` renders under the checkout PayU helper. `cod_enabled` (default off), `manual_payments_enabled`, `payu_mode` and `payment_methods` are stored only — checkout has no method selector. |
 | Storefront | `/settings/storefront` | Login heading/subheading, login background media, support link, reCAPTCHA site key + status | 🔵 None consumed by the storefront. The store-admin login page renders its own copy. |

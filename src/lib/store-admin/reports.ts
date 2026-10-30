@@ -3,7 +3,6 @@ import { getSql } from '@/lib/admin/db';
 import { maskCustomerEmail } from './masking';
 import { maskCustomerName } from './orders';
 import {
-  REPORT_ROW_LIMIT,
   type ReportColumnFormat,
   type ReportData,
   type ReportFilters,
@@ -19,16 +18,19 @@ import {
  * CSV export cannot drift. Definitions are deliberately explicit and match the
  * order and payment lists:
  *
- * - A **captured sale** is `status = 'PAID'` with fulfilment not `CANCELED`.
- *   Revenue, units, AOV and sell-through use exactly that predicate.
+ * - A **captured sale** is `status = 'PAID'` with fulfilment not `CANCELED`
+ *   (cancelling a paid order leaves the status PAID). Revenue, units, AOV and
+ *   sell-through use exactly that predicate.
  * - **Revenue** is the order total as charged — items − discount + shipping —
  *   the same figure the Overview and the Orders list show. It falls back to
  *   the rupee `amount` for rows created before migration 0014. The item-wise
- *   and category/brand reports sum `line_total_paise` instead: product revenue,
- *   which excludes shipping by construction and says so in its note.
- * - A **refund** is attributed to the day it was recorded, not the order date,
- *   except in the order report where it is bucketed with the order the filters
- *   selected. Both statements appear in the note under the matching table.
+ *   and category/brand reports sum `line_total_paise − discount_paise`:
+ *   product revenue after discount, which excludes shipping, so item revenue
+ *   plus shipping equals revenue.
+ * - A **refund** is attributed to the day it was recorded. Sales reports net
+ *   only refunds on captured orders; the transaction statement is the cash
+ *   view and lists every refund.
+ * - **Days** are store-timezone days (the `timezone` setting), never UTC days.
  * - Payments come from two places: `order_payments` rows (manual and POS) and
  *   the order itself for PayU (the gateway marks the order paid without
  *   writing a payment row). The transaction statement combines them, and a
@@ -96,17 +98,32 @@ export function maskReference(value: unknown): string {
   return `…${reference.slice(-6)}`;
 }
 
-function capped(rows: Row[]): { rows: Row[]; truncated: boolean } {
+function capped<T>(
+  rows: T[],
+  filters: Pick<ReportFilters, 'rowLimit'>,
+): { rows: T[]; truncated: boolean } {
   return {
-    rows: rows.slice(0, REPORT_ROW_LIMIT),
-    truncated: rows.length > REPORT_ROW_LIMIT,
+    rows: rows.slice(0, filters.rowLimit),
+    truncated: rows.length > filters.rowLimit,
   };
 }
 
+/**
+ * Reports whose totals are computed in JavaScript read every row (up to this
+ * many) and only then cut the table, so a long table never skews its totals.
+ */
+const SCAN_LIMIT = 50_000;
+
 /* --------------------------------------------------------------- orders */
 
+/**
+ * A *captured* order: paid and not cancelled afterwards. Cancelling a paid
+ * order leaves `status = 'PAID'` and sets `fulfilment_status = 'CANCELED'`, so
+ * both columns are needed. Everything that is "revenue" uses this predicate.
+ */
 async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData> {
   const group = filters.groupBy;
+  const tz = filters.timeZone;
   const step = group === 'day' ? '1 day' : group === 'week' ? '1 week' : '1 month';
   const labelFormat = group === 'month' ? 'Mon YYYY' : 'DD Mon YYYY';
 
@@ -114,22 +131,22 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
     sql`
       with buckets as (
         select generate_series(
-          date_trunc(${group}, ${filters.fromIso}::timestamptz at time zone 'UTC'),
-          date_trunc(
-            ${group},
-            (${filters.toIso}::timestamptz - interval '1 millisecond') at time zone 'UTC'
-          ),
+          date_trunc(${group}, ${filters.fromDay}::date::timestamp),
+          date_trunc(${group}, ${filters.toDay}::date::timestamp),
           ${step}::interval
         ) as bucket
       ),
       ord as (
         select
-          date_trunc(${group}, o.created_at at time zone 'UTC') as bucket,
+          date_trunc(${group}, (o.created_at at time zone ${tz}::text)) as bucket,
           count(*)::int as orders,
           count(*) filter (
             where o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
           )::int as paid_orders,
-          count(*) filter (where o.status = 'CANCELLED')::int as cancelled_orders,
+          count(*) filter (
+            where o.status <> 'FAILED'
+              and (o.status = 'CANCELLED' or o.fulfilment_status = 'CANCELED')
+          )::int as cancelled_orders,
           count(*) filter (where o.status = 'FAILED')::int as failed_orders,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (
             where o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
@@ -149,7 +166,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       ),
       units as (
         select
-          date_trunc(${group}, uo.created_at at time zone 'UTC') as bucket,
+          date_trunc(${group}, (uo.created_at at time zone ${tz}::text)) as bucket,
           coalesce(sum(oi.quantity), 0)::int as units
         from order_items oi
         join orders uo on uo.id = oi.order_id
@@ -166,12 +183,14 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       ),
       ref as (
         select
-          date_trunc(${group}, r.created_at at time zone 'UTC') as bucket,
+          date_trunc(${group}, (r.created_at at time zone ${tz}::text)) as bucket,
           coalesce(sum(r.amount_paise), 0)::bigint as refunds
         from refunds r
         join orders ro on ro.id = r.order_id
         where r.created_at >= ${filters.fromIso}::timestamptz
           and r.created_at < ${filters.toIso}::timestamptz
+          and ro.status = 'PAID'
+          and ro.fulfilment_status <> 'CANCELED'
           and (${filters.status}::text = 'all' or ro.status = ${filters.status}::text)
           and (
             ${filters.channel}::text = 'all'
@@ -195,7 +214,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       left join units u on u.bucket = b.bucket
       left join ref rf on rf.bucket = b.bucket
       order by b.bucket
-      limit ${REPORT_ROW_LIMIT + 1}
+      limit ${filters.rowLimit + 1}
     `,
     sql`
       select
@@ -203,7 +222,10 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
         count(*) filter (
           where o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
         )::int as paid_orders,
-        count(*) filter (where o.status = 'CANCELLED')::int as cancelled_orders,
+        count(*) filter (
+          where o.status <> 'FAILED'
+            and (o.status = 'CANCELLED' or o.fulfilment_status = 'CANCELED')
+        )::int as cancelled_orders,
         count(*) filter (where o.status = 'FAILED')::int as failed_orders,
         coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (
           where o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
@@ -231,6 +253,8 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           join orders ro on ro.id = r.order_id
           where r.created_at >= ${filters.fromIso}::timestamptz
             and r.created_at < ${filters.toIso}::timestamptz
+            and ro.status = 'PAID'
+            and ro.fulfilment_status <> 'CANCELED'
             and (${filters.status}::text = 'all' or ro.status = ${filters.status}::text)
             and (
               ${filters.channel}::text = 'all'
@@ -251,7 +275,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
   const summary = (summaryRows as Row[])[0] ?? {};
   const revenue = number(summary.revenue);
   const refunds = number(summary.refunds);
-  const cut = capped(rows as Row[]);
+  const cut = capped(rows as Row[], filters);
 
   return {
     columns: [
@@ -299,9 +323,11 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       { label: 'Net', value: revenue - refunds, format: 'money' },
     ],
     note:
-      'Captured revenue counts PAID orders that were not cancelled, matching the Sales list. ' +
-      'Each order contributes its total as charged (items − discount + shipping). ' +
-      'Refunds are shown in the bucket they were recorded in and follow the status and channel filters.',
+      'Captured revenue counts PAID orders that were not cancelled afterwards. ' +
+      'Each order contributes its total as charged (items − discount + shipping) on its order date. ' +
+      'Refunds are taken from captured orders only, in the bucket they were recorded in, and follow the status and channel filters; ' +
+      'a refund on an order cancelled after payment is a cash movement shown in the Transaction statement, not a deduction from sales. ' +
+      `Days, weeks (starting Monday) and months follow the store timezone (${filters.timeZone}).`,
     truncated: cut.truncated,
   };
 }
@@ -309,6 +335,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
 /* ------------------------------------------------------------- day-wise */
 
 async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData> {
+  const tz = filters.timeZone;
   const [rows, summaryRows] = await Promise.all([
     sql`
       with days as (
@@ -320,7 +347,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       ),
       ord as (
         select
-          (o.created_at at time zone 'UTC')::date as day,
+          (o.created_at at time zone ${tz}::text)::date as day,
           count(*)::int as orders,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue
         from orders o
@@ -336,7 +363,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       ),
       newc as (
         select
-          (u.created_at at time zone 'UTC')::date as day,
+          (u.created_at at time zone ${tz}::text)::date as day,
           count(*)::int as new_customers
         from users u
         where u.created_at >= ${filters.fromIso}::timestamptz
@@ -345,12 +372,14 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       ),
       ref as (
         select
-          (r.created_at at time zone 'UTC')::date as day,
+          (r.created_at at time zone ${tz}::text)::date as day,
           coalesce(sum(r.amount_paise), 0)::bigint as refunds
         from refunds r
         join orders ro on ro.id = r.order_id
         where r.created_at >= ${filters.fromIso}::timestamptz
           and r.created_at < ${filters.toIso}::timestamptz
+          and ro.status = 'PAID'
+          and ro.fulfilment_status <> 'CANCELED'
           and (
             ${filters.channel}::text = 'all'
             or coalesce(nullif(ro.channel, ''), 'web') = ${filters.channel}::text
@@ -358,7 +387,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
         group by 1
       )
       select
-        d.day,
+        to_char(d.day, 'YYYY-MM-DD') as day,
         coalesce(o.orders, 0)::int as orders,
         coalesce(o.revenue, 0)::bigint as revenue,
         coalesce(n.new_customers, 0)::int as new_customers,
@@ -369,7 +398,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       left join newc n on n.day = d.day
       left join ref rf on rf.day = d.day
       order by d.day
-      limit ${REPORT_ROW_LIMIT + 1}
+      limit ${filters.rowLimit + 1}
     `,
     sql`
       select
@@ -409,6 +438,8 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           join orders ro on ro.id = r.order_id
           where r.created_at >= ${filters.fromIso}::timestamptz
             and r.created_at < ${filters.toIso}::timestamptz
+            and ro.status = 'PAID'
+            and ro.fulfilment_status <> 'CANCELED'
             and (
               ${filters.channel}::text = 'all'
               or coalesce(nullif(ro.channel, ''), 'web') = ${filters.channel}::text
@@ -420,7 +451,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
   const summary = (summaryRows as Row[])[0] ?? {};
   const revenue = number(summary.revenue);
   const refunds = number(summary.refunds);
-  const cut = capped(rows as Row[]);
+  const cut = capped(rows as Row[], filters);
 
   return {
     columns: [
@@ -435,7 +466,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
     rows: cut.rows.map((row) => {
       const orders = number(row.orders);
       return {
-        day: iso(row.day),
+        day: text(row.day),
         orders,
         revenue: number(row.revenue),
         aov: average(number(row.revenue), orders),
@@ -462,7 +493,8 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       { label: 'Net', value: revenue - refunds, format: 'money' },
     ],
     note:
-      'One row per UTC day, zero-filled. Revenue counts captured orders; refunds are on the day they were recorded. ' +
+      `One row per store day (${filters.timeZone}), zero-filled. Revenue counts captured orders; ` +
+      'refunds are taken from captured orders on the day they were recorded. ' +
       'New customers are storefront accounts created that day.',
     truncated: cut.truncated,
   };
@@ -474,12 +506,13 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
   const [itemRows, returnRows, summaryRows] = await Promise.all([
     sql`
       select
-        p.id as product_id,
-        coalesce(p.name, max(oi.product_name)) as name,
+        split_part(oi.product_id, '::', 1) as base_id,
+        max(p.id) as product_id,
+        coalesce(max(p.name), max(oi.product_name)) as name,
         max(c.name) as category_name,
         max(b.name) as brand_name,
         coalesce(sum(oi.quantity), 0)::int as units,
-        coalesce(sum(oi.line_total_paise), 0)::bigint as revenue,
+        coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue,
         count(distinct o.id)::int as orders,
         max(s.on_hand - s.reserved) as available,
         coalesce(bool_or(s.track_inventory), false) as track_inventory
@@ -495,28 +528,41 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
         and o.created_at < ${filters.toIso}::timestamptz
         and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
         and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
-      group by p.id
-      order by revenue desc, units desc
-      limit ${REPORT_ROW_LIMIT + 1}
+      group by split_part(oi.product_id, '::', 1)
+      order by revenue desc, units desc, base_id
+      limit ${SCAN_LIMIT}
     `,
     sql`
       select
-        split_part(oi.product_id, '::', 1) as product_id,
+        split_part(oi.product_id, '::', 1) as base_id,
+        max(p.id) as product_id,
+        coalesce(max(p.name), max(oi.product_name)) as name,
+        max(c.name) as category_name,
+        max(b.name) as brand_name,
+        max(s.on_hand - s.reserved) as available,
+        coalesce(bool_or(s.track_inventory), false) as track_inventory,
         coalesce(sum(ri.quantity), 0)::int as returned
       from return_items ri
       join return_requests rr on rr.id = ri.return_id
       join order_items oi on oi.id = ri.order_item_id
+      left join products p on p.id = split_part(oi.product_id, '::', 1)
+      left join categories c on c.id = p.category_id and c.deleted_at is null
+      left join brands b on b.id = p.brand_id and b.deleted_at is null
+      left join stock s on s.product_id = p.id and s.variant_id is null
       where rr.created_at >= ${filters.fromIso}::timestamptz
         and rr.created_at < ${filters.toIso}::timestamptz
         and rr.status in ('APPROVED', 'RECEIVED', 'REFUNDED')
-      group by 1
+        and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
+        and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
+      group by split_part(oi.product_id, '::', 1)
+      order by base_id
     `,
     sql`
       select
         coalesce(sum(oi.quantity), 0)::int as units,
-        coalesce(sum(oi.line_total_paise), 0)::bigint as revenue,
+        coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue,
         count(distinct o.id)::int as orders,
-        count(distinct oi.product_id)::int as products
+        count(distinct split_part(oi.product_id, '::', 1))::int as products
       from order_items oi
       join orders o on o.id = oi.order_id
       left join products p on p.id = split_part(oi.product_id, '::', 1)
@@ -531,16 +577,22 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
 
   const returnedByProduct = new Map<string, number>();
   for (const row of returnRows as Row[]) {
-    returnedByProduct.set(text(row.product_id), number(row.returned));
+    returnedByProduct.set(text(row.base_id), number(row.returned));
   }
 
   const summary = (summaryRows as Row[])[0] ?? {};
   const summaryUnits = number(summary.units);
-  const cut = capped(itemRows as Row[]);
 
-  const allRows: ReportRow[] = (itemRows as Row[]).map((row) => {
+  // Returns belong to their request date, even when the product had no sales
+  // in this window. Keep those products in the table with zero sales figures.
+  const soldProductIds = new Set((itemRows as Row[]).map((row) => text(row.base_id)));
+  const productRows = [
+    ...(itemRows as Row[]),
+    ...(returnRows as Row[]).filter((row) => !soldProductIds.has(text(row.base_id))),
+  ];
+  const allRows: ReportRow[] = productRows.map((row) => {
     const units = number(row.units);
-    const returned = returnedByProduct.get(text(row.product_id)) ?? 0;
+    const returned = returnedByProduct.get(text(row.base_id)) ?? 0;
     const available = nullableNumber(row.available);
     const tracked = row.track_inventory === true || text(row.track_inventory) === 'true';
     return {
@@ -559,7 +611,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
     };
   });
   const totalReturned = allRows.reduce((sum, row) => sum + Number(row.returned ?? 0), 0);
-  const rows = allRows.slice(0, REPORT_ROW_LIMIT);
+  const rows = allRows.slice(0, filters.rowLimit);
 
   const revenue = number(summary.revenue);
 
@@ -603,9 +655,10 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
     ],
     note:
       'Returned units count return requests approved, received or refunded in the range. ' +
-      'Revenue is line revenue (unit price × quantity), so it excludes shipping; order-level revenue includes it. ' +
+      'Revenue is line revenue after discount (unit price × quantity − the order discount share), so it excludes shipping: ' +
+      'item revenue plus shipping equals the order-level revenue of the Order report. ' +
       'Sell-through is units sold divided by units sold plus available stock, and is blank when inventory is not tracked.',
-    truncated: cut.truncated,
+    truncated: allRows.length > filters.rowLimit,
   };
 }
 
@@ -622,7 +675,16 @@ interface StatementLine {
   reference: string;
 }
 
+/**
+ * The statement is a cash view. A payment belongs to the moment it was
+ * received (`paid_at`), a refund to the moment it was recorded, and an order
+ * that was cancelled after payment keeps both lines: the money did move. A
+ * gateway order with no `order_payments` rows contributes one synthetic
+ * payment line from the order itself, unless its total is zero (a free sale
+ * has no payment).
+ */
 async function statementLines(sql: Sql, filters: ReportFilters): Promise<Row[]> {
+  const tz = filters.timeZone;
   return (await sql`
     with lines as (
       select
@@ -644,13 +706,14 @@ async function statementLines(sql: Sql, filters: ReportFilters): Promise<Row[]> 
         'Payment'::text,
         o.txnid,
         case when o.channel = 'pos' then 'pos' else 'web' end,
-        coalesce(nullif(o.payment_method, ''), nullif(o.payu_mode, ''), 'payu'),
+        coalesce(nullif(o.payu_mode, ''), nullif(o.payment_method, ''), 'payu'),
         o.status,
         coalesce(o.total_paise, round(o.amount * 100)::bigint),
         coalesce(o.payu_mihpayid, '')
       from orders o
       where o.status = 'PAID'
         and not exists (select 1 from order_payments p where p.order_id = o.id)
+        and coalesce(o.total_paise, round(o.amount * 100)::bigint) > 0
         and coalesce(o.paid_at, o.created_at) >= ${filters.fromIso}::timestamptz
         and coalesce(o.paid_at, o.created_at) < ${filters.toIso}::timestamptz
       union all
@@ -668,19 +731,21 @@ async function statementLines(sql: Sql, filters: ReportFilters): Promise<Row[]> 
       where r.created_at >= ${filters.fromIso}::timestamptz
         and r.created_at < ${filters.toIso}::timestamptz
     )
-    select *
+    select
+      to_char((recorded_at at time zone ${tz}::text), 'YYYY-MM-DD HH24:MI') as recorded_local,
+      kind, txnid, channel, method, status, amount_paise, reference
     from lines
     where (${filters.channel}::text = 'all' or channel = ${filters.channel}::text)
-    order by recorded_at desc, txnid desc
-    limit ${REPORT_ROW_LIMIT + 1}
+    order by recorded_at desc, txnid desc, kind
   `) as Row[];
 }
 
 async function transactionReport(sql: Sql, filters: ReportFilters): Promise<ReportData> {
   const rows = await statementLines(sql, filters);
-  const cut = capped(rows);
-  const lines: StatementLine[] = cut.rows.map((row) => ({
-    recordedAt: iso(row.recorded_at) ?? '',
+  const method = filters.method?.trim().toLowerCase();
+  // Filter normalized statement lines before both totals and the display cap.
+  const allLines = rows.map<StatementLine>((row) => ({
+    recordedAt: text(row.recorded_local),
     kind: text(row.kind) === 'Refund' ? 'Refund' : 'Payment',
     txnid: text(row.txnid),
     channel: text(row.channel),
@@ -688,68 +753,27 @@ async function transactionReport(sql: Sql, filters: ReportFilters): Promise<Repo
     status: text(row.status),
     amountPaise: number(row.amount_paise),
     reference: text(row.reference),
-  }));
-
-  // Totals for the whole filtered set, not just the capped page.
-  const summaryRows = (await sql`
-    with lines as (
-      select
-        coalesce(p.paid_at, p.created_at) as recorded_at,
-        'Payment'::text as kind,
-        case when o.channel = 'pos' then 'pos' else 'web' end as channel,
-        p.status,
-        p.amount_paise
-      from order_payments p
-      join orders o on o.id = p.order_id
-      where coalesce(p.paid_at, p.created_at) >= ${filters.fromIso}::timestamptz
-        and coalesce(p.paid_at, p.created_at) < ${filters.toIso}::timestamptz
-      union all
-      select
-        coalesce(o.paid_at, o.created_at),
-        'Payment'::text,
-        case when o.channel = 'pos' then 'pos' else 'web' end,
-        o.status,
-        coalesce(o.total_paise, round(o.amount * 100)::bigint)
-      from orders o
-      where o.status = 'PAID'
-        and not exists (select 1 from order_payments p where p.order_id = o.id)
-        and coalesce(o.paid_at, o.created_at) >= ${filters.fromIso}::timestamptz
-        and coalesce(o.paid_at, o.created_at) < ${filters.toIso}::timestamptz
-      union all
-      select
-        r.created_at,
-        'Refund'::text,
-        case when o.channel = 'pos' then 'pos' else 'web' end,
-        r.status,
-        -r.amount_paise
-      from refunds r
-      join orders o on o.id = r.order_id
-      where r.created_at >= ${filters.fromIso}::timestamptz
-        and r.created_at < ${filters.toIso}::timestamptz
-    )
-    select
-      count(*) filter (
-        where kind = 'Payment' and status in ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
-      )::int as settled_count,
-      count(*) filter (
-        where kind = 'Payment' and status not in ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
-      )::int as unsettled_count,
-      count(*) filter (where kind = 'Refund')::int as refund_count,
-      coalesce(sum(amount_paise) filter (
-        where kind = 'Payment' and status in ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
-      ), 0)::bigint as money_in,
-      coalesce(sum(-amount_paise) filter (where kind = 'Refund'), 0)::bigint as money_out
-    from lines
-    where (${filters.channel}::text = 'all' or channel = ${filters.channel}::text)
-  `) as Row[];
-
-  const summary = summaryRows[0] ?? {};
-  const moneyIn = number(summary.money_in);
-  const moneyOut = number(summary.money_out);
+  })).filter((line) => !method || method === 'all' || line.method.trim().toLowerCase() === method);
+  const cut = capped(allLines, filters);
+  const lines = cut.rows;
+  const settledStatuses = new Set(['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED']);
+  const summary = { settled_count: 0, unsettled_count: 0 };
+  let moneyIn = 0;
+  let moneyOut = 0;
+  for (const line of allLines) {
+    if (line.kind === 'Refund') {
+      moneyOut -= line.amountPaise;
+    } else if (settledStatuses.has(line.status)) {
+      summary.settled_count++;
+      moneyIn += line.amountPaise;
+    } else {
+      summary.unsettled_count++;
+    }
+  }
 
   return {
     columns: [
-      { key: 'date', label: 'Date', format: 'date' },
+      { key: 'date', label: 'Date', format: 'datetime' },
       { key: 'type', label: 'Type' },
       { key: 'order', label: 'Order', link: 'order' },
       { key: 'channel', label: 'Channel' },
@@ -792,7 +816,8 @@ async function transactionReport(sql: Sql, filters: ReportFilters): Promise<Repo
     ],
     note:
       'Money in and net count only settled payments; pending, failed and cancelled attempts stay in the list for reference but are not money received. ' +
-      'Refund lines are negative and dated when they were recorded. Provider references keep only their last six characters; ' +
+      'Refund lines are negative and dated when they were recorded, including refunds on orders cancelled after payment. ' +
+      `Times are shown in the store timezone (${filters.timeZone}). Provider references keep only their last six characters; ` +
       'the order number is the full key for matching a payment.',
     truncated: cut.truncated,
   };
@@ -808,12 +833,16 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
         o.txnid,
         o.status,
         case when o.channel = 'pos' then 'pos' else 'web' end as channel,
-        coalesce(o.total_paise, round(o.amount * 100)::bigint)::bigint as expected,
+        (case
+          when o.status = 'PAID' then coalesce(o.total_paise, round(o.amount * 100)::bigint)
+          else 0
+        end)::bigint as expected,
         coalesce(p.recorded, 0)::bigint as recorded,
         coalesce(p.methods, '') as methods,
         coalesce(r.refunded, 0)::bigint as refunded,
         o.payu_mihpayid,
-        o.created_at
+        o.created_at,
+        to_char((o.created_at at time zone ${filters.timeZone}::text), 'YYYY-MM-DD') as created_local
       from orders o
       left join (
         select
@@ -836,9 +865,11 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
       select
         *,
         case
+          when status = 'PAID' and expected = 0 then 'MATCHED'
           when status = 'PAID'
-            and (payu_mihpayid is not null or recorded > 0)
+            and payu_mihpayid is not null
             and recorded <= expected then 'MATCHED'
+          when status = 'PAID' and recorded = expected then 'MATCHED'
           when status = 'PAID' then 'UNMATCHED'
           when status in ('FAILED', 'CANCELLED') and recorded = 0 then 'FAILED'
           when status in ('CREATED', 'PENDING')
@@ -849,12 +880,14 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
     )
     select
       txnid, status, channel, methods, state, expected, recorded, refunded,
-      payu_mihpayid, created_at,
+      payu_mihpayid, created_at, created_local,
       count(*) filter (where state = 'MATCHED') over () as matched_count,
       count(*) filter (where state = 'UNMATCHED') over () as unmatched_count,
       count(*) filter (where state = 'FAILED') over () as failed_count,
       count(*) filter (where state = 'OPEN') over () as open_count,
-      coalesce(sum(expected) filter (where state in ('MATCHED', 'UNMATCHED')) over (), 0) as expected_sum,
+      coalesce(sum(expected) filter (
+        where status = 'PAID' and state in ('MATCHED', 'UNMATCHED')
+      ) over (), 0) as expected_sum,
       coalesce(sum(recorded) over (), 0) as recorded_sum,
       coalesce(sum(refunded) over (), 0) as refunded_sum,
       coalesce(sum(expected) filter (
@@ -865,7 +898,7 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
       ) over (), 0) as pos_sum
     from classified
     order by created_at desc, txnid desc
-    limit ${REPORT_ROW_LIMIT + 1}
+    limit ${filters.rowLimit + 1}
   `) as Row[];
 
   const first = rows[0] ?? {};
@@ -876,7 +909,7 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
   const expected = number(first.expected_sum);
   const recorded = number(first.recorded_sum);
   const refunded = number(first.refunded_sum);
-  const cut = capped(rows);
+  const cut = capped(rows, filters);
 
   const stateLabel: Record<string, string> = {
     MATCHED: 'Matched',
@@ -899,7 +932,7 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
       { key: 'reference', label: 'Gateway ref', align: 'right' },
     ],
     rows: cut.rows.map((row) => ({
-      date: iso(row.created_at),
+      date: text(row.created_local),
       order: text(row.txnid),
       channel: text(row.channel),
       method: text(row.methods) || '—',
@@ -931,10 +964,12 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
       { label: 'Refunded', value: refunded, format: 'money' },
     ],
     note:
-      'Matched: a PAID order with a gateway reference or recorded payment, not recorded above the order total. ' +
-      'Unmatched: a PAID order with no money attached, or money recorded on an order that is not paid. ' +
-      `Open rows (${open}) have a gateway attempt but no captured money yet and are excluded from the expected total. ` +
-      'Recorded money comes from manual and POS payment rows; PayU marks the order paid without writing one.',
+      'Matched: a PAID order whose recorded payments equal its total (or that carries a gateway reference and is not recorded above its total), or a zero-value sale. ' +
+      'Unmatched: a PAID order that is underpaid or has no money attached, or money or a gateway attempt on an order that is not paid. ' +
+      'Failed: a failed or cancelled order whose payment was never captured. ' +
+      `Open rows (${open}) have a payment attempt but no captured money yet. Expected is the order total for PAID orders and zero for the rest, so the rows add up to the total. ` +
+      'Recorded money comes from manual and POS payment rows marked PAID; PayU marks the order paid without writing one. ' +
+      `Dates are the order date in the store timezone (${filters.timeZone}).`,
     truncated: cut.truncated,
   };
 }
@@ -957,7 +992,7 @@ async function expenseReport(sql: Sql, filters: ReportFilters): Promise<ReportDa
         and (${filters.categoryId}::text is null or e.category_id = ${filters.categoryId}::text)
       group by e.spent_on, coalesce(c.name, 'Uncategorised')
       order by e.spent_on desc, total desc
-      limit ${REPORT_ROW_LIMIT + 1}
+      limit ${filters.rowLimit + 1}
     `,
     sql`
       select
@@ -988,7 +1023,7 @@ async function expenseReport(sql: Sql, filters: ReportFilters): Promise<ReportDa
   const summary = (summaryRows as Row[])[0] ?? {};
   const top = (topRows as Row[])[0];
   const total = number(summary.total);
-  const cut = capped(rows as Row[]);
+  const cut = capped(rows as Row[], filters);
 
   return {
     columns: [
@@ -1067,7 +1102,7 @@ async function stockRows(sql: Sql, filters: ReportFilters): Promise<Row[]> {
       and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
       and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
     order by p.name
-    limit ${REPORT_ROW_LIMIT + 1}
+    limit ${SCAN_LIMIT}
   `) as Row[];
 }
 
@@ -1093,8 +1128,8 @@ function mapStockRow(row: Row): StockRow {
 async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData> {
   const raw = await stockRows(sql, filters);
   const mapped = raw.map(mapStockRow);
-  const cut = capped(raw);
-  const rows = mapped.slice(0, REPORT_ROW_LIMIT);
+  const cut = capped(raw, filters);
+  const rows = mapped.slice(0, filters.rowLimit);
 
   let onHand = 0;
   let reserved = 0;
@@ -1191,7 +1226,7 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       s.reserved,
       s.low_stock_threshold,
       (s.on_hand - s.reserved) as available,
-      m.last_moved
+      to_char((m.last_moved at time zone ${filters.timeZone}::text), 'YYYY-MM-DD') as last_moved
     from stock s
     join products p on p.id = s.product_id
     left join categories c on c.id = p.category_id and c.deleted_at is null
@@ -1208,11 +1243,11 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
       and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
     order by (s.on_hand - s.reserved), p.name
-    limit ${REPORT_ROW_LIMIT + 1}
+    limit ${SCAN_LIMIT}
   `) as Row[];
 
-  const cut = capped(raw);
-  const rows = cut.rows.map((row) => {
+  const cut = capped(raw, filters);
+  const allRows = raw.map((row) => {
     const onHand = number(row.on_hand);
     const reserved = number(row.reserved);
     const available = number(row.available);
@@ -1227,12 +1262,13 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       available,
       threshold,
       reorder: Math.max(threshold * 2 - available, 1),
-      lastMoved: iso(row.last_moved),
+      lastMoved: nullableText(row.last_moved),
     };
   });
+  const rows = allRows.slice(0, filters.rowLimit);
 
-  const outOfStock = rows.filter((row) => row.available <= 0).length;
-  const reorderUnits = rows.reduce((sum, row) => sum + row.reorder, 0);
+  const outOfStock = allRows.filter((row) => row.available <= 0).length;
+  const reorderUnits = allRows.reduce((sum, row) => sum + row.reorder, 0);
 
   return {
     columns: [
@@ -1251,15 +1287,15 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       product: 'Total',
       category: '',
       brand: '',
-      onHand: rows.reduce((sum, row) => sum + row.onHand, 0),
-      reserved: rows.reduce((sum, row) => sum + row.reserved, 0),
-      available: rows.reduce((sum, row) => sum + row.available, 0),
+      onHand: allRows.reduce((sum, row) => sum + row.onHand, 0),
+      reserved: allRows.reduce((sum, row) => sum + row.reserved, 0),
+      available: allRows.reduce((sum, row) => sum + row.available, 0),
       threshold: '',
       reorder: reorderUnits,
       lastMoved: '',
     },
     stats: [
-      { label: 'Items low', value: rows.length, format: 'int' },
+      { label: 'Items low', value: allRows.length, format: 'int' },
       { label: 'Out of stock', value: outOfStock, format: 'int' },
       { label: 'Units to reorder', value: reorderUnits, format: 'int' },
     ],
@@ -1277,7 +1313,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
     sql`
       with buyers as (
         select
-          coalesce(o.user_id, 'guest:' || lower(o.customer_email)) as buyer_key,
+          coalesce(o.user_id, case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end) as buyer_key,
           max(o.user_id) as user_id,
           max(
             case
@@ -1289,8 +1325,8 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
           max(o.customer_name) as order_name,
           count(*)::int as orders,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
-          min(o.created_at) as first_order_at,
-          max(o.created_at) as last_order_at
+          to_char((min(o.created_at) at time zone ${filters.timeZone}::text), 'YYYY-MM-DD') as first_order_at,
+          to_char((max(o.created_at) at time zone ${filters.timeZone}::text), 'YYYY-MM-DD') as last_order_at
         from orders o
         left join users u on u.id = o.user_id
         where o.status = 'PAID'
@@ -1301,11 +1337,11 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
             ${filters.channel}::text = 'all'
             or coalesce(nullif(o.channel, ''), 'web') = ${filters.channel}::text
           )
-        group by coalesce(o.user_id, 'guest:' || lower(o.customer_email))
+        group by coalesce(o.user_id, case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end)
       ),
       prior as (
         select
-          coalesce(o.user_id, 'guest:' || lower(o.customer_email)) as buyer_key,
+          coalesce(o.user_id, case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end) as buyer_key,
           count(*)::int as prior_orders
         from orders o
         where o.status = 'PAID'
@@ -1321,12 +1357,12 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       from buyers b
       left join prior pr on pr.buyer_key = b.buyer_key
       order by b.revenue desc, b.orders desc
-      limit ${REPORT_ROW_LIMIT + 1}
+      limit ${filters.rowLimit + 1}
     `,
     sql`
       with buyers as (
         select
-          coalesce(o.user_id, 'guest:' || lower(o.customer_email)) as buyer_key,
+          coalesce(o.user_id, case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end) as buyer_key,
           max(o.user_id) as user_id,
           count(*)::int as orders,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue
@@ -1339,11 +1375,11 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
             ${filters.channel}::text = 'all'
             or coalesce(nullif(o.channel, ''), 'web') = ${filters.channel}::text
           )
-        group by coalesce(o.user_id, 'guest:' || lower(o.customer_email))
+        group by coalesce(o.user_id, case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end)
       ),
       prior as (
         select
-          coalesce(o.user_id, 'guest:' || lower(o.customer_email)) as buyer_key,
+          coalesce(o.user_id, case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end) as buyer_key,
           count(*)::int as prior_orders
         from orders o
         where o.status = 'PAID'
@@ -1366,7 +1402,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
   ]);
 
   const summary = (summaryRows as Row[])[0] ?? {};
-  const cut = capped(rows as Row[]);
+  const cut = capped(rows as Row[], filters);
   const buyers = number(summary.buyers);
 
   return {
@@ -1390,8 +1426,8 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         orders: number(row.orders),
         revenue: number(row.revenue),
         average: average(number(row.revenue), number(row.orders)),
-        firstOrder: iso(row.first_order_at),
-        lastOrder: iso(row.last_order_at),
+        firstOrder: nullableText(row.first_order_at),
+        lastOrder: nullableText(row.last_order_at),
       };
     }),
     totals: {
@@ -1418,7 +1454,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       { label: 'Registered buyers', value: number(summary.registered_buyers), format: 'int' },
     ],
     note:
-      'A buyer is an account when signed in, otherwise the checkout email. New means no captured order before the range starts. ' +
+      'A buyer is an account when signed in, otherwise the checkout email; a sale with no email (a walk-in) is its own buyer. New means no captured order before the range starts. ' +
       'Names and emails are masked; open the customer to use the audited reveal.',
     truncated: cut.truncated,
   };
@@ -1433,7 +1469,7 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         coalesce(c.name, 'Uncategorised') as name,
         count(distinct o.id)::int as orders,
         coalesce(sum(oi.quantity), 0)::int as units,
-        coalesce(sum(oi.line_total_paise), 0)::bigint as revenue
+        coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue
       from order_items oi
       join orders o on o.id = oi.order_id
       left join products p on p.id = split_part(oi.product_id, '::', 1)
@@ -1446,14 +1482,14 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
       group by coalesce(c.name, 'Uncategorised')
       order by revenue desc
-      limit 501
+      limit ${SCAN_LIMIT}
     `,
     sql`
       select
         coalesce(b.name, 'No brand') as name,
         count(distinct o.id)::int as orders,
         coalesce(sum(oi.quantity), 0)::int as units,
-        coalesce(sum(oi.line_total_paise), 0)::bigint as revenue
+        coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue
       from order_items oi
       join orders o on o.id = oi.order_id
       left join products p on p.id = split_part(oi.product_id, '::', 1)
@@ -1466,11 +1502,11 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
       group by coalesce(b.name, 'No brand')
       order by revenue desc
-      limit 501
+      limit ${SCAN_LIMIT}
     `,
     sql`
       select
-        coalesce(sum(oi.line_total_paise), 0)::bigint as revenue,
+        coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue,
         coalesce(sum(oi.quantity), 0)::int as units,
         count(distinct o.id)::int as orders
       from order_items oi
@@ -1494,8 +1530,8 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
     ...(categoryRows as Row[]).map((row) => ({ scope: 'Category', row })),
     ...(brandRows as Row[]).map((row) => ({ scope: 'Brand', row })),
   ];
-  const truncated = lines.length > REPORT_ROW_LIMIT;
-  const rows = lines.slice(0, REPORT_ROW_LIMIT).map(({ scope, row }) => {
+  const truncated = lines.length > filters.rowLimit;
+  const rows = lines.slice(0, filters.rowLimit).map(({ scope, row }) => {
     const revenue = number(row.revenue);
     return {
       scope,
@@ -1533,7 +1569,7 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       { label: 'Brands', value: (brandRows as Row[]).length, format: 'int' },
     ],
     note:
-      'Both rollups use the same captured orders and filters. Revenue is line revenue, so it excludes shipping. ' +
+      'Both rollups use the same captured orders and filters. Revenue is line revenue after discount, so it excludes shipping. ' +
       'Share is of the filtered revenue, so with a category filter selected the share is within that category.',
     truncated,
   };
@@ -1588,6 +1624,9 @@ export async function getReport(
     return { ok: false, reason: 'unavailable' };
   }
 }
+
+/** Re-exported so pages and routes take both from one module. */
+export { loadReportFilters } from './store-clock';
 
 /** Re-exported so the export route and the page agree on formatting. */
 export type { ReportColumnFormat, ReportData, ReportRow, ReportStat };

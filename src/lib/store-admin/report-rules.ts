@@ -38,6 +38,8 @@ export interface ReportDefinition {
   title: string;
   description: string;
   group: ReportGroup;
+  /** One line on the page: what is counted, which date, what is netted. */
+  howCalculated: string;
   /** Offers day/week/month buckets. */
   groupBy: boolean;
   filters: {
@@ -51,6 +53,8 @@ export interface ReportDefinition {
 export const REPORTS: readonly ReportDefinition[] = [
   {
     key: 'orders',
+    howCalculated:
+      'Captured orders are PAID and not cancelled; revenue is the order total as charged (items − discount + shipping), counted on the order date. Refunds recorded in the period on captured orders are subtracted to give Net. Days, weeks and months follow the store timezone.',
     title: 'Order report',
     description:
       'Orders, revenue, discounts, refunds and net, grouped by day, week or month with a status breakdown.',
@@ -60,6 +64,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'items',
+    howCalculated:
+      'Captured orders only, on the order date: units and line revenue (price × quantity − discount) per product, so shipping is excluded; returns are approved, received or refunded requests created in the period.',
     title: 'Item-wise report',
     description:
       'Units sold, revenue, returns, return rate, current stock and sell-through per product.',
@@ -69,6 +75,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'daily',
+    howCalculated:
+      'One row per store-timezone day: captured orders and their order totals by order date, accounts created that day, and refunds on captured orders by the day they were recorded.',
     title: 'Day-wise report',
     description:
       'Daily revenue, orders, AOV, new customers and refunds, one row per day.',
@@ -78,6 +86,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'transactions',
+    howCalculated:
+      'Cash view: every payment by the day it was received and every refund (negative) by the day it was recorded, including orders cancelled afterwards; only settled payments count towards money in.',
     title: 'Transaction statement',
     description:
       'Every recorded payment and refund on one timeline, with order, method, reference and status.',
@@ -87,6 +97,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'reconciliation',
+    howCalculated:
+      'Orders created in the period that are paid or have a payment attempt: Expected is the order total of PAID orders, Recorded is the sum of manual and POS payments marked PAID, Refunded is every refund on the order.',
     title: 'Payment reconciliation',
     description:
       'PayU, manual and POS money side by side, with matched, unmatched and failed payments called out.',
@@ -96,6 +108,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'expenses',
+    howCalculated:
+      'Live ledger entries by the date spent, in the chosen range; deleted entries are excluded.',
     title: 'Expense report',
     description: 'Manual expense entries by category and date, with a category breakdown.',
     group: 'Money',
@@ -104,6 +118,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'stock',
+    howCalculated:
+      'Product-level stock rows today: available is on hand minus reserved; value at cost skips products with no cost, value at retail uses the list price, not the sale price.',
     title: 'Stock report',
     description:
       'On hand, reserved, available, and value at cost and retail for every stocked item.',
@@ -113,6 +129,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'low-stock',
+    howCalculated:
+      'Tracked products whose available stock (on hand − reserved) is at or below their threshold, as of now; suggested reorder is twice the threshold minus available, at least one.',
     title: 'Low-stock report',
     description:
       'Items at or below their threshold, with the last movement and a suggested reorder quantity.',
@@ -122,6 +140,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'customers',
+    howCalculated:
+      'Buyers of captured orders in the period, keyed by account, else checkout email, else the single order; new means no captured order before the period; revenue is the order total.',
     title: 'Customer report',
     description:
       'New versus returning buyers, repeat rate, guest versus registered orders and the top customers.',
@@ -131,6 +151,8 @@ export const REPORTS: readonly ReportDefinition[] = [
   },
   {
     key: 'categories',
+    howCalculated:
+      'Captured orders only, on the order date: line revenue (price × quantity − discount, shipping excluded) rolled up by category and by brand of the product.',
     title: 'Category and brand report',
     description: 'Revenue and units sold rolled up by category and by brand.',
     group: 'Catalogue',
@@ -169,13 +191,18 @@ export interface ReportFilters {
   fromDay: string;
   /** `YYYY-MM-DD`, inclusive. */
   toDay: string;
-  /** Start of `fromDay`, UTC. */
+  /** The instant `fromDay` starts in the store timezone (ISO, UTC). */
   fromIso: string;
-  /** Start of the day after `toDay` — the exclusive upper bound. */
+  /** The instant the day after `toDay` starts in the store timezone — the exclusive upper bound. */
   toIso: string;
+  /** IANA zone the days are cut in; every bucket and date column uses it. */
+  timeZone: string;
+  /** Rows kept before a table is cut off (the CSV export raises it). */
+  rowLimit: number;
   groupBy: ReportGroupBy;
   status: 'all' | OrderStatus;
   channel: 'all' | ReportChannel;
+  method?: string;
   categoryId: string | null;
   brandId: string | null;
 }
@@ -195,13 +222,75 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * DAY_MS);
 }
 
-/** Today at midnight UTC — the reports bucket on UTC days. */
-export function todayUtc(now: Date = new Date()): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+export const DEFAULT_REPORT_TIME_ZONE = 'Asia/Kolkata';
+
+/** A zone Intl understands, else the store default. */
+export function normaliseTimeZone(value: unknown): string {
+  const zone = typeof value === 'string' ? value.trim() : '';
+  if (!zone) return DEFAULT_REPORT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: zone });
+    return zone;
+  } catch {
+    return DEFAULT_REPORT_TIME_ZONE;
+  }
 }
 
-export function defaultReportRange(now: Date = new Date()): { fromDay: string; toDay: string } {
-  const today = todayUtc(now);
+/** Minutes the zone is ahead of UTC at the given instant. */
+function zoneOffsetMinutes(instantMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(instantMs));
+  const part = (type: string) => Number(parts.find((entry) => entry.type === type)?.value);
+  const asUtc = Date.UTC(
+    part('year'),
+    part('month') - 1,
+    part('day'),
+    part('hour'),
+    part('minute'),
+    part('second'),
+  );
+  return (asUtc - Math.floor(instantMs / 1000) * 1000) / 60_000;
+}
+
+/**
+ * The instant the given calendar day (`YYYY-MM-DD`) starts in `timeZone`.
+ * Reports cut days here, so a range is inclusive of the store's own first and
+ * last moments and never of a neighbouring UTC day.
+ */
+export function zonedDayStart(dayValue: string, timeZone: string): Date {
+  const date = parseIsoDay(dayValue);
+  if (!date) throw new Error(`Not a calendar day: ${dayValue}`);
+  const zone = normaliseTimeZone(timeZone);
+  const wallClockAsUtc = date.getTime();
+  let instant = wallClockAsUtc - zoneOffsetMinutes(wallClockAsUtc, zone) * 60_000;
+  // One refinement step handles zones whose offset changes on that day.
+  instant = wallClockAsUtc - zoneOffsetMinutes(instant, zone) * 60_000;
+  return new Date(instant);
+}
+
+/** The store's calendar day (`YYYY-MM-DD`) for an instant. */
+export function storeDay(now: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: normaliseTimeZone(timeZone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+export function defaultReportRange(
+  now: Date = new Date(),
+  timeZone: string = DEFAULT_REPORT_TIME_ZONE,
+): { fromDay: string; toDay: string } {
+  const today = parseIsoDay(storeDay(now, timeZone)) as Date;
   return {
     fromDay: dayString(addDays(today, -(DEFAULT_REPORT_DAYS - 1))),
     toDay: dayString(today),
@@ -211,8 +300,10 @@ export function defaultReportRange(now: Date = new Date()): { fromDay: string; t
 export function parseReportFilters(
   params: Record<string, string | undefined>,
   now: Date = new Date(),
+  timeZoneInput: string = DEFAULT_REPORT_TIME_ZONE,
 ): ReportFilterParse {
-  const defaults = defaultReportRange(now);
+  const timeZone = normaliseTimeZone(timeZoneInput);
+  const defaults = defaultReportRange(now, timeZone);
 
   const rawFrom = (params.from ?? '').trim();
   const rawTo = (params.to ?? '').trim();
@@ -252,6 +343,11 @@ export function parseReportFilters(
     ? (rawChannel as ReportChannel)
     : 'all';
 
+  const method = (params.method ?? '').trim().toLowerCase();
+  if (method && !/^[a-z0-9_-]{1,32}$/.test(method)) {
+    return { ok: false, error: 'That payment method filter is not valid.' };
+  }
+
   const rawCategory = (params.category ?? '').trim();
   if (rawCategory && !ID_PATTERN.test(rawCategory)) {
     return { ok: false, error: 'That category filter is not valid.' };
@@ -267,11 +363,14 @@ export function parseReportFilters(
     filters: {
       fromDay: dayString(fromDate),
       toDay: dayString(toDate),
-      fromIso: fromDate.toISOString(),
-      toIso: addDays(toDate, 1).toISOString(),
+      fromIso: zonedDayStart(dayString(fromDate), timeZone).toISOString(),
+      toIso: zonedDayStart(dayString(addDays(toDate, 1)), timeZone).toISOString(),
+      timeZone,
+      rowLimit: REPORT_ROW_LIMIT,
       groupBy,
       status,
       channel,
+      method: method || 'all',
       categoryId: rawCategory || null,
       brandId: rawBrand || null,
     },
@@ -290,6 +389,7 @@ export function reportQuery(
   if (filters.groupBy !== 'day') params.set('group', filters.groupBy);
   if (filters.status !== 'all') params.set('status', filters.status);
   if (filters.channel !== 'all') params.set('channel', filters.channel);
+  if (filters.method && filters.method !== 'all') params.set('method', filters.method);
   if (filters.categoryId) params.set('category', filters.categoryId);
   if (filters.brandId) params.set('brand', filters.brandId);
 
@@ -306,7 +406,7 @@ export function reportQuery(
 export type ReportCell = string | number | null;
 export type ReportRow = Record<string, ReportCell>;
 
-export type ReportColumnFormat = 'text' | 'int' | 'money' | 'date';
+export type ReportColumnFormat = 'text' | 'int' | 'money' | 'date' | 'datetime';
 
 export interface ReportColumn {
   key: string;
@@ -342,10 +442,14 @@ export interface ReportData {
 /** How many rows a report table will hold before it is cut off. */
 export const REPORT_ROW_LIMIT = 500;
 
+/** The CSV export keeps far more rows so its lines add up to its totals. */
+export const REPORT_EXPORT_ROW_LIMIT = 20_000;
+
 export function formatReportValue(value: ReportCell, format: ReportColumnFormat = 'text'): string {
   if (value === null || value === '') return '—';
   if (format === 'money') return formatPaise(Number(value));
   if (format === 'date') return String(value).slice(0, 10);
+  if (format === 'datetime') return String(value);
   if (format === 'int') {
     const number = Number(value);
     return Number.isFinite(number) ? number.toLocaleString('en-IN') : '—';

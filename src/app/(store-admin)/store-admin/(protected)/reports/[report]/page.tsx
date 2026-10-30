@@ -5,14 +5,15 @@ import { PrintButton } from '@/components/store-admin/PrintButton';
 import { listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
 import { listExpenseCategories } from '@/lib/store-admin/expenses';
 import { getReport } from '@/lib/store-admin/reports';
+import { getDatabaseNow, loadReportFilters } from '@/lib/store-admin/store-clock';
 import {
   ORDER_STATUSES,
   REPORT_CHANNELS,
   REPORT_GROUP_BY,
   formatReportValue,
   isReportKey,
-  parseReportFilters,
   reportDefinition,
+  storeDay,
   reportHref,
   reportQuery,
   type ReportColumn,
@@ -112,7 +113,7 @@ export default async function StoreAdminReportPage({ params, searchParams }: Pro
 
   const definition = reportDefinition(key);
   const raw = flatParams(await searchParams);
-  const parsed = parseReportFilters(raw);
+  const parsed = await loadReportFilters(raw);
 
   if (!parsed.ok) {
     return (
@@ -146,10 +147,12 @@ export default async function StoreAdminReportPage({ params, searchParams }: Pro
       : Promise.resolve([] as Option[]),
   ]);
 
+  const printedOn = storeDay(await getDatabaseNow(), filters.timeZone);
   const exportHref = `/api/store-admin/reports/export${reportQuery(filters, { report: key })}`;
   const hasFilters =
     filters.status !== 'all' ||
     filters.channel !== 'all' ||
+    (filters.method !== undefined && filters.method !== 'all') ||
     filters.categoryId !== null ||
     filters.brandId !== null ||
     filters.groupBy !== 'day' ||
@@ -165,6 +168,7 @@ export default async function StoreAdminReportPage({ params, searchParams }: Pro
           </Link>
           <h1 className="sa-page-title">{definition.title}</h1>
           <p className="sa-page-sub">{definition.description}</p>
+          <p className="sa-note">How this is calculated: {definition.howCalculated}</p>
         </div>
         <div className="sa-inline-actions">
           <a className="sa-btn sa-btn-quiet sa-btn-small" href={exportHref} download>
@@ -180,7 +184,7 @@ export default async function StoreAdminReportPage({ params, searchParams }: Pro
         <p>
           {filters.fromDay} to {filters.toDay}
           {definition.groupBy ? ` · grouped by ${filters.groupBy}` : ''}
-          {` · printed ${new Date().toISOString().slice(0, 10)}`}
+          {` · printed ${printedOn}`}
         </p>
       </div>
 
@@ -260,6 +264,20 @@ export default async function StoreAdminReportPage({ params, searchParams }: Pro
                 </option>
               ))}
             </select>
+          </div>
+        ) : null}
+        {key === 'transactions' ? (
+          <div className="sa-filter-field">
+            <label className="sa-label" htmlFor="report-method">Payment method</label>
+            <input
+              id="report-method"
+              className="sa-input"
+              name="method"
+              maxLength={32}
+              pattern="[a-zA-Z0-9_-]{1,32}"
+              placeholder="All methods"
+              defaultValue={filters.method === 'all' ? '' : filters.method}
+            />
           </div>
         ) : null}
         {definition.filters.category ? (
@@ -345,6 +363,9 @@ export default async function StoreAdminReportPage({ params, searchParams }: Pro
           {result.data.note ? (
             <p className="sa-report-note">{result.data.note}</p>
           ) : null}
+          <p className="sa-note sa-print-hide">
+            Days are cut in the store timezone ({filters.timeZone}); amounts are in rupees.
+          </p>
         </>
       )}
     </div>

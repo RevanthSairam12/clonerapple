@@ -256,7 +256,7 @@ test('receipt, invoice and order detail show the charged price', async () => {
 test('reports and revenue read the charged totals', async () => {
   const reports = await source('src/lib/store-admin/reports.ts');
   assert.match(reports, /sum\(coalesce\(o\.total_paise, round\(o\.amount \* 100\)::bigint\)\)/);
-  assert.match(reports, /sum\(oi\.line_total_paise\)/);
+  assert.match(reports, /sum\(oi\.line_total_paise - oi\.discount_paise\)/);
   const orders = await source('src/lib/store-admin/orders.ts');
   assert.match(orders, /reference_price_paise/);
   assert.match(orders, /unit_price_paise/);

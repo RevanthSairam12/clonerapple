@@ -2,6 +2,7 @@
 
 import { parseAmountToPaise } from './amount';
 import { parseIsoDay } from './customer-rules';
+import { DEFAULT_REPORT_TIME_ZONE, storeDay } from './report-rules';
 
 export const EXPENSE_TITLE_MAX = 160;
 export const EXPENSE_NOTE_MAX = 1000;
@@ -32,19 +33,21 @@ export function validateExpenseAmount(value: unknown): ExpenseValidation<number>
   return { ok: true, value: paise };
 }
 
-/** `YYYY-MM-DD`, not in the future. Returns the normalised day string. */
+/**
+ * `YYYY-MM-DD`, not in the future. "Today" is the store's calendar day, so an
+ * expense dated today is accepted in the early hours (IST is ahead of UTC).
+ * Returns the normalised day string.
+ */
 export function validateSpentOn(
   value: unknown,
   today: Date = new Date(),
+  timeZone: string = DEFAULT_REPORT_TIME_ZONE,
 ): ExpenseValidation<string> {
   const day = typeof value === 'string' ? value.trim() : '';
   const parsed = parseIsoDay(day);
   if (!parsed) return { ok: false, error: 'Choose a valid expense date.' };
 
-  const todayUtc = new Date(
-    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
-  );
-  if (parsed.getTime() > todayUtc.getTime()) {
+  if (day > storeDay(today, timeZone)) {
     return { ok: false, error: 'The expense date cannot be in the future.' };
   }
   return { ok: true, value: parsed.toISOString().slice(0, 10) };

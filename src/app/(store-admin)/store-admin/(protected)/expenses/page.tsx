@@ -2,7 +2,8 @@ import Link from 'next/link';
 
 import { formatPaise } from '@/lib/store-admin/amount';
 import { listExpenseCategories, listExpenses } from '@/lib/store-admin/expenses';
-import { parseReportFilters, reportQuery } from '@/lib/store-admin/report-rules';
+import { reportQuery } from '@/lib/store-admin/report-rules';
+import { loadReportFilters } from '@/lib/store-admin/store-clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,7 @@ function preview(note: string): string {
  */
 export default async function StoreAdminExpensesPage({ searchParams }: Props) {
   const raw = flatParams(await searchParams);
-  const parsed = parseReportFilters(raw);
+  const parsed = await loadReportFilters(raw);
 
   if (!parsed.ok) {
     return (

@@ -7,6 +7,7 @@ import { getMaintenanceState, maintenanceStatus } from '@/lib/storefront/mainten
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { formatPaise } from '@/lib/store-admin/amount';
+import { getDatabaseNow, getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import {
   getSalesAnalytics,
   getTransactionsAnalytics,
@@ -268,7 +269,7 @@ function SalesTab({ data, range }: { data: SalesAnalytics; range: RangeKey }) {
         <StatCard
           label="Captured orders"
           value={data.orders.current.toLocaleString('en-IN')}
-          meta={`${data.refundedOrders} refunded`}
+          meta={`${data.refundedOrders} with refunds (${formatPaise(data.refundsPaise)})`}
           icon="orders"
           tone="violet"
           change={data.orders}
@@ -382,7 +383,15 @@ function SalesTab({ data, range }: { data: SalesAnalytics; range: RangeKey }) {
   );
 }
 
-function UsersTab({ data, range }: { data: UsersAnalytics; range: RangeKey }) {
+function UsersTab({
+  data,
+  range,
+  timeZone,
+}: {
+  data: UsersAnalytics;
+  range: RangeKey;
+  timeZone: string;
+}) {
   const repeatRate = data.buyers > 0 ? (data.repeatBuyers / data.buyers) * 100 : 0;
   const mixTotal = data.registeredOrders + data.guestOrders;
 
@@ -496,6 +505,7 @@ function UsersTab({ data, range }: { data: UsersAnalytics; range: RangeKey }) {
                     <td className="sa-date">
                       {customer.lastOrderAt
                         ? new Date(customer.lastOrderAt).toLocaleDateString('en-IN', {
+                            timeZone,
                             day: '2-digit',
                             month: 'short',
                             year: 'numeric',
@@ -518,9 +528,11 @@ function UsersTab({ data, range }: { data: UsersAnalytics; range: RangeKey }) {
 function TransactionsTab({
   data,
   range,
+  timeZone,
 }: {
   data: TransactionsAnalytics;
   range: RangeKey;
+  timeZone: string;
 }) {
   const methodItems = data.methods.map((method, index) => ({
     label: method.method.replace(/_/g, ' '),
@@ -558,7 +570,7 @@ function TransactionsTab({
         <StatCard
           label="Refunded orders"
           value={data.refundedOrders.toLocaleString('en-IN')}
-          meta="Full refunds in this period"
+          meta={`${formatPaise(data.refundedPaise)} refunded in this period`}
           icon="rotate"
           tone="violet"
         />
@@ -609,7 +621,7 @@ function TransactionsTab({
           )}
         </Panel>
 
-        <Panel title="Payment methods" subtitle="Captured revenue by method.">
+        <Panel title="Payment methods" subtitle="Charged order totals by settled method; split instruments are mixed. Gateway mode is the fallback.">
           {methodItems.length > 0 ? (
             <Breakdown items={methodItems} />
           ) : (
@@ -683,6 +695,7 @@ function TransactionsTab({
                     <td className="sa-date">
                       {transaction.createdAt
                         ? new Date(transaction.createdAt).toLocaleString('en-IN', {
+                            timeZone,
                             day: '2-digit',
                             month: 'short',
                             hour: '2-digit',
@@ -727,7 +740,9 @@ export default async function StoreAdminDashboard({
       ? 'Admin'
       : 'Viewer';
 
-  const today = new Date().toLocaleDateString('en-IN', {
+  const timeZone = await getStoreTimeZone();
+  const today = (await getDatabaseNow()).toLocaleDateString('en-IN', {
+    timeZone,
     weekday: 'long',
     day: '2-digit',
     month: 'long',
@@ -799,6 +814,12 @@ export default async function StoreAdminDashboard({
       <p className="sa-overview-note">
         Comparing {rangeLabel(range).toLowerCase()} with the equal-length period before it.
       </p>
+      <p className="sa-note">
+        How this is calculated: revenue is the order total as charged (items − discount +
+        shipping) of orders that are paid and not cancelled, counted on the order date, before
+        refunds; refunds are shown beside it. Days are store days ({timeZone}); the period ends
+        at the end of today.
+      </p>
 
       {sales && !sales.ok ? (
         <p className="sa-notice">Sales analytics are unavailable. Check the database connection.</p>
@@ -808,7 +829,7 @@ export default async function StoreAdminDashboard({
       {users && !users.ok ? (
         <p className="sa-notice">Customer analytics are unavailable. Check the database connection.</p>
       ) : null}
-      {users && users.ok ? <UsersTab data={users.data} range={range} /> : null}
+      {users && users.ok ? <UsersTab data={users.data} range={range} timeZone={timeZone} /> : null}
 
       {transactions && !transactions.ok ? (
         <p className="sa-notice">
@@ -816,7 +837,7 @@ export default async function StoreAdminDashboard({
         </p>
       ) : null}
       {transactions && transactions.ok ? (
-        <TransactionsTab data={transactions.data} range={range} />
+        <TransactionsTab data={transactions.data} range={range} timeZone={timeZone} />
       ) : null}
 
       <p className="sa-readonly-foot">

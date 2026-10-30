@@ -3,6 +3,7 @@ import { getSql } from '@/lib/admin/db';
 import { countPendingTransactions, isRevenueStatus } from './analytics-rules';
 import { maskCustomerEmail } from './masking';
 import { maskCustomerName } from './orders';
+import { getStoreTimeZone } from './sale';
 
 /**
  * Read-only analytics for the Store Desk overview tabs.
@@ -12,16 +13,18 @@ import { maskCustomerName } from './orders';
  *
  * - A **captured sale** is an order with `status = 'PAID'` whose fulfilment
  *   was not cancelled. Revenue, order counts, units and top products all use
- *   exactly that predicate.
- * - A **transaction** is any order row. The Transactions tab counts all
- *   statuses (including failed and abandoned checkouts) and reports captured
- *   money separately.
+ *   exactly that predicate. Revenue is the order total as charged
+ *   (items − discount + shipping), gross of refunds; refunds on captured
+ *   orders are reported next to it, never silently netted.
+ * - **Product revenue** (top products, categories) is line revenue after
+ *   discount, so it excludes shipping: product revenue + shipping = revenue.
+ * - A **transaction** is any order row. The Payments tab counts every order
+ *   created in the window by status; fulfilment cancellations are shown as
+ *   CANCELLED so unpaid cancellations are not pending and PAID equals captured revenue.
  * - A **comparison period** is the equal-length window immediately before the
  *   selected range. Percent change is null when the previous window is empty,
  *   rather than pretending a jump from zero is a percentage.
- *
- * Refund amounts arrive with the returns schema in a later phase; until then
- * the sales tab reports a refunded-order count and no refunded value.
+ * - **Days** are store-timezone days on the database clock, never UTC days.
  */
 
 if (typeof window !== 'undefined') {
@@ -110,7 +113,10 @@ export interface SalesAnalytics {
   aov: Change;
   units: number;
   productCount: number;
+  /** Captured orders with a refund recorded in the range. */
   refundedOrders: number;
+  /** Money refunded in the range on captured orders. */
+  refundsPaise: number;
   series: SalesSeriesPoint[];
   topProducts: TopProduct[];
   categories: CategorySlice[];
@@ -169,7 +175,10 @@ export interface TransactionsAnalytics {
   captured: Change;
   failed: number;
   pending: number;
+  /** Orders (any status) with a refund recorded in the range. */
   refundedOrders: number;
+  /** Money refunded in the range, on any order. */
+  refundedPaise: number;
   statuses: StatusBucket[];
   methods: MethodSlice[];
   channels: ChannelSlice[];
@@ -177,6 +186,7 @@ export interface TransactionsAnalytics {
 }
 
 type Row = Record<string, unknown>;
+type Sql = NonNullable<ReturnType<typeof getSql>>;
 
 function number(value: unknown): number {
   const parsed = Number(value);
@@ -204,12 +214,35 @@ function change(current: number, previous: number): Change {
   };
 }
 
-function boundsCte(days: number) {
-  return {
-    from: days - 1,
-    previousFrom: days * 2 - 1,
-  };
+/**
+ * Window bounds, cut in the store timezone on the database clock.
+ *
+ * `from_ts` is the start of the first store day in the range, `to_ts` the start
+ * of tomorrow, and `prev_from_ts` the start of the equal-length window before
+ * it. Using `current_date` here would cut days in the database session zone
+ * (UTC on hosted Postgres) instead of the store's own.
+ */
+function boundsCte(sql: Sql, timeZone: string, days: number) {
+  const from = days - 1;
+  const previousFrom = days * 2 - 1;
+  return sql`bounds as (
+    select
+      ((now() at time zone ${timeZone}::text)::date - ${from}::int)::timestamp
+        at time zone ${timeZone}::text as from_ts,
+      ((now() at time zone ${timeZone}::text)::date + 1)::timestamp
+        at time zone ${timeZone}::text as to_ts,
+      ((now() at time zone ${timeZone}::text)::date - ${previousFrom}::int)::timestamp
+        at time zone ${timeZone}::text as prev_from_ts,
+      (now() at time zone ${timeZone}::text)::date as today_local,
+      ((now() at time zone ${timeZone}::text)::date - ${from}::int) as from_local
+  )`;
 }
+
+/** A buyer: the account, else the checkout email, else the single order. */
+const BUYER_KEY = `coalesce(
+  o.user_id,
+  case when o.customer_email <> '' then 'guest:' || lower(o.customer_email) else 'order:' || o.id end
+)`;
 
 /* --------------------------------------------------------------- sales */
 
@@ -218,46 +251,45 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
   if (!sql) return { ok: false, reason: 'unavailable' };
 
   const days = rangeDays(range);
-  const { from, previousFrom } = boundsCte(days);
   const bucket = rangeBucket(range);
 
   try {
-    const [summaryRows, unitsRows, seriesRows, topRows, categoryRows, channelRows] =
+    const timeZone = await getStoreTimeZone();
+    const bounds = boundsCte(sql, timeZone, days);
+    const [summaryRows, refundRows, unitsRows, seriesRows, topRows, categoryRows, channelRows] =
       await Promise.all([
         sql`
-          with bounds as (
-            select current_date - (${from}::int * interval '1 day') as from_ts,
-                   current_date + interval '1 day' as to_ts,
-                   current_date - (${previousFrom}::int * interval '1 day') as prev_from_ts
-          )
+          with ${bounds}
           select
             count(*) filter (where o.created_at >= b.from_ts)::int as orders,
             coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at >= b.from_ts), 0)::bigint as revenue,
             count(*) filter (where o.created_at < b.from_ts)::int as prev_orders,
-            coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at < b.from_ts), 0)::bigint as prev_revenue,
-            (
-              select count(*)::int
-              from order_sale_state s
-              where s.sale_state = 'REFUNDED'
-                and s.created_at >= b.from_ts
-                and s.created_at < b.to_ts
-            ) as refunded_orders
+            coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at < b.from_ts), 0)::bigint as prev_revenue
           from orders o
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
             and o.created_at >= b.prev_from_ts
             and o.created_at < b.to_ts
-          group by b.from_ts, b.to_ts
         `,
         sql`
-          with bounds as (
-            select current_date - (${from}::int * interval '1 day') as from_ts,
-                   current_date + interval '1 day' as to_ts
-          )
+          with ${bounds}
+          select
+            count(distinct r.order_id)::int as refunded_orders,
+            coalesce(sum(r.amount_paise), 0)::bigint as refunded
+          from refunds r
+          join orders o on o.id = r.order_id
+          cross join bounds b
+          where o.status = 'PAID'
+            and o.fulfilment_status <> 'CANCELED'
+            and r.created_at >= b.from_ts
+            and r.created_at < b.to_ts
+        `,
+        sql`
+          with ${bounds}
           select
             coalesce(sum(oi.quantity), 0)::int as units,
-            count(distinct oi.product_id)::int as product_count
+            count(distinct split_part(oi.product_id, '::', 1))::int as product_count
           from order_items oi
           join orders o on o.id = oi.order_id
           cross join bounds b
@@ -268,67 +300,70 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
         `,
         bucket === 'month'
           ? sql`
-              with bounds as (
-                select current_date - (${from}::int * interval '1 day') as from_ts,
-                       current_date + interval '1 day' as to_ts
-              ),
+              with ${bounds},
               buckets as (
                 select generate_series(
-                  date_trunc('month', b.from_ts),
-                  date_trunc('month', b.to_ts - interval '1 day'),
+                  date_trunc('month', b.from_local::timestamp),
+                  date_trunc('month', b.today_local::timestamp),
                   interval '1 month'
                 ) as bucket
                 from bounds b
+              ),
+              ord as (
+                select
+                  date_trunc('month', (o.created_at at time zone ${timeZone}::text)) as bucket,
+                  sum(coalesce(o.total_paise, round(o.amount * 100)::bigint))::bigint as revenue,
+                  count(*)::int as orders
+                from orders o
+                cross join bounds b
+                where o.status = 'PAID'
+                  and o.fulfilment_status <> 'CANCELED'
+                  and o.created_at >= b.from_ts
+                  and o.created_at < b.to_ts
+                group by 1
               )
               select
                 to_char(b.bucket, 'Mon YY') as label,
-                coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
-                count(o.id)::int as orders
+                coalesce(ord.revenue, 0)::bigint as revenue,
+                coalesce(ord.orders, 0)::int as orders
               from buckets b
-              left join orders o
-                on o.created_at >= b.bucket
-               and o.created_at < b.bucket + interval '1 month'
-               and o.status = 'PAID'
-               and o.fulfilment_status <> 'CANCELED'
-              group by b.bucket
+              left join ord on ord.bucket = b.bucket
               order by b.bucket
             `
           : sql`
-              with bounds as (
-                select current_date - (${from}::int * interval '1 day') as from_ts,
-                       current_date + interval '1 day' as to_ts
-              ),
+              with ${bounds},
               buckets as (
-                select generate_series(
-                  b.from_ts::date,
-                  (b.to_ts - interval '1 day')::date,
-                  interval '1 day'
-                ) as bucket
+                select generate_series(b.from_local, b.today_local, interval '1 day')::date as bucket
                 from bounds b
+              ),
+              ord as (
+                select
+                  (o.created_at at time zone ${timeZone}::text)::date as bucket,
+                  sum(coalesce(o.total_paise, round(o.amount * 100)::bigint))::bigint as revenue,
+                  count(*)::int as orders
+                from orders o
+                cross join bounds b
+                where o.status = 'PAID'
+                  and o.fulfilment_status <> 'CANCELED'
+                  and o.created_at >= b.from_ts
+                  and o.created_at < b.to_ts
+                group by 1
               )
               select
                 to_char(b.bucket, 'DD Mon') as label,
-                coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
-                count(o.id)::int as orders
+                coalesce(ord.revenue, 0)::bigint as revenue,
+                coalesce(ord.orders, 0)::int as orders
               from buckets b
-              left join orders o
-                on o.created_at >= b.bucket
-               and o.created_at < b.bucket + interval '1 day'
-               and o.status = 'PAID'
-               and o.fulfilment_status <> 'CANCELED'
-              group by b.bucket
+              left join ord on ord.bucket = b.bucket
               order by b.bucket
             `,
         sql`
-          with bounds as (
-            select current_date - (${from}::int * interval '1 day') as from_ts,
-                   current_date + interval '1 day' as to_ts
-          )
+          with ${bounds}
           select
-            oi.product_id,
+            split_part(oi.product_id, '::', 1) as product_id,
             max(oi.product_name) as name,
             coalesce(sum(oi.quantity), 0)::int as units,
-            coalesce(sum(oi.line_total_paise), 0)::bigint as revenue
+            coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue
           from order_items oi
           join orders o on o.id = oi.order_id
           cross join bounds b
@@ -336,18 +371,15 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
             and o.fulfilment_status <> 'CANCELED'
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
-          group by oi.product_id
-          order by revenue desc, units desc
+          group by split_part(oi.product_id, '::', 1)
+          order by revenue desc, units desc, product_id
           limit 5
         `,
         sql`
-          with bounds as (
-            select current_date - (${from}::int * interval '1 day') as from_ts,
-                   current_date + interval '1 day' as to_ts
-          )
+          with ${bounds}
           select
             coalesce(c.name, 'Uncategorised') as name,
-            coalesce(sum(oi.line_total_paise), 0)::bigint as revenue,
+            coalesce(sum(oi.line_total_paise - oi.discount_paise), 0)::bigint as revenue,
             coalesce(sum(oi.quantity), 0)::int as units
           from order_items oi
           join orders o on o.id = oi.order_id
@@ -359,14 +391,11 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
           group by coalesce(c.name, 'Uncategorised')
-          order by revenue desc
+          order by revenue desc, name
           limit 6
         `,
         sql`
-          with bounds as (
-            select current_date - (${from}::int * interval '1 day') as from_ts,
-                   current_date + interval '1 day' as to_ts
-          )
+          with ${bounds}
           select
             coalesce(nullif(o.channel, ''), 'web') as channel,
             count(*)::int as orders,
@@ -383,6 +412,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
       ]);
 
     const summary = (summaryRows as Row[])[0] ?? {};
+    const refunds = (refundRows as Row[])[0] ?? {};
     const units = (unitsRows as Row[])[0] ?? {};
     const currentOrders = number(summary.orders);
     const previousOrders = number(summary.prev_orders);
@@ -400,7 +430,8 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
         ),
         units: number(units.units),
         productCount: number(units.product_count),
-        refundedOrders: number(summary.refunded_orders),
+        refundedOrders: number(refunds.refunded_orders),
+        refundsPaise: number(refunds.refunded),
         series: (seriesRows as Row[]).map((row) => ({
           label: text(row.label),
           revenuePaise: number(row.revenue),
@@ -437,17 +468,14 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
   if (!sql) return { ok: false, reason: 'unavailable' };
 
   const days = rangeDays(range);
-  const { from, previousFrom } = boundsCte(days);
   const bucket = rangeBucket(range);
 
   try {
+    const timeZone = await getStoreTimeZone();
+    const bounds = boundsCte(sql, timeZone, days);
     const [summaryRows, buyerRows, seriesRows, topRows] = await Promise.all([
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts,
-                 current_date - (${previousFrom}::int * interval '1 day') as prev_from_ts
-        )
+        with ${bounds}
         select
           (
             select count(*)::int from users u
@@ -477,13 +505,10 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
         group by b.from_ts, b.to_ts, b.prev_from_ts
       `,
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts
-        ),
+        with ${bounds},
         buyers as (
           select
-            coalesce(o.user_id, lower(o.customer_email)) as buyer_key,
+            ${sql.unsafe(BUYER_KEY)} as buyer_key,
             count(*)::int as order_count
           from orders o
           cross join bounds b
@@ -491,7 +516,7 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
             and o.fulfilment_status <> 'CANCELED'
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
-          group by coalesce(o.user_id, lower(o.customer_email))
+          group by 1
         )
         select
           count(*)::int as buyers,
@@ -500,62 +525,61 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
       `,
       bucket === 'month'
         ? sql`
-            with bounds as (
-              select current_date - (${from}::int * interval '1 day') as from_ts,
-                     current_date + interval '1 day' as to_ts
-            ),
+            with ${bounds},
             buckets as (
               select generate_series(
-                date_trunc('month', b.from_ts),
-                date_trunc('month', b.to_ts - interval '1 day'),
+                date_trunc('month', b.from_local::timestamp),
+                date_trunc('month', b.today_local::timestamp),
                 interval '1 month'
               ) as bucket
               from bounds b
+            ),
+            signups as (
+              select
+                date_trunc('month', (u.created_at at time zone ${timeZone}::text)) as bucket,
+                count(*)::int as signups
+              from users u
+              cross join bounds b
+              where u.created_at >= b.from_ts and u.created_at < b.to_ts
+              group by 1
             )
             select
               to_char(b.bucket, 'Mon YY') as label,
-              count(u.id)::int as signups
+              coalesce(s.signups, 0)::int as signups
             from buckets b
-            left join users u
-              on u.created_at >= b.bucket
-             and u.created_at < b.bucket + interval '1 month'
-            group by b.bucket
+            left join signups s on s.bucket = b.bucket
             order by b.bucket
           `
         : sql`
-            with bounds as (
-              select current_date - (${from}::int * interval '1 day') as from_ts,
-                     current_date + interval '1 day' as to_ts
-            ),
+            with ${bounds},
             buckets as (
-              select generate_series(
-                b.from_ts::date,
-                (b.to_ts - interval '1 day')::date,
-                interval '1 day'
-              ) as bucket
+              select generate_series(b.from_local, b.today_local, interval '1 day')::date as bucket
               from bounds b
+            ),
+            signups as (
+              select
+                (u.created_at at time zone ${timeZone}::text)::date as bucket,
+                count(*)::int as signups
+              from users u
+              cross join bounds b
+              where u.created_at >= b.from_ts and u.created_at < b.to_ts
+              group by 1
             )
             select
               to_char(b.bucket, 'DD Mon') as label,
-              count(u.id)::int as signups
+              coalesce(s.signups, 0)::int as signups
             from buckets b
-            left join users u
-              on u.created_at >= b.bucket
-             and u.created_at < b.bucket + interval '1 day'
-            group by b.bucket
+            left join signups s on s.bucket = b.bucket
             order by b.bucket
           `,
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts
-        )
+        with ${bounds}
         select
           coalesce(
-            nullif(trim(coalesce(u.first_name, '') || ' ' || coalesce(u.last_name, '')), ''),
+            nullif(trim(coalesce(max(u.first_name), '') || ' ' || coalesce(max(u.last_name), '')), ''),
             'Guest checkout'
           ) as name,
-          coalesce(u.email, o.customer_email) as email,
+          coalesce(max(u.email), max(o.customer_email)) as email,
           count(*)::int as orders,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as revenue,
           max(o.created_at) as last_order_at
@@ -566,8 +590,8 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           and o.fulfilment_status <> 'CANCELED'
           and o.created_at >= b.from_ts
           and o.created_at < b.to_ts
-        group by 1, coalesce(u.email, o.customer_email)
-        order by revenue desc
+        group by ${sql.unsafe(BUYER_KEY)}
+        order by revenue desc, orders desc, last_order_at desc
         limit 5
       `,
     ]);
@@ -613,56 +637,57 @@ export async function getTransactionsAnalytics(
   if (!sql) return { ok: false, reason: 'unavailable' };
 
   const days = rangeDays(range);
-  const { from, previousFrom } = boundsCte(days);
 
   try {
+    const timeZone = await getStoreTimeZone();
+    const bounds = boundsCte(sql, timeZone, days);
     const [statusRows, methodRows, channelRows, recentRows, refundRows] = await Promise.all([
+      // Fulfilment cancellations override payment status, including unpaid
+      // orders. The PAID bucket is exactly the captured Sales population.
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts,
-                 current_date - (${previousFrom}::int * interval '1 day') as prev_from_ts
-        )
+        with ${bounds}
         select
-          o.status,
-          count(*)::int as count,
-          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as amount,
-          count(*) filter (where o.created_at < b.from_ts)::int as prev_count,
-          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at < b.from_ts), 0)::bigint as prev_amount
+          case
+            when o.fulfilment_status = 'CANCELED' then 'CANCELLED'
+            else o.status
+          end as status,
+          count(*) filter (where o.created_at >= b.from_ts)::int as count,
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (where o.created_at >= b.from_ts), 0)::bigint as amount,
+          count(*) filter (where o.created_at < b.from_ts)::int as prev_count
         from orders o
         cross join bounds b
         where o.created_at >= b.prev_from_ts
           and o.created_at < b.to_ts
-        group by o.status, b.from_ts
+        group by 1
       `,
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts
-        )
+        with ${bounds}
         select
           coalesce(
-            nullif(o.payment_method, ''),
+            nullif(pm.method, ''),
             nullif(o.payu_mode, ''),
+            nullif(o.payment_method, ''),
             nullif(o.channel, ''),
             'online'
           ) as method,
           count(*)::int as count,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)), 0)::bigint as amount
         from orders o
+        left join lateral (
+          select case when count(distinct nullif(p.method, '')) > 1 then 'mixed'
+                      else min(nullif(p.method, '')) end as method
+          from order_payments p where p.order_id = o.id and p.status = 'PAID'
+        ) pm on true
         cross join bounds b
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
           and o.created_at >= b.from_ts
           and o.created_at < b.to_ts
         group by 1
-        order by amount desc
+        order by amount desc, method
       `,
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts
-        )
+        with ${bounds}
         select
           coalesce(nullif(o.channel, ''), 'web') as channel,
           count(*)::int as orders,
@@ -677,10 +702,7 @@ export async function getTransactionsAnalytics(
         order by revenue desc
       `,
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts
-        )
+        with ${bounds}
         select
           o.txnid, o.customer_name, o.customer_email, o.status,
           coalesce(o.total_paise, round(o.amount * 100)::bigint) as total_paise, o.currency, o.channel, o.created_at
@@ -691,45 +713,45 @@ export async function getTransactionsAnalytics(
         order by o.created_at desc, o.id desc
         limit 8
       `,
+      // Cash view: a refund counts on the day it was recorded, for any order.
       sql`
-        with bounds as (
-          select current_date - (${from}::int * interval '1 day') as from_ts,
-                 current_date + interval '1 day' as to_ts
-        )
-        select count(*)::int as refunded_orders
-        from order_sale_state s
+        with ${bounds}
+        select
+          count(distinct r.order_id)::int as refunded_orders,
+          coalesce(sum(r.amount_paise), 0)::bigint as refunded
+        from refunds r
         cross join bounds b
-        where s.sale_state = 'REFUNDED'
-          and s.created_at >= b.from_ts
-          and s.created_at < b.to_ts
+        where r.created_at >= b.from_ts
+          and r.created_at < b.to_ts
       `,
     ]);
 
-    const statuses = (statusRows as Row[]).map((row) => ({
+    const statusList = (statusRows as Row[]).filter((row) => number(row.count) > 0);
+    const statuses = statusList.map((row) => ({
       status: text(row.status),
       count: number(row.count),
       amountPaise: number(row.amount),
     }));
 
     const paid = (statusRows as Row[]).find((row) => isRevenueStatus(text(row.status)));
-    const failed = (statusRows as Row[]).find((row) => text(row.status) === 'FAILED');
     // PROCESSING belongs here: the money is unconfirmed, so it is neither
     // captured revenue nor a failed payment.
+    const failedCount = statuses
+      .filter((row) => row.status === 'FAILED')
+      .reduce((sum, row) => sum + row.count, 0);
     const pendingCount = countPendingTransactions(
-      (statusRows as Row[]).map((row) => ({
-        status: text(row.status),
-        count: number(row.count),
-      })),
+      statuses.map((row) => ({ status: row.status, count: row.count })),
     );
-    const refundRowsTyped = (refundRows as Row[])[0] ?? {};
+    const refundSummary = (refundRows as Row[])[0] ?? {};
 
     return {
       ok: true,
       data: {
         captured: change(number(paid?.count), number(paid?.prev_count)),
-        failed: number(failed?.count),
+        failed: failedCount,
         pending: pendingCount,
-        refundedOrders: number(refundRowsTyped.refunded_orders),
+        refundedOrders: number(refundSummary.refunded_orders),
+        refundedPaise: number(refundSummary.refunded),
         statuses,
         methods: (methodRows as Row[]).map((row) => ({
           method: text(row.method) || 'online',

@@ -1,6 +1,7 @@
 import { getSql } from '@/lib/admin/db';
 
 import { rangeDays, type RangeKey } from './analytics';
+import { getStoreTimeZone } from './sale';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: The transaction ledger must be read on the server only.');
@@ -36,6 +37,7 @@ export interface TransactionRow {
   amountPaise: number;
   currency: string;
   reference: string;
+  /** Store-timezone wall clock, `YYYY-MM-DD HH:MM:SS`. */
   recordedAt: string;
 }
 
@@ -61,10 +63,13 @@ export async function listTransactionsForExport(options: {
   if (!sql) return { ok: false, reason: 'unavailable' };
 
   const days = rangeDays(options.range);
+  const timeZone = await getStoreTimeZone();
   const channel = options.channel ?? null;
   const limit = Math.min(Math.max(options.limit ?? 10_000, 1), 20_000);
 
   try {
+    // Same window as the Overview range: whole store days up to the end of
+    // today, not a rolling "now minus N days" cut at the current time of day.
     const rows = (await sql`
       select
         o.txnid,
@@ -74,6 +79,7 @@ export async function listTransactionsForExport(options: {
         ) as channel,
         coalesce(
           nullif(p.method, ''),
+          nullif(o.payu_mode, ''),
           nullif(o.payment_method, ''),
           case when o.channel = 'pos' then 'cash' else 'payu' end
         ) as method,
@@ -81,12 +87,19 @@ export async function listTransactionsForExport(options: {
         coalesce(p.amount_paise, o.total_paise, round(o.amount * 100)::bigint) as amount_paise,
         o.currency,
         coalesce(p.provider_ref, o.payu_mihpayid, '') as reference,
-        coalesce(p.paid_at, o.paid_at, p.created_at, o.created_at) as recorded_at
+        to_char(
+          (case when p.id is not null then coalesce(p.paid_at, p.created_at) else coalesce(o.paid_at, o.created_at) end at time zone ${timeZone}::text),
+          'YYYY-MM-DD HH24:MI:SS'
+        ) as recorded_at
       from orders o
       left join order_payments p on p.order_id = o.id
       where (p.id is not null or o.status = 'PAID')
-        and coalesce(p.paid_at, o.paid_at, p.created_at, o.created_at)
-            >= now() - make_interval(days => ${days})
+        and case when p.id is not null then coalesce(p.paid_at, p.created_at) else coalesce(o.paid_at, o.created_at) end >=
+            ((((now() at time zone ${timeZone}::text)::date - ${days - 1}::int)::timestamp)
+              at time zone ${timeZone}::text)
+        and case when p.id is not null then coalesce(p.paid_at, p.created_at) else coalesce(o.paid_at, o.created_at) end <
+            ((((now() at time zone ${timeZone}::text)::date + 1)::timestamp)
+              at time zone ${timeZone}::text)
         and (
           ${channel}::text is null
           or coalesce(
@@ -94,7 +107,7 @@ export async function listTransactionsForExport(options: {
             case when o.channel = 'pos' then 'pos' else 'online' end
           ) = ${channel}
         )
-      order by recorded_at desc, o.txnid desc
+      order by case when p.id is not null then coalesce(p.paid_at, p.created_at) else coalesce(o.paid_at, o.created_at) end desc, o.txnid desc
       limit ${limit}
     `) as Row[];
 

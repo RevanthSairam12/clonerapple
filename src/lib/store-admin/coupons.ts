@@ -1033,15 +1033,20 @@ export interface CouponUsageReportFilters {
   fromDay: string;
   toDay: string;
   code?: string;
+  /** Store timezone the days are cut in; defaults to Asia/Kolkata. */
+  timeZone?: string;
 }
 
 /**
  * Redemption-level usage for a date range, optionally one code.
  *
- * Revenue is the order total, which is already net of this discount. The
- * discount column is the coupon's own share of that order. `RESERVED` rows
- * hold a use but have not been paid; they are counted in redemptions and are
- * shown with their state so staff never read them as money.
+ * `Redemptions` counts the uses that are held: `RESERVED` (an unpaid checkout
+ * holds the use) and `CONSUMED`. `RELEASED` rows stay in the list with their
+ * state but are neither a held use nor money. `Discount` and `Revenue` count
+ * `CONSUMED` redemptions on orders that are still captured (paid and not
+ * cancelled): revenue is the order total, which is already net of the
+ * discount, and the discount is the coupon's own share of that order. Totals
+ * cover the whole range even when the list is capped. Days are store days.
  */
 export async function couponUsageReport(
   filters: CouponUsageReportFilters,
@@ -1051,33 +1056,48 @@ export async function couponUsageReport(
 
   const code = (filters.code ?? '').trim().toUpperCase();
   const limit = 2000;
+  const timeZone = (filters.timeZone ?? '').trim() || 'Asia/Kolkata';
 
   try {
-    const rows = (await sql`
-      select c.code, r.state, r.discount_paise, r.customer_email, r.created_at,
-             o.txnid, o.order_number, o.total_paise, o.amount
-      from coupon_redemptions r
-      join coupons c on c.id = r.coupon_id
-      join orders o on o.id = r.order_id
-      where r.created_at >= ${filters.fromDay}::date
-        and r.created_at < (${filters.toDay}::date + interval '1 day')
-        and (${code} = '' or upper(c.code) = ${code})
-      order by r.created_at desc, r.id desc
-      limit ${limit + 1}
-    `) as Row[];
+    const [rows, totalRows] = await Promise.all([
+      sql`
+        select c.code, r.state, r.discount_paise, r.customer_email, r.created_at,
+               to_char((r.created_at at time zone ${timeZone}::text), 'YYYY-MM-DD HH24:MI') as created_local,
+               o.txnid, o.order_number, o.total_paise, o.amount
+        from coupon_redemptions r
+        join coupons c on c.id = r.coupon_id
+        join orders o on o.id = r.order_id
+        where r.created_at >= (${filters.fromDay}::date)::timestamp at time zone ${timeZone}::text
+          and r.created_at < ((${filters.toDay}::date + 1)::timestamp at time zone ${timeZone}::text)
+          and (${code} = '' or upper(c.code) = ${code})
+        order by r.created_at desc, r.id desc
+        limit ${limit + 1}
+      ` as unknown as Promise<Row[]>,
+      sql`
+        select
+          count(*) filter (where r.state in ('RESERVED', 'CONSUMED'))::int as redemptions,
+          coalesce(sum(r.discount_paise) filter (
+            where r.state = 'CONSUMED' and o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
+          ), 0)::bigint as discount,
+          coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (
+            where r.state = 'CONSUMED' and o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
+          ), 0)::bigint as revenue
+        from coupon_redemptions r
+        join coupons c on c.id = r.coupon_id
+        join orders o on o.id = r.order_id
+        where r.created_at >= (${filters.fromDay}::date)::timestamp at time zone ${timeZone}::text
+          and r.created_at < ((${filters.toDay}::date + 1)::timestamp at time zone ${timeZone}::text)
+          and (${code} = '' or upper(c.code) = ${code})
+      ` as unknown as Promise<Row[]>,
+    ]);
 
     const truncated = rows.length > limit;
     const visible = rows.slice(0, limit);
+    const totals = totalRows[0] ?? {};
 
-    let discountPaise = 0;
-    let revenuePaise = 0;
     const mapped: CouponUsageReportRow[] = visible.map((row) => {
       const discount = number(row.discount_paise);
       const total = number(row.total_paise ?? Math.round(number(row.amount) * 100));
-      if (text(row.state) === 'CONSUMED') {
-        discountPaise += discount;
-        revenuePaise += total;
-      }
       const email = text(row.customer_email);
       return {
         code: text(row.code),
@@ -1086,7 +1106,7 @@ export async function couponUsageReport(
         discountDisplay: formatPaise(discount),
         orderTotalDisplay: formatPaise(total),
         state: text(row.state),
-        createdAt: iso(row.created_at) ?? '',
+        createdAt: text(row.created_local),
       };
     });
 
@@ -1095,9 +1115,9 @@ export async function couponUsageReport(
       data: {
         rows: mapped,
         totals: {
-          redemptions: mapped.length,
-          discountPaise,
-          revenuePaise,
+          redemptions: number(totals.redemptions),
+          discountPaise: number(totals.discount),
+          revenuePaise: number(totals.revenue),
         },
         truncated,
       },

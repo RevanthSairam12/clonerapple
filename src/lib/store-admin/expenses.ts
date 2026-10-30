@@ -9,6 +9,7 @@ import {
   validateExpenseTitle,
   validateSpentOn,
 } from './expense-rules';
+import { getDatabaseNow, getStoreTimeZone } from './store-clock';
 
 /**
  * Manual expense ledger.
@@ -223,14 +224,14 @@ type ValidExpense = {
   attachmentMediaId: string | null;
 };
 
-function validateExpense(input: ExpenseInput, now = new Date()):
+function validateExpense(input: ExpenseInput, now: Date, timeZone: string):
   | { ok: true; value: ValidExpense }
   | { ok: false; error: string } {
   const title = validateExpenseTitle(input.title);
   if (!title.ok) return title;
   const amount = validateExpenseAmount(input.amount);
   if (!amount.ok) return amount;
-  const spentOn = validateSpentOn(input.spentOn, now);
+  const spentOn = validateSpentOn(input.spentOn, now, timeZone);
   if (!spentOn.ok) return spentOn;
   const note = validateExpenseNote(input.note);
   if (!note.ok) return note;
@@ -256,7 +257,7 @@ export async function createExpense(
   input: ExpenseInput,
   staffId: string,
 ): Promise<ExpenseLoad<ExpenseSummary>> {
-  const validation = validateExpense(input);
+  const validation = validateExpense(input, await getDatabaseNow(), await getStoreTimeZone());
   if (!validation.ok) return { ok: false, reason: 'invalid-input' };
   const value = validation.value;
 
@@ -296,7 +297,7 @@ export async function updateExpense(
   input: ExpenseInput,
   staffId: string,
 ): Promise<ExpenseLoad<{ before: ExpenseSummary; after: ExpenseSummary }>> {
-  const validation = validateExpense(input);
+  const validation = validateExpense(input, await getDatabaseNow(), await getStoreTimeZone());
   if (!validation.ok) return { ok: false, reason: 'invalid-input' };
   const value = validation.value;
 

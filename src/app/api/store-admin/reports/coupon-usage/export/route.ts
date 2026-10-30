@@ -4,7 +4,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { toCsv } from '@/lib/store-admin/catalog-csv';
 import { couponUsageReport } from '@/lib/store-admin/coupons';
-import { parseReportFilters } from '@/lib/store-admin/report-rules';
+import { loadReportFilters } from '@/lib/store-admin/store-clock';
 
 /**
  * Coupon usage as CSV for the same range and code as the page.
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
-  const parsed = parseReportFilters({
+  const parsed = await loadReportFilters({
     from: url.searchParams.get('from') ?? '',
     to: url.searchParams.get('to') ?? '',
   });
@@ -33,6 +33,7 @@ export async function GET(request: Request) {
     fromDay: parsed.filters.fromDay,
     toDay: parsed.filters.toDay,
     code,
+    timeZone: parsed.filters.timeZone,
   });
   if (!result.ok) {
     return NextResponse.json({ error: 'The report is not available.' }, { status: 503 });
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
 
   const { rows, totals, truncated } = result.data;
   const csv = toCsv(
-    ['Code', 'Order', 'Customer', 'Discount (INR)', 'Order total (INR)', 'State', 'Time'],
+    ['Code', 'Order', 'Customer', 'Discount (INR)', 'Order total (INR)', 'State', 'Time (store time)'],
     rows.map((row) => [
       row.code,
       row.orderNumber,
@@ -51,6 +52,15 @@ export async function GET(request: Request) {
       row.createdAt,
     ]),
   );
+  const withTotal = `${csv}\r\n${[
+    'Total',
+    `${totals.redemptions} redemptions`,
+    '',
+    (totals.discountPaise / 100).toFixed(2),
+    (totals.revenuePaise / 100).toFixed(2),
+    '',
+    '',
+  ].join(',')}`;
 
   await writeAudit({
     actorId: guard.session.adminId,
@@ -71,7 +81,7 @@ export async function GET(request: Request) {
     request,
   });
 
-  return new NextResponse(`﻿${csv}`, {
+  return new NextResponse(`﻿${withTotal}`, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="gadzio-coupon-usage-${parsed.filters.fromDay}_${parsed.filters.toDay}.csv"`,

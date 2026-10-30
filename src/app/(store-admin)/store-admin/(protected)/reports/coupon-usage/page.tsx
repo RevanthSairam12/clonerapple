@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { PrintButton } from '@/components/store-admin/PrintButton';
 import { formatPaise } from '@/lib/store-admin/amount';
 import { listCouponOptions, couponUsageReport } from '@/lib/store-admin/coupons';
-import { parseReportFilters } from '@/lib/store-admin/report-rules';
+import { storeDay } from '@/lib/store-admin/report-rules';
+import { getDatabaseNow, loadReportFilters } from '@/lib/store-admin/store-clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +37,7 @@ export default async function CouponUsageReportPage({ searchParams }: Props) {
     from: first(raw.from),
     to: first(raw.to),
   };
-  const parsed = parseReportFilters(params);
+  const parsed = await loadReportFilters(params);
   const code = first(raw.code).trim().toUpperCase();
 
   const [result, optionsResult] = await Promise.all([
@@ -45,6 +46,7 @@ export default async function CouponUsageReportPage({ searchParams }: Props) {
           fromDay: parsed.filters.fromDay,
           toDay: parsed.filters.toDay,
           code,
+          timeZone: parsed.filters.timeZone,
         })
       : Promise.resolve(null),
     listCouponOptions(),
@@ -70,6 +72,7 @@ export default async function CouponUsageReportPage({ searchParams }: Props) {
   )}&to=${encodeURIComponent(filters.toDay)}${code ? `&code=${encodeURIComponent(code)}` : ''}`;
 
   const data = result && result.ok ? result.data : null;
+  const printedOn = storeDay(await getDatabaseNow(), filters.timeZone);
 
   return (
     <div className="sa-report-page">
@@ -98,7 +101,7 @@ export default async function CouponUsageReportPage({ searchParams }: Props) {
         <p>
           {filters.fromDay} to {filters.toDay}
           {code ? ` · ${code}` : ''}
-          {` · printed ${new Date().toISOString().slice(0, 10)}`}
+          {` · printed ${printedOn}`}
         </p>
       </div>
 
@@ -163,10 +166,12 @@ export default async function CouponUsageReportPage({ searchParams }: Props) {
           </div>
 
           <p className="sa-note">
-            Discount and revenue count used redemptions only. Order revenue is the order total,
-            which is already net of the coupon; the discount is the coupon&rsquo;s own share of it.
-            Returns and refunds are reported separately and do not restore a coupon use unless the
-            store setting says so.
+            How this is calculated: redemptions count uses that are held or used (released uses stay
+            listed but are not counted). Discount and revenue count used redemptions on orders that
+            are still paid and not cancelled, by the store-timezone day of the redemption. Order
+            revenue is the order total, which is already net of the coupon; the discount is the
+            coupon&rsquo;s own share of it. Returns and refunds are reported separately and do not
+            restore a coupon use unless the store setting says so.
           </p>
 
           <div className="sa-table-wrap sa-report-table-wrap">

@@ -5,6 +5,7 @@ import {
   defaultReportRange,
   type ReportGroup,
 } from '@/lib/store-admin/report-rules';
+import { getDatabaseNow, getStoreTimeZone } from '@/lib/store-admin/store-clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +25,8 @@ const GROUP_NOTE: Record<ReportGroup, string> = {
  * opens the report with the last 30 days selected, so the first click always
  * produces a table.
  */
-export default function StoreAdminReportsPage() {
-  const range = defaultReportRange();
+export default async function StoreAdminReportsPage() {
+  const range = defaultReportRange(await getDatabaseNow(), await getStoreTimeZone());
 
   return (
     <div>

@@ -5,6 +5,7 @@ import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
 
 import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
+import { getStoreTimeZone } from './sale';
 import {
   buildTrackingUrl,
   type DeliveryInput,
@@ -450,6 +451,7 @@ export async function listOrders(options: {
   const sort = options.sort && isOrderSort(options.sort) ? options.sort : 'newest';
   const requestedPage = Math.max(1, Math.trunc(options.page ?? 1) || 1);
   const { pattern } = queryParts({ query, state, dateFrom, dateTo });
+  const tz = await getStoreTimeZone();
 
   try {
     const countRows = (await sql`
@@ -462,8 +464,8 @@ export async function listOrders(options: {
           or o.customer_name ilike ${pattern} escape '\\'
           or o.customer_email ilike ${pattern} escape '\\'
           or o.customer_phone ilike ${pattern} escape '\\')
-        and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
-        and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+        and (${dateFrom === null} or o.created_at >= (${dateFrom}::date)::timestamp at time zone ${tz}::text)
+        and (${dateTo === null} or o.created_at < ((${dateTo}::date + 1)::timestamp at time zone ${tz}::text))
       group by s.sale_state
     `) as Row[];
 
@@ -478,8 +480,8 @@ export async function listOrders(options: {
           or o.customer_name ilike ${pattern} escape '\\'
           or o.customer_email ilike ${pattern} escape '\\'
           or o.customer_phone ilike ${pattern} escape '\\')
-        and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
-        and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+        and (${dateFrom === null} or o.created_at >= (${dateFrom}::date)::timestamp at time zone ${tz}::text)
+        and (${dateTo === null} or o.created_at < ((${dateTo}::date + 1)::timestamp at time zone ${tz}::text))
     `) as Row[];
 
     const counts = emptyCounts();
@@ -506,8 +508,8 @@ export async function listOrders(options: {
           or o.customer_name ilike ${pattern} escape '\\'
           or o.customer_email ilike ${pattern} escape '\\'
           or o.customer_phone ilike ${pattern} escape '\\')
-        and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
-        and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+        and (${dateFrom === null} or o.created_at >= (${dateFrom}::date)::timestamp at time zone ${tz}::text)
+        and (${dateTo === null} or o.created_at < ((${dateTo}::date + 1)::timestamp at time zone ${tz}::text))
       order by
         case when ${sort} = 'amount-desc'
           then coalesce(s.total_paise, round(s.amount * 100)::bigint) end desc nulls last,
@@ -543,6 +545,7 @@ export async function listOrders(options: {
 export interface OrderExportRow {
   txnid: string;
   orderNumber: number | null;
+  /** Store-timezone wall clock, `YYYY-MM-DD HH:MM:SS`. */
   createdAt: string;
   saleState: SaleState;
   paymentStatus: string;
@@ -583,12 +586,14 @@ export async function listOrdersForExport(options: {
   const sort = options.sort && isOrderSort(options.sort) ? options.sort : 'newest';
   const limit = Math.min(Math.max(Math.trunc(options.limit ?? 10_000), 1), 10_000);
   const pattern = `%${escapeLike(query)}%`;
+  const tz = await getStoreTimeZone();
 
   try {
     const rows = (await sql`
       select
         s.txnid, s.sale_state, s.status, s.fulfilment_status, s.channel,
-        s.amount, s.currency, s.total_paise, s.shipping_paise, s.created_at,
+        s.amount, s.currency, s.total_paise, s.shipping_paise,
+        to_char((s.created_at at time zone ${tz}::text), 'YYYY-MM-DD HH24:MI:SS') as created_local,
         o.order_number,
         o.customer_name, o.customer_email, o.customer_phone,
         (
@@ -603,8 +608,8 @@ export async function listOrdersForExport(options: {
           or o.customer_name ilike ${pattern} escape '\\'
           or o.customer_email ilike ${pattern} escape '\\'
           or o.customer_phone ilike ${pattern} escape '\\')
-        and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
-        and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+        and (${dateFrom === null} or o.created_at >= (${dateFrom}::date)::timestamp at time zone ${tz}::text)
+        and (${dateTo === null} or o.created_at < ((${dateTo}::date + 1)::timestamp at time zone ${tz}::text))
       order by
         case when ${sort} = 'amount-desc'
           then coalesce(s.total_paise, round(s.amount * 100)::bigint) end desc nulls last,
@@ -623,7 +628,7 @@ export async function listOrdersForExport(options: {
         return {
         txnid: text(row.txnid),
         orderNumber: orderNumber > 0 ? orderNumber : null,
-        createdAt: iso(row.created_at),
+        createdAt: text(row.created_local),
         saleState: isSaleState(row.sale_state) ? row.sale_state : 'PENDING',
         paymentStatus: text(row.status),
         fulfilmentStatus: isFulfilmentStatus(row.fulfilment_status)

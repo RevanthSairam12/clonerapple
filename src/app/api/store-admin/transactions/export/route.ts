@@ -1,6 +1,8 @@
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { isRangeKey } from '@/lib/store-admin/analytics';
+import { getDatabaseNow, getStoreTimeZone } from '@/lib/store-admin/store-clock';
+import { storeDay } from '@/lib/store-admin/report-rules';
 import {
   isTransactionChannel,
   listTransactionsForExport,
@@ -42,7 +44,7 @@ export async function GET(request: Request) {
 
   const header = [
     'Transaction',
-    'Recorded at',
+    'Recorded at (store time)',
     'Channel',
     'Method',
     'Status',
@@ -79,7 +81,7 @@ export async function GET(request: Request) {
     request,
   });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = storeDay(await getDatabaseNow(), await getStoreTimeZone());
   return new Response(`﻿${lines.join('\r\n')}\r\n`, {
     status: 200,
     headers: {

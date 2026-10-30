@@ -37,9 +37,13 @@ test('every order-level revenue sum uses the same total and legacy fallback', ()
 test('the definition is documented, and item reports say they exclude shipping', () => {
   const reports = read('src/lib/store-admin/reports.ts');
   assert.match(reports, /Revenue\*\* is the order total as charged/);
-  assert.match(reports, /it excludes shipping; order-level revenue includes it/);
-  // Item-wise revenue is line revenue, not the order total.
-  assert.match(reports, /coalesce\(sum\(oi\.line_total_paise\), 0\)::bigint as revenue/);
+  assert.match(reports, /excludes shipping/);
+  // Item-wise revenue is line revenue after discount, not the order total:
+  // item revenue + shipping = order-level revenue.
+  assert.match(
+    reports,
+    /coalesce\(sum\(oi\.line_total_paise - oi\.discount_paise\), 0\)::bigint as revenue/,
+  );
 });
 
 test('an unconfirmed (PROCESSING) payment is labelled and counted, never revenue', () => {

@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
 
 import { requireStoreRole } from '@/lib/store-admin/auth';
-import {
-  getReport,
-} from '@/lib/store-admin/reports';
+import { getReport } from '@/lib/store-admin/reports';
+import { loadReportFilters } from '@/lib/store-admin/store-clock';
 import {
   isReportKey,
-  parseReportFilters,
   reportDefinition,
 } from '@/lib/store-admin/report-rules';
 
@@ -30,7 +28,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Choose a report to run.' }, { status: 400 });
   }
 
-  const parsed = parseReportFilters(Object.fromEntries(url.searchParams));
+  const parsed = await loadReportFilters(Object.fromEntries(url.searchParams));
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }

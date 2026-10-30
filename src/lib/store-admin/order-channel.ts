@@ -2,6 +2,7 @@ import { getSql } from '@/lib/admin/db';
 
 import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
+import { getStoreTimeZone } from './sale';
 import {
   isSaleState,
   ORDERS_PAGE_SIZE,
@@ -97,6 +98,7 @@ export async function listPosOrders(options: {
   const dateTo = options.dateTo || null;
   const requestedPage = Math.max(1, Math.trunc(options.page ?? 1) || 1);
   const pattern = `%${escapeLike(query)}%`;
+  const tz = await getStoreTimeZone();
 
   try {
     const [countRows, rows] = await Promise.all([
@@ -106,8 +108,8 @@ export async function listPosOrders(options: {
         join orders o on o.id = s.id
         where s.channel = 'pos'
           and (${query === ''} or o.txnid ilike ${pattern} escape '\\')
-          and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
-          and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+          and (${dateFrom === null} or o.created_at >= (${dateFrom}::date)::timestamp at time zone ${tz}::text)
+          and (${dateTo === null} or o.created_at < ((${dateTo}::date + 1)::timestamp at time zone ${tz}::text))
         group by s.sale_state
       `,
       sql`
@@ -120,8 +122,8 @@ export async function listPosOrders(options: {
         join orders o on o.id = s.id
         where s.channel = 'pos'
           and (${query === ''} or o.txnid ilike ${pattern} escape '\\')
-          and (${dateFrom === null} or o.created_at >= ${dateFrom}::date)
-          and (${dateTo === null} or o.created_at < (${dateTo}::date + interval '1 day'))
+          and (${dateFrom === null} or o.created_at >= (${dateFrom}::date)::timestamp at time zone ${tz}::text)
+          and (${dateTo === null} or o.created_at < ((${dateTo}::date + 1)::timestamp at time zone ${tz}::text))
         order by s.created_at desc, s.id desc
         limit ${ORDERS_PAGE_SIZE} offset ${(requestedPage - 1) * ORDERS_PAGE_SIZE}
       `,

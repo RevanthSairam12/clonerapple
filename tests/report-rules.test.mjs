@@ -29,6 +29,15 @@ const {
 
 const NOW = new Date('2026-10-24T09:30:00.000Z');
 
+test('payment method filters normalize, validate and survive CSV links', () => {
+  const parsed = parseReportFilters({ method: ' UPI ' }, NOW);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.filters.method, 'upi');
+  assert.match(reportQuery(parsed.filters), /method=upi/);
+  assert.equal(parseReportFilters({ method: '<script>' }, NOW).ok, false);
+  assert.equal(parseReportFilters({}, NOW).filters.method, 'all');
+});
+
 test('the report catalogue covers exactly the ten planned reports', () => {
   assert.equal(REPORT_KEYS.length, 10);
   assert.equal(new Set(REPORT_KEYS).size, 10);
@@ -47,7 +56,7 @@ test('the report catalogue covers exactly the ten planned reports', () => {
   assert.equal(isReportKey(undefined), false);
 });
 
-test('the default range is the last 30 UTC days, both ends inclusive', () => {
+test('the default range is the last 30 store days, both ends inclusive', () => {
   const range = defaultReportRange(NOW);
   assert.equal(range.toDay, '2026-10-24');
   assert.equal(range.fromDay, '2026-09-25');
@@ -57,9 +66,12 @@ test('the default range is the last 30 UTC days, both ends inclusive', () => {
   assert.equal(parsed.ok, true);
   assert.equal(parsed.filters.fromDay, '2026-09-25');
   assert.equal(parsed.filters.toDay, '2026-10-24');
-  assert.equal(parsed.filters.fromIso, '2026-09-25T00:00:00.000Z');
-  // The upper bound is exclusive: the day after `to`.
-  assert.equal(parsed.filters.toIso, '2026-10-25T00:00:00.000Z');
+  // Days start at IST midnight (UTC+05:30), not at UTC midnight.
+  assert.equal(parsed.filters.fromIso, '2026-09-24T18:30:00.000Z');
+  // The upper bound is exclusive: the start of the day after `to`.
+  assert.equal(parsed.filters.toIso, '2026-10-24T18:30:00.000Z');
+  assert.equal(parsed.filters.timeZone, 'Asia/Kolkata');
+  assert.equal(parsed.filters.rowLimit, REPORT_ROW_LIMIT);
   assert.equal(parsed.filters.groupBy, 'day');
   assert.equal(parsed.filters.status, 'all');
   assert.equal(parsed.filters.channel, 'all');
@@ -71,7 +83,8 @@ test('a single day is a valid range', () => {
   const parsed = parseReportFilters({ from: '2026-10-24', to: '2026-10-24' }, NOW);
   assert.equal(parsed.ok, true);
   assert.equal(parsed.filters.fromDay, '2026-10-24');
-  assert.equal(parsed.filters.toIso, '2026-10-25T00:00:00.000Z');
+  assert.equal(parsed.filters.fromIso, '2026-10-23T18:30:00.000Z');
+  assert.equal(parsed.filters.toIso, '2026-10-24T18:30:00.000Z');
 });
 
 test('ranges wider than 62 days default to monthly buckets', () => {

@@ -2,6 +2,8 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { isDateOnly } from '@/lib/store-admin/delivery';
 import { isOrderSort, isSaleState, listOrdersForExport } from '@/lib/store-admin/orders';
+import { storeDay } from '@/lib/store-admin/report-rules';
+import { getDatabaseNow, getStoreTimeZone } from '@/lib/store-admin/store-clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,7 +66,7 @@ export async function GET(request: Request) {
   const header = [
     'Transaction',
     'Order number',
-    'Placed at',
+    'Placed at (store time)',
     'Sale state',
     'Payment status',
     'Fulfilment',
@@ -124,7 +126,7 @@ export async function GET(request: Request) {
     request,
   });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = storeDay(await getDatabaseNow(), await getStoreTimeZone());
   return new Response(`﻿${lines.join('\r\n')}\r\n`, {
     status: 200,
     headers: {

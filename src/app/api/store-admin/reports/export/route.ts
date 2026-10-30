@@ -3,9 +3,10 @@ import { NextResponse } from 'next/server';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { getReport } from '@/lib/store-admin/reports';
+import { loadReportFilters } from '@/lib/store-admin/store-clock';
 import {
+  REPORT_EXPORT_ROW_LIMIT,
   isReportKey,
-  parseReportFilters,
   reportCsv,
   reportDefinition,
 } from '@/lib/store-admin/report-rules';
@@ -31,12 +32,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Choose a report to export.' }, { status: 400 });
   }
 
-  const parsed = parseReportFilters(Object.fromEntries(url.searchParams));
+  const parsed = await loadReportFilters(Object.fromEntries(url.searchParams));
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  const result = await getReport(key, parsed.filters);
+  const result = await getReport(key, {
+    ...parsed.filters,
+    rowLimit: REPORT_EXPORT_ROW_LIMIT,
+  });
   if (!result.ok) {
     return NextResponse.json({ error: 'That report is not available.' }, { status: 503 });
   }
@@ -57,6 +61,7 @@ export async function GET(request: Request) {
       group: parsed.filters.groupBy,
       status: parsed.filters.status,
       channel: parsed.filters.channel,
+      method: parsed.filters.method ?? 'all',
       rows: data.rows.length,
       truncated: data.truncated === true,
     },

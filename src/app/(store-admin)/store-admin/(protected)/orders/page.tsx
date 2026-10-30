@@ -14,6 +14,7 @@ import {
 } from '@/lib/store-admin/orders';
 import { orderTotals } from '@/lib/store-admin/order-documents';
 import { canonicalViewQuery, getSavedViews } from '@/lib/store-admin/preferences';
+import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { QuickView } from '@/components/store-admin/QuickView';
 import { SavedViews } from '@/components/store-admin/SavedViews';
 
@@ -80,9 +81,12 @@ const DATE_FORMAT: Intl.DateTimeFormatOptions = {
   minute: '2-digit',
 };
 
-function formatDate(value: string): string {
+/** Shown in the store timezone, never the web server's. */
+function formatDate(value: string, timeZone: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-IN', DATE_FORMAT);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString('en-IN', { ...DATE_FORMAT, timeZone });
 }
 
 function stateClass(state: SaleState): string {
@@ -96,6 +100,7 @@ function stateClass(state: SaleState): string {
 
 export default async function StoreAdminOrdersPage({ searchParams }: Props) {
   const params = await searchParams;
+  const timeZone = await getStoreTimeZone();
 
   const query = (params.q ?? '').trim().slice(0, 100);
   const state = params.state && isSaleState(params.state) ? params.state : null;
@@ -360,7 +365,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                 <td className="sa-num">
                   {formatAmount(order.totalPaise || Math.round(order.amount * 100), order.currency)}
                 </td>
-                <td className="sa-date">{formatDate(order.createdAt)}</td>
+                <td className="sa-date">{formatDate(order.createdAt, timeZone)}</td>
                 <td className="sa-col-actions">
                   <Link
                     className="sa-quick-link"
@@ -406,7 +411,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
               <span className="sa-eyebrow">Quick view</span>
               <h2 className="sa-quickview-title">{quickOrder.txnid}</h2>
               <p className="sa-quickview-sub">
-                {formatDate(quickOrder.createdAt)} ·{' '}
+                {formatDate(quickOrder.createdAt, timeZone)} ·{' '}
                 {quickOrder.channel === 'pos' ? 'Point of sale' : 'Online store'}
               </p>
             </div>
@@ -479,7 +484,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                   <p className="sa-mono">{quickOrder.delivery.trackingNumber}</p>
                 ) : null}
                 {quickOrder.delivery.scheduledFor ? (
-                  <p>Scheduled {formatDate(quickOrder.delivery.scheduledFor)}</p>
+                  <p>Scheduled {formatDate(quickOrder.delivery.scheduledFor, timeZone)}</p>
                 ) : null}
               </section>
             ) : null}

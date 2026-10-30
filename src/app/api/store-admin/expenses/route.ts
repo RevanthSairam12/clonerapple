@@ -4,7 +4,7 @@ import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { createExpense, listExpenses } from '@/lib/store-admin/expenses';
-import { parseReportFilters } from '@/lib/store-admin/report-rules';
+import { loadReportFilters } from '@/lib/store-admin/store-clock';
 
 /**
  * Expense ledger.
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
-  const parsed = parseReportFilters(Object.fromEntries(url.searchParams));
+  const parsed = await loadReportFilters(Object.fromEntries(url.searchParams));
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
