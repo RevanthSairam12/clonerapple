@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/admin/db';
+import { REMOVED_STAFF_NAME } from './staff-rules';
 
 /**
  * Read model for `store_admin_audit`.
@@ -145,8 +146,19 @@ export type AuditLoad<T> =
   | { ok: true; data: T }
   | { ok: false; reason: 'unavailable' };
 
-function rowFromRecord(row: Row): AuditLogRow {
+export function redactRemovedAuditRow(row: AuditLogRow, removedActor: boolean, removedEntity: boolean): AuditLogRow {
+  if (!removedActor && !removedEntity) return row;
   return {
+    ...row,
+    actorEmail: removedActor ? REMOVED_STAFF_NAME : row.actorEmail,
+    before: { name: REMOVED_STAFF_NAME },
+    after: { name: REMOVED_STAFF_NAME },
+    reason: 'Removed staff member',
+  };
+}
+
+function rowFromRecord(row: Row): AuditLogRow {
+  return redactRemovedAuditRow({
     id: number(row.id),
     createdAt: iso(row.created_at),
     actorId: nullableText(row.actor_id),
@@ -162,7 +174,7 @@ function rowFromRecord(row: Row): AuditLogRow {
     userAgentHash: nullableText(row.user_agent_hash),
     before: row.before ?? null,
     after: row.after ?? null,
-  };
+  }, row.removed_actor === true, row.removed_entity === true);
 }
 
 export async function listAuditLog(filters: AuditFilters): Promise<AuditLoad<AuditLogPage>> {
@@ -178,6 +190,9 @@ export async function listAuditLog(filters: AuditFilters): Promise<AuditLoad<Aud
       select id, created_at, actor_id, actor_email, action, entity, entity_id,
              status, reason, route, request_id, ip_hash, user_agent_hash,
              before, after,
+             exists(select 1 from store_admins a where a.id = store_admin_audit.actor_id and a.removed_at is not null) as removed_actor,
+             exists(select 1 from store_admins a where store_admin_audit.entity = 'store_admin'
+               and a.id = store_admin_audit.entity_id and a.removed_at is not null) as removed_entity,
              count(*) over() as total
       from store_admin_audit
       where created_at >= ${filters.fromDay}::date
@@ -267,7 +282,10 @@ export async function exportAuditLog(filters: AuditFilters): Promise<AuditLoad<A
     const rows = (await sql`
       select id, created_at, actor_id, actor_email, action, entity, entity_id,
              status, reason, route, request_id, ip_hash, user_agent_hash,
-             before, after
+             before, after,
+             exists(select 1 from store_admins a where a.id = store_admin_audit.actor_id and a.removed_at is not null) as removed_actor,
+             exists(select 1 from store_admins a where store_admin_audit.entity = 'store_admin'
+               and a.id = store_admin_audit.entity_id and a.removed_at is not null) as removed_entity
       from store_admin_audit
       where created_at >= ${filters.fromDay}::date
         and created_at < (${filters.toDay}::date + interval '1 day')

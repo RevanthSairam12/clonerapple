@@ -157,8 +157,11 @@ function networkContext(request: Request | null | undefined): AuditNetworkContex
  * Insert one immutable audit row. Best-effort: returns false when the database
  * is unavailable or the insert failed, and logs a payload-free warning.
  */
-export async function writeAudit(input: AuditInput): Promise<boolean> {
-  const sql = getSql();
+export async function writeAudit(
+  input: AuditInput,
+  transaction?: NonNullable<ReturnType<typeof getSql>> | import('postgres').TransactionSql,
+): Promise<boolean> {
+  const sql = transaction ?? getSql();
   if (!sql) return false;
 
   try {

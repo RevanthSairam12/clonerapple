@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/admin/api-guard';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
-import { getStaff, updateStaff } from '@/lib/store-admin/staff';
+import { getStaff, removeStaff, updateStaff } from '@/lib/store-admin/staff';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,4 +87,35 @@ export async function PATCH(
   });
 
   return NextResponse.json({ staff: after, sessionsRevoked });
+}
+
+/** Permanent, audited tombstone removal; the email confirmation is server checked. */
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const originViolation = assertSameOrigin(request);
+  if (originViolation) return originViolation;
+  const guard = await requireStoreRole('store_owner');
+  if (!guard.ok) return guard.response;
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid body');
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
+  }
+  const { id } = await context.params;
+  const result = await removeStaff(id, body.email, {
+    actorId: guard.session.adminId, actorEmail: guard.session.email,
+    action: 'staff.remove', entity: 'store_admin', entityId: id, request,
+  });
+  if (!result.ok) {
+    await writeAudit({
+      actorId: guard.session.adminId, actorEmail: guard.session.email,
+      action: 'staff.remove', entity: 'store_admin', entityId: id,
+      status: 'denied', reason: result.reason, request,
+    });
+    return NextResponse.json({ error: result.error }, {
+      status: result.reason === 'not-found' ? 404 : result.reason === 'invalid-input' || result.reason === 'last-owner' ? 400 : 503,
+    });
+  }
+  return NextResponse.json({ removed: true, sessionsRevoked: result.data.sessionsRevoked });
 }

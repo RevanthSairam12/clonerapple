@@ -1,23 +1,25 @@
 # Gadzio — Feature Reference
 
-**Verified:** 29 October 2026, against the code in this repository and the database
-reached through `.env.local`.
+**Verified:** 31 October 2026 for the automated checks below, against this repository
+and the database reached through `.env.local`. Explicitly dated smoke/catalogue/content
+snapshots remain historical, not reverified by these checks.
 
 **Evidence collected at that moment**
 
 | Check | Result |
 |---|---|
-| `npm test` | **592 tests, 592 pass, 0 fail** (≈210 s with the database suites) |
+| `npm test` | **763 tests, 763 pass, 0 fail, 0 skipped** (including real PostgreSQL fixtures and executable authentication/monitor tests) |
 | `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported (last run 26 October 2026) |
-| `node scripts/check-store-admin-routes.mjs` | **All 94 store-admin routes are guarded** |
+| `node scripts/check-store-admin-routes.mjs` | **All 96 store-admin routes are guarded** |
 | `node scripts/check-setting-lists.mjs` | all 14 settings tables readable, 114 notification cells |
 | `node scripts/check-admin-boundary.mjs` | legacy CMS holds no commerce field; 11 Education collections exempt |
 | `node scripts/check-account-routes.mjs` | **All 8 account API routes check the customer session and ownership boundary** |
 | `npm run typecheck` / `npm run build` | both succeed |
 | `npm audit` | 0 vulnerabilities |
 | Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render (last run 26 October 2026) |
-| Migrations applied | `schema_migrations` holds every migration file through `0041_coupons.sql` |
-| Database contents | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
+| Migrations applied | Migration runner successfully applied `0043_staff_removal.sql`; previous task migrations retained |
+| Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
+| Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
 ---
 
@@ -1542,8 +1544,40 @@ no page reads them; storefront metadata is still hard-coded in each `page.tsx`.
 ### 3.7 Staff — 🟢 Live
 
 - **Route:** `/settings/staff`; APIs under `/api/store-admin/staff/**`.
-- **What it does:** create staff, change name/phone, change role, deactivate, reset
-  password, view and revoke sessions.
+- **What it does:** create staff, change name/phone, change role, deactivate, permanently
+  remove an account, reset passwords, and view/revoke sessions.
+- **Permanent removal (migration 0043):** owner-only, no self-removal or removal of the
+  last active owner. Two sequential confirmations require the exact email, verified again
+  by the server. A transaction revokes all sessions, deletes preferences, clears personal
+  and authentication data, frees the original email and writes an audit entry. An opaque
+  anonymized tombstone is retained because historical foreign keys (including immutable
+  refund/order-edit records and non-null shift attribution) prevent safe hard deletion.
+  Removed accounts are excluded from staff reads and cannot be restored. Audit screen/CSV
+  projections show “Removed staff member” without rewriting append-only history.
+- **Live session enforcement:** page requests and API guards recheck active/nonremoved
+  accounts against database expiry. Session issuance locks/rechecks the account against
+  concurrent removal, deactivation or password resets. Open pages check immediately,
+  every 30 seconds, on focus and when visible via `/api/store-admin/auth/session`.
+  Revoked sessions go to login with “Your account was removed or deactivated. Contact
+  the store owner.” Role changes/reset sessions are picked up by these checks.
+- **Temporary-password gate:** `/store-admin/change-password` sits outside the protected
+  shell. Every other page/API is blocked until completion, except session check, logout
+  and the password-change API. Current/new/confirmation fields have show/hide controls
+  and shared live/submit/server validation: minimum 8 characters, maximum 72 UTF-8 bytes,
+  matching confirmation, a different new password, and correct current password.
+  The same form is used on My profile. Success atomically clears the flag, revokes other
+  sessions and audits the change, then displays a dashboard success notice.
+- **Task 5 verification:** isolated-schema PostgreSQL fixtures verify removal, email
+  reuse, session rejection, immutable history and password/session changes; unit and
+  source-contract tests cover removal rules, rollback, exact password messages,
+  confirmations and audit redaction. Executable mocked-runtime tests exercise API role/
+  password gates, login rejection and issuance races, plus immediate/interval/focus/
+  visibility monitor checks and redirects. Browser interaction has not been exercised;
+  these are not end-to-end browser tests.
+  The initial full run hit a PostgreSQL `ECONNRESET`; the final combined rerun passed
+  763/763 tests with zero skips. Typecheck, production build, route/account/boundary/
+  settings checks and npm audit passed (0 vulnerabilities); notification readiness remains
+  blocked as listed in the evidence table, with no messages sent.
 - **Rules enforced server side:**
   - only an owner may create or modify staff;
   - nobody can change their own role or deactivate themselves;
@@ -1665,7 +1699,7 @@ These are deliberate gaps, not bugs.
 
 | Item | Why |
 |---|---|
-| Migrations after `0036` | `0037` is flash-sale reservations, the waiting list, refund obligations and the new notification topics; `0038` indexes failed/cancelled rows still inside their grace window (§2.15); `0039` adds sale pricing and the `sale_settings` switch (§2.16); `0040` lets POS charge the till price; `0041` adds coupons and their redemption ledger (§2.18). The next free number is `0042`. |
+| Migrations after `0036` | `0037` added reservations/waiting-list/refund obligations; `0038` grace-window indexes; `0039` sale pricing; `0040` POS entered prices; `0041` coupons; `0042` locks pickup off; `0043` adds permanent staff-removal markers. The next free number is `0044`. |
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
 | SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |

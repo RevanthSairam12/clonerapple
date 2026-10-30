@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { ProfilePanel } from '@/components/store-admin/ProfilePanel';
 import { currentStoreTokenHash, getStoreSession } from '@/lib/store-admin/auth';
 import { getStaff, listStaffSessions } from '@/lib/store-admin/staff';
@@ -28,6 +29,7 @@ export default async function StoreAdminProfilePage() {
 
       {profile.ok ? (
         <ProfilePanel
+          timeZone={await getStoreTimeZone()}
           profile={profile.data}
           sessions={sessions.ok ? sessions.data : []}
         />

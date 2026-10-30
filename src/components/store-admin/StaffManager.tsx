@@ -14,6 +14,7 @@ interface Props {
   staff: StaffMember[];
   canManage: boolean;
   currentAdminId: string;
+  timeZone?: string;
 }
 
 interface CreateDraft {
@@ -44,17 +45,17 @@ const EMPTY_CREATE: CreateDraft = {
   role: 'store_admin',
 };
 
-function formatWhen(value: string | null): string {
+function formatWhen(value: string | null, timeZone?: string): string {
   if (!value) return 'Never';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-IN');
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-IN', { timeZone });
 }
 
 /**
  * Staff management. Owner-only writes; admins can read the list. A temporary
  * password is shown once, in this component, and never stored in the browser.
  */
-export function StaffManager({ staff, canManage, currentAdminId }: Props) {
+export function StaffManager({ staff, canManage, currentAdminId, timeZone }: Props) {
   const router = useRouter();
   const [create, setCreate] = useState<CreateDraft>(EMPTY_CREATE);
   const [edit, setEdit] = useState<EditDraft | null>(null);
@@ -62,6 +63,9 @@ export function StaffManager({ staff, canManage, currentAdminId }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [removal, setRemoval] = useState<StaffMember | null>(null);
+  const [removalEmail, setRemovalEmail] = useState('');
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
 
   function resetFeedback() {
     setError(null);
@@ -167,6 +171,39 @@ export function StaffManager({ staff, canManage, currentAdminId }: Props) {
     }
   }
 
+  function beginRemoval(member: StaffMember) {
+    if (!window.confirm(`Are you sure you want to remove ${member.name}?`)) return;
+    resetFeedback();
+    setRemovalEmail('');
+    setRemoval(member);
+  }
+
+  async function submitRemoval(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!removal || removalEmail !== removal.email) return;
+    setBusy(`remove:${removal.id}`);
+    resetFeedback();
+    try {
+      const response = await fetch(`/api/store-admin/staff/${encodeURIComponent(removal.id)}`, {
+        method: 'DELETE', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: removalEmail }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : 'The account could not be removed.');
+      setRemovedIds((ids) => [...ids, removal.id]);
+      if (edit?.id === removal.id) setEdit(null);
+      setCredential(null);
+      setRemoval(null);
+      setRemovalEmail('');
+      setMessage('Account removed.');
+      router.refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The account could not be removed.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function resetPassword(member: StaffMember) {
     if (
       !window.confirm(
@@ -242,6 +279,19 @@ export function StaffManager({ staff, canManage, currentAdminId }: Props) {
       {error ? <p className="sa-error" role="alert">{error}</p> : null}
       {message ? <p className="sa-success" role="status">{message}</p> : null}
 
+      {removal ? (
+        <form className="sa-notice" onSubmit={submitRemoval} aria-label="Confirm account removal">
+          <h2 className="sa-section-title">This cannot be undone. Are you absolutely sure?</h2>
+          <label className="sa-label" htmlFor="remove-staff-email">Type the staff member’s email to confirm</label>
+          <input id="remove-staff-email" className="sa-input" type="email" autoComplete="off"
+            value={removalEmail} onChange={(event) => setRemovalEmail(event.target.value)} required />
+          <button className="sa-btn sa-btn-primary" type="submit"
+            disabled={busy !== null || removalEmail !== removal.email}>Remove account</button>
+          <button className="sa-btn sa-btn-quiet" type="button" disabled={busy !== null}
+            onClick={() => { setRemoval(null); setRemovalEmail(''); }}>Cancel</button>
+        </form>
+      ) : null}
+
       {credential ? (
         <div className="sa-notice" role="status">
           <strong>
@@ -284,7 +334,7 @@ export function StaffManager({ staff, canManage, currentAdminId }: Props) {
             </tr>
           </thead>
           <tbody>
-            {staff.map((member, index) => (
+            {staff.filter((member) => !removedIds.includes(member.id)).map((member, index) => (
               <tr key={member.id} className={member.isActive ? undefined : 'sa-row-muted'}>
                 <td className="sa-num">{index + 1}</td>
                 <td>
@@ -304,7 +354,7 @@ export function StaffManager({ staff, canManage, currentAdminId }: Props) {
                     {member.isActive ? 'Active' : 'Disabled'}
                   </span>
                 </td>
-                <td>{formatWhen(member.lastLoginAt)}</td>
+                <td>{formatWhen(member.lastLoginAt, timeZone)}</td>
                 <td className="sa-num">{member.sessionCount}</td>
                 <td>
                   {canManage ? (
@@ -331,6 +381,13 @@ export function StaffManager({ staff, canManage, currentAdminId }: Props) {
                         disabled={busy !== null}
                       >
                         {member.isActive ? 'Deactivate' : 'Reactivate'}
+                      </button>
+                      <button className="sa-btn sa-btn-small sa-btn-quiet" type="button"
+                        onClick={() => beginRemoval(member)}
+                        disabled={busy !== null || member.id === currentAdminId ||
+                          (member.role === 'store_owner' && member.isActive &&
+                            staff.filter((item) => item.role === 'store_owner' && item.isActive && !removedIds.includes(item.id)).length <= 1)}>
+                        Remove account
                       </button>
                       <button
                         className="sa-btn sa-btn-small sa-btn-quiet"

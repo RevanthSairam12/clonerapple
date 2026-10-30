@@ -4,8 +4,13 @@ import bcrypt from 'bcryptjs';
 
 import { getSql } from '@/lib/admin/db';
 
+import { writeAudit, type AuditInput } from './audit';
+import { validatePasswordChange } from './password-rules';
+
 import {
   checkStaffChange,
+  checkStaffRemoval,
+  REMOVED_STAFF_NAME,
   STAFF_ROLES,
   validateNewPassword,
   validateNewStaff,
@@ -91,7 +96,7 @@ async function activeOwnerCount(sql: NonNullable<ReturnType<typeof getSql>>): Pr
   const rows = (await sql`
     select count(*)::int as count
     from store_admins
-    where role = 'store_owner' and is_active
+    where role = 'store_owner' and is_active and removed_at is null
   `) as Row[];
   return number(rows[0]?.count);
 }
@@ -113,6 +118,7 @@ export async function listStaff(): Promise<StaffLoad<StaffMember[]>> {
                where s.admin_id = a.id and s.expires_at > now()
              ) as session_count
       from store_admins a
+      where a.removed_at is null
       order by a.is_active desc, a.role asc, a.name asc, a.created_at asc
     `) as Row[];
     return { ok: true, data: rows.map(staffFromRow) };
@@ -137,7 +143,7 @@ export async function getStaff(id: string): Promise<StaffLoad<StaffMember>> {
                where s.admin_id = a.id and s.expires_at > now()
              ) as session_count
       from store_admins a
-      where a.id = ${id.trim()}
+      where a.id = ${id.trim()} and a.removed_at is null
       limit 1
     `) as Row[];
     if (!rows[0]) {
@@ -260,6 +266,8 @@ export async function updateStaff(
 
   try {
     return await sql.begin(async (tx) => {
+      // Serialize owner membership changes, including permanent removals.
+      await tx`select pg_advisory_xact_lock(73419201)`;
       const rows = (await tx`
         select a.id, a.name, a.email, a.phone, a.role, a.is_active,
                a.must_change_password, a.last_login_at, a.created_at,
@@ -268,7 +276,7 @@ export async function updateStaff(
                  where s.admin_id = a.id and s.expires_at > now()
                ) as session_count
         from store_admins a
-        where a.id = ${id.trim()}
+        where a.id = ${id.trim()} and a.removed_at is null
         for update of a
       `) as Row[];
       if (!rows[0]) {
@@ -278,7 +286,7 @@ export async function updateStaff(
       const before = staffFromRow(rows[0]);
       const requestedActive = typeof input.isActive === 'boolean' ? input.isActive : undefined;
       const owners = (await tx`
-        select count(*)::int as count from store_admins where role = 'store_owner' and is_active
+        select count(*)::int as count from store_admins where role = 'store_owner' and is_active and removed_at is null
       `) as Row[];
       const check = checkStaffChange({
         actorId,
@@ -338,6 +346,60 @@ export async function updateStaff(
   }
 }
 
+export async function removeStaff(
+  id: string,
+  typedEmail: unknown,
+  audit: AuditInput & { actorId: string },
+): Promise<StaffLoad<{ sessionsRevoked: number }>> {
+  const sql = getSql();
+  if (!sql) return { ok: false, reason: 'unavailable', error: 'Staff are not available.' };
+  try {
+    return await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(73419201)`;
+      const rows = await tx`
+        select id, email, role, is_active from store_admins
+        where id = ${id.trim()} and removed_at is null for update
+      `;
+      const row = rows[0];
+      if (!row) return { ok: false as const, reason: 'not-found' as const, error: 'That staff member does not exist.' };
+      const owners = await tx`
+        select count(*)::int as count from store_admins
+        where role = 'store_owner' and is_active and removed_at is null
+      `;
+      const check = checkStaffRemoval({
+        actorId: audit.actorId, targetId: text(row.id), targetRole: roleOf(row.role),
+        targetActive: row.is_active === true, activeOwners: number(owners[0]?.count),
+        email: text(row.email), typedEmail,
+      });
+      if (!check.ok) return { ok: false as const, reason: 'invalid-input' as const, error: check.error };
+      // A random non-bcrypt value cannot authenticate and contains no old credential.
+      const unusablePassword = `removed:${randomBytes(32).toString('hex')}`;
+      const opaqueEmail = `removed-${randomBytes(24).toString('hex')}@removed.invalid`;
+      await tx`
+        update store_admins set name = ${REMOVED_STAFF_NAME}, email = ${opaqueEmail},
+          phone = null, password_hash = ${unusablePassword}, is_active = false,
+          role = 'store_viewer', totp_secret = null, totp_enabled = false,
+          recovery_hash = null, avatar_media_id = null, last_login_at = null,
+          must_change_password = false, password_changed_at = null,
+          removed_at = clock_timestamp(), updated_at = clock_timestamp()
+        where id = ${text(row.id)}
+      `;
+      const sessions = await tx`delete from store_admin_sessions where admin_id = ${text(row.id)} returning 1`;
+      await tx`delete from store_admin_preferences where admin_id = ${text(row.id)}`;
+      const logged = await writeAudit({
+        ...audit, action: 'staff.remove', entity: 'store_admin', entityId: text(row.id),
+        before: undefined, after: { name: REMOVED_STAFF_NAME, removed: true },
+        reason: 'staff_removed',
+      }, tx);
+      if (!logged) throw new Error('Removal audit failed');
+      return { ok: true as const, data: { sessionsRevoked: sessions.length } };
+    });
+  } catch {
+    console.warn('[store-admin/staff] could not remove a staff account');
+    return { ok: false, reason: 'unavailable', error: 'The account could not be removed.' };
+  }
+}
+
 export async function resetStaffPassword(
   id: string,
   password: unknown,
@@ -355,7 +417,7 @@ export async function resetStaffPassword(
   try {
     return await sql.begin(async (tx) => {
       const rows = (await tx`
-        select id from store_admins where id = ${id.trim()} for update
+        select id from store_admins where id = ${id.trim()} and removed_at is null for update
       `) as Row[];
       if (!rows[0]) {
         return { ok: false as const, reason: 'not-found' as const, error: 'That staff member does not exist.' };
@@ -382,7 +444,7 @@ export async function resetStaffPassword(
                  where s.admin_id = a.id and s.expires_at > now()
                ) as session_count
         from store_admins a
-        where a.id = ${id.trim()}
+        where a.id = ${id.trim()} and a.removed_at is null
       `) as Row[];
       return {
         ok: true as const,
@@ -418,7 +480,7 @@ export async function updateOwnProfile(
     await sql`
       update store_admins
       set name = ${profile.value.name}, phone = ${profile.value.phone}, updated_at = now()
-      where id = ${adminId.trim()}
+      where id = ${adminId.trim()} and removed_at is null
     `;
     return getStaff(adminId);
   } catch {
@@ -432,8 +494,14 @@ export async function changeOwnPassword(input: {
   currentTokenHash: string;
   currentPassword: unknown;
   newPassword: unknown;
+  confirmPassword?: unknown;
+  audit?: AuditInput;
 }): Promise<StaffLoad<{ sessionsRevoked: number }>> {
-  const check = validateNewPassword(input.newPassword);
+  const check = validatePasswordChange({
+    currentPassword: input.currentPassword,
+    newPassword: input.newPassword,
+    confirmPassword: input.confirmPassword,
+  });
   if (!check.ok) {
     return { ok: false, reason: 'invalid-input', error: check.error };
   }
@@ -449,15 +517,26 @@ export async function changeOwnPassword(input: {
   try {
     return await sql.begin(async (tx) => {
       const rows = (await tx`
-        select password_hash from store_admins where id = ${input.adminId.trim()} for update
+        select password_hash from store_admins
+        where id = ${input.adminId.trim()} and is_active and removed_at is null
+        for update
       `) as Row[];
       if (!rows[0]) {
         return { ok: false as const, reason: 'not-found' as const, error: 'That account does not exist.' };
       }
 
+      const sessions = await tx`
+        select 1 from store_admin_sessions
+        where admin_id = ${input.adminId.trim()} and token_hash = ${input.currentTokenHash}
+          and expires_at > now()
+        for update
+      `;
+      if (!sessions[0]) {
+        return { ok: false as const, reason: 'not-found' as const, error: 'That session does not exist.' };
+      }
       const valid = await bcrypt.compare(input.currentPassword as string, text(rows[0].password_hash));
       if (!valid) {
-        return { ok: false as const, reason: 'invalid-input' as const, error: 'Current password is not correct.' };
+        return { ok: false as const, reason: 'invalid-input' as const, error: 'Current password is incorrect' };
       }
 
       const hash = await bcrypt.hash(check.value, BCRYPT_ROUNDS);
@@ -477,6 +556,9 @@ export async function changeOwnPassword(input: {
           and token_hash <> ${input.currentTokenHash}
         returning 1
       `) as Row[];
+      if (input.audit && !(await writeAudit(input.audit, tx))) {
+        throw new Error('Password change audit failed');
+      }
       return { ok: true as const, data: { sessionsRevoked: removed.length } };
     });
   } catch {
@@ -491,6 +573,8 @@ export async function listStaffSessions(
   adminId: string,
   currentTokenHash: string | null,
 ): Promise<StaffLoad<StaffSession[]>> {
+  const member = await getStaff(adminId);
+  if (!member.ok) return member;
   const sql = getSql();
   if (!sql) {
     return { ok: false, reason: 'unavailable', error: 'Sessions are not available.' };
@@ -530,6 +614,8 @@ export async function revokeStaffSession(
   adminId: string,
   sessionId: string,
 ): Promise<StaffLoad<true>> {
+  const member = await getStaff(adminId);
+  if (!member.ok) return member;
   const sql = getSql();
   if (!sql) {
     return { ok: false, reason: 'unavailable', error: 'Sessions are not available.' };
@@ -557,6 +643,8 @@ export async function revokeAllStaffSessions(
   adminId: string,
   keepTokenHash: string | null,
 ): Promise<StaffLoad<{ sessionsRevoked: number }>> {
+  const member = await getStaff(adminId);
+  if (!member.ok) return member;
   const sql = getSql();
   if (!sql) {
     return { ok: false, reason: 'unavailable', error: 'Sessions are not available.' };

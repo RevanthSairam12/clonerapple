@@ -719,7 +719,7 @@ function TransactionsTab({
 export default async function StoreAdminDashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; range?: string }>;
+  searchParams: Promise<{ tab?: string; range?: string; passwordChanged?: string }>;
 }) {
   const params = await searchParams;
   const tab = parseTab(params.tab);
@@ -750,6 +750,9 @@ export default async function StoreAdminDashboard({
 
   return (
     <div>
+      {params.passwordChanged === '1' && (
+        <p className="sa-notice" role="status">Password changed. Other devices were signed out.</p>
+      )}
       <section className="sa-hero">
         <div className="sa-hero-copy">
           <p className="sa-hero-eyebrow">

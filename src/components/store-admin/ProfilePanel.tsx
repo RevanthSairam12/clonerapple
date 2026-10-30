@@ -2,27 +2,26 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { StaffPasswordForm } from './StaffPasswordForm';
 
 import { ROLE_LABELS, type StaffMember, type StaffSession } from '@/lib/store-admin/staff-rules';
 
 interface Props {
   profile: StaffMember;
+  timeZone: string;
   sessions: StaffSession[];
 }
 
-function formatWhen(value: string): string {
+function formatWhen(value: string, timeZone: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-IN');
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-IN', { timeZone });
 }
 
 /** Self-service account screen: name, phone, password and signed-in devices. */
-export function ProfilePanel({ profile, sessions }: Props) {
+export function ProfilePanel({ profile, sessions, timeZone }: Props) {
   const router = useRouter();
   const [name, setName] = useState(profile.name);
   const [phone, setPhone] = useState(profile.phone);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -50,40 +49,6 @@ export function ProfilePanel({ profile, sessions }: Props) {
       router.refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Your profile could not be saved.');
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function savePassword(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    resetFeedback();
-    if (newPassword !== confirmPassword) {
-      setError('The new passwords do not match.');
-      return;
-    }
-    setBusy('password');
-    try {
-      const response = await fetch('/api/store-admin/profile/password', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload.error === 'string' ? payload.error : 'The password could not be changed.');
-      }
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      setMessage(
-        payload.sessionsRevoked
-          ? `Password changed. ${payload.sessionsRevoked} other session(s) were signed out.`
-          : 'Password changed.',
-      );
-      router.refresh();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'The password could not be changed.');
     } finally {
       setBusy(null);
     }
@@ -125,20 +90,10 @@ export function ProfilePanel({ profile, sessions }: Props) {
 
   return (
     <div>
-      {profile.mustChangePassword ? (
-        <p className="sa-notice" role="status">
-          You are signed in with a temporary password. Choose a new one below — the rest of the
-          panel stays available, but the password should be changed now.
-        </p>
-      ) : null}
-
-      {error ? <p className="sa-error" role="alert">{error}</p> : null}
-      {message ? <p className="sa-success" role="status">{message}</p> : null}
-
       <section className="sa-detail-card">
         <h2 className="sa-card-title">Your details</h2>
         <p className="sa-card-note">
-          {profile.email} · {ROLE_LABELS[profile.role]} · joined {formatWhen(profile.createdAt)}
+          {profile.email} · {ROLE_LABELS[profile.role]} · joined {formatWhen(profile.createdAt, timeZone)}
         </p>
         <form className="sa-edit-form" onSubmit={saveProfile}>
           <div className="sa-control-grid">
@@ -173,52 +128,7 @@ export function ProfilePanel({ profile, sessions }: Props) {
 
       <section className="sa-detail-card">
         <h2 className="sa-card-title">Change password</h2>
-        <form className="sa-edit-form" onSubmit={savePassword}>
-          <div className="sa-control-grid">
-            <label className="sa-field">
-              <span className="sa-label">Current password</span>
-              <input
-                className="sa-input"
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                required
-                onChange={(event) => setCurrentPassword(event.target.value)}
-              />
-            </label>
-            <label className="sa-field">
-              <span className="sa-label">New password</span>
-              <input
-                className="sa-input"
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                required
-                minLength={8}
-                onChange={(event) => setNewPassword(event.target.value)}
-              />
-              <span className="sa-hint">At least 8 characters and at most 72 bytes.</span>
-            </label>
-            <label className="sa-field">
-              <span className="sa-label">Confirm new password</span>
-              <input
-                className="sa-input"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                required
-                minLength={8}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-              />
-            </label>
-          </div>
-          <div className="sa-edit-actions">
-            <button className="sa-btn sa-btn-primary" type="submit" disabled={busy !== null}>
-              {busy === 'password' ? 'Changing…' : 'Change password'}
-            </button>
-            <span className="sa-note">Other devices are signed out after a password change.</span>
-          </div>
-        </form>
+        <StaffPasswordForm />
       </section>
 
       <section className="sa-detail-card">
@@ -240,8 +150,8 @@ export function ProfilePanel({ profile, sessions }: Props) {
                     {session.current ? 'This device' : `Device ${index + 1}`}
                     <span className="sa-row-sub sa-mono">{session.id}</span>
                   </td>
-                  <td>{formatWhen(session.createdAt)}</td>
-                  <td>{formatWhen(session.expiresAt)}</td>
+                  <td>{formatWhen(session.createdAt, timeZone)}</td>
+                  <td>{formatWhen(session.expiresAt, timeZone)}</td>
                   <td>
                     {session.current ? (
                       <span className="sa-note">Current session</span>

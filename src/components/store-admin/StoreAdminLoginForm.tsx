@@ -39,10 +39,10 @@ export function StoreAdminLoginForm() {
           }
 
           if (res.ok) {
-            // A temporary password lands on the profile page so it is replaced
+            // A temporary password lands on the dedicated change-password screen
             // before the person starts working.
             window.location.href = json.mustChangePassword
-              ? '/store-admin/profile'
+              ? '/store-admin/change-password'
               : '/store-admin';
             return;
           }

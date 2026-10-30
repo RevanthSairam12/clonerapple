@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole();
+  const guard = await requireStoreRole({ allowPasswordChange: true });
   if (!guard.ok) return guard.response;
 
   const { adminId, email, role } = guard.session;

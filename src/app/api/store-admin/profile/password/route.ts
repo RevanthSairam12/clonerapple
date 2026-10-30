@@ -17,10 +17,10 @@ export async function POST(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole();
+  const guard = await requireStoreRole({ allowPasswordChange: true });
   if (!guard.ok) return guard.response;
 
-  let body: { currentPassword?: unknown; newPassword?: unknown };
+  let body: { currentPassword?: unknown; newPassword?: unknown; confirmPassword?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -37,6 +37,12 @@ export async function POST(request: Request) {
     currentTokenHash: tokenHash,
     currentPassword: body.currentPassword,
     newPassword: body.newPassword,
+    confirmPassword: body.confirmPassword,
+    audit: {
+      actorId: guard.session.adminId, actorEmail: guard.session.email,
+      action: 'profile.password_change', entity: 'store_admin',
+      entityId: guard.session.adminId, request,
+    },
   });
 
   if (!result.ok) {
@@ -55,16 +61,6 @@ export async function POST(request: Request) {
       { status: result.reason === 'invalid-input' ? 400 : 503 },
     );
   }
-
-  await writeAudit({
-    actorId: guard.session.adminId,
-    actorEmail: guard.session.email,
-    action: 'profile.password_change',
-    entity: 'store_admin',
-    entityId: guard.session.adminId,
-    reason: `other_sessions_revoked:${result.data.sessionsRevoked}`,
-    request,
-  });
 
   return NextResponse.json({ ok: true, sessionsRevoked: result.data.sessionsRevoked });
 }

@@ -197,6 +197,29 @@ export function validateNewPassword(password: unknown): StaffValidation<string> 
   return { ok: true, value: password as string };
 }
 
+export const REMOVED_STAFF_NAME = 'Removed staff member';
+
+export function checkStaffRemoval(input: {
+  actorId: string;
+  targetId: string;
+  targetRole: StoreRole;
+  targetActive: boolean;
+  activeOwners: number;
+  email: string;
+  typedEmail: unknown;
+}): { ok: true } | { ok: false; error: string } {
+  if (input.actorId === input.targetId) {
+    return { ok: false, error: 'You cannot remove your own account.' };
+  }
+  if (input.targetRole === 'store_owner' && input.targetActive && input.activeOwners <= 1) {
+    return { ok: false, error: 'The store needs at least one active owner. Promote another owner first.' };
+  }
+  if (typeof input.typedEmail !== 'string' || input.typedEmail !== input.email) {
+    return { ok: false, error: 'The email confirmation does not match.' };
+  }
+  return { ok: true };
+}
+
 /* ------------------------------------------------------- safety rules */
 
 /**

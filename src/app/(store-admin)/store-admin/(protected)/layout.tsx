@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
+import { StoreSessionMonitor } from '@/components/store-admin/StoreSessionMonitor';
 import { StoreAdminShell } from '@/components/store-admin/StoreAdminShell';
 import { getStoreSession } from '@/lib/store-admin/auth';
 
@@ -21,7 +22,7 @@ export default async function ProtectedStoreAdminLayout({
   children: React.ReactNode;
 }) {
   const session = await getStoreSession();
-  if (!session) redirect('/store-admin/login');
+  if (!session) redirect('/store-admin/login?reason=account-unavailable');
 
   return (
     <StoreAdminShell
@@ -32,6 +33,7 @@ export default async function ProtectedStoreAdminLayout({
         mustChangePassword: session.mustChangePassword,
       }}
     >
+      <StoreSessionMonitor role={session.role} />
       {children}
     </StoreAdminShell>
   );

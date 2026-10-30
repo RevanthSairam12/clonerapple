@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+import { getStoreSessionForToken } from '@/lib/store-admin/auth';
 import {
   MAINTENANCE_RETRY_AFTER_SECONDS,
   getMaintenanceState,
@@ -147,6 +148,18 @@ export async function proxy(request: NextRequest) {
     !hasStoreSessionCookie
   ) {
     response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Layouts may be reused during navigation. Recheck every staff page request
+  // before rendering so neither reuse nor a forgotten page-level check bypasses the gate.
+  if ((pathname === '/store-admin' || pathname.startsWith('/store-admin/')) && pathname !== '/store-admin/login') {
+    const token = request.cookies.get(STORE_SESSION_COOKIE)?.value;
+    const session = token ? await getStoreSessionForToken(token) : null;
+    if (!session) {
+      response = NextResponse.redirect(new URL('/store-admin/login?reason=account-unavailable', request.url));
+    } else if (session.mustChangePassword && pathname !== '/store-admin/change-password') {
+      response = NextResponse.redirect(new URL('/store-admin/change-password', request.url));
+    }
   }
 
   return applySecurityHeaders(response);

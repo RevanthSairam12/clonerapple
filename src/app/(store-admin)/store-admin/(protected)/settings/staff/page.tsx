@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { StaffManager } from '@/components/store-admin/StaffManager';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { listStaff } from '@/lib/store-admin/staff';
@@ -26,6 +27,7 @@ export default async function StoreAdminStaffPage() {
 
       {result.ok ? (
         <StaffManager
+          timeZone={await getStoreTimeZone()}
           staff={result.data}
           canManage={session.role === 'store_owner'}
           currentAdminId={session.adminId}

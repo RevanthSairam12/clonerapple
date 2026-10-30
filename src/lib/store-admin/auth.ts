@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { redirect } from 'next/navigation';
 import bcrypt from 'bcryptjs';
 
 import { clientIp } from '@/lib/admin/auth';
@@ -85,8 +86,7 @@ function attemptKeys(email: string, ip: string): [string, string] {
   return [`store-admin:email:${email}`, `store-admin:ip:${ip}`];
 }
 
-function isLocked(email: string, ip: string): boolean {
-  const now = Date.now();
+function isLocked(email: string, ip: string, now: number): boolean {
   for (const key of attemptKeys(email, ip)) {
     const record = attempts.get(key);
     if (record && record.lockedUntil > now) return true;
@@ -94,12 +94,12 @@ function isLocked(email: string, ip: string): boolean {
   return false;
 }
 
-function recordFailure(email: string, ip: string): void {
+function recordFailure(email: string, ip: string, now: number): void {
   for (const key of attemptKeys(email, ip)) {
     const record = attempts.get(key) ?? { failures: 0, lockedUntil: 0 };
     record.failures += 1;
     if (record.failures >= MAX_FAILURES) {
-      record.lockedUntil = Date.now() + LOCKOUT_MS;
+      record.lockedUntil = now + LOCKOUT_MS;
       record.failures = 0;
     }
     attempts.set(key, record);
@@ -159,7 +159,10 @@ export async function login(
   const normalized = email.trim().toLowerCase();
   const ip = await clientIp();
 
-  if (isLocked(normalized, ip)) {
+  const clock = await sql`select now() as now`;
+  const now = new Date(clock[0].now).getTime();
+  if (!Number.isFinite(now)) return { ok: false, status: 401, error: 'Sign-in is temporarily unavailable.' };
+  if (isLocked(normalized, ip, now)) {
     return {
       ok: false,
       error: 'Too many failed attempts. Try again in 15 minutes.',
@@ -179,7 +182,7 @@ export async function login(
   // Always run bcrypt so a missing account costs the same as a wrong password.
   const valid = await bcrypt.compare(password, admin?.password_hash ?? DUMMY_HASH);
   if (!admin || !valid || !admin.is_active) {
-    recordFailure(normalized, ip);
+    recordFailure(normalized, ip, now);
     return { ok: false, error: 'Invalid email or password.', status: 401 };
   }
 
@@ -194,7 +197,7 @@ export async function login(
     }
 
     if (!codeOk) {
-      recordFailure(normalized, ip);
+      recordFailure(normalized, ip, now);
       return {
         ok: false,
         error: code ? 'Invalid verification code.' : 'Verification code required.',
@@ -205,13 +208,22 @@ export async function login(
   }
 
   const token = randomBytes(32).toString('hex');
-  const expires = new Date(Date.now() + SESSION_TTL_MS);
-  await sql`
-    insert into store_admin_sessions (token_hash, admin_id, expires_at)
-    values (${hashToken(token)}, ${admin.id}, ${expires})
-  `;
-  // The staff list shows this column; it is informational, never a gate.
-  await sql`update store_admins set last_login_at = now() where id = ${admin.id}`;
+  // Serialize issuance against removal, deactivation and password resets.
+  const issued = await sql.begin(async (tx) => {
+    const live = await tx`
+      select id from store_admins where id = ${admin.id}
+        and is_active and removed_at is null and password_hash = ${admin.password_hash}
+      for update
+    `;
+    if (!live.length) return false;
+    await tx`
+      insert into store_admin_sessions (token_hash, admin_id, expires_at)
+      values (${hashToken(token)}, ${admin.id}, now() + interval '7 days')
+    `;
+    await tx`update store_admins set last_login_at = now() where id = ${admin.id}`;
+    return true;
+  });
+  if (!issued) return { ok: false, error: 'Invalid email or password.', status: 401 };
   // Opportunistic cleanup of expired rows.
   await sql`delete from store_admin_sessions where expires_at <= now()`;
 
@@ -230,24 +242,29 @@ export async function login(
 /* ----------------------------------------------------------- session */
 
 /** Read the current store-admin session; null when not signed in. */
-export async function getStoreSession(): Promise<StoreSession | null> {
+export async function getStoreSessionForToken(token: string): Promise<StoreSession | null> {
   const sql = getSql();
   if (!sql) return null;
-
-  const store = await cookies();
-  const token = store.get(COOKIE_NAME)?.value;
-  if (!token) return null;
-
   const rows = await sql`
     select a.id, a.email, a.name, a.role, a.must_change_password
     from store_admin_sessions s
     join store_admins a on a.id = s.admin_id
     where s.token_hash = ${hashToken(token)}
       and s.expires_at > now()
-      and a.is_active
+      and a.is_active and a.removed_at is null
   `;
-  const row = rows[0];
-  return row ? toSession(row) : null;
+  return rows[0] ? toSession(rows[0]) : null;
+}
+
+export async function getStoreSession(options: { allowPasswordChange?: boolean } = {}): Promise<StoreSession | null> {
+  const store = await cookies();
+  const token = store.get(COOKIE_NAME)?.value;
+  if (!token) return null;
+  const session = await getStoreSessionForToken(token);
+  if (session?.mustChangePassword && !options.allowPasswordChange) {
+    redirect('/store-admin/change-password');
+  }
+  return session;
 }
 
 /**
@@ -285,16 +302,31 @@ export async function logout(): Promise<void> {
  * Page code should use `getStoreSession()` and `redirect()` instead.
  */
 export async function requireStoreRole(
-  ...roles: StoreRole[]
+  ...requirements: Array<StoreRole | { allowPasswordChange: true }>
 ): Promise<
   | { ok: true; session: StoreSession }
   | { ok: false; response: NextResponse }
 > {
-  const session = await getStoreSession();
+  const roles = requirements.filter((value): value is StoreRole => typeof value === 'string');
+  const allowPasswordChange = requirements.some((value) => typeof value === 'object' && value.allowPasswordChange);
+  const session = await getStoreSession({ allowPasswordChange: true });
   if (!session) {
     return {
       ok: false,
-      response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      response: NextResponse.json({
+        error: 'Your account was removed or deactivated. Contact the store owner.',
+        redirect: '/store-admin/login?reason=account-unavailable',
+      }, { status: 401, headers: { 'Cache-Control': 'no-store' } }),
+    };
+  }
+  if (session.mustChangePassword && !allowPasswordChange) {
+    return {
+      ok: false,
+      response: NextResponse.json({
+        error: 'Change your temporary password before continuing.',
+        code: 'password_change_required',
+        redirect: '/store-admin/change-password',
+      }, { status: 403 }),
     };
   }
   if (!roleSatisfies(session.role, roles)) {
