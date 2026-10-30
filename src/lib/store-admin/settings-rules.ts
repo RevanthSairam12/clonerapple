@@ -33,6 +33,13 @@ export interface SettingFieldDescriptor {
   readonly section: string;
   readonly help?: string;
   readonly options?: readonly SettingOption[];
+  /**
+   * The value is shown but cannot be changed. `validation` still refuses any
+   * other value, so a crafted request cannot bypass the disabled control.
+   */
+  readonly locked?: boolean;
+  /** The only value a locked field may hold. */
+  readonly lockedValue?: string;
 }
 
 export interface SettingSectionDescriptor {
@@ -207,6 +214,12 @@ const FIELD_DEFINITIONS = [
     default: 'off',
     section: 'orders',
     options: TOGGLE_OPTIONS,
+    // Pickup has no checkout path: there is no delivery-method selector, so
+    // a stored "on" could never do anything. The control is shown, disabled,
+    // and the server refuses every value but "off".
+    help: 'Store pickup is not available yet. Checkout offers delivery only; this stays off until pickup is built end to end.',
+    locked: true,
+    lockedValue: 'off',
   },
   {
     key: 'free_shipping_over',
@@ -581,6 +594,20 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
   const field = FIELD_BY_KEY.get(key);
   if (!field) return { ok: false, error: 'Unknown setting.' };
 
+  // A locked field is read-only at the API as well as in the screen: the
+  // disabled control is a convenience, this is the rule.
+  if (field.locked) {
+    const lockedValue = field.lockedValue ?? field.default;
+    const candidate = field.kind === 'toggle' ? normalizeToggle(value) : String(value ?? '').trim();
+    if (candidate !== lockedValue) {
+      return {
+        ok: false,
+        error: `${field.label} cannot be changed. Store pickup is not available yet.`,
+      };
+    }
+    return { ok: true, value: lockedValue };
+  }
+
   if (field.kind === 'toggle') {
     return { ok: true, value: normalizeToggle(value) };
   }
@@ -623,6 +650,17 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
 /** Owner-only settings groups: the maintenance switch takes the shop offline. */
 export function isOwnerOnlySetting(key: string): boolean {
   return key.startsWith('maintenance_');
+}
+
+/**
+ * Store pickup is not offered. Checkout has no delivery-method selector, so a
+ * stored `on` value must never turn into behaviour. Every server path that
+ * could ask "is pickup available?" asks here, and the answer is always false.
+ * The stored setting is kept only so the disabled control has something to
+ * show.
+ */
+export function pickupEnabled(_settings?: Pick<StoreSettings, 'pickup_enabled'>): false {
+  return false;
 }
 
 export const DEFAULT_SETTINGS: StoreSettings = Object.fromEntries(

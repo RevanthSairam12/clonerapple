@@ -31,6 +31,9 @@ export function SettingsForm({ fields, initial, canEdit, note }: Props) {
   const changed = useMemo(
     () =>
       fields
+        // A locked field is shown but never written: its value is fixed by the
+        // server, and sending it would only be refused.
+        .filter((field) => !field.locked)
         .filter((field) => (initial[field.key] ?? field.default) !== values[field.key])
         .map((field) => ({ key: field.key, value: values[field.key] })),
     [fields, initial, values],
@@ -74,11 +77,16 @@ export function SettingsForm({ fields, initial, canEdit, note }: Props) {
       <div className="sa-control-grid">
         {fields.map((field) => {
           const id = `setting-${field.key}`;
-          const value = values[field.key] ?? '';
+          // A locked field always renders its fixed value, even if a legacy
+          // row still holds something else.
+          const value = field.locked
+            ? (field.lockedValue ?? field.default)
+            : (values[field.key] ?? '');
+          const locked = field.locked === true;
           const common = {
             id,
             className: 'sa-input',
-            disabled: !canEdit || busy,
+            disabled: !canEdit || busy || locked,
           };
 
           return (
@@ -88,7 +96,8 @@ export function SettingsForm({ fields, initial, canEdit, note }: Props) {
             >
               <span className="sa-label">
                 {field.label}
-                {field.kind !== 'toggle' && field.kind !== 'select' ? (
+                {locked ? <span className="sa-hint"> — not editable</span> : null}
+                {!locked && field.kind !== 'toggle' && field.kind !== 'select' ? (
                   <span className="sa-hint"> up to {field.limit}</span>
                 ) : null}
               </span>
@@ -118,7 +127,7 @@ export function SettingsForm({ fields, initial, canEdit, note }: Props) {
                   <input
                     id={id}
                     type="checkbox"
-                    disabled={!canEdit || busy}
+                    disabled={!canEdit || busy || locked}
                     checked={value === 'on'}
                     onChange={(event) => set(field.key, event.target.checked ? 'on' : 'off')}
                   />

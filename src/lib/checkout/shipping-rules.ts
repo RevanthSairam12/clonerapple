@@ -12,8 +12,8 @@
  *   4. The chosen method's own threshold met  → no charge
  *   5. Otherwise the method's rate
  *
- * Pickup is read but not selectable: checkout has no delivery-method selector,
- * so pickup never changes the amount. See the Phase 2 report.
+ * Pickup does not exist: no pickup setting is read here, and
+ * `pickupEnabled()` in settings-rules.ts is always false.
  */
 
 export interface ShippingMethodLike {
