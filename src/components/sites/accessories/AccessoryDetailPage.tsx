@@ -30,7 +30,6 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
   const [showStickyBar, setShowStickyBar] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
-  const [showPickupModal, setShowPickupModal] = useState(false);
   const [pincode, setPincode] = useState('400001');
   const [isAddingToBag, setIsAddingToBag] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
@@ -342,30 +341,6 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
               </div>
             </div>
 
-            {/* Pickup Section */}
-            <div className="flex items-start gap-4 mb-7">
-              <div className="mt-0.5 text-[#1d1d1f] shrink-0">
-                <svg className="w-6 h-6 text-[#1d1d1f]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 7.5V6a3 3 0 016 0v1.5" />
-                  <rect x="4.5" y="7.5" width="15" height="13" rx="2" />
-                </svg>
-              </div>
-              <div className="text-[14px] leading-[1.45]">
-                <div className="font-semibold text-[#1d1d1f]">Pickup:</div>
-                <button
-                  type="button"
-                  onClick={() => setShowPickupModal(true)}
-                  className="text-[#0071e3] hover:underline inline-flex items-center gap-1.5 mt-1 font-normal cursor-pointer group"
-                >
-                  <span>Check availability</span>
-                  <svg className="w-4 h-4 text-[#0071e3] group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 8v8M8 12h8" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
             {/* Add to Bag Button */}
             <button
               type="button"
@@ -663,41 +638,6 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
               <div className="flex justify-between text-[#6e6e73]">
                 <span>Carrier:</span>
                 <span>BlueDart / Delhivery Express</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Pickup Availability Modal */}
-      {showPickupModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-[#e5e5ea] relative">
-            <button
-              onClick={() => setShowPickupModal(false)}
-              className="absolute top-4 right-4 text-[#86868b] hover:text-[#1d1d1f] w-8 h-8 rounded-full bg-[#f5f5f7] flex items-center justify-center text-sm"
-              aria-label="Close modal"
-            >
-              ✕
-            </button>
-            <h3 className="text-lg font-semibold text-[#1d1d1f] mb-2">Store Pickup</h3>
-            <p className="text-xs text-[#6e6e73] mb-4">
-              Pick up your order today at a Gadzio Experience Center.
-            </p>
-            <div className="space-y-3">
-              <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50 flex justify-between items-center text-xs">
-                <div>
-                  <strong className="block text-[#1d1d1f]">Gadzio Dispatch Centre, Bhiwandi</strong>
-                  <span className="text-[#6e6e73]">Maharashtra • Open until 10:00 PM</span>
-                </div>
-                <span className="font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">Available Today</span>
-              </div>
-              <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50 flex justify-between items-center text-xs">
-                <div>
-                  <strong className="block text-[#1d1d1f]">Gadzio Dispatch Centre, Gurugram</strong>
-                  <span className="text-[#6e6e73]">Haryana • Open until 10:00 PM</span>
-                </div>
-                <span className="font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">Available Today</span>
               </div>
             </div>
           </div>
