@@ -51,3 +51,6 @@ team 13 (1).pdf
 node_modules
 tsconfig.tsbuildinfo
 
+
+# Generated notification previews
+/tmp/
