@@ -455,7 +455,7 @@ does not exist.
 | `payu_enabled` (Payments) | ignored | off refuses initiate through the existing error alert; nothing is created. |
 | `payment_note` (Payments) | ignored | rendered in the checkout form’s existing PayU helper area. |
 | `cod_enabled` (Payments) | defaulted on and unused | default is now **off**. Checkout has no payment-method selector, so COD stays unwired. |
-| `pickup_enabled` (Orders) | ignored | not wireable — checkout has no delivery/pickup control (see below). |
+| `pickup_enabled` (Orders) | ignored | **locked off** — pickup does not exist; see §2.20. |
 
 **Stock safety.** Order creation runs in one transaction: tracked `stock` rows are locked
 `for update`, re-checked against `on_hand - reserved`, then decremented; every decrement
@@ -539,8 +539,7 @@ remains callable in development for manual runs.
 
 **Not wireable without a UI change (left alone deliberately)**
 
-- Pickup at checkout: `pickup_enabled` exists but the form has no delivery/pickup
-  selector, so there is nothing to gate.
+- Pickup at checkout: does not exist; the setting is locked off (§2.20).
 - Cash on delivery: no payment-method selector exists, so an honest COD path cannot be
   reached from the UI; the setting ships off.
 - A shipping line on checkout: the checkout form has only Subtotal and Total rows. The
@@ -1003,7 +1002,10 @@ stored and editable but **nothing read them**; the storefront had no maintenance
   `/api/account/*`) answer 503 JSON with the same message; `/api/payu/initiate` creates
   no order and holds no stock.
 - **What is blocked.** `/`, `/shop/*`, `/in/shop/*`, `/search`, `/cart`, `/bag`,
-  `/checkout`, `/auth`, `/account/*` and the purchase APIs above.
+  `/checkout`, `/auth`, `/account/*`, `/support`, `/android` and the purchase APIs above.
+  `/privacy` and `/terms` stay reachable on purpose. The Education Store is untouched.
+- **Badge.** `SCHEDULED` means the toggle is on and the start is still in the future; a
+  window that has already ended shows `OFF`.
 - **What always works.** `/store-admin` and `/api/store-admin/*`, `/admin` and
   `/api/admin/*`, every PayU callback (`success`, `failure`, `cancel`, `webhook`,
   `reconcile`), the order result pages (`/order/success|failed|cancelled|processing|status`),
@@ -1019,6 +1021,55 @@ stored and editable but **nothing read them**; the storefront had no maintenance
 - **Tests.** `tests/maintenance.test.mjs` (23 tests: window boundaries, every blocked and
   allowed path, fail-open parsing, badge, copy escaping, owner-only, callback wiring) and
   `tests/maintenance-integration.test.mjs`.
+
+### 2.20 Store pickup — ⛔ Not available (locked off)
+
+Checkout has no delivery-method choice, so pickup could never work. It is now impossible to
+turn on by mistake:
+
+- **Setting.** `pickup_enabled` defaults to `off`, is rendered disabled on Settings → Orders
+  with “Store pickup is not available yet”, and `validateSettingValue` refuses every value but
+  `off`, so a crafted request cannot bypass the disabled control. Migration
+  `0042_pickup_off.sql` forced the stored value to `off` and wrote an audit row
+  (`settings.update`, actor `system`).
+- **Server.** No server code reads the setting; `pickupEnabled()` returns `false`
+  unconditionally, so a stored `on` could never create behaviour in checkout, shipping quotes
+  or anywhere else.
+- **Copy removed.** The “Pickup: Check availability” row and the “Store Pickup / Gadzio
+  Experience Center” modal were removed from `ProductDetailPage.tsx` and
+  `AccessoryDetailPage.tsx`. A search of the storefront, notification templates, receipts,
+  invoices and admin screens found no other offer of pickup (“pick up where you left off” on
+  Saved Items is unrelated and stays).
+- **Tests.** `tests/pickup-off.test.mjs`.
+
+### 2.21 Notification checks (mail and SMS proof)
+
+Before this, no real message had ever been sent and there was no way to prove the setup.
+
+- **Settings → Mail (owner only, 5 per hour per owner, same-origin checked, audited).**
+  *Check connection* runs the SMTP verify (host, port, encryption, login) and sends nothing.
+  *Send test email* sends a message labelled `[TEST]` to an address the owner types.
+  *Send test SMS* goes through the configured gateway. Results are one of a fixed set of
+  plain sentences (sent, not configured, bad credentials, connection refused, timeout, TLS
+  problem, DNS failure, DLT required …). Only error *codes* are read, so a secret, host, user
+  name or stack trace cannot reach the response. Audit rows hold the outcome code and a
+  masked recipient. Route: `POST /api/store-admin/mail-check`.
+- **Configuration status.** Names only: which environment variables and settings are present
+  or missing, plus the last 10 outbox rows (event, channel, status, reason).
+- **MSG91 and India DLT.** New setting `sms_dlt_template_id`, sent as `DLT_TE_ID`. Without it
+  MSG91 sending is `SKIPPED` and the test SMS says a DLT template is required.
+- **`npm run check:notifications`** (`scripts/check-notifications.mjs`, no server needed):
+  loads `.env.local`, lists which credentials exist, renders every event × channel × audience
+  template (and stored email templates) with sample data, fails on an unresolved or unknown
+  placeholder, `undefined`/`NaN` or a secret value, runs the SMTP verify when it can, checks
+  the matrix, writes an HTML preview of every email to `tmp/notification-previews/`
+  (git-ignored) and prints a pass/fail table. It sends nothing unless `--send-to <address>`.
+- **Tests.** `tests/notification-checks.test.mjs`.
+
+**Deliverability (DNS for the From-address domain).** SPF: one TXT record listing your SMTP
+provider’s include. DKIM: publish the selector TXT/CNAME records your provider gives you and
+turn signing on. DMARC: a TXT record at `_dmarc.<domain>`, start with `p=none` and an `rua`
+mailbox, tighten to `quarantine` once reports are clean. Send from an address on that domain.
 
 ---
 
@@ -1289,10 +1340,10 @@ the server would reject. Every write is audited.
 | Page | Route | What it edits | Downstream status |
 |---|---|---|---|
 | Business | `/settings` | Trade/legal name, support email/phone, address, country, timezone, time format, footer text, receipt footer, cookie notice, logo/favicon media ids | 🟡 Only `trade_name`, `address`, `phone`, `email`, `receipt_footer` are consumed (by `DocumentHeader`, the invoice/packing-slip footer and the POS receipt). The rest are stored only. |
-| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, reservation/failure-grace/unresolved windows, waiting-list toggle + claim window + re-invite cooldown, default fulfilment status, return window, processing/cut-off text, confirm unusual POS prices | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote; the six reservation/waiting-list keys drive §2.15. `pos_confirm_unusual_price` gates the POS typo confirmation. `pickup_enabled` has no checkout control; processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
+| Orders | `/settings/orders` | Order prefix, starting number, invoice prefix, auto-confirm, shipping/pickup toggles, free-shipping-over, auto-cancel hours, reservation/failure-grace/unresolved windows, waiting-list toggle + claim window + re-invite cooldown, default fulfilment status, return window, processing/cut-off text, confirm unusual POS prices | 🟢 Prefix/start number, invoice prefix, auto-confirm, default status, auto-cancel hours and return window are consumed at order creation and handling; `shipping_enabled`/`free_shipping_over` feed the shipping quote; the six reservation/waiting-list keys drive §2.15. `pos_confirm_unusual_price` gates the POS typo confirmation. `pickup_enabled` is shown disabled (“Store pickup is not available yet”) and can only be `off` (§2.20); processing/cut-off text stays stored only. POS receipts keep their separate `receipt_counters` table (`RCP-0000007`). |
 | Payments | `/settings/payments` | COD/PayU/manual toggles, PayU mode, payment note | 🟡 `payu_enabled` gates initiate and `payment_note` renders under the checkout PayU helper. `cod_enabled` (default off), `manual_payments_enabled`, `payu_mode` and `payment_methods` are stored only — checkout has no method selector. |
 | Storefront | `/settings/storefront` | Login heading/subheading, login background media, support link, reCAPTCHA site key + status | 🔵 None consumed by the storefront. The store-admin login page renders its own copy. |
-| Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id | 🟢 These settings decide whether the outbox can deliver email or SMS. Secrets stay in environment variables; the page still shows only configured/missing badges. |
+| Mail | `/settings/mail` | Mail driver/status, SMTP host/port/username/encryption, from email/name, SMS gateway/status/sender id/DLT template id (plus owner-only connection check and test sends, §2.21) | 🟢 These settings decide whether the outbox can deliver email or SMS. Secrets stay in environment variables; the page still shows only configured/missing badges. |
 | Shipping | `/settings/shipping` | Couriers + tracking templates, shipping methods and rates, live link tester | 🟢 Couriers + tracking templates used at delivery save; rates and free-over thresholds consumed by the checkout quote and the cart Shipping row |
 | Notifications | `/settings/notifications` | 114 toggles (19 events × 3 channels × 2 audiences), automated messages, email templates, delivery log | 🟢 Enabled cells queue real messages when their event fires; stored templates render them; the delivery log shows every send, skip and failure. |
 | Content | `/settings/content` | Store pages (8) and fixed SEO rows (14) | 🔵 Stored only — no route renders `store_pages`, no metadata reads `seo_pages` |
@@ -1400,9 +1451,10 @@ appears in a log line, an audit row or the admin screen.
 | Staff invite is a notice, never a credential | `tests/notifications-templates.test.mjs` (absolute `/store-admin/login` link, “password the owner shared”, no secret) |
 | Old finished messages lose body and recipient but keep the audit trail | `tests/notifications-outbox-integration.test.mjs` (terminal rows scrubbed, `QUEUED`/recent kept, masked recipient and status stay, rerun is a no-op) + `tests/notifications-rules.test.mjs` (off by default, 90-day default, 3650 clamp, exact cutoff) |
 
-**Known limits.** Indian transactional SMS through MSG91 normally requires a
-DLT-registered template id, and no such setting exists, so MSG91 may reject live SMS until
-that is added (report, not invented). The POS in-store sale path and sale/refund-induced
+**Known limits.** Indian transactional SMS through MSG91 requires a DLT-registered
+template id. The `sms_dlt_template_id` setting now exists, is sent as `DLT_TE_ID`, and MSG91
+sending stays `SKIPPED` (“needs an India DLT template id”) until it is filled in, so a send
+is never reported as working when carriers would drop it. The POS in-store sale path and sale/refund-induced
 low-stock crossings do not raise notifications yet; nor does a later edit to delivery
 details after `shipped` (the first message already carried the tracking data). There is no
 customer “forgot password” flow to notify. Staff in-app messages are marked `SENT` and are
@@ -1493,7 +1545,8 @@ A single view of every Phase 9 setting.
 | `auto_confirm`, `default_fulfilment_status`, `auto_cancel_unpaid_hours`, `return_window_days` | Settings → Orders | Paid-order automation (`transitionOrderStatus`), reconcile, account return requests | 🟢 |
 | `shipping_enabled`, `free_shipping_over` | Settings → Orders / Shipping | Checkout shipping quote, cart Shipping row | 🟢 |
 | `reservation_seconds`, `payment_failure_grace_seconds`, `payment_unresolved_minutes`, `waitlist_enabled`, `waitlist_claim_minutes`, `waitlist_retry_minutes` | Settings → Orders | Reservation deadline, failure grace, unresolved window, waiting-list join/allocation/expiry/cooldown (§2.15) | 🟢 |
-| `pickup_enabled`, `processing_time_text`, `cutoff_text` | Settings → Orders | — (no checkout pickup control; text is copy only) | 🔵 |
+| `pickup_enabled` | Settings → Orders | Locked `off`; the server never reads it (`pickupEnabled()` is always false) | ⛔ locked |
+| `processing_time_text`, `cutoff_text` | Settings → Orders | — (copy only) | 🔵 |
 | `guest_checkout` | Customers → Settings | Checkout page + PayU initiate | 🟢 |
 | `checkout_marketing_optin` | Customers → Settings | Checkout UI + newsletter insert | 🟢 |
 | `default_customer_group` | Customers → Settings | Sign-up | 🟢 |
@@ -1548,7 +1601,7 @@ These are deliberate gaps, not bugs.
 | Courier API integration | Third-party courier; the owner supplies a tracking URL template. |
 | Wallet, loyalty, serial/IMEI tracking, vendor/marketplace modules | Out of scope for a single store. |
 | Education Store admin | Deferred to the end; do not touch. |
-| Pickup, COD and maintenance mode at checkout | Shipping rates **are** charged now (§2.14). There is no delivery/pickup control and no payment-method selector, so `pickup_enabled` and `cod_enabled` stay unwired (COD off). Maintenance mode is still not enforced. |
+| Pickup and COD at checkout | Shipping rates **are** charged now (§2.14). There is no delivery/pickup control and no payment-method selector: pickup is locked off (§2.20) and `cod_enabled` stays unwired (COD off). Maintenance mode **is** enforced (§2.19). |
 | Storefront reading `store_pages` / `seo_pages` | Not implemented. |
 | reCAPTCHA enforcement | Secret not configured and no verification call exists. |
 | Public deployment pipeline | No Vercel/CI config in the repo. |
