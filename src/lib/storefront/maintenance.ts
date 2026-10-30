@@ -46,6 +46,8 @@ const BLOCKED_PREFIXES = [
   '/search',
   '/shop',
   '/in/shop',
+  '/support',
+  '/android',
 ] as const;
 
 /**
@@ -171,6 +173,8 @@ export interface MaintenanceState {
   /** The owner's toggle, regardless of the window. */
   enabled: boolean;
   message: string;
+  /** ISO start time, when one is set. Drives the SCHEDULED badge only. */
+  startsAt: string | null;
   /** ISO end time, when one is set. Shown to the customer. */
   endsAt: string | null;
   /** The database clock at the moment of the decision (ISO). */
@@ -189,6 +193,7 @@ export function maintenanceOff(nowIso: string): MaintenanceState {
     active: false,
     enabled: false,
     message: '',
+    startsAt: null,
     endsAt: null,
     now: nowIso,
     cached: false,
@@ -202,9 +207,12 @@ export type MaintenanceStatus = 'LIVE' | 'SCHEDULED' | 'OFF';
 
 export function maintenanceStatus(state: MaintenanceState): MaintenanceStatus {
   if (state.active) return 'LIVE';
-  if (state.enabled && state.endsAt !== null) {
-    // Toggle on, window in the future (or not yet begun): scheduled.
-    return 'SCHEDULED';
+  // Scheduled means the toggle is on and the window has not begun yet. A
+  // window that already ended is OFF, not scheduled.
+  if (state.enabled && state.startsAt !== null) {
+    const starts = Date.parse(state.startsAt);
+    const now = Date.parse(state.now);
+    if (Number.isFinite(starts) && Number.isFinite(now) && starts > now) return 'SCHEDULED';
   }
   return 'OFF';
 }
@@ -312,6 +320,7 @@ export function stateFromRow(row: Record<string, unknown>): MaintenanceState | n
     active,
     enabled,
     message: text(row.message),
+    startsAt,
     endsAt,
     now: new Date(dbNow).toISOString(),
     cached: false,

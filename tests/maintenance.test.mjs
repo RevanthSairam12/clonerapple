@@ -101,6 +101,8 @@ const STOREFRONT = [
   '/in/shop/iphone/accessories/mobile-cases',
   '/in/shop/iphone/accessories/cases-protection',
   '/search',
+  '/support',
+  '/android',
   '/cart',
   '/bag',
   '/checkout',
@@ -230,9 +232,17 @@ test('a storage outage leaves the store up', async () => {
 test('the badge distinguishes live, scheduled and off', () => {
   const base = { ...maintenanceOff(ON) };
   assert.equal(maintenanceStatus({ ...base, active: true, enabled: true }), 'LIVE');
+  const later = new Date(Date.parse(ON) + 3_600_000).toISOString();
+  const earlier = new Date(Date.parse(ON) - 3_600_000).toISOString();
   assert.equal(
-    maintenanceStatus({ ...base, active: false, enabled: true, endsAt: OFF }),
+    maintenanceStatus({ ...base, active: false, enabled: true, startsAt: later, endsAt: OFF }),
     'SCHEDULED',
+    'start still in the future',
+  );
+  assert.equal(
+    maintenanceStatus({ ...base, active: false, enabled: true, startsAt: earlier, endsAt: earlier }),
+    'OFF',
+    'a window that already ended is not scheduled',
   );
   assert.equal(maintenanceStatus({ ...base, active: false, enabled: false }), 'OFF');
 });
