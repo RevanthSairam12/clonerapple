@@ -196,7 +196,7 @@ function targetsFor(
   if (channel === 'inapp') {
     if (audience === 'customer') {
       const recipient = context.customerEmail || context.txnid || 'customer';
-      return { recipients: [recipient], missingReason: '' };
+      return { recipients: [recipient], missingReason: 'no customer in-app inbox' };
     }
     return { recipients: ['staff'], missingReason: '' };
   }
@@ -377,12 +377,16 @@ export async function enqueueNotification(
         if (context.customerUserId) {
           customerUserId = context.customerUserId;
         } else if (context.txnid) {
-          const ordRows = (await sql`select user_id from orders where txnid = ${context.txnid} limit 1`) as Row[];
-          if (ordRows[0]?.user_id) customerUserId = text(ordRows[0].user_id);
+          try {
+            const ordRows = (await sql`select user_id from orders where txnid = ${context.txnid} limit 1`) as Row[];
+            if (ordRows[0]?.user_id) customerUserId = text(ordRows[0].user_id);
+          } catch {}
         }
         if (!customerUserId && context.customerEmail) {
-          const usrRows = (await sql`select id from users where lower(email) = ${context.customerEmail.trim().toLowerCase()} limit 1`) as Row[];
-          if (usrRows[0]?.id) customerUserId = text(usrRows[0].id);
+          try {
+            const usrRows = (await sql`select id from users where lower(email) = ${context.customerEmail.trim().toLowerCase()} limit 1`) as Row[];
+            if (usrRows[0]?.id) customerUserId = text(usrRows[0].id);
+          } catch {}
         }
 
         if (customerUserId) {
