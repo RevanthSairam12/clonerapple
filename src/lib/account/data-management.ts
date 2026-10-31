@@ -331,10 +331,9 @@ export async function closeCustomerAccount(
     fulfilment_status: string | null;
   }>>`
     select o.txnid, o.status,
-           coalesce(d.status, f.status, 'PENDING') as fulfilment_status
+           coalesce(d.status, o.fulfilment_status, 'PENDING') as fulfilment_status
     from orders o
     left join order_deliveries d on d.order_id = o.id
-    left join order_fulfilment f on f.order_id = o.id
     where o.user_id = ${userId}
       and o.status not in ('CANCELLED', 'REFUNDED', 'FAILED')
   `;
@@ -420,3 +419,4 @@ export async function closeCustomerAccount(
     return { ok: false, error: 'Could not close account. Please try again.', status: 500 };
   }
 }
+

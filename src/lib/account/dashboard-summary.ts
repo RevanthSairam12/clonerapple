@@ -130,11 +130,10 @@ export async function getAccountDashboardSummary(
           select count(*)::int
           from orders o
           left join order_deliveries d on d.order_id = o.id
-          left join order_fulfilment f on f.order_id = o.id
           where o.user_id = ${userId}
             and (
-              coalesce(d.status, f.status, '') in ('PROCESSING', 'SCHEDULED', 'ON_THE_WAY', 'OUT_FOR_DELIVERY')
-              or (o.status = 'PAID' and coalesce(d.status, f.status, '') not in ('DELIVERED', 'CANCELLED', 'FAILED'))
+              coalesce(d.status, o.fulfilment_status, '') in ('PROCESSING', 'SCHEDULED', 'ON_THE_WAY', 'OUT_FOR_DELIVERY')
+              or (o.status = 'PAID' and coalesce(d.status, o.fulfilment_status, '') not in ('DELIVERED', 'CANCELLED', 'FAILED'))
             )
         ) as in_transit_orders,
         -- Latest order fields
@@ -172,11 +171,10 @@ export async function getAccountDashboardSummary(
       from (select 1) as dummy
       left join lateral (
         select o.txnid, o.order_number, o.status, o.amount, o.created_at,
-               coalesce(d.status, f.status, 'PENDING') as fulfilment_status
+               coalesce(d.status, o.fulfilment_status, 'PENDING') as fulfilment_status
         from orders o
         left join order_deliveries d on d.order_id = o.id
-        left join order_fulfilment f on f.order_id = o.id
-        where o.user_id = ${userId}
+                where o.user_id = ${userId}
         order by o.created_at desc
         limit 1
       ) as lat_ord on true
@@ -308,3 +306,4 @@ export async function getAccountDashboardSummary(
     },
   };
 }
+
