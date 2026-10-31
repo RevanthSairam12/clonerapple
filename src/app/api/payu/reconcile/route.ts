@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { pruneOldBrowsingHistory } from '@/lib/account/browsing-history';
 import { processNotificationOutbox, scrubOldNotifications } from '@/lib/notifications/outbox';
 import { authorizeCronRequest } from '@/lib/payu/cron-auth';
 import { reconcilePendingOrders } from '@/lib/payu/reconcile';
@@ -48,6 +49,8 @@ export async function POST(req: NextRequest) {
     // Optional and off by default. When NOTIFICATION_RETENTION_ENABLED is set,
     // old finished rows lose their body and recipient but keep their history.
     const retention = await scrubOldNotifications();
+    // Prune browsing history older than 90 days. Never deletes anything else.
+    const prunedHistoryCount = await pruneOldBrowsingHistory(90);
 
     return NextResponse.json({
       success: true,
@@ -55,6 +58,7 @@ export async function POST(req: NextRequest) {
       summary,
       notifications,
       retention,
+      prunedHistoryCount,
     });
   } catch (err: unknown) {
     console.error('[Reconciliation Endpoint Error]:', (err as Error).message);

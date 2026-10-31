@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ProductDetailPage } from '@/components/shop/ProductDetailPage';
+import { recordProductView } from '@/lib/account/browsing-history';
 import { getProductDetail } from '@/lib/storefront/catalog';
 import { readSaleState } from '@/lib/storefront/sale-state';
+import { getUserSession } from '@/lib/user-auth';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -32,14 +34,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function BuyPage({ params }: Props) {
   const { productId } = await params;
-  const [detail, sale] = await Promise.all([
+  const [detail, sale, session] = await Promise.all([
     getProductDetail(productId),
     readSaleState(),
+    getUserSession(),
   ]);
 
   // This route has always sold the bespoke case range only.
   if (!detail || detail.kind !== 'case') {
     notFound();
+  }
+
+  if (session) {
+    // Record product view server-side for signed-in customer (debounced)
+    void recordProductView(session.userId, detail.product.id);
   }
 
   return (

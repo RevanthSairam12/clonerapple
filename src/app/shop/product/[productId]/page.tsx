@@ -3,8 +3,10 @@ import { notFound } from 'next/navigation';
 
 import { ProductDetailPage } from '@/components/shop/ProductDetailPage';
 import { AccessoryDetailPage } from '@/components/sites/accessories/AccessoryDetailPage';
+import { recordProductView } from '@/lib/account/browsing-history';
 import { getProductDetail } from '@/lib/storefront/catalog';
 import { readSaleState } from '@/lib/storefront/sale-state';
+import { getUserSession } from '@/lib/user-auth';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -38,12 +40,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ProductPage({ params }: Props) {
   const { productId } = await params;
-  const [detail, sale] = await Promise.all([
+  const [detail, sale, session] = await Promise.all([
     getProductDetail(productId),
     readSaleState(),
+    getUserSession(),
   ]);
 
   if (!detail) notFound();
+
+  if (session) {
+    // Record product view server-side for signed-in customer (debounced)
+    void recordProductView(session.userId, detail.product.id);
+  }
 
   // Original iPhone cases keep their polished, bespoke detail page.
   if (detail.kind === 'case') {
