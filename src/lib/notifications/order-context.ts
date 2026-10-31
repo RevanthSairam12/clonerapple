@@ -23,6 +23,7 @@ export interface OrderNotificationExtras {
   trackingLink?: string | null;
   refundPaise?: number | null;
   token?: string | null;
+  customerUserId?: string | null;
 }
 
 export function orderNotificationContext(
@@ -31,7 +32,7 @@ export function orderNotificationContext(
     'txnid' | 'orderNumber' | 'items' | 'amount' | 'status'
     | 'customerName' | 'customerEmail' | 'customerPhone'
     | 'couponCode' | 'discountPaise'
-  >,
+  > & { userId?: string | null },
   extras: OrderNotificationExtras = {},
 ): NotificationContext {
   const totalPaise = Math.round((Number(order.amount) || 0) * 100);
@@ -52,6 +53,7 @@ export function orderNotificationContext(
     customerName: order.customerName,
     customerEmail: order.customerEmail,
     customerPhone: order.customerPhone,
+    customerUserId: extras.customerUserId ?? order.userId ?? null,
     orderTotalPaise: totalPaise,
     shippingPaise: Math.max(0, totalPaise - subtotalPaise),
     orderStatus: extras.orderStatus ?? order.status,
@@ -68,66 +70,48 @@ export function orderNotificationContext(
 }
 
 /** Queue one order event, always after the business transaction committed. */
-export function queueOrderEvent(
+export async function queueOrderNotification(
   event: NotificationEvent,
-  order: Parameters<typeof orderNotificationContext>[0],
+  txnid: string,
   extras: OrderNotificationExtras = {},
-): void {
-  queueNotification(
+): Promise<boolean> {
+  const order = await getOrderByTxnid(txnid);
+  if (!order) return false;
+  return queueNotification(
     event,
     { type: 'order', id: order.txnid },
     orderNotificationContext(order, extras),
   );
 }
 
-/**
- * Read the order after a committed staff action and queue its event. A read
- * failure is logged by event name only; it must not turn a successful
- * cancellation or refund into an error response.
- */
-export async function queueOrderEventByTxnid(
-  event: NotificationEvent,
+/** Convenience wrapper for status transitions that notify customers/staff. */
+export async function notifyOrderStatusChange(
   txnid: string,
-  extras: OrderNotificationExtras = {},
+  toStatus: string,
 ): Promise<void> {
-  try {
-    const order = await getOrderByTxnid(txnid);
-    if (order) queueOrderEvent(event, order, extras);
-  } catch {
-    console.warn(`[notifications] could not read the order for ${event}`);
+  const norm = toStatus.trim().toUpperCase();
+  if (norm === 'PAID') {
+    await queueOrderNotification('payment_received', txnid, { orderStatus: 'PAID' });
+  } else if (norm === 'CANCELLED' || norm === 'CANCELED') {
+    await queueOrderNotification('cancelled', txnid, { orderStatus: 'CANCELLED' });
   }
 }
 
-/**
- * Fulfilment moves that have a matching matrix topic. ACCEPTED is deliberately
- * absent: the matrix has no "accepted" topic, and pretending it is
- * "processing" would send the customer the wrong copy.
- */
-const FULFILMENT_EVENTS: Partial<Record<FulfilmentStatus, NotificationEvent>> = {
-  PROCESSING: 'processing',
-  ON_THE_WAY: 'shipped',
-  DELIVERED: 'delivered',
-  CANCELED: 'cancelled',
-};
-
-export function fulfilmentNotificationEvent(
-  status: FulfilmentStatus,
-): NotificationEvent | null {
-  return FULFILMENT_EVENTS[status] ?? null;
-}
-
-/**
- * Queue a message for each fulfilment step that moved the order. The steps
- * come from the order-automation planner, already in chain order.
- */
-export function queueFulfilmentEvents(
-  order: Parameters<typeof orderNotificationContext>[0],
-  steps: readonly FulfilmentStatus[],
-  extras: Omit<OrderNotificationExtras, 'orderStatus'> = {},
-): void {
-  for (const step of steps) {
-    const event = fulfilmentNotificationEvent(step);
-    if (!event) continue;
-    queueOrderEvent(event, order, { ...extras, orderStatus: step });
+/** Convenience wrapper for fulfilment transitions that notify customers/staff. */
+export async function notifyFulfilmentStatusChange(
+  txnid: string,
+  toStatus: FulfilmentStatus,
+  tracking?: { number?: string | null; link?: string | null },
+): Promise<void> {
+  if (toStatus === 'PROCESSING') {
+    await queueOrderNotification('processing', txnid, { orderStatus: 'PROCESSING' });
+  } else if (toStatus === 'OUT_FOR_DELIVERY') {
+    await queueOrderNotification('shipped', txnid, {
+      orderStatus: 'ON_THE_WAY',
+      trackingNumber: tracking?.number,
+      trackingLink: tracking?.link,
+    });
+  } else if (toStatus === 'DELIVERED') {
+    await queueOrderNotification('delivered', txnid, { orderStatus: 'DELIVERED' });
   }
 }
