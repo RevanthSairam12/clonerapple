@@ -8,16 +8,16 @@ snapshots remain historical, not reverified by these checks.
 
 | Check | Result |
 |---|---|
-| `npm test` | **763 tests, 763 pass, 0 fail, 0 skipped** (including real PostgreSQL fixtures and executable authentication/monitor tests) |
+| `npm test` | **808 tests, 808 pass, 0 fail, 0 skipped** (including real PostgreSQL fixtures, live customer dashboard, browsing history, coupons, in-app outbox and data privacy tests) |
 | `node scripts/catalog-parity.mjs` | no fatal gaps: all 12 static products/variants exist in the database; 2 price drifts and 1 database-only product reported (last run 26 October 2026) |
 | `node scripts/check-store-admin-routes.mjs` | **All 96 store-admin routes are guarded** |
 | `node scripts/check-setting-lists.mjs` | all 14 settings tables readable, 114 notification cells |
 | `node scripts/check-admin-boundary.mjs` | legacy CMS holds no commerce field; 11 Education collections exempt |
-| `node scripts/check-account-routes.mjs` | **All 8 account API routes check the customer session and ownership boundary** |
+| `node scripts/check-account-routes.mjs` | **All 19 account API routes check the customer session and ownership boundary, and all 11 account pages are session-guarded and dynamic** |
 | `npm run typecheck` / `npm run build` | both succeed |
 | `npm audit` | 0 vulnerabilities |
 | Live smoke test (`next start`) | home, product, buy, six category pages, cases (both routes), search, cart and bag return 200; unknown product id returns 404; database prices render (last run 26 October 2026) |
-| Migrations applied | Migration runner successfully applied `0043_staff_removal.sql`; previous task migrations retained |
+| Migrations applied | Migration runner successfully applied `0044_customer_dashboard.sql`; previous task migrations retained |
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
@@ -328,18 +328,38 @@ separate validation code.
 
 | Route | What it does | Data |
 |---|---|---|
-| `/auth` | Sign up, sign in, sign out | `users`, `user_sessions` |
-| `/account` | Dashboard with latest order | `users`, `orders` |
-| `/account/profile` | Edit name/phone; change password | `users` |
-| `/account/addresses` | Add, edit, delete, set default address | `customer_addresses` |
-| `/account/orders` | Order history with status chips | `orders` |
-| `/account/orders/[txnid]` | Order detail, request buttons | `orders`, `order_requests` |
-| `/account/orders/[txnid]/receipt` | Printable receipt | `orders`, settings `receipt_footer` |
+| `/auth` | Customer sign-up, sign-in, and sign-out | `users`, `user_sessions` |
+| `/account` | Modern customer dashboard: 8 primary action cards in a responsive 3/2/1 grid, grouped quick navigation, live Buy Again carousel, Recently Viewed history row, and Inspired by History recommendations | `users`, `orders`, `order_requests`, `customer_addresses`, `customer_browsing_history`, `notification_outbox`, `coupons` |
+| `/account/orders` | Order history with filter tabs (All, In-Flight, Delivered, Cancelled), customer status chips, live background order polling, and Buy Again quick reorder | `orders` |
+| `/account/orders/[txnid]` | Detailed order summary with itemised pricing, delivery status, auto-refreshing live poller, and customer request actions (cancel / return / help) | `orders`, `order_requests` |
+| `/account/orders/[txnid]/receipt` | Clean, printable tax invoice / receipt with order itemisation and company receipt footer | `orders`, settings `receipt_footer` |
+| `/account/addresses` | Address book: create, edit, delete shipping addresses, and switch default address | `customer_addresses` |
+| `/account/coupons` | Customer promotional wallet: view private assigned coupons (by email or group), copyable coupon codes, discount value, plain-word scope, min order, expiry date, and remaining uses | `coupons`, `coupon_redemptions` |
+| `/account/messages` | Message centre / in-app notification inbox: read/unread badges, single-item mark read, mark all as read, and neutral fallback display for retention-scrubbed messages | `notification_outbox` (`customer_user_id`, `read_at`) |
+| `/account/history` | Browsing history manager: list recently viewed products, remove individual items, clear all history, and toggle browsing history tracking on/off | `customer_browsing_history`, `users.save_browsing_history` |
+| `/account/preferences` | Communication preferences: toggle marketing email & SMS opt-in, synchronized automatically with newsletter subscriptions | `users.marketing_opt_in`, `newsletter_subscribers` |
+| `/account/profile` | Profile & security: edit display name, contact phone, and change account password with current-password verification | `users` |
+| `/account/data` | Privacy & data management: download complete JSON data export (rate-limited with 24h cooldown) or execute irreversible account closure (guards against open/unpaid orders and active returns, revokes sessions, clears addresses & history, and frees the original email) | `users`, `user_sessions`, `customer_addresses`, `customer_browsing_history` |
 
-All account pages go through `requireAccountPageSession(...)`; APIs go through
-`requireAccountSessionApi()`. Sessions are rows in `user_sessions`, not just a signed
-cookie. `users`, `user_sessions` and `orders` have RLS enabled (migration `0013`), and all
-access is through `DATABASE_URL` — the publishable key is never used on those tables.
+#### Key Guardrails & Security Architecture
+
+1. **Session & Ownership Boundary:**
+   - All 11 account pages enforce `requireAccountPageSession(...)` and export `dynamic = 'force-dynamic'` with no shared CDN cache headers.
+   - All 19 account API routes enforce `requireAccountSessionApi()` and filter strictly on `auth.session.userId`.
+   - All mutating API requests enforce `assertSameOrigin(request)`.
+   - Verified continuously by `scripts/check-account-routes.mjs`.
+
+2. **Database Isolation & Migration 0044:**
+   - Added table `customer_browsing_history` with strict Row Level Security (RLS) enabled and composite unique index (`user_id, product_id`).
+   - Added user columns `save_browsing_history` (default true), `password_changed_at`, and `last_data_export_at`.
+   - Added `customer_user_id` (indexed) and `read_at` to `notification_outbox` for owner-scoped customer in-app notifications.
+   - All account access uses `DATABASE_URL`; publishable keys are never used on customer tables.
+
+3. **Performance & Bounded Queries:**
+   - `getAccountDashboardSummary` executes in parallel bounded batches (no unbounded queries or N+1 leaks).
+   - Live order poller runs every 30 seconds only while the tab is active and visible; pauses in the background and halts permanently upon reaching a terminal order state (`DELIVERED`, `CANCELLED`, `FAILED`).
+   - Browsing history writes are debounced client-side (30-second deduplication) and automatically pruned at 90 days during the background reconcile cron.
+   - Buy Again row queries only delivered/accepted products from customer-owned paid orders, re-verifies live catalogue prices, and checks inventory rules before adding to the bag.
 
 ### 2.10 Order requests (cancel / return / help) — 🟢 Live
 
