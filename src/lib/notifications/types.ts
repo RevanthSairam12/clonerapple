@@ -63,6 +63,7 @@ export interface NotificationContext {
   customerName?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
+  customerUserId?: string | null;
   /** A single staff recipient, for invitations and password resets. */
   staffEmail?: string | null;
   staffPhone?: string | null;

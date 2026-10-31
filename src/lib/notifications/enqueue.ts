@@ -195,7 +195,8 @@ function targetsFor(
 ): TargetResult {
   if (channel === 'inapp') {
     if (audience === 'customer') {
-      return { recipients: ['customer'], missingReason: 'no customer in-app inbox' };
+      const recipient = context.customerEmail || context.txnid || 'customer';
+      return { recipients: [recipient], missingReason: '' };
     }
     return { recipients: ['staff'], missingReason: '' };
   }
@@ -256,6 +257,7 @@ async function insertRow(
     reason: string;
     sentAt: Date | null;
     token?: string | null;
+    customerUserId?: string | null;
   },
 ): Promise<boolean> {
   const key = dedupeKey({
@@ -272,13 +274,14 @@ async function insertRow(
     insert into notification_outbox (
       id, event_key, audience, channel, entity_type, entity_id,
       recipient, recipient_masked, subject, body, status, reason,
-      sent_at, dedupe_key
+      sent_at, dedupe_key, customer_user_id, read_at
     ) values (
       ${`ntf_${randomBytes(12).toString('hex')}`},
       ${input.event}, ${input.audience}, ${input.channel},
       ${input.entity.type}, ${input.entity.id},
       ${input.recipient}, ${input.recipientMasked}, ${input.subject}, ${input.body},
-      ${input.status}, ${input.reason}, ${input.sentAt}, ${key}
+      ${input.status}, ${input.reason}, ${input.sentAt}, ${key},
+      ${input.customerUserId ?? null}, ${null}
     )
     on conflict (dedupe_key) do nothing
     returning id
@@ -363,6 +366,7 @@ export async function enqueueNotification(
       let status: NotificationStatus = 'QUEUED';
       let reason = '';
       let sentAt: Date | null = null;
+      let customerUserId: string | null = null;
 
       if (target.recipients.length === 0) {
         status = 'SKIPPED';
@@ -370,6 +374,22 @@ export async function enqueueNotification(
       } else if (channel === 'inapp' && audience === 'customer') {
         status = 'SKIPPED';
         reason = target.missingReason;
+        if (context.customerUserId) {
+          customerUserId = context.customerUserId;
+        } else if (context.txnid) {
+          const ordRows = (await sql`select user_id from orders where txnid = ${context.txnid} limit 1`) as Row[];
+          if (ordRows[0]?.user_id) customerUserId = text(ordRows[0].user_id);
+        }
+        if (!customerUserId && context.customerEmail) {
+          const usrRows = (await sql`select id from users where lower(email) = ${context.customerEmail.trim().toLowerCase()} limit 1`) as Row[];
+          if (usrRows[0]?.id) customerUserId = text(usrRows[0].id);
+        }
+
+        if (customerUserId) {
+          status = 'SENT';
+          sentAt = new Date();
+          reason = '';
+        }
       } else if (channel === 'inapp') {
         status = 'SENT';
         sentAt = new Date();
@@ -411,6 +431,7 @@ export async function enqueueNotification(
           reason,
           sentAt,
           token: context.token,
+          customerUserId,
         });
 
         if (!inserted) duplicates += 1;

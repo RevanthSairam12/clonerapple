@@ -52,6 +52,7 @@ export function orderNotificationContext(
     customerName: order.customerName,
     customerEmail: order.customerEmail,
     customerPhone: order.customerPhone,
+    customerUserId: ('userId' in order && order.userId ? String(order.userId) : null),
     orderTotalPaise: totalPaise,
     shippingPaise: Math.max(0, totalPaise - subtotalPaise),
     orderStatus: extras.orderStatus ?? order.status,
