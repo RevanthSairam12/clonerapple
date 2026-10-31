@@ -1,10 +1,14 @@
 /**
- * Notification topic/event names.
+ * Shared notification vocabulary.
  *
- * Every event maps to a column in the 72-cell notification matrix and to an
- * email template row. The list is sealed: an event not in this union cannot
- * be enqueued.
+ * The event names are the `topic` values in `notification_channel_settings`;
+ * adding one here without adding its matrix row would make the toggle
+ * unreachable, and adding a matrix row without code here would make the
+ * toggle inert. Keep the two lists aligned.
+ *
+ * Pure module: no database, no Next.js, no environment access.
  */
+
 export const NOTIFICATION_EVENTS = [
   'order_placed',
   'payment_received',
@@ -18,15 +22,19 @@ export const NOTIFICATION_EVENTS = [
   'password_reset',
   'staff_invite',
   'low_stock',
+  'payment_processing',
+  'payment_failed',
+  'reservation_expired',
+  'refund_pending',
+  'payment_review',
 ] as const;
 
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 
-export const NOTIFICATION_CHANNELS = ['email', 'sms', 'inapp'] as const;
-export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
+/** The outbox audience. The settings matrix calls staff "admin". */
+export type NotificationAudience = 'customer' | 'staff';
 
-export const NOTIFICATION_AUDIENCES = ['customer', 'staff'] as const;
-export type NotificationAudience = (typeof NOTIFICATION_AUDIENCES)[number];
+export type NotificationChannel = 'email' | 'sms' | 'inapp';
 
 export const NOTIFICATION_STATUSES = [
   'QUEUED',
@@ -35,21 +43,12 @@ export const NOTIFICATION_STATUSES = [
   'FAILED',
   'SKIPPED',
 ] as const;
+
 export type NotificationStatus = (typeof NOTIFICATION_STATUSES)[number];
 
 export function isNotificationEvent(value: unknown): value is NotificationEvent {
   return typeof value === 'string'
     && (NOTIFICATION_EVENTS as readonly string[]).includes(value);
-}
-
-export function isNotificationChannel(value: unknown): value is NotificationChannel {
-  return typeof value === 'string'
-    && (NOTIFICATION_CHANNELS as readonly string[]).includes(value);
-}
-
-export function isNotificationAudience(value: unknown): value is NotificationAudience {
-  return typeof value === 'string'
-    && (NOTIFICATION_AUDIENCES as readonly string[]).includes(value);
 }
 
 /**
@@ -64,8 +63,6 @@ export interface NotificationContext {
   customerName?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
-  /** Registered customer user ID, for attaching in-app notifications. */
-  customerUserId?: string | null;
   /** A single staff recipient, for invitations and password resets. */
   staffEmail?: string | null;
   staffPhone?: string | null;

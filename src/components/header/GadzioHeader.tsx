@@ -47,6 +47,8 @@ export interface GadzioHeaderProps {
   searchPlaceholder?: string;
   /** Route for the account button. */
   accountHref?: string;
+  unreadMessagesCount?: number;
+  customerFirstName?: string;
 }
 
 /* ------------------------------------------------------------------ icons */
@@ -221,6 +223,8 @@ export function GadzioHeader({
   navItems = NAV_ITEMS,
   searchPlaceholder = SEARCH_PANEL.placeholder,
   accountHref = '/auth',
+  unreadMessagesCount,
+  customerFirstName,
 }: GadzioHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -469,10 +473,16 @@ export function GadzioHeader({
 
               <Link
                 href={accountHref}
-                aria-label="Account"
-                className="hidden items-center p-3 text-black transition-opacity duration-150 hover:opacity-60 anav:flex"
+                aria-label={customerFirstName ? `Account for ${customerFirstName}` : 'Account'}
+                className="relative hidden items-center p-3 text-black transition-opacity duration-150 hover:opacity-60 anav:flex"
               >
                 <AccountIcon className="h-[16px] w-[16px]" />
+                {unreadMessagesCount && unreadMessagesCount > 0 ? (
+                  <span
+                    aria-label={`${unreadMessagesCount} unread message${unreadMessagesCount === 1 ? '' : 's'}`}
+                    className="absolute top-2.5 right-2 h-2 w-2 rounded-full bg-[#0071e3]"
+                  />
+                ) : null}
               </Link>
 
               <Link
@@ -648,9 +658,14 @@ export function GadzioHeader({
                   <Link
                     href={accountHref}
                     onClick={closeAll}
-                    className="flex h-[50px] items-center border-b border-white bg-[#e8eaee] px-4 text-[15px] font-bold tracking-[-0.01em] text-black uppercase"
+                    className="flex h-[50px] items-center justify-between border-b border-white bg-[#e8eaee] px-4 text-[15px] font-bold tracking-[-0.01em] text-black uppercase"
                   >
-                    Account
+                    <span>{customerFirstName ? `Hi, ${customerFirstName}` : 'Account'}</span>
+                    {unreadMessagesCount && unreadMessagesCount > 0 ? (
+                      <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#0071e3] px-1.5 text-[10px] leading-none font-semibold text-white">
+                        {unreadMessagesCount}
+                      </span>
+                    ) : null}
                   </Link>
                 </li>
                 <li>

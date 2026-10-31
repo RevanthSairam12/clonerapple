@@ -1,14 +1,19 @@
-import { randomBytes } from 'crypto';
-import type { Sql } from 'postgres';
+import { randomBytes } from 'node:crypto';
+import type postgres from 'postgres';
 
 import { getSql } from '@/lib/admin/db';
-import { maskCustomerEmail, maskCustomerPhone } from '@/lib/admin/order-masking';
-import { readNotificationSettings, type StoreSettings } from '@/lib/store-admin/settings';
+import { maskCustomerEmail, maskCustomerPhone } from '@/lib/store-admin/masking';
+import type { StoreSettings } from '@/lib/store-admin/settings-rules';
 
-import { dedupeKey } from './dedupe';
-import { defaultTemplate } from './defaults';
-import { renderEmail, renderText } from './render';
-import { templateValues } from './template-values';
+import { dedupeKey, uniqueRecipients } from './rules';
+import { readNotificationSettings } from './settings';
+import {
+  defaultTemplate,
+  renderEmail,
+  renderText,
+  templateValues,
+  type EmailParts,
+} from './templates';
 import {
   isNotificationEvent,
   type NotificationAudience,
@@ -18,29 +23,37 @@ import {
   type NotificationEvent,
   type NotificationStatus,
 } from './types';
-import { uniqueRecipients } from './validate-recipient';
 
+/**
+ * Turn a business event into outbox rows according to the settings matrix.
+ *
+ * Call this only after the order/payment transaction has committed. Every
+ * error is caught and returned as a no-op: a mail outage or a missing settings
+ * table must never fail checkout, a callback or a staff action. For the same
+ * reason the catch block logs the event name only, never the recipient or the
+ * database error text.
+ */
+
+if (typeof window !== 'undefined') {
+  throw new Error('SECURITY ALERT: notifications must be queued on the server only.');
+}
+
+type Sql = postgres.Sql;
 type Row = Record<string, unknown>;
 
 export interface EnqueueResult {
   ok: boolean;
+  /** Rows that will be delivered (including in-app rows already SENT). */
   queued: number;
+  /** Rows written to explain why nothing could be sent. */
   skipped: number;
+  /** Rows already present under the same dedupe key. */
   duplicates: number;
 }
 
-const EMPTY: EnqueueResult = { ok: false, queued: 0, skipped: 0, duplicates: 0 };
+const EMPTY: EnqueueResult = { ok: true, queued: 0, skipped: 0, duplicates: 0 };
 
 interface StoredEmail {
-  subject: string;
-  heading: string;
-  body: string;
-  buttonLabel: string;
-  buttonUrl: string;
-  footer: string;
-}
-
-interface EmailParts {
   subject: string;
   heading: string;
   body: string;
@@ -182,8 +195,7 @@ function targetsFor(
 ): TargetResult {
   if (channel === 'inapp') {
     if (audience === 'customer') {
-      const recipient = context.customerEmail || context.txnid || 'customer';
-      return { recipients: [recipient], missingReason: '' };
+      return { recipients: ['customer'], missingReason: 'no customer in-app inbox' };
     }
     return { recipients: ['staff'], missingReason: '' };
   }
@@ -244,7 +256,6 @@ async function insertRow(
     reason: string;
     sentAt: Date | null;
     token?: string | null;
-    customerUserId?: string | null;
   },
 ): Promise<boolean> {
   const key = dedupeKey({
@@ -261,14 +272,13 @@ async function insertRow(
     insert into notification_outbox (
       id, event_key, audience, channel, entity_type, entity_id,
       recipient, recipient_masked, subject, body, status, reason,
-      sent_at, dedupe_key, customer_user_id, read_at
+      sent_at, dedupe_key
     ) values (
       ${`ntf_${randomBytes(12).toString('hex')}`},
       ${input.event}, ${input.audience}, ${input.channel},
       ${input.entity.type}, ${input.entity.id},
       ${input.recipient}, ${input.recipientMasked}, ${input.subject}, ${input.body},
-      ${input.status}, ${input.reason}, ${input.sentAt}, ${key},
-      ${input.customerUserId ?? null}, ${null}
+      ${input.status}, ${input.reason}, ${input.sentAt}, ${key}
     )
     on conflict (dedupe_key) do nothing
     returning id
@@ -353,32 +363,13 @@ export async function enqueueNotification(
       let status: NotificationStatus = 'QUEUED';
       let reason = '';
       let sentAt: Date | null = null;
-      let customerUserId: string | null = null;
 
       if (target.recipients.length === 0) {
         status = 'SKIPPED';
         reason = target.missingReason || 'no recipient';
       } else if (channel === 'inapp' && audience === 'customer') {
-        // Resolve destination customer account
-        if (context.customerUserId) {
-          customerUserId = context.customerUserId;
-        } else if (context.txnid) {
-          const ordRows = (await sql`select user_id from orders where txnid = ${context.txnid} limit 1`) as Row[];
-          if (ordRows[0]?.user_id) customerUserId = text(ordRows[0].user_id);
-        }
-        if (!customerUserId && context.customerEmail) {
-          const usrRows = (await sql`select id from users where lower(email) = ${context.customerEmail.trim().toLowerCase()} limit 1`) as Row[];
-          if (usrRows[0]?.id) customerUserId = text(usrRows[0].id);
-        }
-
-        if (customerUserId) {
-          status = 'SENT';
-          sentAt = new Date();
-          reason = '';
-        } else {
-          status = 'SKIPPED';
-          reason = 'no customer in-app inbox';
-        }
+        status = 'SKIPPED';
+        reason = target.missingReason;
       } else if (channel === 'inapp') {
         status = 'SENT';
         sentAt = new Date();
@@ -420,7 +411,6 @@ export async function enqueueNotification(
           reason,
           sentAt,
           token: context.token,
-          customerUserId,
         });
 
         if (!inserted) duplicates += 1;
