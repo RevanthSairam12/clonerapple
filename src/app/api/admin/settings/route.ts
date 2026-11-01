@@ -38,17 +38,20 @@ export async function PUT(request: Request) {
     // never stuff arbitrary rows into site_settings.
     if (!THEME_SETTING_KEYS.has(key)) continue;
     await sql`
-      insert into site_settings (key, value, updated_at, updated_by)
-      values (${key}, ${value}, now(), ${guard.email})
+      insert into site_settings (key, value, updated_at, updated_by, archived_at)
+      values (${key}, ${value}, now(), ${guard.email}, null)
       on conflict (key) do update
-      set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by
+      set value = excluded.value,
+          updated_at = now(),
+          updated_by = excluded.updated_by,
+          archived_at = null
     `;
   }
 
   return NextResponse.json({ ok: true });
 }
 
-/** DELETE /api/admin/settings?key=... — revert one setting. */
+/** DELETE /api/admin/settings?key=... — revert one setting (archive, never delete). */
 export async function DELETE(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
@@ -64,6 +67,10 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'Unknown setting key.' }, { status: 400 });
   }
 
-  await sql`delete from site_settings where key = ${key}`;
-  return NextResponse.json({ ok: true });
+  await sql`
+    update site_settings
+    set archived_at = now(), updated_at = now(), updated_by = ${guard.email}
+    where key = ${key} and archived_at is null
+  `;
+  return NextResponse.json({ ok: true, archived: true });
 }

@@ -120,12 +120,21 @@ export async function getContentMany<T extends Record<string, unknown>>(
   return out as T;
 }
 
-/** Fetch all site_settings rows at once (fonts, colors, logo). */
+/**
+ * Fetch all live site_settings rows at once (fonts, colors, logo).
+ *
+ * A row is archived — not deleted — when an editor resets a theme value
+ * (migration 0046); archived rows are ignored here so the site falls back to
+ * its coded default while the old value stays in the table for rollback.
+ */
 export async function getThemeSettings(): Promise<Record<string, string>> {
   const supabase = getSupabase();
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('site_settings').select('key, value');
+      const { data, error } = await supabase
+        .from('site_settings')
+        .select('key, value')
+        .is('archived_at', null);
       if (!error) {
         const out: Record<string, string> = {};
         for (const row of data ?? []) out[row.key] = row.value;
@@ -139,7 +148,7 @@ export async function getThemeSettings(): Promise<Record<string, string>> {
   const sql = getSql();
   if (!sql) return {};
   try {
-    const rows = await sql`select key, value from site_settings`;
+    const rows = await sql`select key, value from site_settings where archived_at is null`;
     const out: Record<string, string> = {};
     for (const row of rows) out[row.key] = row.value;
     return out;
