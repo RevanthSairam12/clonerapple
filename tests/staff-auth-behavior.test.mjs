@@ -37,6 +37,7 @@ function loadAuth({ account = null, session = null, issuanceAllowed = true } = {
       if (name === '@/lib/platform/client-ip') return { clientIp: async () => 'fixture-ip' };
       if (name === '@/lib/platform/db') return { getSql: () => sql };
       if (name === '@/lib/platform/totp') return { verifyTotp: () => false };
+      if (name === '@/lib/store-admin/totp') return { verifySecondFactor: async () => false };
       return nativeRequire(name);
     },
   });

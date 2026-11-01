@@ -80,6 +80,7 @@ function staffFromRow(row: Row): StaffMember {
     isActive: row.is_active === true || text(row.is_active) === 'true',
     mustChangePassword:
       row.must_change_password === true || text(row.must_change_password) === 'true',
+    totpEnabled: row.totp_enabled === true || text(row.totp_enabled) === 'true',
     lastLoginAt: nullableIso(row.last_login_at),
     createdAt: iso(row.created_at),
     sessionCount: number(row.session_count),
@@ -112,7 +113,7 @@ export async function listStaff(): Promise<StaffLoad<StaffMember[]>> {
   try {
     const rows = (await sql`
       select a.id, a.name, a.email, a.phone, a.role, a.is_active,
-             a.must_change_password, a.last_login_at, a.created_at,
+             a.must_change_password, a.totp_enabled, a.last_login_at, a.created_at,
              (
                select count(*)::int from store_admin_sessions s
                where s.admin_id = a.id and s.expires_at > now()
@@ -137,7 +138,7 @@ export async function getStaff(id: string): Promise<StaffLoad<StaffMember>> {
   try {
     const rows = (await sql`
       select a.id, a.name, a.email, a.phone, a.role, a.is_active,
-             a.must_change_password, a.last_login_at, a.created_at,
+             a.must_change_password, a.totp_enabled, a.last_login_at, a.created_at,
              (
                select count(*)::int from store_admin_sessions s
                where s.admin_id = a.id and s.expires_at > now()
@@ -270,7 +271,7 @@ export async function updateStaff(
       await tx`select pg_advisory_xact_lock(73419201)`;
       const rows = (await tx`
         select a.id, a.name, a.email, a.phone, a.role, a.is_active,
-               a.must_change_password, a.last_login_at, a.created_at,
+               a.must_change_password, a.totp_enabled, a.last_login_at, a.created_at,
                (
                  select count(*)::int from store_admin_sessions s
                  where s.admin_id = a.id and s.expires_at > now()
@@ -327,7 +328,7 @@ export async function updateStaff(
       // this uncommitted row and deadlock.
       const afterRows = (await tx`
         select a.id, a.name, a.email, a.phone, a.role, a.is_active,
-               a.must_change_password, a.last_login_at, a.created_at,
+               a.must_change_password, a.totp_enabled, a.last_login_at, a.created_at,
                (
                  select count(*)::int from store_admin_sessions s
                  where s.admin_id = a.id and s.expires_at > now()
@@ -438,7 +439,7 @@ export async function resetStaffPassword(
 
       const afterRows = (await tx`
         select a.id, a.name, a.email, a.phone, a.role, a.is_active,
-               a.must_change_password, a.last_login_at, a.created_at,
+               a.must_change_password, a.totp_enabled, a.last_login_at, a.created_at,
                (
                  select count(*)::int from store_admin_sessions s
                  where s.admin_id = a.id and s.expires_at > now()

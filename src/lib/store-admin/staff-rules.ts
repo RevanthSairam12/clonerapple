@@ -22,6 +22,8 @@ export interface StaffMember {
   role: StoreRole;
   isActive: boolean;
   mustChangePassword: boolean;
+  /** Two-factor is switched on for this account. */
+  totpEnabled: boolean;
   lastLoginAt: string | null;
   createdAt: string;
   sessionCount: number;

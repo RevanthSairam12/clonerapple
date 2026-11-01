@@ -5,6 +5,7 @@ import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { ProfilePanel } from '@/components/store-admin/ProfilePanel';
 import { currentStoreTokenHash, getStoreSession } from '@/lib/store-admin/auth';
 import { getStaff, listStaffSessions } from '@/lib/store-admin/staff';
+import { getTotpState } from '@/lib/store-admin/totp';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,9 +13,10 @@ export default async function StoreAdminProfilePage() {
   const session = await getStoreSession();
   if (!session) redirect('/store-admin/login');
 
-  const [profile, tokenHash] = await Promise.all([
+  const [profile, tokenHash, totp] = await Promise.all([
     getStaff(session.adminId),
     currentStoreTokenHash(),
+    getTotpState(session.adminId),
   ]);
   const sessions = await listStaffSessions(session.adminId, tokenHash);
 
@@ -32,6 +34,7 @@ export default async function StoreAdminProfilePage() {
           timeZone={await getStoreTimeZone()}
           profile={profile.data}
           sessions={sessions.ok ? sessions.data : []}
+          totp={totp}
         />
       ) : (
         <p className="sa-notice">

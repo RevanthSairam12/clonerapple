@@ -264,6 +264,36 @@ export function StaffManager({ staff, canManage, currentAdminId, timeZone }: Pro
     }
   }
 
+  async function resetTotp(member: StaffMember) {
+    if (
+      !window.confirm(
+        `Turn off two-factor authentication for ${member.name}? Only do this if they have lost their device. They can set it up again after signing in.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(`totp:${member.id}`);
+    resetFeedback();
+    try {
+      const response = await fetch(
+        `/api/store-admin/staff/${encodeURIComponent(member.id)}/totp/reset`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          typeof payload.error === 'string' ? payload.error : 'Two-factor could not be reset.',
+        );
+      }
+      setMessage(`Two-factor reset for ${member.name}. They can set it up again at next sign-in.`);
+      router.refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Two-factor could not be reset.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function copyPassword() {
     if (!credential) return;
     try {
@@ -353,6 +383,7 @@ export function StaffManager({ staff, canManage, currentAdminId, timeZone }: Pro
                   <span className={member.isActive ? 'sa-status sa-status-on' : 'sa-status'}>
                     {member.isActive ? 'Active' : 'Disabled'}
                   </span>
+                  {member.totpEnabled ? <span className="sa-row-sub">2FA on</span> : null}
                 </td>
                 <td>{formatWhen(member.lastLoginAt, timeZone)}</td>
                 <td className="sa-num">{member.sessionCount}</td>
@@ -405,6 +436,21 @@ export function StaffManager({ staff, canManage, currentAdminId, timeZone }: Pro
                           disabled={busy !== null}
                         >
                           Sign out
+                        </button>
+                      ) : null}
+                      {member.totpEnabled ? (
+                        <button
+                          className="sa-btn sa-btn-small sa-btn-quiet"
+                          type="button"
+                          onClick={() => resetTotp(member)}
+                          disabled={busy !== null || member.id === currentAdminId}
+                          title={
+                            member.id === currentAdminId
+                              ? 'Turn your own two-factor off from your profile.'
+                              : undefined
+                          }
+                        >
+                          Reset 2FA
                         </button>
                       ) : null}
                     </div>

@@ -3,13 +3,16 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { StaffPasswordForm } from './StaffPasswordForm';
+import { TotpPanel } from './TotpPanel';
 
 import { ROLE_LABELS, type StaffMember, type StaffSession } from '@/lib/store-admin/staff-rules';
+import type { TotpState } from '@/lib/store-admin/totp';
 
 interface Props {
   profile: StaffMember;
   timeZone: string;
   sessions: StaffSession[];
+  totp: TotpState;
 }
 
 function formatWhen(value: string, timeZone: string): string {
@@ -18,7 +21,7 @@ function formatWhen(value: string, timeZone: string): string {
 }
 
 /** Self-service account screen: name, phone, password and signed-in devices. */
-export function ProfilePanel({ profile, sessions, timeZone }: Props) {
+export function ProfilePanel({ profile, sessions, timeZone, totp }: Props) {
   const router = useRouter();
   const [name, setName] = useState(profile.name);
   const [phone, setPhone] = useState(profile.phone);
@@ -130,6 +133,8 @@ export function ProfilePanel({ profile, sessions, timeZone }: Props) {
         <h2 className="sa-card-title">Change password</h2>
         <StaffPasswordForm />
       </section>
+
+      <TotpPanel state={totp} />
 
       <section className="sa-detail-card">
         <h2 className="sa-card-title">Signed-in devices</h2>

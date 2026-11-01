@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 
 import { clientIp } from '@/lib/platform/client-ip';
 import { getSql } from '@/lib/platform/db';
-import { verifyTotp } from '@/lib/platform/totp';
+import { verifySecondFactor } from '@/lib/store-admin/totp';
 
 /**
  * Authentication for the store admin panel.
@@ -108,6 +108,36 @@ function recordFailure(email: string, ip: string, now: number): void {
 
 function recordSuccess(email: string, ip: string): void {
   for (const key of attemptKeys(email, ip)) attempts.delete(key);
+  totpAttempts.delete(totpKey(email));
+}
+
+/**
+ * Verification-code attempts are counted per account as well as per IP, so
+ * rotating IPs cannot brute-force a 6-digit code. The counter is checked only
+ * after the password has been accepted, which stops an unauthenticated caller
+ * from locking an account out.
+ */
+const MAX_TOTP_FAILURES = 10;
+const totpAttempts = new Map<string, AttemptRecord>();
+
+function totpKey(email: string): string {
+  return `store-admin:totp:${email}`;
+}
+
+function isTotpLocked(email: string, now: number): boolean {
+  const record = totpAttempts.get(totpKey(email));
+  return Boolean(record && record.lockedUntil > now);
+}
+
+function recordTotpFailure(email: string, now: number): void {
+  const key = totpKey(email);
+  const record = totpAttempts.get(key) ?? { failures: 0, lockedUntil: 0 };
+  record.failures += 1;
+  if (record.failures >= MAX_TOTP_FAILURES) {
+    record.lockedUntil = now + LOCKOUT_MS;
+    record.failures = 0;
+  }
+  totpAttempts.set(key, record);
 }
 
 /* ------------------------------------------------------------- helpers */
@@ -188,15 +218,26 @@ export async function login(
 
   if (admin.totp_enabled && admin.totp_secret) {
     const code = (totpCode ?? '').trim();
-    let codeOk = false;
 
-    if (/^\d{6}$/.test(code)) {
-      codeOk = verifyTotp(admin.totp_secret, code);
-    } else if (admin.recovery_hash && /^[0-9A-Za-z-]{11,30}$/.test(code)) {
-      codeOk = await bcrypt.compare(code.toUpperCase(), admin.recovery_hash);
+    if (isTotpLocked(normalized, now)) {
+      return {
+        ok: false,
+        error: 'Too many incorrect verification codes. Try again in 15 minutes.',
+        codeRequired: true,
+        retryAfterSec: LOCKOUT_MS / 1000,
+        status: 429,
+      };
     }
 
+    const codeOk = await verifySecondFactor(
+      admin.id,
+      admin.totp_secret as string,
+      (admin.recovery_hash as string | null) ?? null,
+      code,
+    );
+
     if (!codeOk) {
+      recordTotpFailure(normalized, now);
       recordFailure(normalized, ip, now);
       return {
         ok: false,

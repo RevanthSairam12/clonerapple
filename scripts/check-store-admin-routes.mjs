@@ -101,6 +101,8 @@ EXPECTED_OWNER_ROUTES.push('staff/route.ts');
 EXPECTED_OWNER_ROUTES.push('staff/[id]/route.ts');
 EXPECTED_OWNER_ROUTES.push('staff/[id]/password/route.ts');
 EXPECTED_OWNER_ROUTES.push('staff/[id]/sessions/route.ts');
+// Two-factor: resetting another staff member's second factor is owner-only.
+EXPECTED_OWNER_ROUTES.push('staff/[id]/totp/reset/route.ts');
 
 const EXPECTED_MUTATING_ROUTES = [
   'orders/[txnid]/fulfilment/route.ts',
@@ -139,6 +141,10 @@ const EXPECTED_MUTATING_ROUTES = [
   'profile/route.ts',
   'profile/password/route.ts',
   'profile/sessions/route.ts',
+  // Two-factor are self-service mutations for any signed-in role.
+  'profile/totp/setup/route.ts',
+  'profile/totp/enable/route.ts',
+  'profile/totp/disable/route.ts',
   // Phase 9: the configuration lists (couriers, methods, pages, SEO, social,
   // analytics, integrations, messages, templates, reasons) share one engine,
   // and the notification matrix toggles one cell at a time.
