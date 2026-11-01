@@ -63,9 +63,9 @@
      whichever allow-listed face the editor picked (Inter by default). The
      literal fallback that used to sit here lives on in
      FONT_FALLBACK in src/lib/fontLoaders.ts, appended after the loaded face. */
-  --gz-font-text: var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --gz-font-display: var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --gz-font-footer: var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gz-font-text: transducer, var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gz-font-display: transducer, var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gz-font-footer: transducer, var(--font-site), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
 
   /* motion */
   --gz-ease: cubic-bezier(0.4, 0, 0.6, 1);

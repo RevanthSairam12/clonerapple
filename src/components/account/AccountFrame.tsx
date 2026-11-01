@@ -28,7 +28,7 @@ export async function AccountFrame({
   const unreadMessagesCount = await getUnreadMessageCount(session.userId);
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f]">
+    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
       <GadzioHeader
         accountHref="/account"
         bannerVisible={false}

@@ -29,7 +29,7 @@ export default async function OrderFailedPage({ searchParams }: Props) {
     || order?.reservationState === 'EXPIRED';
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f] flex items-center justify-center">
+    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f] flex items-center justify-center" style={{ fontFamily: 'transducer, sans-serif' }}>
       <div className="max-w-md w-full bg-white rounded-3xl p-8 sm:p-10 shadow-sm border border-[#e5e5ea] text-center">
         <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 text-2xl font-bold">
           ✕
@@ -69,7 +69,7 @@ export default async function OrderFailedPage({ searchParams }: Props) {
         <div className="space-y-3">
           <Link
             href="/checkout"
-            className="block w-full text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition"
+            className="block w-full text-center bg-[#ffe100] text-black py-3.5 rounded-xl text-sm font-black uppercase tracking-wider hover:bg-[#ffea33] shadow-sm transition"
           >
             Start a new checkout
           </Link>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GadzioHeader } from '@/components/header/GadzioHeader';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
+import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import {
   scoreProducts,
   PAGE_SEARCH_ITEMS,
@@ -331,6 +332,11 @@ export function SearchPageView({ initialQuery = '', initialProducts, saleLive = 
             </div>
           )}
         </div>
+      </div>
+
+      {/* Trust Badges */}
+      <div className="w-full mt-10 border-t border-[#e5e5ea]">
+        <GadzioTrustBar />
       </div>
 
       <GlobalFooter />

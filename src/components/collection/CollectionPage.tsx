@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { GadzioHeader } from '@/components/header/GadzioHeader';
+import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
 
@@ -311,6 +312,11 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
             )}
           </main>
         </div>
+      </div>
+
+      {/* Trust Badges Bar */}
+      <div className="w-full mt-10 border-t border-[#e5e5ea]">
+        <GadzioTrustBar />
       </div>
 
       {/* 11. Global Footer */}

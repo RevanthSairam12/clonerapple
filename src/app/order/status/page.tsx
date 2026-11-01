@@ -109,10 +109,10 @@ export default async function OrderStatusPage({ searchParams }: Props) {
         ?? 'Order received';
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f]">
+    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f]" style={{ fontFamily: 'transducer, sans-serif' }}>
       <div className="max-w-2xl mx-auto bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-[#e5e5ea]">
         <div className="text-center mb-8">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#0071e3] bg-[#0071e3]/10 px-3 py-1 rounded-full">Order status</span>
+          <span className="text-xs font-extrabold uppercase tracking-wider text-black bg-[#ffe100] px-3 py-1 rounded-sm">Order status</span>
           <h1 className="text-3xl font-semibold tracking-tight mt-3 mb-2">{currentLabel}</h1>
           <p className="text-sm text-[#86868b]">Reference <span className="font-mono text-[#1d1d1f]">{result.data.txnid}</span></p>
         </div>

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
+import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart } from '@/lib/cart/CartContext';
 import {
@@ -174,7 +175,7 @@ export function ProductDetailPage({ product, saleLive = false, inStock = true }:
   };
 
   return (
-    <div className="min-h-screen bg-[#fff] text-[#1d1d1f] font-sans antialiased selection:bg-[#0071e3] selection:text-white">
+    <div className="gz-storefront-page min-h-screen bg-[#fff] text-[#1d1d1f] antialiased selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
       {/* Global Navigation */}
       <GlobalNav bannerVisible={false} />
 
@@ -207,7 +208,7 @@ export function ProductDetailPage({ product, saleLive = false, inStock = true }:
                   ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
                   : isAdded
                     ? 'bg-[#34c759] text-white cursor-pointer'
-                    : 'bg-[#0071e3] hover:bg-[#0077ed] text-white cursor-pointer'
+                    : 'bg-[#ffe100] hover:bg-[#ffea33] text-black font-black uppercase tracking-wider cursor-pointer'
               }`}
             >
               {unavailable ? STOCK_NOT_AVAILABLE : isAdded ? 'Added ✓' : 'Add to Bag'}
@@ -473,7 +474,7 @@ export function ProductDetailPage({ product, saleLive = false, inStock = true }:
                   ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
                   : isAdded
                     ? 'bg-[#34c759] text-white cursor-pointer'
-                    : 'bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white cursor-pointer'
+                    : 'bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black font-black uppercase tracking-wider cursor-pointer'
               }`}
             >
               {unavailable ? (
@@ -730,6 +731,11 @@ export function ProductDetailPage({ product, saleLive = false, inStock = true }:
           </div>
         </div>
       )}
+
+      {/* Trust Badges */}
+      <div className="w-full mt-12 border-t border-[#e5e5ea]">
+        <GadzioTrustBar />
+      </div>
 
       {/* Global Footer */}
       <GlobalFooter />

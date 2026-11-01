@@ -63,7 +63,7 @@ export default async function CheckoutPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] py-10 px-4 sm:px-6 lg:px-8">
+    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] py-10 px-4 sm:px-6 lg:px-8" style={{ fontFamily: 'transducer, sans-serif' }}>
       <div className="max-w-4xl mx-auto mb-6 flex justify-between items-center text-sm">
         <div className="flex items-center gap-3">
           <Link href="/cart" className="text-[#0071e3] hover:underline font-medium">

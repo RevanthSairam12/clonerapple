@@ -1,13 +1,15 @@
 import Link from 'next/link';
 
+import { AdminUiSwitcher } from '@/components/admin/AdminUiSwitcher';
 import { COLLECTIONS } from '@/lib/admin/collections';
 import { getSql } from '@/lib/admin/db';
 import { getSession } from '@/lib/admin/auth';
+import { getThemeSettings } from '@/lib/content';
 
 export const dynamic = 'force-dynamic';
 
 const SITE_LABELS: Record<string, { label: string; icon: string }> = {
-  '/': { label: 'Gadzio Homepage', icon: '' },
+  '/': { label: 'Gadzio Homepage', icon: '⚡' },
   '/android': { label: 'OPPO India', icon: '📱' },
   '/in-edu/store': { label: 'Education Store', icon: '🎓' },
   '/in/shop/iphone/accessories/cases-protection': { label: 'Cases & Protection', icon: '🛡️' },
@@ -27,6 +29,9 @@ export default async function AdminDashboard() {
       editedKeys = new Set();
     }
   }
+
+  const settings = await getThemeSettings();
+  const currentUiMode: 'new' | 'old' = settings.homepageUiMode === 'old' ? 'old' : 'new';
 
   const bySite = new Map<string, typeof COLLECTIONS>();
   for (const c of COLLECTIONS) {
@@ -56,6 +61,9 @@ export default async function AdminDashboard() {
       </div>
 
       <div className="admin-content">
+        {/* 1-Click Storefront UI Version Switcher */}
+        <AdminUiSwitcher initialMode={currentUiMode} />
+
         {!dbConfigured ? (
           <div className="admin-notice admin-notice-warn">
             <span>⚠️</span>

@@ -176,7 +176,218 @@ function eduShelfSchema(
 
 /* ------------------------------------------------------------------ build */
 
+const CROWD_FAVORITES_ITEM_FIELDS: FieldSchema[] = [
+  text('title', 'Product Title', 'e.g. Gadzio CrystalArmor Clear Case with MagSafe'),
+  text('priceDisplay', 'Price Display', 'e.g. ₹3,499 or ₹1,499'),
+  image('image', 'Product Photo', 'High-res transparent or clean product cut-out'),
+  url('href', 'Product Link'),
+  text('badge', 'Primary Badge (e.g. LIMITED RELEASE, ⚡ NEW, TRENDING)'),
+  text('badgeColor', 'Badge Style', 'lavender, yellow, green, or default'),
+  text('secondaryBadge', 'Secondary Badge (optional)', 'e.g. TOP ITEM, BESTSELLER'),
+  text('secondaryBadgeColor', 'Secondary Badge Style', 'pink, yellow, green, or default'),
+  text('colorDots', 'Color Swatches (optional)', 'Comma-separated hex colors (e.g. #1d1d1f, #8e8e93)'),
+];
+
 export const COLLECTIONS: CollectionSchema[] = [
+  /* — Gadzio homepage (route: /) — */
+  {
+    key: 'gadzio.reviews',
+    label: 'Homepage — Customer Reviews & Star Rating',
+    sitePaths: ['/'],
+    description: 'The 4.9 average star rating block with verified customer testimonial cards.',
+    fields: [
+      booleanField('enabled', 'Show reviews section', 'Untick to hide the reviews section from the homepage.'),
+      text('kicker', 'Top Kicker', 'e.g. LOVED BY CREATORS & CUSTOMERS'),
+      text('heading', 'Headline', 'e.g. 4.9 Average Star Rating'),
+      area('subheading', 'Subheading', 'Short intro statement under the headline.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Review Card',
+        minItems: 1,
+        maxItems: 9,
+        itemFields: [
+          text('headline', 'Review Title', 'e.g. CrystalArmor Case is unbelievable!'),
+          text('rating', 'Star Rating', 'e.g. 5'),
+          area('content', 'Review Content', 'Customer quote or testimonial feedback.'),
+          text('author', 'Author Name', 'e.g. Aarav M.'),
+          text('badgeText', 'Badge Text', 'e.g. Verified Buyer'),
+        ],
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.in_the_wild',
+    label: 'Homepage — Gadzio in the Wild (Community Gallery)',
+    sitePaths: ['/'],
+    description: 'The community photo carousel showcasing creators and customers using Gadzio gear.',
+    fields: [
+      booleanField('enabled', 'Show community gallery', 'Untick to hide this section from the homepage.'),
+      text('heading', 'Headline', 'e.g. Gadzio in the Wild'),
+      text('subheading', 'Subheading', 'Call to action for tagging photos on social media.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Community Photo',
+        minItems: 1,
+        maxItems: 18,
+        itemFields: [
+          image('image', 'Photo'),
+          text('alt', 'Accessibility Label', 'Describe what is shown in the photo.'),
+          text('caption', 'Hover Caption (optional)', 'Short description or user handle.'),
+          url('href', 'Link (optional)'),
+        ],
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.brand_bar',
+    label: 'Homepage — Brand Logos Bar',
+    sitePaths: ['/'],
+    description: 'The horizontal brand wordmarks/logos strip.',
+    fields: [
+      booleanField('enabled', 'Show brand bar', 'Untick to hide the brand logos strip.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Brand Logo',
+        minItems: 1,
+        maxItems: 12,
+        itemFields: [
+          text('name', 'Brand Name', 'e.g. GADZIO PRO, GADZIO LAB'),
+          text('subhead', 'Sub-label (optional)', 'Small helper text'),
+          url('href', 'Brand link (optional)'),
+        ],
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.diwali_campaign',
+    label: 'Homepage — Diwali Festive Campaign',
+    sitePaths: ['/'],
+    description: 'The festive Diwali feature banner and limited release product carousel.',
+    fields: [
+      booleanField('enabled', 'Show Diwali campaign', 'Untick to hide this section.'),
+      text('bannerKicker', 'Banner Kicker', 'e.g. DIWALI 2026'),
+      text('bannerTitle', 'Banner Headline', 'e.g. ARE YOU READY?'),
+      text('bannerButtonLabel', 'Button Label', 'e.g. SHOP DIWALI'),
+      url('bannerButtonHref', 'Button Link'),
+      image('bannerImage', 'Banner Background Image (optional)', 'Leave blank for the built-in Diwali glowing lights backdrop.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Festive Product',
+        minItems: 1,
+        maxItems: 12,
+        itemFields: [
+          text('title', 'Product Title', 'e.g. Gadzio Diwali Festive Tech Hamper 2026'),
+          text('tagPrimary', 'Primary Tag (optional)', 'e.g. LIMITED RELEASE'),
+          text('tagSecondary', 'Secondary Tag (optional)', 'e.g. ⚡ NEW'),
+          text('amountText', 'Deal Price', 'e.g. ₹2,999'),
+          text('originalAmountText', 'Original Price (optional)', 'e.g. ₹4,499'),
+          text('savingsText', 'Savings Badge (optional)', 'e.g. SAVE 33%'),
+          image('image', 'Product Image'),
+          url('href', 'Product Link'),
+        ],
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.trust_badges',
+    label: 'Homepage — Trust Badges Bar',
+    sitePaths: ['/'],
+    description: 'The 3 value proposition / trust badges directly below the hero section.',
+    fields: [
+      booleanField('enabled', 'Show trust badges bar', 'Untick to hide this strip from the homepage.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Badge',
+        minItems: 1,
+        maxItems: 6,
+        itemFields: [
+          text('title', 'Badge Title', 'e.g. FREE SHIPPING OVER ₹999 or 30-DAY RETURNS'),
+          text('subtitle', 'Badge Subtitle (optional)', 'Small helper text under the badge title'),
+          text('icon', 'Icon Type', 'One of: shipping, returns, heart, genuine, shield'),
+          url('href', 'Badge link (optional)'),
+        ],
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.category_grid',
+    label: 'Homepage — 4-Column Category Grid',
+    sitePaths: ['/'],
+    description: 'The prominent 4-column category photo cards.',
+    fields: [
+      text('heading', 'Section heading (optional)', 'Shown above the category cards if provided.'),
+      booleanField('enabled', 'Show category grid', 'Untick to hide this section from the homepage.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Category Card',
+        minItems: 1,
+        maxItems: 8,
+        itemFields: [
+          text('title', 'Category Title', 'e.g. CASES, CHARGERS, AUDIO, ACCESSORIES'),
+          text('subtitle', 'Subtitle (optional)'),
+          image('image', 'Card Photo', 'High-res image filling the card'),
+          url('href', 'Card Link'),
+          text('badge', 'Badge (optional)', 'Small pill on top-left of card (e.g. NEW, POPULAR)'),
+        ],
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.crowd_favorites',
+    label: 'Homepage — The Crowd Favorites',
+    sitePaths: ['/'],
+    description: 'The horizontal product slider showcasing bestsellers and customer favorites with badges and swatches.',
+    fields: [
+      text('heading', 'Section heading', 'Defaults to "The Crowd Favorites"'),
+      text('subtitle', 'Section subtitle', 'Defaults to "See what everyone is adding to their cart right now."'),
+      text('rightLinkLabel', 'Right link label', 'Defaults to "SHOP BEST SELLERS"'),
+      url('rightLinkHref', 'Right link destination'),
+      booleanField('enabled', 'Show Crowd Favorites section', 'Untick to hide this section from the homepage.'),
+    ],
+    lists: [
+      {
+        path: 'items',
+        itemLabel: 'Product Card',
+        minItems: 1,
+        maxItems: 12,
+        itemFields: CROWD_FAVORITES_ITEM_FIELDS,
+      },
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.event_banner',
+    label: 'Homepage — Feature Spotlight Banner',
+    sitePaths: ['/'],
+    description: 'The high-impact dark promotional banner directly below Crowd Favorites.',
+    fields: [
+      text('heading', 'Banner heading', 'Defaults to "The Flagship Drop Of The Year"'),
+      area('subtitle', 'Banner subtitle', 'Defaults to "Order now to get the limited edition—available on the first batch only!"'),
+      text('ctaLabel', 'CTA button label', 'Defaults to "SHOP THE DROP"'),
+      url('ctaHref', 'CTA link destination'),
+      image('image', 'Feature Image', 'High-impact image of the featured product or showcase'),
+      booleanField('enabled', 'Show Feature Banner', 'Untick to hide this banner from the homepage.'),
+    ],
+    disablable: true,
+  },
   /* — Gadzio homepage (route: /) — */
   {
     key: 'apple.hero_tiles',
@@ -560,6 +771,13 @@ export const COLLECTIONS: CollectionSchema[] = [
 
 /** Site-wide settings edited on the Theme page (site_settings table). */
 export const THEME_FIELDS: FieldSchema[] = [
+  {
+    path: 'homepageUiMode',
+    label: 'Storefront UI Version',
+    type: 'select',
+    options: ['new', 'old'],
+    hint: 'Switch between Modern Gadzio UI (hero + trust bar + category grid) and Old UI (classic showcase layout).',
+  },
   {
     path: 'fontFamily',
     label: 'Font family',

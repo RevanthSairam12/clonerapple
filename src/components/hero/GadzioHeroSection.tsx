@@ -28,7 +28,8 @@ export function GadzioHeroSection() {
     <section
       id="gadzio-hero"
       aria-label="Featured Collections"
-      className="w-full bg-[#ebebe7] py-3.5 px-2 sm:px-3.5 select-none font-sans"
+      className="w-full bg-[#ebebe7] py-3.5 px-2 sm:px-3.5 select-none"
+      style={{ fontFamily: 'transducer, sans-serif' }}
     >
       <div className="max-w-[1560px] mx-auto">
         {/* Asymmetric 2-column Grid: Left Big Tile, Right 2 Stacked Tiles */}
@@ -59,10 +60,11 @@ export function GadzioHeroSection() {
             <div className="relative z-10 flex flex-col items-center justify-center max-w-lg mx-auto space-y-3 sm:space-y-4">
               {/* Main Headline */}
               <h2
-                className="text-4xl sm:text-5xl md:text-5xl lg:text-[58px] font-black uppercase text-black leading-[0.96] tracking-tight"
+                className="text-4xl sm:text-5xl md:text-5xl lg:text-[58px] font-bold uppercase text-black leading-[0.96] tracking-tight"
                 style={{
-                  fontFamily:
-                    '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+                  fontFamily: 'transducer, sans-serif',
+                  fontWeight: 700,
+                  color: '#000',
                 }}
               >
                 Everyday Tech.
@@ -118,10 +120,10 @@ export function GadzioHeroSection() {
                 </span>
 
                 <h3
-                  className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase text-white leading-[1.02] tracking-tight"
+                  className="text-2xl sm:text-3xl lg:text-4xl font-bold uppercase text-white leading-[1.02] tracking-tight"
                   style={{
-                    fontFamily:
-                      '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+                    fontFamily: 'transducer, sans-serif',
+                    fontWeight: 700,
                   }}
                 >
                   SOUND ON.
@@ -166,10 +168,10 @@ export function GadzioHeroSection() {
                 </span>
 
                 <h3
-                  className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase text-white leading-[1.02] tracking-tight"
+                  className="text-2xl sm:text-3xl lg:text-4xl font-bold uppercase text-white leading-[1.02] tracking-tight"
                   style={{
-                    fontFamily:
-                      '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+                    fontFamily: 'transducer, sans-serif',
+                    fontWeight: 700,
                   }}
                 >
                   GEAR THAT

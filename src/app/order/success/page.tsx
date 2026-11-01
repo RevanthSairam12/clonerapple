@@ -81,7 +81,7 @@ export default async function OrderSuccessPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f]">
+    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f]" style={{ fontFamily: 'transducer, sans-serif' }}>
       <ClearCartOnSuccess />
       <div className="max-w-2xl mx-auto bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-[#e5e5ea]">
         {/* Success Icon */}
@@ -176,7 +176,7 @@ export default async function OrderSuccessPage({ searchParams }: Props) {
         <div className="flex flex-col sm:flex-row gap-3">
           <Link
             href="/"
-            className="flex-1 text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition"
+            className="flex-1 text-center bg-[#ffe100] text-black py-3.5 rounded-xl text-sm font-black uppercase tracking-wider hover:bg-[#ffea33] shadow-sm transition"
           >
             Continue Shopping
           </Link>

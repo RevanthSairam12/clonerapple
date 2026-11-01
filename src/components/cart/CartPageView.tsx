@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
+import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
@@ -178,7 +179,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
   };
 
   return (
-    <div className="min-h-screen bg-[#fff] text-[#1d1d1f] font-sans antialiased selection:bg-[#0071e3] selection:text-white flex flex-col justify-between">
+    <div className="gz-storefront-page min-h-screen bg-[#fff] text-[#1d1d1f] antialiased selection:bg-[#ffe100] selection:text-black flex flex-col justify-between" style={{ fontFamily: 'transducer, sans-serif' }}>
       <div>
         <GlobalNav bannerVisible={false} />
 
@@ -485,7 +486,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                       ) : (
                         <Link
                           href="/checkout"
-                          className="w-full bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white text-[15px] font-semibold py-3.5 rounded-2xl text-center transition-all active:scale-[0.99] shadow-sm flex items-center justify-center gap-2"
+                          className="w-full bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black text-[15px] font-black uppercase tracking-wider py-4 rounded-xl text-center transition-all active:scale-[0.99] shadow-md flex items-center justify-center gap-2"
                         >
                           <span>Check Out with PayU</span>
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -512,7 +513,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
 
                       <Link
                         href="/auth?redirect=/checkout"
-                        className="w-full bg-[#0071e3] hover:bg-[#0077ed] active:bg-[#0066cc] text-white text-[15px] font-semibold py-3.5 rounded-2xl text-center transition-all active:scale-[0.99] shadow-sm flex items-center justify-center gap-2"
+                        className="w-full bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black text-[15px] font-black uppercase tracking-wider py-4 rounded-xl text-center transition-all active:scale-[0.99] shadow-md flex items-center justify-center gap-2"
                       >
                         <span>Sign In to Check Out</span>
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -673,6 +674,11 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
             </div>
           </div>
         </main>
+      </div>
+
+      {/* Trust Badges */}
+      <div className="w-full mt-10 border-t border-[#e5e5ea]">
+        <GadzioTrustBar />
       </div>
 
       <GlobalFooter />

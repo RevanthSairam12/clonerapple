@@ -53,6 +53,14 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function Home() {
   // One round-trip: every homepage collection, with hardcoded fallbacks.
   const c = await getContentMany({
+    trustBar: ['gadzio.trust_badges', {}],
+    categoryGrid: ['gadzio.category_grid', {}],
+    brandBar: ['gadzio.brand_bar', {}],
+    diwaliCampaign: ['gadzio.diwali_campaign', {}],
+    crowdFavorites: ['gadzio.crowd_favorites', {}],
+    reviews: ['gadzio.reviews', {}],
+    inTheWild: ['gadzio.in_the_wild', {}],
+    eventBanner: ['gadzio.event_banner', {}],
     heroTiles: ['apple.hero_tiles', {}],
     heroVideo: ['apple.hero_video', {}],
     promo: ['apple.promo_section', {}],
@@ -75,7 +83,26 @@ export default async function Home() {
     ? { ...(c.footer as HomePageOverrides['footer']), copyright: settings.appleCopyright }
     : (c.footer as HomePageOverrides['footer']);
 
+  // UI Mode: 'new' (Modern Gadzio Storefront) or 'old' (Classic Apple clone)
+  const uiMode: 'new' | 'old' = settings.homepageUiMode === 'old' ? 'old' : 'new';
+
   const overrides: HomePageOverrides = {
+    trustBar: c.trustBar as HomePageOverrides['trustBar'],
+    trustBarEnabled: (c.trustBar as { enabled?: boolean }).enabled !== false,
+    categoryGrid: c.categoryGrid as HomePageOverrides['categoryGrid'],
+    categoryGridEnabled: (c.categoryGrid as { enabled?: boolean }).enabled !== false,
+    brandBar: c.brandBar as HomePageOverrides['brandBar'],
+    brandBarEnabled: (c.brandBar as { enabled?: boolean }).enabled !== false,
+    diwaliCampaign: c.diwaliCampaign as HomePageOverrides['diwaliCampaign'],
+    diwaliCampaignEnabled: (c.diwaliCampaign as { enabled?: boolean }).enabled !== false,
+    crowdFavorites: c.crowdFavorites as HomePageOverrides['crowdFavorites'],
+    crowdFavoritesEnabled: (c.crowdFavorites as { enabled?: boolean }).enabled !== false,
+    reviews: c.reviews as HomePageOverrides['reviews'],
+    reviewsEnabled: (c.reviews as { enabled?: boolean }).enabled !== false,
+    inTheWild: c.inTheWild as HomePageOverrides['inTheWild'],
+    inTheWildEnabled: (c.inTheWild as { enabled?: boolean }).enabled !== false,
+    eventBanner: c.eventBanner as HomePageOverrides['eventBanner'],
+    eventBannerEnabled: (c.eventBanner as { enabled?: boolean }).enabled !== false,
     heroTiles: (c.heroTiles as { heroTiles?: HomePageOverrides['heroTiles'] }).heroTiles,
     heroVideo: c.heroVideo as HomePageOverrides['heroVideo'],
     promoHeading: (c.promo as { heading?: string }).heading,
@@ -91,5 +118,5 @@ export default async function Home() {
     galleryEnabled: (c.gallery as { enabled?: boolean }).enabled !== false,
   };
 
-  return <GadzioHomePage overrides={overrides} />;
+  return <GadzioHomePage overrides={overrides} uiMode={uiMode} />;
 }

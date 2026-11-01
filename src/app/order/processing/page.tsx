@@ -24,11 +24,11 @@ export default async function OrderProcessingPage({ searchParams }: Props) {
 
   if (!txnid) {
     return (
-      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center p-6 text-[#1d1d1f]">
+      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center p-6 text-[#1d1d1f] gz-storefront-page" style={{ fontFamily: 'transducer, sans-serif' }}>
         <div className="bg-white max-w-md w-full p-8 rounded-2xl shadow-sm text-center border border-[#e5e5ea]">
-          <h1 className="text-2xl font-semibold mb-2">Payment status</h1>
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Payment status</h1>
           <p className="text-[#86868b] mb-6">No transaction identifier was provided.</p>
-          <Link href="/" className="inline-block bg-[#0071e3] text-white px-6 py-2.5 rounded-full text-sm font-medium">
+          <Link href="/" className="inline-block bg-[#ffe100] text-black px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-[#ffea33] transition">
             Return to Store
           </Link>
         </div>
@@ -40,11 +40,11 @@ export default async function OrderProcessingPage({ searchParams }: Props) {
 
   if (!order) {
     return (
-      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center p-6 text-[#1d1d1f]">
+      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center p-6 text-[#1d1d1f] gz-storefront-page" style={{ fontFamily: 'transducer, sans-serif' }}>
         <div className="bg-white max-w-md w-full p-8 rounded-2xl shadow-sm text-center border border-[#e5e5ea]">
-          <h1 className="text-2xl font-semibold mb-2">Payment status</h1>
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Payment status</h1>
           <p className="text-[#86868b] mb-6">We could not find an order for that reference.</p>
-          <Link href="/" className="inline-block bg-[#0071e3] text-white px-6 py-2.5 rounded-full text-sm font-medium">
+          <Link href="/" className="inline-block bg-[#ffe100] text-black px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-[#ffea33] transition">
             Return to Store
           </Link>
         </div>
@@ -55,11 +55,11 @@ export default async function OrderProcessingPage({ searchParams }: Props) {
   const session = await getUserSession();
   if (order.userId && (!session || session.userId !== order.userId)) {
     return (
-      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center p-6 text-[#1d1d1f]">
+      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center p-6 text-[#1d1d1f] gz-storefront-page" style={{ fontFamily: 'transducer, sans-serif' }}>
         <div className="bg-white max-w-md w-full p-8 rounded-2xl shadow-sm text-center border border-[#e5e5ea]">
-          <h1 className="text-2xl font-semibold mb-2">Sign in to view this payment</h1>
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Sign in to view this payment</h1>
           <p className="text-[#86868b] mb-6">Please sign in with the account that placed this order.</p>
-          <Link href="/auth" className="inline-block bg-[#0071e3] text-white px-6 py-2.5 rounded-full text-sm font-medium">
+          <Link href="/auth" className="inline-block bg-[#ffe100] text-black px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-[#ffea33] transition">
             Sign In
           </Link>
         </div>
@@ -83,17 +83,17 @@ export default async function OrderProcessingPage({ searchParams }: Props) {
   const statusHref = `/order/status?txnid=${encodeURIComponent(order.txnid)}`;
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f5f5f7] py-12 px-4 sm:px-6 lg:px-8 text-[#1d1d1f] flex items-center justify-center gz-storefront-page" style={{ fontFamily: 'transducer, sans-serif' }}>
       <div className="max-w-md w-full bg-white rounded-3xl p-8 sm:p-10 shadow-sm border border-[#e5e5ea] text-center">
         <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6 text-2xl" aria-hidden="true">
           ⏳
         </div>
 
-        <span className="text-xs font-semibold uppercase tracking-wider text-amber-700 bg-amber-50 px-3 py-1 rounded-full">
+        <span className="text-xs font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-3 py-1 rounded-full">
           Payment being verified
         </span>
 
-        <h1 className="text-2xl font-semibold tracking-tight mt-3 mb-3">We are checking your payment</h1>
+        <h1 className="text-2xl font-bold tracking-tight mt-3 mb-3">We are checking your payment</h1>
 
         <p className="text-sm text-[#1d1d1f] leading-relaxed mb-4">
           Your payment is being verified. If your bank has debited the amount, please do not pay
@@ -119,13 +119,13 @@ export default async function OrderProcessingPage({ searchParams }: Props) {
         <div className="space-y-3">
           <Link
             href={`/order/processing?txnid=${encodeURIComponent(order.txnid)}`}
-            className="block w-full text-center bg-[#0071e3] text-white py-3.5 rounded-full text-sm font-medium hover:bg-[#0077ed] transition"
+            className="block w-full text-center bg-[#ffe100] text-black py-3.5 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-[#ffea33] transition"
           >
             Check status again
           </Link>
           <Link
             href={statusHref}
-            className="block w-full text-center bg-[#f5f5f7] text-[#1d1d1f] py-3.5 rounded-full text-sm font-medium hover:bg-[#e8e8ed] transition"
+            className="block w-full text-center bg-[#f5f5f7] text-[#1d1d1f] py-3.5 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-[#e8e8ed] transition"
           >
             View order details
           </Link>

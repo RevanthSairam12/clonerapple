@@ -237,3 +237,127 @@ export interface HeroVideoOverride extends ResponsiveImageOverride {
 export function subheadFromText(text: string): SubheadSegment[] {
   return [{ kind: 'text', value: text }];
 }
+
+
+/* --------------------------------------------------- Gadzio New UI overrides */
+
+export interface TrustBadgeItemOverride {
+  title?: string;
+  subtitle?: string;
+  icon?: string;
+  href?: string;
+}
+
+export interface TrustBarOverride {
+  enabled?: boolean;
+  items?: TrustBadgeItemOverride[];
+}
+
+export interface CategoryGridItemOverride {
+  title?: string;
+  subtitle?: string;
+  image?: string;
+  href?: string;
+  badge?: string;
+}
+
+export interface CategoryGridOverride {
+  heading?: string;
+  enabled?: boolean;
+  items?: CategoryGridItemOverride[];
+}
+
+export interface CrowdFavoriteItemOverride {
+  title?: string;
+  price?: string;
+  image?: string;
+  href?: string;
+  badge?: string;
+  badgeColor?: 'lavender' | 'yellow' | 'green' | 'default';
+  secondaryBadge?: string;
+  secondaryBadgeColor?: 'pink' | 'yellow' | 'green' | 'default';
+  colorDots?: string;
+}
+
+export interface CrowdFavoritesOverride {
+  heading?: string;
+  subtitle?: string;
+  rightLinkLabel?: string;
+  rightLinkHref?: string;
+  enabled?: boolean;
+  items?: CrowdFavoriteItemOverride[];
+}
+
+export interface EventBannerOverride {
+  heading?: string;
+  subtitle?: string;
+  ctaLabel?: string;
+  ctaHref?: string;
+  image?: string;
+  enabled?: boolean;
+}
+
+
+
+export interface BrandLogoItemOverride {
+  name?: string;
+  subhead?: string;
+  href?: string;
+}
+
+export interface BrandBarOverride {
+  enabled?: boolean;
+  items?: BrandLogoItemOverride[];
+}
+
+export interface FestiveProductItemOverride {
+  title?: string;
+  tagPrimary?: string;
+  tagSecondary?: string;
+  amountText?: string;
+  originalAmountText?: string;
+  savingsText?: string;
+  image?: string;
+  href?: string;
+}
+
+export interface DiwaliCampaignOverride {
+  enabled?: boolean;
+  bannerKicker?: string;
+  bannerTitle?: string;
+  bannerButtonLabel?: string;
+  bannerButtonHref?: string;
+  bannerImage?: string;
+  items?: FestiveProductItemOverride[];
+}
+
+export interface ReviewItemOverride {
+  headline?: string;
+  rating?: string | number;
+  content?: string;
+  author?: string;
+  badgeText?: string;
+}
+
+export interface ReviewsOverride {
+  enabled?: boolean;
+  kicker?: string;
+  heading?: string;
+  subheading?: string;
+  items?: ReviewItemOverride[];
+}
+
+export interface WildPhotoItemOverride {
+  image?: string;
+  alt?: string;
+  caption?: string;
+  href?: string;
+}
+
+export interface InTheWildOverride {
+  enabled?: boolean;
+  heading?: string;
+  subheading?: string;
+  items?: WildPhotoItemOverride[];
+}
+

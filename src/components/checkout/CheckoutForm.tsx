@@ -712,7 +712,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
             className={`w-full py-4 rounded-full text-base font-semibold text-white transition flex items-center justify-center space-x-2 ${
               isSubmitting || hasUnavailable
                 ? 'bg-[#86868b] cursor-not-allowed'
-                : 'bg-[#0071e3] hover:bg-[#0077ed] active:scale-[0.99] shadow-sm'
+                : 'bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black font-black uppercase tracking-wider active:scale-[0.99] shadow-md'
             }`}
           >
             {isSubmitting ? (

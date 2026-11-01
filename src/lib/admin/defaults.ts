@@ -499,10 +499,311 @@ const CASES_SEO_DEFAULTS = {
     'Shop Gadzio protective cases for iPhone. Find MagSafe liquid silicone cases, crystal clear cases, and AeroWeave technical textile cases with military-grade drop defense.',
 };
 
+export const GADZIO_TRUST_BADGES_DEFAULTS = {
+  enabled: true,
+  items: [
+    {
+      title: 'FREE SHIPPING OVER ₹999',
+      subtitle: 'Free delivery on all prepaid orders',
+      icon: 'shipping',
+      href: '',
+    },
+    {
+      title: '30-DAY RETURNS',
+      subtitle: 'Hassle-free replacement guarantee',
+      icon: 'returns',
+      href: '',
+    },
+    {
+      title: '1% DONATED',
+      subtitle: 'Giving back with every single order',
+      icon: 'heart',
+      href: '',
+    },
+  ],
+};
+
+export const GADZIO_CATEGORY_GRID_DEFAULTS = {
+  enabled: true,
+  heading: '',
+  items: [
+    {
+      title: 'CASES',
+      subtitle: 'Drop Protection & MagSafe',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
+      href: '/in/shop/iphone/accessories/cases-protection',
+      badge: 'BESTSELLER',
+    },
+    {
+      title: 'CHARGERS',
+      subtitle: 'High-speed adapters & braided cables',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
+      href: '/in/shop/iphone/accessories/power-adapter-cable',
+      badge: '',
+    },
+    {
+      title: 'AUDIO',
+      subtitle: 'Studio grade sound & noise isolation',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
+      href: '/in/shop/iphone/accessories/wired-earphones',
+      badge: 'NEW',
+    },
+    {
+      title: 'ACCESSORIES',
+      subtitle: 'Everyday tech essentials',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg',
+      href: '/in/shop/iphone/accessories/cable-plug-case',
+      badge: '',
+    },
+  ],
+};
+
+export const GADZIO_CROWD_FAVORITES_DEFAULTS = {
+  enabled: true,
+  heading: 'The Crowd Favorites',
+  subtitle: 'See what everyone is adding to their cart right now.',
+  rightLinkLabel: 'SHOP BEST SELLERS',
+  rightLinkHref: '/in/shop/iphone/accessories/cases-protection',
+  items: [
+    {
+      title: 'Gadzio CrystalArmor Clear Case with MagSafe',
+      price: '₹3,499',
+      image: '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
+      href: '/shop/product/iphone18pro-max-clear-magsafe',
+      badge: 'LIMITED RELEASE',
+      badgeColor: 'lavender',
+      secondaryBadge: '⚡ NEW',
+      secondaryBadgeColor: 'yellow',
+      colorDots: '#e8e8ed, #1d1d1f',
+    },
+    {
+      title: 'Gadzio MagPulse Liquid Silicone Case',
+      price: '₹3,499',
+      image: '/sites/cases-protection/images/iphone17-silicone-black.jpg',
+      href: '/shop/product/iphone17-silicone-black',
+      badge: '⚡ NEW',
+      badgeColor: 'yellow',
+      secondaryBadge: 'TOP ITEM',
+      secondaryBadgeColor: 'pink',
+      colorDots: '#1d1d1f, #8e8e93',
+    },
+    {
+      title: 'Gadzio 20W USB-C GaN Fast Power Adapter',
+      price: '₹1,499',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
+      href: '/in/shop/iphone/accessories/power-adapter-cable',
+      badge: 'TRENDING',
+      badgeColor: 'green',
+      secondaryBadge: '',
+      secondaryBadgeColor: 'default',
+      colorDots: '#f5f5f7, #1d1d1f',
+    },
+    {
+      title: 'Gadzio Pulse USB-C Studio Hi-Res Earphones',
+      price: '₹1,499',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
+      href: '/in/shop/iphone/accessories/wired-earphones',
+      badge: 'TRENDING',
+      badgeColor: 'green',
+      secondaryBadge: '',
+      secondaryBadgeColor: 'default',
+      colorDots: '#ffffff, #1d1d1f',
+    },
+    {
+      title: 'Gadzio Ultra-Durable Braided USB-C Cable',
+      price: '₹999',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg',
+      href: '/in/shop/iphone/accessories/cable-plug-case',
+      badge: 'BESTSELLER',
+      badgeColor: 'yellow',
+      secondaryBadge: '',
+      secondaryBadgeColor: 'default',
+      colorDots: '#1d1d1f',
+    },
+    {
+      title: 'Gadzio Rugged Armor Case for AirPods Pro',
+      price: '₹1,299',
+      image: '/sites/cases-protection/images/iphone17pro-max-silicone.jpg',
+      href: '/in/shop/iphone/accessories/airpods-case',
+      badge: 'NEW',
+      badgeColor: 'yellow',
+      secondaryBadge: '',
+      secondaryBadgeColor: 'default',
+      colorDots: '#1d1d1f, #4f6f8f',
+    },
+  ],
+};
+
+export const GADZIO_EVENT_BANNER_DEFAULTS = {
+  enabled: true,
+  heading: 'The Flagship Drop Of The Year',
+  subtitle:
+    'Order now to get the limited deluxe titanium edition—engineered with aerospace-grade defense and high-gauss MagSafe.',
+  ctaLabel: 'SHOP THE DROP',
+  ctaHref: '/in/shop/iphone/accessories/cases-protection',
+  image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
+};
+
+export const GADZIO_BRAND_BAR_DEFAULTS = {
+  enabled: true,
+  items: [
+    { name: 'GADZIO FEASTABLES', subhead: 'SWEET TREATS & EDITIONS', href: '/in/shop/iphone/accessories/cases-protection' },
+    { name: 'GADZIO GAMES', subhead: 'CHALLENGES & ARENA', href: '/in/shop/iphone/accessories/cases-protection' },
+    { name: 'GADZIO BY MRBEAST', subhead: 'OFFICIAL STORE', href: '/in/shop/iphone/accessories/cases-protection' },
+    { name: 'GADZIO ATHLETICS', subhead: 'PERFORMANCE GEAR', href: '/in/shop/iphone/accessories/power-adapter-cable' },
+    { name: 'GADZIO LAB', subhead: 'TECH EXPERIMENTS', href: '/in/shop/iphone/accessories/wired-earphones' },
+    { name: 'GADZIO SIGNATURE', subhead: 'PREMIUM ESSENTIALS', href: '/in/shop/iphone/accessories/cable-plug-case' },
+  ],
+};
+
+export const GADZIO_DIWALI_CAMPAIGN_DEFAULTS = {
+  enabled: true,
+  bannerKicker: 'DIWALI 2026',
+  bannerTitle: 'ARE YOU READY?',
+  bannerButtonLabel: 'SHOP DIWALI',
+  bannerButtonHref: '/in/shop/iphone/accessories/cases-protection',
+  bannerImage: '',
+  items: [
+    {
+      title: 'Gadzio Diwali Festive Tech Hamper 2026 (Limited Box)',
+      tagPrimary: 'LIMITED RELEASE',
+      tagSecondary: '⚡ NEW',
+      amountText: '₹2,999',
+      originalAmountText: '₹4,499',
+      savingsText: 'SAVE 33%',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (3).jpg',
+      href: '/in/shop/iphone/accessories/cases-protection',
+    },
+    {
+      title: 'Diwali Gold Edition 3-in-1 Fast Wireless Charging Station',
+      tagPrimary: '',
+      tagSecondary: '⚡ NEW',
+      amountText: '₹1,899',
+      originalAmountText: '₹2,699',
+      savingsText: 'SAVE 30%',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
+      href: '/in/shop/iphone/accessories/power-adapter-cable',
+    },
+    {
+      title: 'Gadzio Pulse ANC Wireless Earphones - Festive Edition',
+      tagPrimary: 'SAVE',
+      tagSecondary: '⚡ NEW',
+      amountText: '₹1,499',
+      originalAmountText: '₹2,199',
+      savingsText: 'SAVE 32%',
+      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
+      href: '/in/shop/iphone/accessories/wired-earphones',
+    },
+    {
+      title: 'Diwali Elite MagSafe Protection Combo (Case + Screen Glass)',
+      tagPrimary: 'BESTSELLER',
+      tagSecondary: '⚡ FESTIVE',
+      amountText: '₹1,299',
+      originalAmountText: '₹1,899',
+      savingsText: 'SAVE 31%',
+      image: '/sites/cases-protection/images/iphone16pro-clear-magsafe.jpg',
+      href: '/in/shop/iphone/accessories/cases-protection',
+    },
+  ],
+};
+
 /* -------------------------------------------------------------- build */
+
+export const GADZIO_REVIEWS_DEFAULTS = {
+  enabled: true,
+  kicker: 'LOVED BY CREATORS & CUSTOMERS',
+  heading: '4.9 Average Star Rating',
+  subheading:
+    'With over 25,000 5-star reviews, Gadzio tech and everyday essentials are trusted by creators and tech lovers across India!',
+  items: [
+    {
+      headline: 'CrystalArmor Case is unbelievable!',
+      rating: '5',
+      content:
+        'The MagSafe magnets are insanely strong, and the drop protection saved my iPhone twice already. Crystal clear finish with zero yellowing even after months of daily use.',
+      author: 'Aarav M.',
+      badgeText: 'Verified Buyer',
+    },
+    {
+      headline: 'Insane charging speed & durable cable!',
+      rating: '5',
+      content:
+        'The 65W GaN adapter and braided cable charge my phone from 0 to 80% in half an hour. The metal reinforced connectors feel practically indestructible.',
+      author: 'Priya S.',
+      badgeText: 'Verified Buyer',
+    },
+    {
+      headline: 'Studio earphones blew me away!!',
+      rating: '5',
+      content:
+        'Crisp highs, deep punchy bass, and phenomenal noise isolation. Outstanding audio clarity for daily travel and long work calls. Truly 10/10!',
+      author: 'Rohan K.',
+      badgeText: 'Verified Buyer',
+    },
+  ],
+};
+
+export const GADZIO_IN_THE_WILD_DEFAULTS = {
+  enabled: true,
+  heading: 'Gadzio in the Wild',
+  subheading:
+    "Want to be featured here? Tag your photos with #GadzioInTheWild and show us how you're representing the brand every day.",
+  items: [
+    {
+      image: '/images/wild/gadzio-wild-1.jpg',
+      alt: 'Creator working outdoors with Gadzio phone case and accessories',
+      caption: 'Campus & creator essentials • @aarav_tech',
+      href: '/in/shop/iphone/accessories/cases-protection',
+    },
+    {
+      image: '/images/wild/gadzio-wild-2.jpg',
+      alt: 'Gadzio CrystalArmor MagSafe clear case in studio',
+      caption: 'CrystalArmor MagSafe setup • @priya_creations',
+      href: '/in/shop/iphone/accessories/cases-protection',
+    },
+    {
+      image: '/images/wild/gadzio-wild-3.jpg',
+      alt: 'Listening to music with Gadzio Studio Earphones',
+      caption: 'Commute in pure sound • @rohan_pulse',
+      href: '/in/shop/iphone/accessories/wired-earphones',
+    },
+    {
+      image: '/images/wild/gadzio-wild-4.jpg',
+      alt: 'Minimalist desk setup with Gadzio charging station',
+      caption: 'Studio desk setup • @vikram_workstation',
+      href: '/in/shop/iphone/accessories/power-adapter-cable',
+    },
+    {
+      image: '/images/wild/gadzio-wild-5.jpg',
+      alt: 'Tech creator inspecting Gadzio gear',
+      caption: 'Unboxing day with Gadzio • @neha_daily',
+      href: '/in/shop/iphone/accessories/cases-protection',
+    },
+    {
+      image: '/images/wild/gadzio-wild-6.jpg',
+      alt: 'Heavy-duty braided cables on desk',
+      caption: 'High-speed charging setup • @kabir_edits',
+      href: '/in/shop/iphone/accessories/power-adapter-cable',
+    },
+    {
+      image: '/images/wild/gadzio-wild-7.jpg',
+      alt: 'Silicone protection case and AirTag accessory',
+      caption: 'Travel ready with Gadzio • @ananya_travels',
+      href: '/in/shop/iphone/accessories/cases-protection',
+    },
+  ],
+};
 
 const DEFAULTS: Record<string, Record<string, unknown>> = {
   /* Gadzio homepage */
+  'gadzio.reviews': GADZIO_REVIEWS_DEFAULTS,
+  'gadzio.in_the_wild': GADZIO_IN_THE_WILD_DEFAULTS,
+  'gadzio.brand_bar': GADZIO_BRAND_BAR_DEFAULTS,
+  'gadzio.diwali_campaign': GADZIO_DIWALI_CAMPAIGN_DEFAULTS,
+  'gadzio.trust_badges': GADZIO_TRUST_BADGES_DEFAULTS,
+  'gadzio.category_grid': GADZIO_CATEGORY_GRID_DEFAULTS,
+  'gadzio.crowd_favorites': GADZIO_CROWD_FAVORITES_DEFAULTS,
+  'gadzio.event_banner': GADZIO_EVENT_BANNER_DEFAULTS,
   'apple.hero_tiles': APPLE_HERO_TILES_DEFAULTS,
   'apple.hero_video': APPLE_HERO_VIDEO_DEFAULTS,
   'apple.promo_section': APPLE_PROMO_DEFAULTS,
