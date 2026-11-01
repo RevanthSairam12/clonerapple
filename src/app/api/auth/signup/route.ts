@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 import { signUp, userSessionCookie } from '@/lib/user-auth';
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import {
   isValidEmail,
   normalizeEmail,

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
-import { disableTotp, getTotpStatus, loadEditorTotp, verifyTotp } from '@/lib/admin/totp';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { requireEditor } from '@/lib/admin/require-editor';
+import { disableTotp, getTotpStatus, loadEditorTotp, verifyTotp } from '@/lib/admin/totp-store';
 import bcrypt from 'bcryptjs';
 
 /**
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
   }
 
   // Password re-check: the session alone must not be enough to weaken login.
-  const { getSql } = await import('@/lib/admin/db');
+  const { getSql } = await import('@/lib/platform/db');
   const sql = getSql();
   if (!sql) return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
   const rows = await sql`select password_hash from admin_users where id = ${guard.userId}`;

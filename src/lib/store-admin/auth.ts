@@ -4,15 +4,15 @@ import { NextResponse } from 'next/server';
 import { redirect } from 'next/navigation';
 import bcrypt from 'bcryptjs';
 
-import { clientIp } from '@/lib/admin/auth';
-import { getSql } from '@/lib/admin/db';
-import { verifyTotp } from '@/lib/admin/totp';
+import { clientIp } from '@/lib/platform/client-ip';
+import { getSql } from '@/lib/platform/db';
+import { verifyTotp } from '@/lib/platform/totp';
 
 /**
  * Authentication for the store admin panel.
  *
  * This is deliberately parallel to — and completely separate from — the
- * content panel in `src/lib/admin/auth.ts`:
+ * content panel (removed):
  *
  * - rows live in `store_admins` / `store_admin_sessions`, not `admin_users`;
  * - the cookie is `store_admin_session`, not `admin_session`;

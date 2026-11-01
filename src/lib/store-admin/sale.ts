@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { readSaleStateUsing, type SaleState } from '@/lib/storefront/sale-state';
 
 import type { CatalogWrite } from './catalog-writes';

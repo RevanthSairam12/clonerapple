@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Order notes must be read and written on the server only.');

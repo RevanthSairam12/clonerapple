@@ -16,7 +16,7 @@
 import { cache } from 'react';
 import { unstable_cache } from 'next/cache';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { getStorefrontProducts, type StorefrontProduct } from '@/lib/catalog/storefront';
 
 import {

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { validateAddressInput, type ValidatedAddress } from './rules';
 
 export interface CustomerAddress extends ValidatedAddress {

@@ -11,7 +11,7 @@
  * Server-only. Every amount that leaves this module is `price_paise / 100`.
  */
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { stockStateFrom } from '@/lib/storefront/catalog-rules';
 import { resolveEffectivePrice } from '@/lib/storefront/pricing';
 import { readSaleState } from '@/lib/storefront/sale-state';

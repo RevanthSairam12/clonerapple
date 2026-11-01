@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import bcrypt from 'bcryptjs';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import { writeAudit, type AuditInput } from './audit';
 import { validatePasswordChange } from './password-rules';

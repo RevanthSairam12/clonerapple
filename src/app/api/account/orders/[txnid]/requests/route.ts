@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { validateRequestType, type RequestType } from '@/lib/account/request-rules';

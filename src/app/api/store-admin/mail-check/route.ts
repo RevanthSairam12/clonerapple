@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
-import { getSql } from '@/lib/admin/db';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { getSql } from '@/lib/platform/db';
 import {
   checkMailConnection,
   sendTestEmail,

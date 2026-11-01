@@ -1,5 +1,5 @@
-import { getSql } from '@/lib/admin/db';
-import { publicObjectUrl } from '@/lib/admin/storage';
+import { getSql } from '@/lib/platform/db';
+import { publicObjectUrl } from '@/lib/platform/storage';
 
 /**
  * GET /api/admin/media/[id] — serves an uploaded image.

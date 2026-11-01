@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
-import { getTotpStatus, totpQrDataUri, totpUrl, newTotpSecret, savePendingSecret } from '@/lib/admin/totp';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { requireEditor } from '@/lib/admin/require-editor';
+import { getTotpStatus, totpQrDataUri, totpUrl, newTotpSecret, savePendingSecret } from '@/lib/admin/totp-store';
 
 /**
  * POST /api/admin/totp/setup — start enrollment for the signed-in editor.

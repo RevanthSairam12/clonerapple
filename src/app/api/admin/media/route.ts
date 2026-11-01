@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
-import { getSql } from '@/lib/admin/db';
-import { storageConfigured, uploadToStorage } from '@/lib/admin/storage';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { requireEditor } from '@/lib/admin/require-editor';
+import { getSql } from '@/lib/platform/db';
+import { storageConfigured, uploadToStorage } from '@/lib/platform/storage';
 import { imageDimensions } from '@/lib/store-admin/media-rules';
 
 /**

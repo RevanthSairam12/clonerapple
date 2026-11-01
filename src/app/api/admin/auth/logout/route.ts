@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { logout, sessionCookie } from '@/lib/admin/auth';
 
 export async function POST(request: Request) {

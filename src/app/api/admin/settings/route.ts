@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
-import { getSql } from '@/lib/admin/db';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { requireEditor } from '@/lib/admin/require-editor';
+import { getSql } from '@/lib/platform/db';
 import { getThemeSettings, THEME_SETTING_KEYS } from '@/lib/content';
 
 /** GET /api/admin/settings — all theme settings. */

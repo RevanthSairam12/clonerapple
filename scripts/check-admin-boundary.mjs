@@ -35,10 +35,10 @@ function ok(message) {
 }
 
 const { COLLECTIONS, THEME_FIELDS } = await jiti.import(
-  path.join(ROOT, 'src', 'lib', 'admin', 'collections.ts'),
+  path.join(ROOT, 'src', 'lib', 'website', 'collections.ts'),
 );
 const { isCommerceFieldName, isExemptCollectionKey } = await jiti.import(
-  path.join(ROOT, 'src', 'lib', 'admin', 'boundary.ts'),
+  path.join(ROOT, 'src', 'lib', 'website', 'boundary.ts'),
 );
 
 /** Last property name in a field path, e.g. `ctas[0].label` -> `label`. */
@@ -198,7 +198,7 @@ async function collectFiles(dir) {
 
 // boundary.ts and cms-product-migration.ts name commerce concepts by design;
 // they contain no SQL and no editor fields.
-const PLANNER_FILES = new Set(['boundary.ts', 'cms-product-migration.ts']);
+const PLANNER_FILES = new Set(['boundary.ts', 'product-import.ts']);
 
 let legacyFiles = 0;
 for (const dir of LEGACY_DIRS) {

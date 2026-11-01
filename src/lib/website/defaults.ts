@@ -1,7 +1,7 @@
 /**
  * Hardcoded defaults for every admin content collection, shaped exactly like
  * the simplified override object the admin panel stores in `content_blocks`
- * (see src/lib/admin/collections.ts for the field-path contract).
+ * (see src/lib/website/collections.ts for the field-path contract).
  *
  * Purpose: pre-fill the admin editor so editors see the content the site
  * currently renders instead of blank fields. Saving the pre-filled value

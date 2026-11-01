@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import {
   ADMIN_MAX_MARK_PAID_PAISE,

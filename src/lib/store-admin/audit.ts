@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 /**
  * Append-only audit log for store admin actions.

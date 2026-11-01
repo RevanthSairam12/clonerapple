@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import {
   formatPaise,
   getStorefrontProduct,

@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { anonymisedEmail } from '@/lib/store-admin/customer-rules';
 import { normalizeEmail } from '@/lib/coupons/rules';
 

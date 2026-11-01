@@ -1,5 +1,5 @@
 import { MediaLibrary } from '@/components/store-admin/MediaLibrary';
-import { storageConfigured } from '@/lib/admin/storage';
+import { storageConfigured } from '@/lib/platform/storage';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { listMedia } from '@/lib/store-admin/media';
 

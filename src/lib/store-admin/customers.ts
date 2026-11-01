@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import type { CustomerFilters, CustomerGroup } from './customer-rules';
 import { CUSTOMER_PAGE_SIZE } from './customer-rules';

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import {
   releaseConsumedCouponOnRefund,
   releaseCouponInTx,

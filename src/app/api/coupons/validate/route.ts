@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { quoteShipping } from '@/lib/checkout/shipping-rules';
 import {

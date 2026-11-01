@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';

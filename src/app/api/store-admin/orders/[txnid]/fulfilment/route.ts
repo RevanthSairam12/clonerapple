@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import {
   fulfilmentNotificationEvent,
   queueOrderEventByTxnid,

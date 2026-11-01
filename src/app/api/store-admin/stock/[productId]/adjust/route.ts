@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { queueNotification } from '@/lib/notifications/queue';
 import { stockNotificationEvent } from '@/lib/notifications/stock-events';
 import { requireStoreRole } from '@/lib/store-admin/auth';

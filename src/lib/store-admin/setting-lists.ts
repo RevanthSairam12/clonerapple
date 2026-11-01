@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import { buildTrackingUrl } from './delivery';
 

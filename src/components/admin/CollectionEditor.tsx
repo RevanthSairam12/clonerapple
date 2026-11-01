@@ -3,8 +3,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-import type { CollectionSchema, FieldSchema, ListSchema } from '@/lib/admin/collections';
-import { getByPath, setByPath } from './json-path';
+import type { CollectionSchema, FieldSchema, ListSchema } from '@/lib/website/collections';
+import { getByPath, setByPath } from '@/lib/website/json-path';
 
 /* --------------------------------------------------------------- inputs */
 

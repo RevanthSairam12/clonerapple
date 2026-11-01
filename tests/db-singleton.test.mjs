@@ -31,7 +31,7 @@ test('two evaluations of the db module share one pool', async () => {
     createJiti(import.meta.url, {
       moduleCache: false,
       alias: { '@': path.join(root, 'src') },
-    }).import(path.join(root, 'src', 'lib', 'admin', 'db.ts'));
+    }).import(path.join(root, 'src', 'lib', 'platform', 'db.ts'));
 
   const first = await load();
   const second = await load();

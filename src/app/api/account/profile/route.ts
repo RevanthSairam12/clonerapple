@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { normalizeName } from '@/lib/auth/validation';
 import { updateUserProfile } from '@/lib/user-auth';

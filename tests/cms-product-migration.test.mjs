@@ -21,7 +21,7 @@ const {
   planCmsItemMigration,
   resolveCmsItemProduct,
 } = await jiti.import(
-  path.join(root, 'src', 'lib', 'admin', 'cms-product-migration.ts'),
+  path.join(root, 'src', 'lib', 'catalogue', 'product-import.ts'),
 );
 
 function product(overrides = {}) {

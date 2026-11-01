@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { resolveEffectivePrice } from '@/lib/storefront/pricing';
 import { readSaleState } from '@/lib/storefront/sale-state';

@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import type { CatalogWrite } from './catalog-writes';
 import { altError } from './media-rules';

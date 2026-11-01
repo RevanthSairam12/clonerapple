@@ -58,7 +58,7 @@ async function removalHarness({ auditOk = true, typedEmail = base.typedEmail, pa
   vm.runInNewContext(compiled, {
     module, exports: module.exports, console: { warn() {} },
     require(name) {
-      if (name === '@/lib/admin/db') return { getSql: () => sql };
+      if (name === '@/lib/platform/db') return { getSql: () => sql };
       if (name === './staff-rules') return rules;
       if (name === './password-rules') return passwordRules;
       if (name === './audit') return { writeAudit: async (input, writer) => {

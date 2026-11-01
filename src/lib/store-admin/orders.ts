@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import { getSql } from '../admin/db';
+import { getSql } from '../platform/db';
 import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
 
 import { orderRevenuePaise } from './amount';

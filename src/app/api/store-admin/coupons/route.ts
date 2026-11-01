@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { couponAuditFromRow, parseCouponInput } from '@/lib/store-admin/coupon-rules';
 import { createCoupon, listCoupons } from '@/lib/store-admin/coupons';

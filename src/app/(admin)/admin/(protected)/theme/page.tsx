@@ -1,5 +1,5 @@
 import { ThemeEditor } from '@/components/admin/ThemeEditor';
-import { THEME_FIELDS } from '@/lib/admin/collections';
+import { THEME_FIELDS } from '@/lib/website/collections';
 import { getThemeSettings } from '@/lib/content';
 
 export const dynamic = 'force-dynamic';

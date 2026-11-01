@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { formatPaise, getStorefrontProduct, getStorefrontProducts, type StorefrontProduct } from '@/lib/catalog/storefront';
 import { getProductImage, getProductFromCatalog } from '@/lib/payu/catalog';
 import { readSaleState } from '@/lib/storefront/sale-state';

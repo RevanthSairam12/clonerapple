@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { requireEditor } from '@/lib/admin/require-editor';
 import {
   enableTotp,
   getTotpStatus,
@@ -8,7 +9,7 @@ import {
   loadEditorTotp,
   newRecoveryCode,
   verifyTotp,
-} from '@/lib/admin/totp';
+} from '@/lib/admin/totp-store';
 
 /**
  * POST /api/admin/totp/enable — confirm enrollment. The editor submits a code

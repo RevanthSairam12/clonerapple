@@ -7,7 +7,7 @@
 // see the note at the foot of this file.
 //
 // NOTE: the admin panel may override any of this at runtime; see
-// src/lib/admin/defaults.ts and src/lib/admin/collections.ts.
+// src/lib/website/defaults.ts and src/lib/website/collections.ts.
 
 export interface EduCard {
   id: string;

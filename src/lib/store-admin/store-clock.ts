@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 import { parseReportFilters, type ReportFilterParse } from './report-rules';
 import { getStoreTimeZone } from './sale';

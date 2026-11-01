@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin } from '@/lib/admin/api-guard';
-import { storageConfigured, uploadToStorage } from '@/lib/admin/storage';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { storageConfigured, uploadToStorage } from '@/lib/platform/storage';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { createMedia, listMedia } from '@/lib/store-admin/media';

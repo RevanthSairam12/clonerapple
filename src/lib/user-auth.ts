@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { cookies, headers } from 'next/headers';
 import bcrypt from 'bcryptjs';
-import { getSql } from './admin/db';
+import { getSql } from './platform/db';
 import {
   isValidEmail,
   normalizeEmail,

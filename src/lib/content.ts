@@ -1,12 +1,12 @@
 import { createServerClient } from '@supabase/ssr';
 
-import { getSql } from './admin/db';
+import { getSql } from './platform/db';
 
 /**
  * Theme keys the admin panel may write to site_settings. Sourced from the
  * Theme page field registry so the whitelist can never drift from the UI.
  */
-import { THEME_FIELDS } from './admin/collections';
+import { THEME_FIELDS } from './website/collections';
 
 export const THEME_SETTING_KEYS: Set<string> = new Set(
   THEME_FIELDS.map((field) => field.path),

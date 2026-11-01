@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { isRevealField, revealCustomerField } from '@/lib/store-admin/customers';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 

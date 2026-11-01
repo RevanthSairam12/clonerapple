@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
-import { COLLECTIONS } from '@/lib/admin/collections';
+import { COLLECTIONS } from '@/lib/website/collections';
 import { getSession } from '@/lib/admin/auth';
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 export const metadata: Metadata = {
   title: 'Admin — Sign in',

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { exportCustomerData } from '@/lib/account/data-management';
 import { checkRateLimit } from '@/lib/payu/rate-limit';

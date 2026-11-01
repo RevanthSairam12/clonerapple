@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 
-import { assertSameOrigin, requireEditor } from '@/lib/admin/api-guard';
-import { validateLegacyContentWrite } from '@/lib/admin/boundary';
-import { getCollection } from '@/lib/admin/collections';
-import { getSql } from '@/lib/admin/db';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
+import { requireEditor } from '@/lib/admin/require-editor';
+import { validateLegacyContentWrite } from '@/lib/website/boundary';
+import { getCollection } from '@/lib/website/collections';
+import { getSql } from '@/lib/platform/db';
 import { getContentRaw } from '@/lib/content';
 
 /** GET /api/admin/content — list all collections with current values. */
@@ -16,7 +17,7 @@ export async function GET() {
 
   const values: Record<string, unknown> = {};
   for (const collection of Object.values(
-    await import('@/lib/admin/collections').then((m) => m.COLLECTIONS),
+    await import('@/lib/website/collections').then((m) => m.COLLECTIONS),
   )) {
     values[collection.key] = await getContentRaw(collection.key);
   }

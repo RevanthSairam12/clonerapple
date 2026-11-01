@@ -34,9 +34,9 @@ function loadAuth({ account = null, session = null, issuanceAllowed = true } = {
       if (name === 'next/headers') return { cookies: async () => ({ get: () => ({ value: 'fixture-token' }) }) };
       if (name === 'next/server') return { NextResponse: { json: (body, options) => ({ body, ...options }) } };
       if (name === 'next/navigation') return { redirect: (url) => { throw new Error(`redirect:${url}`); } };
-      if (name === '@/lib/admin/auth') return { clientIp: async () => 'fixture-ip' };
-      if (name === '@/lib/admin/db') return { getSql: () => sql };
-      if (name === '@/lib/admin/totp') return { verifyTotp: () => false };
+      if (name === '@/lib/platform/client-ip') return { clientIp: async () => 'fixture-ip' };
+      if (name === '@/lib/platform/db') return { getSql: () => sql };
+      if (name === '@/lib/platform/totp') return { verifyTotp: () => false };
       return nativeRequire(name);
     },
   });

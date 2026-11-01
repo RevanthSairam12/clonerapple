@@ -1,8 +1,8 @@
 import Link from 'next/link';
 
 import { AdminUiSwitcher } from '@/components/admin/AdminUiSwitcher';
-import { COLLECTIONS } from '@/lib/admin/collections';
-import { getSql } from '@/lib/admin/db';
+import { COLLECTIONS } from '@/lib/website/collections';
+import { getSql } from '@/lib/platform/db';
 import { getSession } from '@/lib/admin/auth';
 import { getThemeSettings } from '@/lib/content';
 

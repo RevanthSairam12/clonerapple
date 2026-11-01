@@ -16,7 +16,7 @@ import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { getCustomerAddress } from '@/lib/account/addresses';
 import { validateAddressInput } from '@/lib/account/rules';
-import { assertSameOrigin } from '@/lib/admin/api-guard';
+import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { parseReservationPolicy } from '@/lib/checkout/reservation-rules';
 import { quoteShipping } from '@/lib/checkout/shipping-rules';

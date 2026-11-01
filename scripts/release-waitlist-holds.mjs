@@ -33,7 +33,7 @@ const jiti = createJiti(import.meta.url, {
   alias: { '@': path.join(root, 'src') },
 });
 
-const { getSql } = await jiti.import(path.join(root, 'src/lib/admin/db.ts'));
+const { getSql } = await jiti.import(path.join(root, 'src/lib/platform/db.ts'));
 const { releaseWaitingListHoldsUsing } = await jiti.import(
   path.join(root, 'src/lib/payu/waitlist-cleanup.ts'),
 );

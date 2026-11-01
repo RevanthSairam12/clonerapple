@@ -21,7 +21,7 @@
  * future route handler all call them.
  */
 
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Maintenance state must be read on the server only.');

@@ -2,8 +2,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { CollectionEditor } from '@/components/admin/CollectionEditor';
-import { getCollection } from '@/lib/admin/collections';
-import { getCollectionDefaults, getCollectionCurrentArt } from '@/lib/admin/defaults';
+import { getCollection } from '@/lib/website/collections';
+import { getCollectionDefaults, getCollectionCurrentArt } from '@/lib/website/defaults';
 import { getContentRaw } from '@/lib/content';
 
 export const dynamic = 'force-dynamic';

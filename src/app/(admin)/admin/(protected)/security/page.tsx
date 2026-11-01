@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { AdminSecurityClient } from '@/components/admin/AdminSecurityClient';
 import { getSession } from '@/lib/admin/auth';
-import { getTotpStatus } from '@/lib/admin/totp';
+import { getTotpStatus } from '@/lib/admin/totp-store';
 
 export const metadata: Metadata = {
   title: 'Admin — Security',

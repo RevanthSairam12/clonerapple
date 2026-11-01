@@ -23,7 +23,7 @@ const root = path.join(here, '..');
 const jiti = createJiti(import.meta.url, {
   alias: { '@': path.join(root, 'src') },
 });
-const { assertSameOrigin } = await jiti.import(path.join(root, 'src', 'lib', 'admin', 'api-guard.ts'));
+const { assertSameOrigin } = await jiti.import(path.join(root, 'src', 'lib', 'platform', 'api-guard.ts'));
 
 function post(headers) {
   return new Request('http://localhost:3000/api/payu/initiate', {

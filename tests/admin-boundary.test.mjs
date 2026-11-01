@@ -17,9 +17,9 @@ const {
   validateLegacyContentWrite,
   isCommerceFieldName,
   isExemptCollectionKey,
-} = await jiti.import(path.join(root, 'src', 'lib', 'admin', 'boundary.ts'));
+} = await jiti.import(path.join(root, 'src', 'lib', 'website', 'boundary.ts'));
 const { COLLECTIONS, THEME_FIELDS } = await jiti.import(
-  path.join(root, 'src', 'lib', 'admin', 'collections.ts'),
+  path.join(root, 'src', 'lib', 'website', 'collections.ts'),
 );
 
 function lastToken(input) {

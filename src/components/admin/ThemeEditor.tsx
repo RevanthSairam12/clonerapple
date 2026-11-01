@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-import type { FieldSchema } from '@/lib/admin/collections';
+import type { FieldSchema } from '@/lib/website/collections';
 import { FONT_LOADERS } from '@/lib/fontLoaders';
 import { DEFAULT_SITE_FONT, type SiteFontName } from '@/lib/fonts';
 

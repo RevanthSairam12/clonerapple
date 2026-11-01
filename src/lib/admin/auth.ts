@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { cookies, headers } from 'next/headers';
+import { cookies } from 'next/headers';
 import bcrypt from 'bcryptjs';
-import { getSql } from './db';
-import { verifyTotp } from './totp';
+import { getSql } from '@/lib/platform/db';
+import { clientIp } from '@/lib/platform/client-ip';
+import { verifyTotp } from '@/lib/platform/totp';
 
 /**
  * Email+password auth for the admin panel. Sessions are server-side rows in
@@ -72,15 +73,8 @@ function recordSuccess(email: string, ip: string): void {
   for (const key of attemptKeys(email, ip)) attempts.delete(key);
 }
 
-/** Best-effort client IP from proxy headers; '' when unknown. */
-export async function clientIp(): Promise<string> {
-  const h = await headers();
-  return (
-    h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    h.get('x-real-ip') ||
-    ''
-  );
-}
+/** Re-exported for legacy callers; the implementation is shared. */
+export { clientIp };
 
 /* ------------------------------------------------------------- login */
 

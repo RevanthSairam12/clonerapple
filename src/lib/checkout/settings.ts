@@ -1,4 +1,4 @@
-import { getSql } from '@/lib/admin/db';
+import { getSql } from '@/lib/platform/db';
 import { getStoreSettings } from '@/lib/store-admin/settings';
 import { DEFAULT_SETTINGS, type StoreSettings } from '@/lib/store-admin/settings-rules';
 
