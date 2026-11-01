@@ -1,8 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import type { FieldSchema } from '@/lib/website/collections';
+
+import { MediaPicker } from './MediaPicker';
 
 /* --------------------------------------------------------------- upload */
 
@@ -41,6 +43,19 @@ function useMediaUpload(onChange: (url: string) => void, disabled: boolean) {
   }
 
   return { fileRef, uploading, error, upload };
+}
+
+function useMediaPicker(onChange: (url: string) => void) {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  const pick = useCallback(
+    (url: string) => {
+      onChange(url);
+      setOpen(false);
+    },
+    [onChange],
+  );
+  return { open, show: () => setOpen(true), close, pick };
 }
 
 /* ---------------------------------------------------------------- fields */
@@ -97,6 +112,7 @@ export function ImageField({
   onChange: (value: string) => void;
 }) {
   const { fileRef, uploading, error, upload } = useMediaUpload(onChange, disabled);
+  const picker = useMediaPicker(onChange);
   const preview = value || currentArt;
 
   return (
@@ -113,10 +129,18 @@ export function ImageField({
           style={{ flex: 1, minWidth: 220 }}
           type="text"
           value={value}
-          placeholder={currentArt && !value ? 'Keep current image' : 'https://… or upload →'}
+          placeholder={currentArt && !value ? 'Keep current image' : 'https://… or pick from the library →'}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
+        <button
+          className="sa-btn sa-btn-quiet sa-btn-small"
+          type="button"
+          disabled={disabled || uploading}
+          onClick={picker.show}
+        >
+          Library
+        </button>
         <button
           className="sa-btn sa-btn-quiet sa-btn-small"
           type="button"
@@ -140,6 +164,7 @@ export function ImageField({
       {!value && currentArt ? (
         <span className="sa-hint">Showing the image the site uses now. Upload to replace it; leave blank to keep it.</span>
       ) : null}
+      {picker.open ? <MediaPicker kind="image" current={value} onPick={picker.pick} onClose={picker.close} /> : null}
     </FieldFrame>
   );
 }
@@ -156,6 +181,7 @@ export function VideoField({
   onChange: (value: string) => void;
 }) {
   const { fileRef, uploading, error, upload } = useMediaUpload(onChange, disabled);
+  const picker = useMediaPicker(onChange);
 
   return (
     <FieldFrame label={field.label} changed={false} hint={field.hint} error={error}>
@@ -169,10 +195,18 @@ export function VideoField({
           style={{ flex: 1, minWidth: 220 }}
           type="text"
           value={value}
-          placeholder="https://… or upload →"
+          placeholder="https://… or pick from the library →"
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
+        <button
+          className="sa-btn sa-btn-quiet sa-btn-small"
+          type="button"
+          disabled={disabled || uploading}
+          onClick={picker.show}
+        >
+          Library
+        </button>
         <button
           className="sa-btn sa-btn-quiet sa-btn-small"
           type="button"
@@ -193,6 +227,7 @@ export function VideoField({
           }}
         />
       </div>
+      {picker.open ? <MediaPicker kind="video" current={value} onPick={picker.pick} onClose={picker.close} /> : null}
     </FieldFrame>
   );
 }
