@@ -790,7 +790,12 @@ export const THEME_FIELDS: FieldSchema[] = [
     hint: 'Site-wide typeface. Self-hosted — no external font requests are made, and any other value falls back to the default.',
   },
   { path: 'logoText', label: 'Logo text (OPPO nav)', type: 'text', hint: 'Text shown as the OPPO nav logo.' },
-  { path: 'appleCopyright', label: 'Storefront footer copyright', type: 'text' },
+  {
+    path: 'appleCopyright',
+    label: 'Homepage footer copyright (override)',
+    type: 'text',
+    hint: 'Leave empty to use the copyright from the Footer content section. When set, replaces it on the homepage only.',
+  },
   { path: 'oppoPrimaryColor', label: 'OPPO primary color', type: 'color' },
   { path: 'oppoGreenDark', label: 'OPPO dark green', type: 'color' },
   { path: 'oppoGreenLight', label: 'OPPO light green', type: 'color' },

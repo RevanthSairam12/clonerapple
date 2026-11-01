@@ -74,6 +74,9 @@ const EXPECTED_READ_ONLY_ROUTES = [
   // Phase 9: the audit log is append-only and has no write path at all.
   'audit/route.ts',
   'audit/export/route.ts',
+  // Website: the collection index is a read for every store role. The values
+  // it returns are the same ones the storefront renders publicly.
+  'website/content/route.ts',
   // Phase 11: the coupon list CSV and the coupon usage report CSV are reads
   // for every store role; each writes only an audit row.
   'coupons/export/route.ts',
@@ -145,6 +148,10 @@ const EXPECTED_MUTATING_ROUTES = [
   'profile/totp/setup/route.ts',
   'profile/totp/enable/route.ts',
   'profile/totp/disable/route.ts',
+  // Website: saving or resetting a collection, and the theme editor, are
+  // guarded, same-origin mutations (the owner role is enforced in-handler).
+  'website/content/[key]/route.ts',
+  'website/theme/route.ts',
   // Phase 9: the configuration lists (couriers, methods, pages, SEO, social,
   // analytics, integrations, messages, templates, reasons) share one engine,
   // and the notification matrix toggles one cell at a time.

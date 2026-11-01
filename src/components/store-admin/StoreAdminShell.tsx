@@ -278,6 +278,14 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Website',
+    items: [
+      { href: '/store-admin/website', label: 'Website overview', icon: 'grid', exact: true },
+      { href: '/store-admin/website/content', label: 'Content', icon: 'layers' },
+      { href: '/store-admin/website/theme', label: 'Theme', icon: 'spark' },
+    ],
+  },
+  {
     label: 'Settings',
     items: [
       {

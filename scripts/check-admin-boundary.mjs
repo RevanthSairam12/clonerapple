@@ -112,7 +112,13 @@ const COMMERCE_WRITE =
 
 const ADMIN_API = path.join(ROOT, 'src', 'app', 'api', 'admin');
 const routeFiles = await collectRouteFiles(ADMIN_API);
-if (routeFiles.length === 0) fail('no legacy admin API routes found.');
+// The legacy tree disappears when the merge completes; the Website routes in
+// Store Admin must exist either way. Fail only when neither is present.
+const WEBSITE_API = path.join(ROOT, 'src', 'app', 'api', 'store-admin', 'website');
+const websiteRouteFiles = await collectRouteFiles(WEBSITE_API);
+if (routeFiles.length === 0 && websiteRouteFiles.length === 0) {
+  fail('no content API routes found (neither legacy /api/admin nor Store Admin /api/store-admin/website).');
+}
 
 for (const file of routeFiles) {
   const relative = path.relative(ROOT, file).split(path.sep).join('/');
@@ -149,6 +155,42 @@ for (const file of routeFiles) {
 }
 
 ok(`${routeFiles.length} legacy admin API route(s) checked for commerce writes.`);
+
+/* ------------------------------------ 2b. Store Admin Website write routes */
+
+const WEBSITE_CONTENT_WRITE = path.join(WEBSITE_API, 'content', '[key]', 'route.ts');
+if (websiteRouteFiles.length > 0) {
+  const source = await readFile(WEBSITE_CONTENT_WRITE, 'utf8').catch(() => '');
+  if (!source) fail('src/app/api/store-admin/website/content/[key]/route.ts is missing.');
+  else {
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    if (!/validateLegacyContentWrite\s*\(/.test(code)) {
+      fail('the Website content route does not call validateLegacyContentWrite().');
+    }
+    if (/delete\s+from\s+content_blocks/i.test(code)) {
+      fail('the Website content route deletes content_blocks rows; archive them instead.');
+    }
+    if (!/store_owner/.test(code)) {
+      fail('the Website content route must restrict writes to store_owner.');
+    }
+  }
+
+  for (const file of websiteRouteFiles) {
+    const relative = path.relative(ROOT, file).split(path.sep).join('/');
+    const source = await readFile(file, 'utf8');
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const write = COMMERCE_WRITE.exec(code);
+    if (write) fail(`${relative} writes commerce table "${write[1]}".`);
+    if (/insert\s+into\s+products?|update\s+products?\b/i.test(code)) {
+      fail(`${relative} writes the product catalogue.`);
+    }
+  }
+  ok(`${websiteRouteFiles.length} Website API route(s) checked for commerce writes.`);
+}
 
 /* ------------------------------------------- 3. migration / archive shape */
 
