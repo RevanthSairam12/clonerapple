@@ -54,3 +54,9 @@ tsconfig.tsbuildinfo
 
 # Generated notification previews
 /tmp/
+
+# Session diagnostics and database fixture snapshots
+/.tmp-*
+
+# Machine-local tool permissions
+/.qoder/
