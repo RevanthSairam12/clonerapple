@@ -85,6 +85,9 @@ const EXPECTED_READ_ONLY_ROUTES = [
 
 /** The only mutation in the customer area: an owner-only, audited reveal. */
 const EXPECTED_OWNER_ROUTES = ['customers/[id]/reveal/route.ts'];
+// Shared-list management stays owner-only; inline creation is separately scoped.
+for (const suffix of ['', '/preview', '/apply']) EXPECTED_OWNER_ROUTES.push(`catalog/shared/[kind]${suffix}/route.ts`);
+for (const suffix of ['export', 'template', 'uses']) EXPECTED_READ_ONLY_ROUTES.push(`catalog/shared/[kind]/${suffix}/route.ts`);
 EXPECTED_OWNER_ROUTES.push('orders/[txnid]/reveal/route.ts');
 // Voiding a POS sale is owner-only.
 EXPECTED_OWNER_ROUTES.push('orders/[txnid]/void/route.ts');

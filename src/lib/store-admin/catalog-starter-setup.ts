@@ -18,9 +18,9 @@ const REQUIRED: Record<string, readonly string[]> = {
   product_type_attributes: ['product_type_id', 'attribute_id', 'is_required', 'sort_order', 'show_in_specs', 'show_in_filters', 'show_in_search', 'is_active'],
   units: ['id', 'code', 'label', 'dimension', 'base_code', 'factor'],
   attribute_options: ['attribute_id', 'value', 'sort_order'],
-  products: ['id', 'category_id', 'product_type_id', 'is_active', 'deleted_at', 'compatibility_reviewed_at'],
+  products: ['id', 'category_id', 'product_type_id', 'is_active', 'deleted_at', 'compatibility_reviewed_at', 'inventory_mode'],
   product_attribute_values: ['product_id', 'attribute_id', 'value_text', 'value_number', 'value_bool', 'option_value', 'archived_at'],
-  product_variants: ['id', 'product_id', 'device_model_id', 'is_active', 'is_purchasable'],
+  product_variants: ['id', 'product_id', 'device_model_id', 'is_active', 'is_purchasable', 'retired_at'],
   device_brands: ['id', 'name', 'sort_order', 'is_active'],
   device_models: ['id', 'brand_id', 'name', 'sort_order', 'is_active'],
   product_device_models: ['product_id', 'device_model_id', 'sort_order', 'archived_at'],
@@ -109,7 +109,7 @@ export async function applyCatalogStarterSetup(input: CatalogStarterSelection[],
       await insert('product_types', plan.inserts.types, INSERT_COLUMNS.types);
       await insert('attributes', plan.inserts.attributes, INSERT_COLUMNS.attributes);
       await insert('product_type_attributes', plan.inserts.mappings, INSERT_COLUMNS.mappings);
-      const invalidVariants = await tx`select v.id from product_variants v join products p on p.id=v.product_id left join device_models dm on dm.id=v.device_model_id left join device_brands db on db.id=dm.brand_id where v.is_purchasable and v.is_active and p.deleted_at is null and v.device_model_id is not null and (not coalesce(dm.is_active,false) or not coalesce(db.is_active,false)) limit 1`;
+      const invalidVariants = await tx`select v.id from product_variants v join products p on p.id=v.product_id left join device_models dm on dm.id=v.device_model_id left join device_brands db on db.id=dm.brand_id where v.is_purchasable and v.is_active and p.deleted_at is null and (v.retired_at is not null or (v.device_model_id is not null and (dm.id is null or db.id is null or not exists(select 1 from product_device_models pm where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null) or (p.inventory_mode<>'variant' and (not coalesce(dm.is_active,false) or not coalesce(db.is_active,false)))))) limit 1`;
       if (invalidVariants.length) throw new CatalogStarterError('Published catalogue dependencies require review; setup was rolled back.', 409);
       const refs = await metadataReferencesUsing(tx);
       const products = await tx`select id from products where deleted_at is null and is_active and product_type_id is not null order by id`;

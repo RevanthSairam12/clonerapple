@@ -174,9 +174,9 @@ const columns = {
   attributes: 'id key label data_type unit_id is_active deleted_at sort_order is_filterable is_variant_option',
   product_type_attributes: 'product_type_id attribute_id is_required sort_order show_in_specs show_in_filters show_in_search is_active',
   units: 'id code label dimension base_code factor', attribute_options: 'attribute_id value sort_order',
-  products: 'id category_id product_type_id is_active deleted_at compatibility_reviewed_at',
+  products: 'id category_id product_type_id is_active deleted_at compatibility_reviewed_at inventory_mode',
   product_attribute_values: 'product_id attribute_id value_text value_number value_bool option_value archived_at',
-  product_variants: 'id product_id device_model_id is_active is_purchasable',
+  product_variants: 'id product_id device_model_id is_active is_purchasable retired_at',
   device_brands: 'id name sort_order is_active', device_models: 'id brand_id name sort_order is_active',
   product_device_models: 'product_id device_model_id sort_order archived_at', store_admin_audit: 'actor_id action entity entity_id before after',
 };

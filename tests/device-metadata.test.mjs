@@ -17,6 +17,7 @@ function load(relative, mocks) {
   }, { filename: file });
   return module.exports;
 }
+const sharedRules = load('lib/catalog/shared-list-rules.ts', {});
 const catalogRules = load('lib/store-admin/catalog-rules.ts', {});
 const rules = load('lib/catalog/product-metadata-rules.ts', { '@/lib/store-admin/catalog-rules': catalogRules });
 function serviceHarness() {
@@ -40,6 +41,7 @@ function serviceHarness() {
     './audit': { writeAudit: async (input, transaction) => { assert.equal(transaction, tx); calls.push({ query: 'AUDIT', input }); return controls.audit; } },
     './catalog-rules': catalogRules,
     '@/lib/catalog/product-metadata-rules': rules,
+    '@/lib/catalog/shared-list-rules': sharedRules,
   });
   return { service, tx, calls, controls };
 }
@@ -96,17 +98,33 @@ test('create and PUT map duplicate names to clear conflicts; unexpected SQL stay
   }
 });
 
-test('PUT never reparents models and preserves active variant deactivation guard', async () => {
+test('PUT never reparents models and rejects active options missing retained compatibility mappings', async () => {
   const { service, tx, controls, calls } = serviceHarness();
   controls.existing = { brand_id: 'original' };
   await assert.rejects(service.saveMetadataReferenceUsing(tx, 'models', { id: 'm', name: 'M', brandId: 'other' }, 'owner'), /cannot move brands/);
   assert.ok(calls.every(call => !call.query.startsWith('insert')));
   controls.existing = { brand_id: 'original' };
   controls.invalidVariants = true;
-  await assert.rejects(service.saveMetadataReferenceUsing(tx, 'models', { id: 'm', name: 'M', brandId: 'original', isActive: false }, 'owner'), /active purchasable variant/);
+  await assert.rejects(service.saveMetadataReferenceUsing(tx, 'models', { id: 'm', name: 'M', brandId: 'original', isActive: false, confirmDeactivation: true }, 'owner'), /no retained compatibility mapping/);
   const insert = calls.find(call => call.query.startsWith('insert into device_models'));
   assert.doesNotMatch(insert.query.split('do update')[1], /brand_id=/);
   assert.equal(calls.some(call => call.query === 'AUDIT'), false);
+});
+
+test('owner-confirmed model deactivation retains saved references without changing option identities', async () => {
+  const { service, tx, controls, calls } = serviceHarness();
+  controls.existing = { brand_id: 'original' };
+  await service.saveMetadataReferenceUsing(tx, 'models', { id: 'm', name: 'M', brandId: 'original', isActive: false, confirmDeactivation: true }, 'owner');
+  assert.equal(calls.at(-1).query, 'AUDIT');
+  const guard = calls.find(call => call.query.startsWith('select v.id from product_variants'));
+  assert.match(guard.query, /not exists\(select 1 from product_device_models/);
+  assert.match(guard.query, /pm\.archived_at is null/);
+  assert.ok(calls.every(call => !/^(update|delete from|insert into) product_variants/.test(call.query)));
+  controls.joins = [{ device_model_id: 'm' }];
+  const state = await service.productMetadataUsing(tx, 'p', { ...refs, models: [{ id: 'm', isActive: false }] });
+  assert.deepEqual(Array.from(state.deviceModelIds), ['m']);
+  assert.equal(state.needsCompatibilityReview, true);
+  assert.equal(state.problems.length, 0);
 });
 
 test('create and save audit failure propagate to transaction owner; published product guard remains', async () => {
@@ -132,8 +150,9 @@ test('shared publication callers parse and pass the explicit effective type ID',
     function visit(node) {
       if (ts.isCallExpression(node) && node.expression.getText(source) === 'publicationProblems') {
         found++;
-        assert.equal(node.arguments.length, 5);
+        assert.equal(node.arguments.length, relative.endsWith('.tsx') ? 5 : 6);
         assert.equal(node.arguments[4].getText(source), relative.endsWith('.tsx') ? 'metadata.productTypeId' : 'productTypeId');
+        if (!relative.endsWith('.tsx')) assert.equal(node.arguments[5].getText(source), 'retention');
       }
       ts.forEachChild(node, visit);
     }

@@ -123,8 +123,14 @@ export function planProductMetadataBackfill(snapshot: BackfillSnapshot, targetId
       if (!applicable.get(spec.id)!.has(String(mapping.attribute_id))) issue(conflicts, 'unexpected-type-attribute', spec.id, mapping.attribute_id);
     }
   }
-  reference(snapshot.brands, { id: 'device_brand_apple', name: 'Apple', sort_order: 0, is_active: true }, 'device_brands');
-  for (const [index, [id, name]] of HISTORICAL_MODELS.entries()) reference(snapshot.models, { id, brand_id: 'device_brand_apple', name, sort_order: index, is_active: true }, 'device_models', 'brand_id');
+  // Device references must be supplied by an owner, never invented by backfills.
+  const ownerBrands = snapshot.brands.filter(row => normalizedName(row.name) === 'apple' && row.is_active === true);
+  const ownerModelIds = new Map<string, string>();
+  for (const [, name] of HISTORICAL_MODELS) {
+    const matches = snapshot.models.filter(row => normalizedName(row.name) === normalizedName(name) && row.is_active === true && ownerBrands.some(brand => brand.id === row.brand_id));
+    if (matches.length === 1 && ownerBrands.length === 1) ownerModelIds.set(name, String(matches[0].id));
+    else issue(conflicts, 'owner-device-reference-missing-or-ambiguous', name);
+  }
 
   for (const known of HISTORICAL_PRODUCTS) {
     if (!snapshot.products.some(row => row.id === known.id && live(row))) issue(review, 'historical-product-missing-or-deleted', known.id);
@@ -164,7 +170,8 @@ export function planProductMetadataBackfill(snapshot: BackfillSnapshot, targetId
       issue(conflicts, 'product-model-conflict', id, 'model');
     }
     const joins = snapshot.joins.filter(row => row.product_id === id);
-    const expected = known.models.map(name => HISTORICAL_MODELS.find(row => row[1] === name)![0]);
+    const expected = known.models.flatMap(name => ownerModelIds.has(name) ? [ownerModelIds.get(name)!] : []);
+    if (expected.length !== known.models.length) { issue(conflicts, 'owner-device-reference-required', id); continue; }
     // Deliberate reviewed-empty selections are sacrosanct. Otherwise an
     // unexpected or archived join is a conflict, never an upsert/revival.
     if (product.compatibility_reviewed_at == null && joins.some(row => row.archived_at != null || !expected.includes(row.device_model_id as typeof expected[number]))) issue(conflicts, 'existing-join-conflict', id);

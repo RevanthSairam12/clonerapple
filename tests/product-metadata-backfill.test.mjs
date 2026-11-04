@@ -20,7 +20,9 @@ function fixture() {
     attributes: keys.map(key => ({ id: `attr_${key}`, key, data_type: 'enum', is_active: true, deleted_at: null })),
     facetDefs: categories.flatMap(category => [...new Set(HISTORICAL_TYPES.filter(row => row.category === category.slug).flatMap(row => row.keys)), 'model'].map((key, index) => ({ category_id: category.id, facet_key: key, sort_order: index }))),
     facets: HISTORICAL_PRODUCTS.flatMap(row => row.models.map((name, index) => ({ product_id: row.id, facet_key: 'model', facet_value: name, sort_order: index }))),
-    values: [], types: [], typeAttributes: [], brands: [], models: [], joins: [],
+    values: [], types: [], typeAttributes: [],
+    brands: [{ id: 'owner_apple', name: 'Apple', sort_order: 0, is_active: true }],
+    models: HISTORICAL_MODELS.map(([id, name], sort_order) => ({ id, name, brand_id: 'owner_apple', sort_order, is_active: true })), joins: [],
   };
 }
 function simulate(snapshot, planned) {
@@ -39,12 +41,12 @@ test('exact allowlist: 12 products, six categories, seven types, seven distinct 
   assert.equal(HISTORICAL_PRODUCTS.length, 12);
   assert.equal(new Set(HISTORICAL_PRODUCTS.map(row => row.category)).size, 6);
   assert.equal(result.inserts.product_types.length, 7);
-  assert.equal(result.inserts.device_brands[0].name, 'Apple');
-  assert.equal(result.inserts.device_models.length, 7);
+  assert.equal(result.inserts.device_brands.length, 0);
+  assert.equal(result.inserts.device_models.length, 0);
   assert.equal(result.inserts.product_device_models.length, 7);
   assert.equal(result.updates.length, 12);
   assert.equal(result.conflicts.length, 0);
-  assert.deepEqual(result.inserts.device_models.map(row => row.name).sort(), HISTORICAL_MODELS.map(row => row[1]).sort());
+  assert.deepEqual(fixture().models.map(row => row.name).sort(), HISTORICAL_MODELS.map(row => row[1]).sort());
   assert.equal(result.updates.filter(row => row.review_compatibility).length, 6);
   assert.equal(result.counts.store_admin_audit.insert, 1);
   approve(result, result.digest);
@@ -112,7 +114,7 @@ test('unknown model facets and unknown model PAVs report review without importin
     assert.ok(result.conflicts.some(row => row.code === 'product-model-conflict'));
     assert.equal(result.updates.some(row => row.product_id === id), false);
     assert.equal(JSON.stringify(result).includes('iPhone 99 Secret'), false);
-    assert.equal(result.inserts.device_models.length, 7);
+    assert.equal(result.inserts.device_models.length, 0);
     assert.throws(() => approve(result, result.digest), /conflicts/);
   }
 });
@@ -181,19 +183,39 @@ test('different existing type and wrong category are conflicts, not assignments'
   }
 });
 
-test('references with conflicting ID, inactive flag, or case-insensitive name collision block apply', () => {
-  const proposed = plan(fixture(), target);
-  for (const row of [
-    { ...proposed.inserts.device_brands[0], name: 'Another' },
-    { ...proposed.inserts.device_brands[0], is_active: false },
-    { ...proposed.inserts.device_brands[0], id: 'another_apple', name: ' apple ' },
+test('missing/inactive/ambiguous owner brand references block apply without creating devices', () => {
+  for (const modify of [
+    s => { s.brands[0].name = 'Another'; },
+    s => { s.brands[0].is_active = false; },
+    s => { s.brands.push({ ...s.brands[0], id: 'another_apple', name: ' apple ' }); },
   ]) {
-    const snapshot = fixture(); snapshot.brands.push(row);
+    const snapshot = fixture(); modify(snapshot);
     const result = plan(snapshot, target);
-    assert.ok(result.conflicts.some(issue => issue.code === 'reference-conflict'));
+    assert.ok(result.conflicts.some(issue => issue.code === 'owner-device-reference-missing-or-ambiguous'));
     assert.equal(result.inserts.device_brands.length, 0);
+    assert.equal(result.inserts.device_models.length, 0);
     assert.throws(() => approve(result, result.digest));
   }
+});
+
+test('empty owner references cause review conflicts and zero device or compatibility inserts', () => {
+  const snapshot = fixture(); snapshot.brands = []; snapshot.models = [];
+  const result = plan(snapshot, target);
+  assert.ok(result.conflicts.some(row => row.code === 'owner-device-reference-missing-or-ambiguous'));
+  assert.equal(result.inserts.device_brands.length, 0);
+  assert.equal(result.inserts.device_models.length, 0);
+  assert.equal(result.inserts.product_device_models.length, 0);
+  assert.throws(() => approve(result, result.digest));
+});
+
+test('compatibility resolves owner-created IDs rather than historical fixture IDs', () => {
+  const snapshot = fixture();
+  snapshot.models = snapshot.models.map((row, index) => ({ ...row, id: `owner_model_${index}`, name: ` ${row.name.toUpperCase()} ` }));
+  const result = plan(snapshot, target);
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.inserts.product_device_models.length, 7);
+  assert.ok(result.inserts.product_device_models.every(row => row.device_model_id.startsWith('owner_model_')));
+  assert.equal(result.inserts.device_models.length, 0);
 });
 
 test('type attributes intersect explicit category facets, never model and never required', () => {
@@ -250,12 +272,12 @@ test('unexpected existing type mappings, including model, block apply without de
 });
 
 test('inactive/differently branded model reference is never reactivated or moved', () => {
-  const snapshot = fixture(), first = plan(snapshot, target);
-  snapshot.models.push({ ...first.inserts.device_models[0], is_active: false, brand_id: 'other_brand' });
+  const snapshot = fixture();
+  Object.assign(snapshot.models[0], { is_active: false, brand_id: 'other_brand' });
   const result = plan(snapshot, target);
-  assert.ok(result.conflicts.some(row => row.code === 'reference-conflict'));
+  assert.ok(result.conflicts.some(row => row.code === 'owner-device-reference-missing-or-ambiguous'));
   assert.throws(() => approve(result, result.digest));
-  assert.equal(result.inserts.device_models.length, 6);
+  assert.equal(result.inserts.device_models.length, 0);
 });
 
 test('pre-schema dry-run still produces references/counts, but schema and RLS gate apply', () => {

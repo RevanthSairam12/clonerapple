@@ -164,6 +164,7 @@ async function main() {
       if (!actor) throw new Error('actor');
       const fresh = planProductMetadataBackfill(await snapshotUsing(tx), identity);
       assertBackfillApproval(fresh, args.approvedDigest);
+      if (fresh.inserts.device_brands.length || fresh.inserts.device_models.length) throw new Error('Owner-entered device references only.');
       const changed = Object.values(fresh.inserts).some(rows => rows.length) || fresh.updates.length > 0;
       if (!changed) return fresh;
       for (const table of Object.keys(INSERT_COLUMNS)) for (const row of fresh.inserts[table]) {

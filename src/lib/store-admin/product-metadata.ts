@@ -3,6 +3,7 @@ import type { TransactionSql } from 'postgres';
 import { getSql } from '@/lib/platform/db';
 import { writeAudit, type AuditInput } from './audit';
 import { validateAttributeValue } from './catalog-rules';
+import { normalizeSharedName, sharedNearNames } from '@/lib/catalog/shared-list-rules';
 import {
   MetadataError, parseMetadataInput, publicationProblems, validateScopedValue,
   type AttributePrimitive, type DeviceBrand, type DeviceModel, type MetadataInput, type MetadataReferences,
@@ -75,7 +76,18 @@ export async function productMetadataUsing(sql: Client, productId: string, refs?
   const values = Object.fromEntries(attributes.filter(a=>a.applicable&&!a.archived).map(a=>[a.attributeId,a.value]));
   const active = deviceModelIds.filter(id=>references.models.some(m=>m.id===id&&m.isActive));
   const productTypeId = product.product_type_id == null ? null : s(product.product_type_id);
-  return {productTypeId,deviceModelIds,attributes,reviewed:product.compatibility_reviewed_at!=null,needsCompatibilityReview:(productTypeId !== null && !type) || Boolean(type?.requiresCompatibility && (product.compatibility_reviewed_at==null || active.length===0)) || active.length!==deviceModelIds.length,problems:publicationProblems(type,s(product.category_id),values,active,productTypeId)};
+  const retainedModelIds = deviceModelIds.filter(id => !active.includes(id));
+  const retainedOptions = retainedModelIds.length ? await sql`
+    select distinct v.device_model_id from product_variants v
+    join products p on p.id=v.product_id and p.inventory_mode='variant'
+    join stock st on st.product_id=v.product_id and st.variant_id=v.id
+    join product_device_models pm on pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null
+    where v.product_id=${productId} and v.is_active and v.is_purchasable and v.retired_at is null
+      and nullif(trim(v.sku),'') is not null and nullif(trim(v.combination_key),'') is not null
+      and v.device_model_id=any(${retainedModelIds}::text[])
+  ` : [];
+  const retention = { retainedModelIds, retainedOptionModelIds: retainedOptions.map(row => s(row.device_model_id)) };
+  return {productTypeId,deviceModelIds,attributes,reviewed:product.compatibility_reviewed_at!=null,needsCompatibilityReview:(productTypeId !== null && !type) || Boolean(type?.requiresCompatibility && (product.compatibility_reviewed_at==null || active.length===0)) || active.length!==deviceModelIds.length,problems:publicationProblems(type,s(product.category_id),values,active,productTypeId,retention)};
 }
 export async function strictMetadataAudit(tx: Client, input: AuditInput): Promise<void> {
   if (!await writeAudit(input,tx)) throw new MetadataError('The change was rolled back because its audit could not be saved.');
@@ -162,12 +174,21 @@ function referenceConflict(error: unknown, kind: string): never {
   throw error;
 }
 
+async function assertSharedDeviceNameUsing(tx: Client, kind: string, name: string, brandId?: string, exceptId?: string, confirmNearMatch = false) {
+  const key = normalizeSharedName(name);
+  if (!key || /^[\s\p{Cc}\p{Cf}]*[=+@-]/u.test(name.normalize('NFKC')) || /[\p{Cc}\p{Cf}]/u.test(name)) throw new MetadataError('Use a plain device name without spreadsheet formulas or control characters.');
+  const rows = kind === 'brands' ? await tx`select id,name from device_brands` : await tx`select id,name from device_models where brand_id=${brandId ?? ''}`;
+  if (rows.some(row => row.id !== exceptId && normalizeSharedName(s(row.name)) === key)) throw new MetadataConflictError('This device name is already in the list (ignoring punctuation and spaces).');
+  const near = sharedNearNames(name, rows.filter(row => row.id !== exceptId).map(row => ({ id:s(row.id),name:s(row.name),isActive:true,sortOrder:0 })));
+  if (near.length && !confirmNearMatch) throw new MetadataConflictError(`Did you mean ${near.join(' or ')}? Review the suggestions and confirm Create as entered.`);
+}
+
 /** Plain creation only: never accepts client IDs, mappings or product associations. */
 export async function createMetadataReferenceUsing(tx: Client, kind: string, raw: unknown, staffId: string, request?: Request): Promise<DeviceBrand | DeviceModel> {
   if (kind !== 'brands' && kind !== 'models') throw new MetadataError('Only device brands and models can be created here.');
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new MetadataError('Send a reference object.');
   const input = raw as Record<string, unknown>;
-  const allowed = new Set(['name', 'sortOrder', 'isActive', ...(kind === 'models' ? ['brandId'] : [])]);
+  const allowed = new Set(['name', 'sortOrder', 'isActive', 'confirmNearMatch', ...(kind === 'models' ? ['brandId'] : [])]);
   if (Object.keys(input).some(key => !allowed.has(key))) throw new MetadataError('Only name, sortOrder, isActive and (for models) brandId are accepted.');
   const max = kind === 'brands' ? 100 : 120;
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > max || /[\u0000-\u001f\u007f]/.test(input.name)) throw new MetadataError(`Device ${kind === 'brands' ? 'brand' : 'model'} name is required (maximum ${max} characters).`);
@@ -178,6 +199,7 @@ export async function createMetadataReferenceUsing(tx: Client, kind: string, raw
   const isActive = input.isActive !== false;
   if (kind === 'models' && (typeof input.brandId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(input.brandId))) throw new MetadataError('Select an active device brand.');
   await metadataGate(tx);
+  await assertSharedDeviceNameUsing(tx, kind, name, typeof input.brandId === 'string' ? input.brandId : undefined, undefined, input.confirmNearMatch === true);
   const id = randomUUID();
   let reference: DeviceBrand | DeviceModel;
   try {
@@ -215,6 +237,11 @@ export async function saveMetadataReferenceUsing(tx: Client, kind:string, raw:Re
   for(const key of ['isActive','requiresCompatibility','isRequired','showInSpecs','showInFilters','showInSearch']) if(raw[key]!==undefined&&typeof raw[key]!=='boolean') throw new MetadataError(`${key} must be true or false.`);
   const active=raw.isActive!==false;
   await metadataGate(tx);
+  if (kind === 'brands' || kind === 'models') {
+    await assertSharedDeviceNameUsing(tx, kind, name, s(raw.brandId), id, raw.confirmNearMatch === true);
+    const prior = kind === 'brands' ? await tx`select is_active from device_brands where id=${id}` : await tx`select is_active from device_models where id=${id}`;
+    if (prior[0]?.is_active && !active && raw.confirmDeactivation !== true) throw new MetadataError('Review the affected products and confirm deactivation using the shared-list manager.');
+  }
   try {
     if(kind==='types') {
       if(!name||name.length>120||!s(raw.categoryId)) throw new MetadataError('Type name and category are required.');
@@ -238,10 +265,17 @@ export async function saveMetadataReferenceUsing(tx: Client, kind:string, raw:Re
       await tx`insert into product_type_attributes(product_type_id,attribute_id,is_required,sort_order,show_in_specs,show_in_filters,show_in_search,is_active) values(${typeId},${attributeId},${raw.isRequired===true},${order},${raw.showInSpecs!==false},${raw.showInFilters===true},${raw.showInSearch===true},${active}) on conflict(product_type_id,attribute_id) do update set is_required=excluded.is_required,sort_order=excluded.sort_order,show_in_specs=excluded.show_in_specs,show_in_filters=excluded.show_in_filters,show_in_search=excluded.show_in_search,is_active=excluded.is_active,updated_at=now()`;
     } else throw new MetadataError('Unknown reference kind.');
   } catch (error) { referenceConflict(error, kind); }
-    const invalidVariants=await tx`select v.id from product_variants v join products p on p.id=v.product_id left join device_models dm on dm.id=v.device_model_id left join device_brands db on db.id=dm.brand_id where v.is_purchasable and v.is_active and p.deleted_at is null and v.device_model_id is not null and (not coalesce(dm.is_active,false) or not coalesce(db.is_active,false)) limit 1`;
-    if(invalidVariants.length) throw new MetadataError('Cannot deactivate a model or brand used by an active purchasable variant.');
+    await assertMetadataPublicationUsing(tx);
+    await strictMetadataAudit(tx,{actorId:staffId,action:`catalog.metadata.${kind}.save`,entity:kind,entityId:id,after:{id,isActive:active},request});
+}
+
+/** Shared by both reference-management paths; the caller owns transaction rollback. */
+export async function assertMetadataPublicationUsing(tx: Client): Promise<void> {
+    // Reference activity controls new selections, not an existing option's identity.
+    // New/reactivated option admission remains active-only in variant-identity.ts.
+    const invalidVariants=await tx`select v.id from product_variants v join products p on p.id=v.product_id where v.is_purchasable and v.is_active and v.retired_at is null and p.deleted_at is null and v.device_model_id is not null and not exists(select 1 from product_device_models pm where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null) limit 1`;
+    if(invalidVariants.length) throw new MetadataError('An active option has no retained compatibility mapping. Review it before changing references.');
     const refs=await metadataReferencesUsing(tx);
     const products=await tx`select id from products where deleted_at is null and is_active and product_type_id is not null order by id`;
     for(const p of products){const state=await productMetadataUsing(tx,s(p.id),refs);if(state.problems.length) throw new MetadataError(`This reference change would invalidate published product ${s(p.id)}. Save affected products as drafts or complete their metadata first.`);}
-    await strictMetadataAudit(tx,{actorId:staffId,action:`catalog.metadata.${kind}.save`,entity:kind,entityId:id,after:{id,isActive:active},request});
 }

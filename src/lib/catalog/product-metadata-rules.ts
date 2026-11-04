@@ -54,8 +54,15 @@ export function validateScopedValue(attribute: TypeAttribute, value: AttributePr
   if (!checked.ok) throw new MetadataError(`${attribute.label}: ${checked.error}`);
   if (attribute.dataType === 'enum' && !attribute.options.includes(String(value).trim())) throw new MetadataError(`${attribute.label}: select a defined option.`);
 }
+/** Server-loaded unarchived mappings, never selections supplied by the client. */
+export interface CompatibilityRetention {
+  /** Saved inactive compatibility remains visible for review, not a new choice. */
+  retainedModelIds?: readonly string[];
+  /** Subset supporting existing active, non-retired purchasable commerce options. */
+  retainedOptionModelIds?: readonly string[];
+}
 /** Explicit null means deliberately untyped; omitted IDs retain the legacy strict check. */
-export function publicationProblems(type: ProductType | undefined, categoryId: string, values: Record<string, AttributePrimitive>, activeModelIds: string[], effectiveTypeId?: string | null): string[] {
+export function publicationProblems(type: ProductType | undefined, categoryId: string, values: Record<string, AttributePrimitive>, activeModelIds: string[], effectiveTypeId?: string | null, retention: CompatibilityRetention = {}): string[] {
   if (effectiveTypeId === null) return [];
   if (!type || !type.isActive || type.categoryId !== categoryId || (effectiveTypeId !== undefined && type.id !== effectiveTypeId)) return ['Select an active product type for this category before publishing.'];
   const problems: string[] = [];
@@ -67,6 +74,7 @@ export function publicationProblems(type: ProductType | undefined, categoryId: s
       catch (error) { problems.push(error instanceof MetadataError ? error.message : `${attribute.label} is invalid.`); }
     }
   }
-  if (type.requiresCompatibility && activeModelIds.length === 0) problems.push('Select at least one active compatible device model before publishing.');
+  const retainedOption = retention.retainedOptionModelIds?.some(id => retention.retainedModelIds?.includes(id));
+  if (type.requiresCompatibility && activeModelIds.length === 0 && !retainedOption) problems.push('Select at least one active compatible device model before publishing.');
   return problems;
 }
