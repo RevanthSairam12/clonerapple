@@ -274,7 +274,10 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     .map((image) => text(image.url))
     .filter(Boolean);
 
-  const projection = projectManagedCatalog(attributes, deviceModels);
+  // Saved options keep their mapped labels after reference deactivation, but
+  // inactive references must not reappear in discovery facets or search.
+  const discoveryModels = deviceModels.filter((model) => model.selection_eligible !== false);
+  const projection = projectManagedCatalog(attributes, discoveryModels);
   const { facets: facetsFlat, facetValues, compatibility } = projection;
   // Product merchandising brand is global, unlike type-scoped attributes.
   if (text(row.brand).trim()) {
@@ -284,7 +287,7 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
   }
   const colors = asColors(row.__colors);
   const inventoryMode = row.inventory_mode === 'variant' ? 'variant' : 'product';
-  const configured = variants.filter((variant) => Boolean(variant.is_active) && Boolean(variant.is_purchasable) &&
+  const configured = variants.filter((variant) => !variant.retired_at && Boolean(variant.is_active) && Boolean(variant.is_purchasable) &&
     text(variant.sku).trim() && text(variant.combination_key).trim() &&
     aggregate.variantStock.some((entry) => entry.variant_id === variant.id) &&
     (!row.__requires_compatibility || Boolean(variant.device_model_id)) &&
@@ -440,16 +443,16 @@ export async function loadCatalogUsing(
       order by m.sort_order asc, a.key asc
     `,
     sql`
-      select j.product_id, d.id, d.name
+      select j.product_id, d.id, d.name, (d.is_active and b.is_active) as selection_eligible
       from product_device_models j
-      join device_models d on d.id = j.device_model_id and d.is_active
-      join device_brands b on b.id = d.brand_id and b.is_active
+      join device_models d on d.id = j.device_model_id
+      join device_brands b on b.id = d.brand_id
       where j.archived_at is null
       order by j.sort_order asc, b.sort_order asc, d.sort_order asc, d.name asc
     `,
     sql`
       select id, product_id, sku, option_name, option_value, option_hex, is_active, sort_order,
-             is_purchasable, device_model_id, combination_key, price_paise_override, sale_price_paise
+             is_purchasable, device_model_id, combination_key, price_paise_override, sale_price_paise, retired_at
       from product_variants
       order by sort_order asc
     `,

@@ -41,12 +41,12 @@ export async function readAvailabilityUsing(
     join products p on p.id = v.product_id and p.inventory_mode = 'variant'
     left join product_types pt on pt.id = p.product_type_id
     left join stock s on s.product_id = v.product_id and s.variant_id = v.id
-    where v.product_id = any(${wanted}::text[]) and v.is_active and v.is_purchasable
+    where v.product_id = any(${wanted}::text[]) and v.is_active and v.is_purchasable and v.retired_at is null
       and nullif(trim(v.sku), '') is not null and nullif(trim(v.combination_key), '') is not null
       and (not coalesce(pt.requires_compatibility, false) or v.device_model_id is not null)
       and (v.device_model_id is null or exists (
-        select 1 from product_device_models j join device_models d on d.id = j.device_model_id and d.is_active
-        join device_brands b on b.id = d.brand_id and b.is_active
+        select 1 from product_device_models j join device_models d on d.id = j.device_model_id
+        join device_brands b on b.id = d.brand_id
         where j.product_id = v.product_id and j.device_model_id = v.device_model_id and j.archived_at is null))
   ` as Row[];
   const byId = new Map(rows.map((row) => [String(row.id), row]));

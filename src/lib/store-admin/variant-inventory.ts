@@ -11,7 +11,7 @@ export async function adjustVariantInventoryUsing(tx: TransactionSql, raw: Inven
   const [product] = await tx`select id,inventory_mode from products where id=${input.productId} and deleted_at is null`;
   if (!product) throw new MetadataError('Product not found.');
   if (input.variantId) {
-    const [variant] = await tx`select v.id from product_variants v where v.id=${input.variantId} and v.product_id=${input.productId} and v.is_purchasable and v.is_active and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null and dm.is_active and db.is_active))`;
+    const [variant] = await tx`select v.id from product_variants v where v.id=${input.variantId} and v.product_id=${input.productId} and v.is_purchasable and v.is_active and v.retired_at is null and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null and ((dm.is_active and db.is_active) or ${product.inventory_mode === 'variant'})))`;
     if (!variant) throw new MetadataError('Select an active purchasable variant with a valid model mapping.');
   }
   const [before] = await tx`select * from stock where product_id=${input.productId} and variant_id is not distinct from ${input.variantId}::text for update`;

@@ -43,8 +43,15 @@ export async function saveVariantIdentityUsing(tx:TransactionSql,productId:strin
     if(v.sku!==nullable(old.sku)||v.optionName!==old.option_name||v.optionValue!==old.option_value||purchasable!==Boolean(old.is_purchasable)||model!==nullable(old.device_model_id)||key!==nullable(old.combination_key)||semantic!==nullable(old.option_identity)||v.optionHex!==nullable(old.option_hex)||v.sortOrder!==Number(old.sort_order))throw new VariantIdentityError('Retired options are read-only.');
     return {id,before:old,after:old,created:false,retired:false};
   }
-  if(model&&v.isActive){
-    const mapped=await tx`select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=${productId} and pm.device_model_id=${model} and pm.archived_at is null and dm.is_active and db.is_active`;
+  if(model&&(v.isActive||!old||source||model!==nullable(old.device_model_id)||(!old.is_purchasable&&purchasable))){
+    // Only the owned, server-loaded live commerce identity may retain an
+    // inactive reference. resolvedVariantIdentity already proved its identity
+    // unchanged; neither an input ID nor a display-only/inactive option does.
+    // A parent still in product inventory is a conversion, not retention.
+    const retained = Boolean(!source && old && old.id === id && old.product_id === productId &&
+      old.is_active === true && old.is_purchasable === true && !old.retired_at && purchasable &&
+      model === nullable(old.device_model_id));
+    const mapped=await tx`select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=${productId} and pm.device_model_id=${model} and pm.archived_at is null and ((dm.is_active and db.is_active) or (${retained} and exists(select 1 from products p where p.id=pm.product_id and p.inventory_mode='variant')))`;
     if(!mapped.length)throw new VariantIdentityError('Select an active model from this product compatibility.',400);
   }
   if(source){

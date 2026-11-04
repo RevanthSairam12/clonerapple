@@ -1,30 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { createJiti } from 'jiti';
-
-// Invoke the actual payment read/mapping boundary with an injected SQL double.
-// This proves dependency/money behavior, not PostgreSQL query correctness.
-const jiti = createJiti(import.meta.url, { moduleCache: false, alias: { '@': path.resolve('src') },
-  virtualModules: { '@/lib/platform/db': { getSql: () => { throw new Error('Unexpected application pool'); } } } });
-const { resolveCartItemsFromDbUsing } = await jiti.import(path.resolve('src/lib/payu/db-catalog.ts'));
-const { evaluateCoupon } = await jiti.import(path.resolve('src/lib/coupons/rules.ts'));
-const { quoteShipping } = await jiti.import(path.resolve('src/lib/checkout/shipping-rules.ts'));
-
-function connection({ expired = false, rows, failure } = {}) {
-  const queries = [];
-  const sql = async (strings) => {
-    const query = strings.join('?'); queries.push(query);
-    if (query.includes('from sale_settings')) return [{ enabled: true, starts_at: null, ends_at: new Date('2026-11-03T12:00:00Z'), db_now: new Date('2026-11-03T11:00:00Z') }];
-    if (query.includes('clock_timestamp()')) return [{ db_now: new Date(expired ? '2026-11-03T12:00:00Z' : '2026-11-03T11:59:00Z') }];
-    if (query.includes('from products p')) { if (failure) throw failure; return rows ?? [
-      { id: 'case', name: 'Case', inventory_mode: 'variant', price_paise: 10000, sale_price_paise: 8000, variant_id: 'inherited', variant_sku: 'BASE', option_price_paise: null, option_sale_price_paise: null, track_inventory: true },
-      { id: 'case', name: 'Case', inventory_mode: 'variant', price_paise: 10000, sale_price_paise: 8000, variant_id: 'override', variant_sku: 'PRO', option_price_paise: 15000, option_sale_price_paise: 12000, track_inventory: true },
-    ]; }
-    throw new Error('Unexpected SQL boundary');
-  };
-  return { sql, queries };
-}
+import { paymentConnection as connection, resolveCartItemsFromDbUsing, evaluateCoupon, quoteShipping } from './helpers/payment-catalog-fixture.mjs';
 const lines = [
   { id: 'case', variantId: 'inherited', quantity: 1, expectedUnitPaise: 8000 },
   { id: 'case', variantId: 'override', quantity: 2, expectedUnitPaise: 12000 },
@@ -56,18 +32,24 @@ test('coupons scoped to a product and shipping threshold use resolved option lin
   }
 });
 
-test('payment query matches storefront category and compatibility eligibility without unapplied columns', async () => {
+test('payment retains inactive reference mappings with storefront category, nonretired identity and exact-stock eligibility', async () => {
   const { sql, queries } = connection();
   await resolveCartItemsFromDbUsing(sql, lines);
   const query = queries.find(query => query.includes('from products p')).replace(/\s+/g, ' ');
+  // SQL contracts, not a simulated execution of PostgreSQL predicates: only
+  // reference active status is relaxed for an existing eligible option.
   for (const predicate of ['join categories c on c.id = p.category_id and c.is_active and c.deleted_at is null',
-    'p.deleted_at is null', 'p.is_active', "v.product_id=p.id and p.inventory_mode='variant'", 'v.is_active and v.is_purchasable',
+    'p.deleted_at is null', 'and p.is_active', "v.product_id=p.id and p.inventory_mode='variant'", 'v.is_active and v.is_purchasable and v.retired_at is null',
     "nullif(trim(v.sku), '') is not null", "nullif(trim(v.combination_key), '') is not null", 's.id is not null',
+    's.product_id=p.id and s.variant_id is not distinct from v.id',
     'not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null',
-    'dm.is_active and db.is_active', 'pdm.product_id=p.id and pdm.device_model_id=v.device_model_id and pdm.archived_at is null']) {
+    'v.device_model_id is null or (dm.id is not null and db.id is not null and exists(',
+    'pdm.product_id=p.id and pdm.device_model_id=v.device_model_id and pdm.archived_at is null',
+    'lower(p.id) = any(?::text[])']) {
     assert.ok(query.includes(predicate), predicate);
   }
-  assert.doesNotMatch(query, /retired_at|option_identity/);
+  assert.doesNotMatch(query, /\b(?:dm|db)\.is_active/, 'deactivation alone must not remove retained mapped commerce');
+  assert.doesNotMatch(query, /option_identity/, 'legacy saved commerce does not require backfilled option semantics to purchase');
 });
 
 test('missing eligible exact variant never falls back to an eligible sibling or parent', async () => {

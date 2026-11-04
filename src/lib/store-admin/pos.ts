@@ -163,12 +163,12 @@ export async function getPosCatalogUsing(sql: Sql): Promise<PosCatalogLoad> {
              s.on_hand-s.reserved as on_hand, s.track_inventory
       from products p
       left join product_types pt on pt.id=p.product_type_id
-      left join product_variants v on p.inventory_mode='variant' and v.product_id=p.id and v.is_active and v.is_purchasable
+      left join product_variants v on p.inventory_mode='variant' and v.product_id=p.id and v.is_active and v.is_purchasable and v.retired_at is null
         and nullif(trim(v.sku),'') is not null and nullif(trim(v.combination_key),'') is not null
         and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null)
       left join device_models dm on dm.id=v.device_model_id
       left join stock s on s.product_id = p.id and s.variant_id is not distinct from v.id
-      where p.is_active and p.deleted_at is null and (p.inventory_mode='product' or (v.id is not null and s.id is not null and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.device_model_id=v.device_model_id and pm.archived_at is null and dm.is_active and db.is_active))))
+      where p.is_active and p.deleted_at is null and (p.inventory_mode='product' or (v.id is not null and s.id is not null and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.device_model_id=v.device_model_id and pm.archived_at is null))))
       order by p.name
     `) as Row[];
     return {
@@ -522,7 +522,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
         }
         const variantId=cartLine.variantId??null;
         if((product.inventory_mode==='variant')!==Boolean(variantId)) return {ok:false as const,reason:'invalid-input' as const,error:'Select the exact purchasable combination; product-level selections cannot be substituted.'};
-        const variantRows=variantId?await tx`select v.* from product_variants v left join products p on p.id=v.product_id left join product_types pt on pt.id=p.product_type_id where v.id=${variantId} and v.product_id=${baseId} and v.is_active and v.is_purchasable and v.sku is not null and v.combination_key is not null and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null) and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null and dm.is_active and db.is_active))`:[];
+        const variantRows=variantId?await tx`select v.* from product_variants v left join products p on p.id=v.product_id left join product_types pt on pt.id=p.product_type_id where v.id=${variantId} and v.product_id=${baseId} and v.is_active and v.is_purchasable and v.retired_at is null and nullif(trim(v.sku),'') is not null and nullif(trim(v.combination_key),'') is not null and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null) and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null))`:[];
         const variant=variantRows[0];
         if(variantId&&!variant)return {ok:false as const,reason:'invalid-input' as const,error:'Variant is missing, inactive or has an invalid model mapping.'};
         const regularPricePaise = integer(variant?.price_paise_override??product.price_paise);

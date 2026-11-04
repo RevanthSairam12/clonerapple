@@ -81,7 +81,7 @@ async function loadPricingRows(
     from products p
     join categories c on c.id = p.category_id and c.is_active and c.deleted_at is null
     left join product_variants v on v.product_id=p.id and p.inventory_mode='variant'
-      and v.is_active and v.is_purchasable
+      and v.is_active and v.is_purchasable and v.retired_at is null
       and nullif(trim(v.sku), '') is not null and nullif(trim(v.combination_key), '') is not null
     left join device_models dm on dm.id=v.device_model_id
     left join device_brands db on db.id=dm.brand_id
@@ -90,7 +90,7 @@ async function loadPricingRows(
     where p.deleted_at is null
       and (p.inventory_mode='product' or (v.id is not null and s.id is not null
         and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null)
-        and (v.device_model_id is null or (dm.is_active and db.is_active and exists(
+        and (v.device_model_id is null or (dm.id is not null and db.id is not null and exists(
           select 1 from product_device_models pdm where pdm.product_id=p.id and pdm.device_model_id=v.device_model_id and pdm.archived_at is null)))))
       and p.is_active
       and lower(p.id) = any(${ids}::text[])

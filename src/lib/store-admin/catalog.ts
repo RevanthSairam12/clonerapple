@@ -130,7 +130,7 @@ export interface CatalogProductDetail extends CatalogProductSummary {
   /** Opaque bounded edit token; inventory balances do not advance it. */
   catalogRevision: number;
   inventoryMode: 'product' | 'variant';
-  deviceModels: Array<{id:string;name:string}>;
+  deviceModels: Array<{id:string;name:string;isActive?:boolean}>;
   description: string;
   shortDescription: string | null;
   descriptionSections: unknown;
@@ -453,7 +453,7 @@ export async function getCatalogProduct(
              p.badge, p.highlights, p.in_the_box, p.seo_title,
              p.seo_description, p.in_stock, p.is_active, p.sort_order,
              p.created_at, p.updated_at, p.inventory_mode, p.catalog_revision,
-             (select coalesce(jsonb_agg(jsonb_build_object('id',dm.id,'name',dm.name) order by dm.name),'[]'::jsonb) from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.archived_at is null and dm.is_active and db.is_active) as device_models,
+             (select coalesce(jsonb_agg(jsonb_build_object('id',dm.id,'name',dm.name,'isActive',dm.is_active and db.is_active) order by dm.name),'[]'::jsonb) from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.archived_at is null) as device_models,
              c.id as category_id, c.slug as category_slug, c.name as category_name
       from products p
       join categories c on c.id = p.category_id
@@ -608,7 +608,7 @@ export async function getCatalogProduct(
         ...mapSummary(productRow),
         catalogRevision: readCatalogRevision(productRow.catalog_revision),
         inventoryMode:productRow.inventory_mode==='variant'?'variant':'product',
-        deviceModels:Array.isArray(productRow.device_models)?productRow.device_models as Array<{id:string;name:string}>:[],
+        deviceModels:Array.isArray(productRow.device_models)?productRow.device_models as Array<{id:string;name:string;isActive?:boolean}>:[],
         trackInventory: stock ? stock.trackInventory : null,
         description: text(productRow.description),
         shortDescription: productRow.short_description == null ? null : text(productRow.short_description),
