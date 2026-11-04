@@ -1,0 +1,50 @@
+# Phase 2 catalog deployment and approved database verification
+
+## Migrations first; nothing applied by this change
+
+The implementation and offline tests do not apply SQL, execute a backfill, or authorize production writes. Migrations **0055, 0056 and 0057 remain unapplied until an operator separately approves and installs them**. Install prerequisites through 0054 first. Deploy the matching application only after these migrations succeed, in filename order. Mixed old/new application instances and writes during the index transition are not an approved rollout strategy; use a coordinated maintenance window and a separately reviewed backup/recovery plan.
+
+Use the project's migration runner only after its normal target review. Each SQL file is one implicit transaction; do not add transaction wrappers inside the files. The runner is not a dry-run tool. A missing catalog revision is an unavailable-schema error, not revision zero. New content/history paths likewise fail closed when their table/columns are absent.
+
+0055 replaces the original all-history `(product_id, option_name, option_value)` unique index with a live-only label index and adds retirement/identity constraints. Global SKU and permanent purchasable combination uniqueness remain intact. Existing live label/semantic collisions or incompatible rows can prevent installation; inspect separately under explicit target approval rather than silently rewriting business data. 0056 creates private append-only content history with RLS and no public policy. 0057 introduces aggregate editorial revision triggers across products and their supported child/reference rows. None of these migrations populates descriptions or guesses product claims.
+
+## Rollback limits
+
+An error **within** the 0055 migration transaction rolls back its index change. The proposed integration fixture exercises this with the actual original index present. This does not imply that an already-committed migration is safely reversible. Once a retired option and its same-label replacement coexist, recreating the old all-history unique label index can fail. Do not delete retired variants, orders, stock references, content revisions or audit rows to force an application rollback. SKU/combination identities remain permanently reserved.
+
+There is no automatic down-migration. Rolling application code back after successful migrations needs an operator-reviewed compatibility plan; retaining additive columns/history does not make old writers safe. A partially completed multi-file rollout can have earlier files committed even if a later file failed. Review the migration ledger and actual schema before resuming; do not blindly replay constraint/trigger creation. Database snapshots and the rollout window are operational responsibilities, not supplied by these tests.
+
+## Tokens and null content
+
+- Product editing uses integer **`expectedRevision`**, compared with the locked product's `catalog_revision`. This is an opaque concurrency token, not a save count. A multi-step save may advance it more than once. Child/reference editorial changes invalidate stale forms; inventory balances/reservations and denormalized `in_stock` do not.
+- Content restore HTTP requests use **`expectedContentRevision`**, an optional revision ID string or explicit `null`. This is not the integer product token. A supplied string requires that exact latest content revision; explicit null asserts no content history; omission allows unconditional content restore. The internal content helper currently names this option `expectedRevision`; the route maps the distinct external name.
+- Restore bodies contain `revisionId`, optional `snapshot: 'before' | 'after'` (default after), and optional `expectedContentRevision`. Never send content prose or a staff actor identity to the restore endpoint.
+- Omitted content fields mean unchanged; canonical `null` retains legacy fallback; explicit `descriptionSections: []` intentionally suppresses fallback. Do not coerce these into each other or auto-backfill at application startup.
+- Revision snapshots contain exact persisted old canonical JSON and private `legacyFallback` evidence. Automatic restore is **canonical-only**. Legacy description/highlight/box values are retained for forensic/reference recovery, not automatically written back. Malformed or sanitization-changing stored canonical snapshots require review rather than silent lossy restoration.
+- Only guarded store-admin history routes expose snapshots. Generic audit entries contain revision IDs/counts, not prose. Duplication copies current canonical content, never revision lineage or stock.
+
+## Variant and editor compatibility
+
+New purchasable identities require explicit normalized `optionIdentity`; retained legacy rows may remain null. No combined model/display labels are parsed or backfilled. The existing generator now sends the raw option value identity separately, using stable model IDs. Explicit replacement uses `replacesVariantId`, a new SKU, a server-generated commerce key and a new variant ID. Source rows submitted alongside replacement must be inactive; source edits run first regardless of array order. The source keeps all stock, holds, prices and order references. A replacement starts with its own zero-count tracked stock row, including when inactive. Nonzero opening stock must be an explicit confirmed receipt; it is never a transfer from the source. Nonzero receipts currently use the existing active-variant inventory guard.
+
+Phase 3 now wires the six-section editor to these contracts: replacements with unknown semantic values require explicit input, existing-product saves send the loaded `expectedRevision`, and conflicts preserve the draft instead of acquiring a new token and replaying it. Successful saves lock submission until authoritative remount. This wiring is verified with offline interactions and a synthetic browser fixture, not authenticated deployed-app or real-database execution. The aggregate token remains optional for legacy API clients. Legacy attribute-definition/unit edits are revalidated at save and do not fan out revision changes; supported product children and gated type/device reference edits do.
+
+Content snapshot writes reject serialized before/after snapshots above 1 MiB rather than truncate history. Canonical revisions do not introduce row-level specification archive flags.
+
+## Separate approval for the real-database fixture
+
+The new fixture is intentionally **not run** during implementation. It requires a dedicated disposable PostgreSQL database/session target, a non-superuser/non-BYPASSRLS schema-owning role with CREATE SCHEMA privilege, and capacity for **two independent connections**. It refuses transaction pooler port 6543. It does not load `.env.local`, alter the application pool, create roles or read/write public business tables. Set `DATABASE_URL` through a secure environment mechanism; never print the URL or credentials.
+
+1. Review `tests/helpers/phase2-catalog-fixture.mjs` and `tests/phase2-catalog-integration.test.mjs` before approving writes.
+2. With the target already configured securely, print the **read-only local manifest** using `node tests/helpers/phase2-catalog-fixture.mjs --manifest`. This reads source/migration files only and does not open PostgreSQL. Review target hostname/port, hashed database/role identity, migration/source hashes, the two-connection bound, local schema/table/sequence writes, rollback attempts and cleanup scope.
+3. Obtain explicit human approval of that exact manifest and target. Only then set `RUN_PHASE2_CATALOG_DB_TESTS=1` and `PHASE2_CATALOG_APPROVED_MANIFEST` to its `approvalSha256`. Any source/migration/target change invalidates approval and requires a regenerated, newly reviewed digest.
+4. Run only `node --test tests/phase2-catalog-integration.test.mjs` after that approval. These instructions are a procedure, not approval to run it now.
+5. Cleanup drops only `itest_phase2_catalog_approved` when this invocation successfully created it. An existing schema is refused, never adopted or deleted. If a process is killed before cleanup, separately inspect ownership/target before approving any manual cleanup; do not broadly remove schemas.
+
+The fixture creates local prerequisite contracts with the original real label-index definition, global SKU/combination uniqueness and stock/order composite FKs, then executes the **actual bytes** of 0055–0057. It checks transactional index rollback, retirement/replacement, identity/FK preservation, editorial revision triggers, stale-version and duplicate races on independent backend connections, private RLS/no policies and immutable history. RLS denial is exercised by forcing RLS on the owner in a rollback-only transaction; this is why superuser/BYPASSRLS targets are refused. Rejected and rolled-back inserts may advance only disposable local sequences, explicitly disclosed in the manifest.
+
+## What remains unproven
+
+Until separately approved execution, the integration fixture is authored/syntax-checked only: **real PostgreSQL migration behavior, SQL/runtime compatibility, lock interleavings, RLS enforcement and cleanup have not been demonstrated by a test run**. SQL doubles cannot establish these properties.
+
+Even a successful fixture run will not prove production data compatibility, historical migrations end-to-end, production role grants or Supabase policy configuration, live pooler behavior/session capacity, index-lock duration, all reference/child fanout combinations, query plans at catalog scale, browser/auth/cookie/cache behavior, or the full aggregate draft/CSV transaction workflow. Those require their own bounded approved checks. The version race checks locked-parent token comparison using the actual pure token helper and real trigger, not an HTTP save. The duplicate race exercises the real duplicate transaction helper; the content path exercises the real injected content write/restore helpers. No PayU, notification, SMTP or public storefront behavior is exercised.

@@ -21,6 +21,459 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Phase A — customer order flow — 2 November 2026
+
+**Implementation delivered; acceptance is not fully complete.** Required real SQL
+suites and populated end-to-end/provider checks remain pending fresh authorization.
+This evidence supplements, rather than re-dates, the historical checks above.
+
+- Cart/bag primary action is **Checkout** with no provider branding. Guest help
+  follows the existing setting. Shared footer uses neutral payment methods.
+- Checkout uses the normal storefront shell, left summary/right form on desktop,
+  collapsible total/summary above the form at 768/390px, item images/options,
+  existing coupon/totals/stock/price/reservation protections and amount-labelled Pay.
+- Shared browser/server India validation covers unknown inputs, Unicode names,
+  normalized +91/91/0 mobile prefixes, 36 states/UTs and exact nonzero-leading PINs.
+  Inline errors are associated/focused; saved addresses are ownership-checked and
+  revalidated. Edited values cannot silently reuse a selected old snapshot.
+  Successful address saves retain their ID; ambiguous saves check owned rows before
+  retrying, rather than blindly inserting duplicates. Marketing remains opt-in.
+- All five result routes use shared header/footer and authoritative financial
+  wording/actions. Verified success has one summary/shopping pair; uncertainty
+  never offers repayment. Real timeline retained; result stepper/pickup placeholder
+  removed. No unverified email-sent claim. Guest summary requires signed return
+  access; full documents remain account-owner-only.
+- Customer **Payment receipt** is available after settled payment; **Invoice**
+  View/Print requires Delivered and existing identity. Direct invoice mode before
+  delivery returns unavailable, never a substitute invoice. Request-bill mutation
+  is retired with guarded 410; historical rows, shipment-time numbering and staff/POS
+  eligibility are preserved. Refund overlays remain truthful. Confirm dispatch-time
+  tax issuance with the accountant before changing issuance rules.
+- Bounded payment prerequisites now share integrity checks and safe allowlisted
+  persistence, use database lifecycle time, distinguish explicit cancellation,
+  reject gateway-identity races and preserve uncertain callback recovery context.
+  Historical raw payloads were not deleted.
+
+| Check | Actual Phase A evidence |
+|---|---|
+| Full offline `npm test` | **1,249 tests: 1,167 passed, 0 failed, 82 skipped**, 0 cancelled; DB opt-ins off. `.tmp-phaseA-final-verified-tests.txt` |
+| Typecheck / production build | Passed; `.tmp-phaseA-typecheck-verified.txt`, `.tmp-phaseA-build-verified.txt`. Existing external-lockfile warning retained. |
+| Authorization / boundary scripts | **110 store-admin routes**, **21 account APIs / 11 pages**, admin boundary passed. |
+| Read-only settings checker | All 15 settings/list tables plus staff columns readable; 114 notification cells. `.tmp-phaseA-setting-lists.txt` |
+| Notification checker | **102 templates render cleanly**; offline readiness **1 pass / 4 fail**: DB omitted, SMTP driver unconfigured, SMS off, SMTP intentionally skipped. Exit 1, not readiness success. Fresh preview directory preserves earlier previews; no send. `.tmp-phaseA-notifications.txt` |
+| Legacy compatibility | Configured running local app: **2/2 media routes pass**, zero old-admin references. `.tmp-phaseA-legacy-compat.txt`. Separate no-DB runtime diagnostic: 0/2 media routes, expected missing DB resolution, `.tmp-phaseA-legacy-local.txt`. |
+| Actual browser smoke | Cart/bag/unavailable-result at **1440/768/390**: 9 HTTP-200 cases, header/footer, no horizontal overflow; guest-off checkout redirects to auth. Screenshots `tmp/phaseA-browser-20261102/`. Not populated checkout/payment/invoice acceptance. |
+| `npm audit` | **0 vulnerabilities**, `.tmp-phaseA-audit.json` |
+| Real SQL suites | **Not run / not passed**. Fresh write approval absent; manifest prepared read-only with hostname and private fixture row/sequence scope. `.tmp-phaseA-sql-preapproval.json` |
+| Git | `git diff --check` passed. No new commits/staging; existing dirty tree retained. `git log -5 --oneline` and status captured in `.tmp-phaseA-git-*.txt`; not clean. |
+
+**Historical SQL evidence reconciled:** `remaing tests.md` and the exact-name index
+confirm **80/80 original registrations passed**, including callback **4/4**,
+shipping **6/6** and expanded Phase 2 **15/15**. Of the latest 82 offline skips,
+**79 exactly match historical passing registrations**; the other three are the
+changed Phase 2 registration and separate Phase 4/5 suites. Phase 5 has separate
+**9/9 SQL passing evidence**. These are completed earlier runs, not current-source
+Phase A reruns; particularly, the old Phase 2 log tests active bill requests that
+Phase A now retires. See the reconciliation section in `remaing tests.md`.
+
+**Remaining:** freshly approved current-source isolated document/shipping/callback SQL tests;
+populated checkout keyboard/saved-address/retry browser checks; confirmed payment,
+Delivered/refund invoice checks against real isolated data; actual PayU test payment
+and notification delivery readiness. No migration or live order written. Do not
+interpret prior Phase 2/5 SQL evidence as current-source Phase A acceptance.
+
+**File map:** `UX_NOTES.md`; `CartPageView.tsx`, cart/bag/checkout pages,
+`CheckoutForm.tsx`, `GadzioFooter.tsx`; shared `checkout/india-validation.ts` and
+`account/rules.ts`, payment initiation route; `order/layout.tsx`, five result pages,
+`OrderResultPage.tsx`, `orders/result-state.ts`; `orders/{document-policy,document-data}.ts`,
+`OrderDocument.tsx`, account order/receipt pages, guarded retired bill-request route
+and service; `payu/{verify,process-response,reconcile,orders,callback-route,return-access}.ts`,
+`checkout/reservation-rules.ts`; checkout/validation/initiation, result, customer-document,
+document-policy/render and payment seam regression tests; `phase-a-test-manifest.mjs`,
+`phase-a-browser-smoke.py`, notification checker fresh-output option. No new public API
+or invoice route; no new Phase A migration. Phase B evidence follows separately.
+
+### Phase B — catalogue and product admin — 3 November 2026
+
+**Partial implementation verified; Phase B acceptance is not complete.** Independent
+option-price writes remain safety-gated pending real authoritative checkout acceptance.
+No configured-database migration/backfill or business-data write was performed.
+
+- Six-step Add product and matching sectioned Edit with jump links, sticky Save,
+  publish checklist, staged photos/options/descriptions/stock/metadata, shared paise
+  parser and unsaved-exit warnings. One coordinated transaction rolls back on
+  validation/history/audit failure; post-commit cache failure is not reported as rollback.
+- Editable color/model sub-items with model × value generation, explicit device
+  mappings, per-item stock limits/counts and Active controls. Saved commerce identity
+  changes use Archive and replace; old order/stock history stays intact and replacement
+  stock starts at zero. Product listing exposes sub-item counts/edit links and exact-row
+  stock aggregates, including mixed/missing setup rather than false unlimited labels.
+- Compatible devices active switch reveals searchable brand-grouped device dropdown;
+  saved selections initialize it. Clearing requires confirmation, never claims universal
+  compatibility, and cannot silently orphan active model-mapped sub-items.
+- Plain stock vocabulary across products/options, Stock/Low-stock, Sale, POS, reports,
+  CSV help and notifications. Existing schema keys, event names and ledger rules retained.
+- Shared effective option pricing prevents parent-sale inheritance when an option owns
+  its regular price. Checkout-valid option minimum/From display, sale refresh provenance,
+  exact option price-change identities, coupon/shipping option totals and POS reference
+  prices have focused offline coverage. Cashier-entered prices remain unchanged.
+- Exact selected-variant checkout regression: seven new tests invoke real checkout,
+  stock and signed callback services with injected SQL/verifier; focused matrix **48
+  passed / 0 failed / 0 skipped**. Black 10→9 at reservation, verified payment consumes
+  without a second decrement; same-product Blue/iPhone15, other product and retained
+  parent balances unchanged. Replay, cancellation release/grace and missing/sold-out
+  selection are covered. This is not real PostgreSQL/concurrency or live payment proof.
+- Safe short description and ordered text/bullets/specs/FAQ sections with starters,
+  hide/reorder/remove, typed formatting and safe links. Both detail renderers retain
+  null legacy fallback and honor [] as intentionally empty. CSV preserves omitted/blank
+  cells and supports explicit null/[] and stable structured JSON round trips.
+
+**UI-only clarity follow-up (3 November 2026):** Products list has obvious Edit/View,
+colors/models and Set stock actions, distinct review filters and labelled category counts.
+Add/Edit retain six sections, existing controls and coordinated saving. Product-scoped
+question-mark help covers fields, settings, actions, table headers and review items;
+native disclosures work for viewers without enabling edits. Description formatting/link
+controls are secondary disclosures, with errors and stock/publication warnings visible.
+No API, schema, checkout, stock calculation or price-gate changes. Regression evidence:
+**1,349 total / 1,267 passed / 0 failed / 82 skipped**, focused **71/71**;
+`.tmp-product-ui-tests-20261103.txt`, `.tmp-product-ui-focused-20261103.txt`.
+Typecheck/build and 111-route/admin-boundary checks pass. Loopback fixture browser matrix
+passes at 1440/768/390 for actual hydrated Add/Edit/viewer components and mocked-data
+Products list; keyboard/touch help, unchanged drafts, in-memory saves, sticky-footer
+reachability and table overflow verified, zero hydration/console/external-request errors.
+Screenshots/results: `tmp/product-admin-ui-20261103/`. This is not real authenticated
+Next/database acceptance. UI details and fixture-browser limitations are in `UX_NOTES.md`.
+
+| Check | Earlier Phase B evidence (before UI-only follow-up) |
+|---|---|
+| Full offline npm test | **1,342 total: 1,260 passed, 0 failed, 82 skipped**, 0 cancelled. `.tmp-phaseB-tests-complete-20261103.txt`; includes seven selected-variant deduction tests. Subsequent fixture-only addition of same-product iPhone15 sibling passed the 48-test focused rerun. |
+| Typecheck / production build | Passed: `.tmp-phaseB-typecheck-complete-20261103.txt` (nonincremental), `.tmp-phaseB-build-complete-20261103.txt`. |
+| Guards / boundaries | 111 store-admin routes, 21 account APIs / 11 pages, admin boundary passed. |
+| Read-only settings / legacy media | 15 settings/list tables plus staff columns, 114 cells; 2/2 stored-media routes pass, zero old-admin references. |
+| Notifications | 102 templates render; offline readiness **1 pass / 4 fail**, no send/SMTP connection. `.tmp-phaseB-notifications-final-20261103.txt`. |
+| Audit | Zero vulnerabilities. `.tmp-phaseB-audit-final-20261103.json`. |
+| Browser | Existing adapter PDP 200 at 1440/768/390, shared header/footer, no horizontal overflow/pageErrors; protected Add redirects login. Screenshots `tmp/phaseB-browser-20261103-final/`; desktop/mobile inspected. Not authenticated wizard/persisted section/option-payment acceptance. |
+| SQL/migrations | Not run, not passed; 82 skips remain unverified for current source. 0054 prepared, not applied; backfill not executed. |
+
+**Deployment:** keep existing 0051 metadata → 0052 inventory → 0053 coupon sequence;
+apply additive **0054_product_descriptions.sql** before description writes. Description
+reads tolerate absent columns; this is not migration acceptance. Backfill defaults to
+read-only dry run and requires explicit reviewed source/digest/host/actor before apply.
+CSV content format and precise responsive notes are in `UX_NOTES.md`.
+
+**Remaining:** option-price write gate; option Sale inline/bulk/clear (current bulk is
+explicitly product-default-only); writable option price CSV/history acceptance; real
+isolated SQL checkout/stock/atomicity/concurrency/migration/backfill proof; source-bound
+Phase B database fixture/manifest; authenticated Add/Edit/publish/structured-content
+roundtrip; complete changed-screen keyboard/focus/AA and screenshots; real PayU test
+payment. No Phase C started. Existing dirty tree preserved; no commit/staging.
+
+**File map:** `ProductWorkflow.tsx`, `ProductCreateForm.tsx`, `ProductMetadataFields.tsx`,
+`ProductDescriptionEditor.tsx`; products list/new/detail pages; new guarded
+`POST /api/store-admin/catalog/products/draft`; `store-admin/{product-draft-rules,
+product-draft,product-option-combinations,catalog,catalog-csv,catalog-transfer,sale,pos}.ts`;
+`catalog/{product-description,storefront}.ts`, `storefront/{pricing,catalog,catalog-merge}.ts`,
+`payu/{db-catalog,db-pricing}.ts`; both shop product/buy metadata routes,
+`ProductDescriptionSections.tsx`, `ProductDetailPage.tsx`, `AccessoryDetailPage.tsx`,
+collection/card quick-add surfaces; stock/Sale/POS/report/notification terminology;
+0054 migration and `backfill-product-descriptions.mjs`; focused workflow/draft/route,
+list-stock, metadata/CSV/description/backfill and option pricing/consumer/checkout tests;
+`phase-b-browser-smoke.py`. No new public customer API.
+
+### Phase 5 — coupon visibility controls — 2 November 2026
+
+**Implemented and verified with isolated PostgreSQL tests; live migration and
+browser acceptance are pending.** This supplements, not re-dates, older evidence.
+
+- Coupons have **Show to all users**, default off, with independent discovery
+  assignments by email or existing customer group. Existing redemption email and
+  group restrictions keep their AND semantics. Assignments grant discovery only;
+  a hidden code remains redeemable when its redemption rules allow it.
+- Admin create/edit/generation forms include help, separate discovery inputs and
+  read-only viewer behavior. The list adds public/hidden visibility, assignment
+  counts, filtering, filter-preserving export and selected-row bulk show/hide.
+  Duplicates remain paused, hidden and discovery-unassigned.
+- New `POST /api/store-admin/coupons/visibility` accepts a bounded selected list;
+  role/origin checks remain mandatory. Create/update/generation/duplication and
+  bulk visibility audit in the mutation transaction and roll back on audit
+  failure. Audits record visibility/assignment counts, not recipient lists.
+- Customer list/count require coupons globally enabled, active/database-time
+  validity, eligibility and remaining uses, plus public visibility OR a matching
+  explicit email/group assignment. Ledger reads are batched. Customer DTOs expose
+  only customer-facing details, expiry and personal remaining uses. Percentage,
+  free-shipping and targeted-scope labels are corrected.
+
+| Check | Actual Phase 5 evidence |
+|---|---|
+| Full offline `npm test` | **1,103 tests: 1,021 passed, 0 failed, 82 skipped**, 0 cancelled. SQL opt-ins disabled; skips are not passes. `.tmp-phase5-tests.txt` |
+| Approved real PostgreSQL run | **9 passed, 0 failed, 0 skipped**; six nested SQL scenarios plus fixture/manifest registrations. Actual 0041/0053 migrations, rerun preservation, customer isolation/DTOs, real admin services, bulk action and audit rollback. `.tmp-phase5-sql-tests.txt` |
+| SQL scope and cleanup | Only newly owned `itest_phase5_coupon_visibility_approved`; asserted final counts and local sequences; schema removal verified. No public writes/sequences, PayU, email or app-pool use. Owner-connected tests are not restricted-role RLS authorization proof. |
+| `npm run typecheck` / `npm run build` | Both passed. `.tmp-phase5-typecheck.txt`, `.tmp-phase5-build.txt`; existing external-lockfile warning retained. |
+| Route/boundary/settings checkers | **110 store-admin routes**, **21 account API routes / 11 account pages**, commerce boundary and read-only settings checks passed. |
+| Notification checker | **Skipped at user's request** after its offline preview-directory replacement required approval. Existing previews preserved; no notification send. |
+| Legacy compatibility checker | Database reference scan found zero old admin references; **failed at local media HTTP check** because no app was listening on localhost:3000. `.tmp-phase5-legacy-compat.txt` |
+| `npm audit` | **0 vulnerabilities**. `.tmp-phase5-audit.json` |
+| Git | No new commits. Existing branch/worktree remains dirty, including earlier phases; no unrelated changes discarded or staged. `.tmp-phase5-git-status.txt` |
+
+**Rollout / manual acceptance:**
+1. Back up the database. Re-run `node scripts/inspect-coupon-visibility.mjs` for a
+   fresh read-only census. Current census: **3 existing coupons**, new columns
+   absent; first application defaults all three hidden. No live migration applied.
+2. Separately approve and apply `0053_coupon_visibility_assignments.sql` after its
+   earlier coupon prerequisites. Do not blindly run the migration runner: other
+   unapplied Phase 1–4 files are also present. No new environment variables.
+3. Explicitly enable public visibility or assign each intended coupon; existing
+   redemption restrictions are NOT copied into discovery assignments. A hidden
+   coupon may still appear to its explicitly assigned eligible customers.
+4. In the running app, create two coupons, enable public visibility on only one,
+   and verify a customer sees only that one. Assign the hidden coupon to another
+   email/group and verify isolation, list/count agreement, filters and bulk
+   show/hide. Test a known hidden unrestricted code at checkout. Expired, paused
+   or exhausted coupons must not appear. These browser checks are **not yet run**.
+5. Safe rollback is operational: disable public discovery/remove explicit
+   assignments through audited admin controls if needed; retain additive columns
+   and existing redemption history. Do not use destructive SQL or restore old
+   private-only discovery as a silent workaround.
+
+**File map:** migration `0053_coupon_visibility_assignments.sql`; admin
+`src/lib/store-admin/{coupon-rules,coupons}.ts`, coupon API routes and
+`coupons/visibility/route.ts`; `CouponForm.tsx`, `CouponVisibilityControls.tsx` and
+protected coupon pages; customer `src/lib/account/{coupon-rules,coupons}.ts`,
+shared `src/lib/coupons/rules.ts`, `CouponsList.tsx`; tests
+`account-coupons.test.mjs`, `store-admin-coupon-visibility.test.mjs`,
+`phase5-coupon-integration.test.mjs`, `helpers/phase5-fixture.mjs`; scripts
+`inspect-coupon-visibility.mjs`, `phase5-test-manifest.mjs`,
+`run-phase5-approved.mjs`. Phase 6 was not started.
+
+### Database fixture repair follow-up — 2 November 2026
+
+- Current-source Phase 2 SQL rerun: **15 passed, 0 failed, 0 skipped**;
+  repaired Phase 3 SQL rerun: **12 passed, 0 failed, 0 skipped**. The missing
+  local `product_variants` dependency is supplied without changing live tables.
+- Shared test isolation rebinds copied serial defaults to owned local sequences,
+  protects schema cleanup ownership, and supplies additive Phase 4 fixture columns.
+  Reports/shipping/availability clone empty metadata dependencies; notification,
+  coupon, staff and PayU fixtures use the same fail-closed lifecycle.
+- Offline regression: **1,072 tests; 991 passed, 0 failed, 81 skipped**. Original
+  80-registration SQL reconciliation is still in progress; the separate new Phase 4
+  suite is not included in those 80. Skips are not passes.
+- Typecheck, production build, 109 store-admin route guards, account-route guards,
+  and the admin commerce boundary pass. No live migration/allocation, real PayU
+  request, notification delivery, commit or push is part of this follow-up.
+- Evidence: `.tmp-phase2-approved-rerun.log`, `.tmp-phase3-fixed-retry.log`,
+  `.tmp-fixture-repair-offline.log`, `.tmp-fixture-repair-typecheck.log`,
+  `.tmp-fixture-repair-build.log`; see `PHASES_NOTES.md` for scope and pending SQL.
+
+### Website merge verification — 1 November 2026
+
+This supplements, rather than re-dates, the historical checks above:
+
+- Repository caller audit: old API fetches occur only in legacy UI; public media
+  URLs are the intentional compatibility exception. No repo CI/script caller found.
+- Saved integration audit via `DATABASE_URL`: `social_links`, `analytics_scripts`,
+  `store_integrations` each have 0 rows and 0 old API references (counts only).
+- Stored media HTTP check against the running local app: **2/2 legacy rows resolve**;
+  no active shared rows existed for a live shared-media check. Shared-source resolution,
+  archiving and bytea headers are covered by fixtures instead.
+- Local HTTP smoke: known/unknown old pages return 308; old login, content, theme,
+  upload and unknown API requests return 410 with `no-store` and the moved message.
+- Final full regression run: **895 passed, 0 failed, 0 skipped**. Typecheck and
+  production build pass; all 103 Store Admin routes are guarded. Boundary and
+  customer-route checkers pass. Step-7 SSR alignment checks are included.
+- **Not verified:** owner browser save/no-op/reset and theme round trips, migrated
+  password/TOTP sign-in, external provider configuration outside the repo/database,
+  and remote CDN object bytes. Final legacy code deletion remains blocked.
+
+### Phase 3 — scoped attributes and manual compatibility — 2 November 2026
+
+**Implemented in the working tree; approved Phase 3 SQL tests pass. Live rollout
+and browser acceptance remain pending.** This section supersedes the interrupted Phase 3 handoff in
+`PHASES_NOTES.md`, not the earlier historical evidence. No public business-table writes, live migration application, backfill apply,
+commits or pushes were performed. Approved SQL tests created and removed private
+throwaway schemas on the configured database.
+
+- Owners manage category-linked product types, ordered attribute mappings,
+  required fields and specification/filter/search placement, and device brands/models.
+- Create/edit use only mapped attributes and a searchable manual device picker.
+  New products are drafts; no type or models are selected automatically. Category
+  and type changes warn; unrelated saved/local values are retained. Clear archives;
+  Restore is explicit. Inactive saved references stay visible for draft review.
+- Shared transactional validation covers create, metadata/attribute edits,
+  activation, CSV and duplication. Published products need an active matching type,
+  valid required values and, where required, at least one active selected device.
+  Reference changes cannot invalidate published classified products. Audit failure
+  rolls back new metadata changes. Legacy unclassified copy-only edits remain possible.
+- Product list offers separate **Needs compatibility review** and broader metadata
+  review filters. Types not requiring devices are not automatically compatibility
+  failures merely because their selection is empty.
+- Draft duplication retains classification, selected devices and retained attribute
+  values (including archived state); it never copies stock/reservations or orders.
+  It currently does not copy gallery images or colour variants.
+- CSV columns: `product_type_id` (ID or literal `null`), `device_model_ids` (JSON
+  array), `attribute_values` (typed JSON object). Omission preserves on update;
+  included blank metadata cells are rejected; `[]` clears devices, `{}` makes no
+  attribute edits, and per-key `null` archives. Export omits archived/out-of-scope
+  PAVs without deleting them. CSV dry-run records an import job and is **not** the
+  no-write historical migration preflight or proof that publication will succeed.
+- Storefront compatibility comes only from active selected device joins; attributes
+  come only from active matching type mappings and unarchived values. Authoritative
+  empty selections remain empty. PDP selectors no longer inject models; category
+  filters and both search feeds use projected data. Connection-outage marketing
+  fallback suppresses managed metadata. Missing schema is a deployment-readiness
+  error, not permission to revive static compatibility. Variant stock is not added.
+
+| Check | Actual Phase 3 evidence |
+|---|---|
+| Latest full suite, DB opt-ins disabled and `DATABASE_URL` empty | **1,034 tests: 954 pass, 0 fail, 80 skipped**, 0 cancelled. Includes 10 new pure fixture-isolation checks. This offline run does not supersede the separately completed SQL results or count SQL skips as passes. |
+| Metadata/rules/admin/backfill/sale-entry focused regression | **100 tests: 99 pass, 0 fail, 1 legacy-DB skip** |
+| Typecheck / production build | Pass; build retains the outside-repository lockfile warning |
+| Role / account / CMS boundary checkers | Pass: **108 Store Admin APIs; 21 account APIs + 11 pages**; commerce boundary intact |
+| Read-only settings checker | Pass: all settings tables readable, 114 notification cells; this is newer evidence than Phase 2's missing-table observation |
+| Legacy compatibility checker | Pass: 0 saved old-API references; **2/2 legacy media routes** resolve; 0 shared-media rows |
+| Offline notifications | **1 pass, 4 fail**; 102 templates render. Offline DB/provider readiness is not verified; no send/SMTP login attempted |
+| `npm audit` | **0 vulnerabilities** |
+| Whitespace / git | `git diff --check` passes (LF/CRLF notices); existing dirty tree preserved; no commits |
+| Real Phase 3 SQL tests | **12 passed, 0 failed, 0 skipped** after explicit database-test permission. Actual migration/service/duplicate tests ran only in the approved temporary schema; count/sequence assertions passed and schema cleanup was verified |
+| Real Phase 2 SQL tests (follow-up) | **15 passed, 0 failed, 0 skipped** in its approved temporary schema, including independent-session races and final insert-count assertions; cleanup verified |
+| Additional database follow-up batches | Safe legacy allowlist **120/120**; payment/shipping **10/10**; sale-boundary **10/10**, all zero skipped. These batch counts include their non-DB tests and must not be added to full-suite totals as unique tests |
+| Remaining legacy SQL / consolidated DB regression | **Not executed:** execution permission guard blocked the next batch pending fresh host-specific temporary-schema-write approval after context compaction. Remaining fixture batch contains **40 gated registrations**. Fixture isolation hardening is implemented; its SQL execution and hardened sale-boundary rerun remain unverified |
+| Browser acceptance | Not run. Playwright is not installed; no dependency was added |
+
+**Read-only historical backfill report.** Host:
+`aws-0-ap-northeast-1.pooler.supabase.com`. Schema 0051 is absent (49 missing
+schema items); apply is blocked. Proposed inserts: types **7**, type mappings
+**18**, brands **1**, models **7**, product/device joins **7**, audit **1**;
+products **12 updates**; PAV/history **0 writes**; conflicts **0**. Ten unrelated
+legacy values are reported and retained. Three unknown products remain untyped:
+`test-2026`, `test-item-xyz999`, `test-product`; the second also has unrecognized
+model evidence. Six products receive seven exact static selections—never broad
+phrases, model ranges or automatic all-model assignments. Existing reviewed-empty
+selections and manual joins are never refilled/overwritten.
+
+**File map:** schema `migrations/0051_product_types_compatibility.sql`; rules and
+planner `src/lib/catalog/product-metadata-{rules,backfill}.ts`; service/duplicate
+`src/lib/store-admin/product-{metadata,duplicate}.ts`; create/update/CSV modules
+`catalog-crud*.ts`, `catalog-writes.ts`, `catalog-{csv,transfer}.ts`; shared UI
+`ProductMetadataFields`, `ProductMetadataEditor`, `MetadataReferenceManager`,
+`ProductAttributes`; APIs `catalog/metadata/[kind]`, product `metadata` and
+`duplicate`; storefront `src/lib/catalog/storefront.ts`, `src/lib/storefront/catalog*.ts`,
+case/accessory PDPs, five accessory category pages and `/api/catalog/summary`.
+Tests: `product-metadata-{rules,admin,backfill}`, `catalog-metadata-csv`,
+`storefront-phase3`, `phase3-metadata-integration`, and `helpers/phase3-fixture`.
+Scripts: `migrate-product-compatibility.mjs`, `phase3-test-manifest.mjs`.
+
+**Rollout and forward-fix order:**
+1. Preserve a database backup and the current application artifact. Review earlier
+   pending migrations 0047–0050 independently; do not run the blanket migration
+   runner as a Phase 3 test. Review and separately authorize 0051 (six new RLS
+   tables, product/PAV columns, category/type FK, history trigger; removal only of
+   the old overly broad PAV public-read policy). No historical assignments in DDL.
+2. Run the approved private-schema SQL fixture before release. Generate its exact
+   host/count/digest manifest with `node scripts/phase3-test-manifest.mjs
+   --configured-hostname`. Approval must cover the current digest, not a prior
+   version. Production/public table writes and sequence advances are zero.
+3. After authorized schema installation, rerun `node
+   scripts/migrate-product-compatibility.mjs --dry-run`; obtain a separate approval
+   for the new actual counts/digest and store-owner actor before apply. The current
+   pre-schema digest is not apply approval. No new environment variables required
+   for normal app operation: server-side `DATABASE_URL` remains authoritative.
+4. Deploy only with schema ready. Review required flags before enforcing stricter
+   business rules: proposed initial historical mappings are optional. Check unknown
+   products manually; do not infer their types from category alone.
+5. Forward-fix mappings/values or revert the app artifact if needed. Retain additive
+   schema/history and data; do not roll back by deleting joins, PAVs or tables or
+   restoring the overly broad public policy. Coordinate old-app rollback because
+   older code does not enforce the new publication/scoping rules.
+
+**Manual acceptance still required:** create a draft case with no devices; select
+its type and verify only case attributes; select two exact models, save/reload,
+then publish; confirm only those models in PDP/filter/search. Change type/category
+and cancel/confirm the warning; return and verify values survived. Clear/restore a
+value, duplicate to a draft, CSV export/reimport multiple models and false/zero.
+Confirm required-value/device removal fails on a published product, empty optional
+compatibility hides its block, viewers cannot write, and owner reference changes
+cannot invalidate a published product. Verify authoritative-empty behavior and
+outage handling in a safe environment. No browser or real SQL round-trip claim is
+made beyond the specific approved SQL fixture coverage above; real CSV/browser
+persistence still needs acceptance. Education Store, Phase 4 stock and Phase 5
+coupons untouched.
+
+### Phase 2 — receipts, refunds and invoices — 2 November 2026
+
+**Implemented in the working tree; not deployed and not fully acceptance-verified.**
+The older evidence above remains historical. No production migrations or order
+mutations were performed for this phase. Real SQL transaction tests remain pending
+because the finalized fixture manifest adds one rolled-back refund request beyond
+the approved count; the expanded scope was not executed at that handoff.
+**Follow-up after explicit full database-test permission:** the finalized Phase 2
+fixture has now run successfully: **15 passed, 0 failed, 0 skipped**, including
+invoice/refund races, rollback, and all declared row/sequence counts. Its temporary
+schema was removed and verified absent. The historical table below records the
+original handoff, not this later SQL result.
+
+| Check | Actual result on 2 November 2026 |
+|---|---|
+| Full `npm test`, all DB write opt-ins disabled | **958 tests: 879 pass, 0 fail, 79 skipped**, 0 cancelled. Skips are not passes. |
+| Document policy / renderer / shipment focused run | **28 pass, 0 fail, 0 skipped**; policy includes 720 status/fact combinations. |
+| Refund lifecycle / return rules focused run | **48 pass, 0 fail, 0 skipped**; lifecycle uses transaction mocks, not a real DB. |
+| Real SQL Phase 2 suite | **Not executed**. Default run proves manifest determinism and rejection before connection; transaction suite is skipped. |
+| `npm run typecheck` / `npm run build` | Both pass. Build warns about an outside-repository lockfile; no root configuration changed for that warning. |
+| Account / Store Admin / CMS boundary checkers | Pass: **21 account APIs + 11 pages**, **105 Store Admin routes**, commerce boundary intact. |
+| Read-only settings checker | **Fails on missing `bill_request_reasons`**: migration 0049 is intentionally unapplied. Other existing settings tables are readable; 114 notification cells. |
+| Legacy compatibility checker | 0 saved old-API references in each of the three scanned integration sources; **2/2** local legacy media routes resolve; 0 shared-media rows available for live checking. |
+| Offline notifications | **102 templates render** without unresolved placeholders/secrets. Readiness summary **1 pass, 4 fail/unverified**; no DB/SMTP connection or message send in offline mode. |
+| Running production-app authorization smoke | Customer receipt and staff invoice redirect unauthenticated requests (**307**); bill-request and refund-resolution APIs reject unauthenticated same-origin POSTs (**401**). **4/4 expected responses**; no real order mutation. |
+| `npm audit` | **0 vulnerabilities** across all dependencies. |
+
+**Behavior and scope**
+
+- Shared policy keeps payment, order, shipment and refund status independent.
+  Pending/verifying/review/failed/cancelled payments get status-only documents,
+  not paid bills. Captured payment history is retained after cancellation.
+- Paid, active, unshipped orders offer an owner-only **Request bill** flow with
+  an active managed reason or bounded Other text. Durable throttling, reason
+  snapshots and idempotency unlock **Bill / Payment receipt — invoice follows
+  on shipment**. Staff can see the saved request.
+- New shipments (`ON_THE_WAY`) and direct-delivered POS sales allocate a unique,
+  sequential invoice reference and database issue time in the same transaction.
+  Retries reuse it; later prefix edits cannot rename it. Existing shipped orders
+  have explicit legacy wording, not invented issue times or silent backfill.
+- Manual refunds now have immutable initiation and terminal history. Completion
+  requires a reference for every method. Pending reservations count toward capture
+  and return caps without prematurely writing completed refunds or restoring
+  coupons/closing returns. Completion preserves the existing financial side effects.
+- Customer/staff documents, order detail/quick-view, result summaries, POS and
+  relevant notification context use the shared policy. Issued invoices retain their
+  identity after cancellation/refunds and show the current stamp and amounts.
+  Packing slips remain fulfilment documents. POS voids are not paid receipts.
+- Existing non-GST wording remains; no tax calculation, credit-note workflow,
+  payment-provider refund API, attachment pipeline or receipt pop-up was invented.
+  Education Store and Phases 3–6 are outside this phase.
+
+**Phase 2 file map**
+
+| Area | Implementation |
+|---|---|
+| Shared policy / authoritative facts | `src/lib/orders/document-policy.ts`, `src/lib/orders/document-data.ts` |
+| Invoice allocator / milestones | `src/lib/orders/invoice.ts`, `src/lib/store-admin/orders.ts`, `src/lib/store-admin/pos.ts` |
+| Bill requests / reason management | `src/lib/account/bill-requests.ts`, account `bill-request/route.ts`, `RequestBillForm.tsx`, `setting-lists.ts`, Settings → Reasons |
+| Refund lifecycle / APIs / staff UI | `src/lib/store-admin/refund-lifecycle.ts`, `returns.ts`, order/return refund APIs, new `refunds/[id]/route.ts`, `RefundForm.tsx` |
+| Shared document renderer | `src/components/orders/OrderDocument.tsx`, `DocumentHeader.tsx`; customer receipt, staff invoice and POS receipt callers |
+| Schema | `migrations/0049_order_documents.sql`, `migrations/0050_refund_lifecycle.sql` |
+| Pure / mocked tests | `tests/document-policy.test.mjs`, `tests/order-documents.test.mjs`, `tests/refund-lifecycle-unit.test.mjs`, `tests/fulfilment-pickup.test.mjs` |
+| Real SQL harness (pending execution) | `tests/phase2-documents-integration.test.mjs`, `tests/helpers/phase2-fixture.mjs`, `scripts/phase2-test-manifest.mjs` |
+| Decisions / release gates / manual checks | `PHASES_NOTES.md` |
+
+**Release gate:** take a backup, verify the existing migration ledger, then apply
+outstanding migrations in order (existing 0047/0048 prerequisites before new
+0049/0050). This was **not run** during implementation. The migration runner applies
+*all* pending SQL, so do not use it as a test. Run the explicitly approved isolated
+SQL tests and authenticated manual checklist in `PHASES_NOTES.md` before release.
+New tables enable RLS with no policies and use server-side `DATABASE_URL` only.
+No new environment variables are needed in the app; test flags are opt-in only.
+Do not roll back by deleting invoice/refund history; stop affected writes and use
+a reviewed forward fix. No historical invoice backfill is authorized.
+
 ---
 
 ## 0. What “live” means in this document
@@ -91,31 +544,31 @@ Browser
   ├── Customer account  (/account, /auth) ─────► users / user_sessions / orders / customer_addresses / order_requests
   │
   ├── Store admin  (/store-admin) ─────────────► store_admins / store_admin_sessions  (cookie store_admin_session)
-  │        └── 86 API routes, each requireStoreRole(...); owns products, collections, orders, customers
+  │        ├── guarded APIs: products, collections, orders, customers
+  │        └── Website: content_blocks, site_settings; shared store_media library
   │
-  └── Legacy CMS admin (/admin) ───────────────► admin_users / admin_sessions  (cookie admin_session)
-                                                   edits content_blocks (design/marketing only), theme, shared media
+  └── Legacy /admin bookmarks ──308──► Store Admin Website
+           /api/admin/* ──410──► moved message (public media GET retained)
 ```
 
-**The admin boundary (Phase 0).** The legacy CMS may edit layout, copy, imagery and
-theme. It may not accept a product id, name, price, cost, SKU, stock, discount, order,
-customer or shipping value; `/api/admin/content` rejects such a payload through
-`validateLegacyContentWrite()` and `scripts/check-admin-boundary.mjs` proves it. Product
-and merchandising data is written only by Store Admin. The Education Store (`edu.*`) is
-exempt and untouched. See `PHASE0-AUDIT.md` for the full field-by-field audit.
+**The content boundary (Phase 0, retained in Website).** Website edits layout, copy,
+imagery and theme, not product ids, prices, costs, SKUs, stock, discounts, orders,
+customers or shipping data. `/api/store-admin/website/content/[key]` calls
+`validateLegacyContentWrite()` and `scripts/check-admin-boundary.mjs` checks that
+boundary. Commerce remains in Store Admin's commerce modules. Education (`edu.*`)
+keeps its existing exemption and storefront implementation unchanged.
 
-Two independent admin identities exist and must never be mixed:
+**One active staff login.** Commerce and Website both use `store_admins`,
+`store_admin_sessions` and `store_admin_session`, with roles
+`store_owner` ⊇ `store_admin` ⊇ `store_viewer`. Website writes are **owner-only**;
+other roles may read. Optional TOTP enrolment is under My profile → Security.
+Customer identity (`users` / `user_sessions`) remains completely separate.
 
-| | Store admin | Legacy CMS admin |
-|---|---|---|
-| Tables | `store_admins`, `store_admin_sessions` | `admin_users`, `admin_sessions` |
-| Cookie | `store_admin_session` | `admin_session` |
-| Login | email + password (bcrypt, 10 rounds) | email + password + optional TOTP |
-| Purpose | running the shop | editing marketing content |
-| Roles | `store_owner` ⊇ `store_admin` ⊇ `store_viewer` | single editor role |
-
-Customer identity is a third store: `users` / `user_sessions`, with a separate cookie and
-separate validation code.
+The old `admin_users` / `admin_sessions` tables are retained untouched, not dropped
+or blanked. Legacy login APIs no longer issue sessions. Legacy UI/auth source and
+the one-off migration script are still retained for rollback until the manual
+owner/migrated-account verification gate in `MERGE_PLAN.md` is confirmed. This is
+an in-progress retirement, not a claim that the final code-removal step is done.
 
 ---
 
@@ -129,16 +582,17 @@ separate validation code.
 - **How it works:** `src/lib/content.ts` reads `content_blocks` rows by key. It tries the
   Supabase REST endpoint first (`NEXT_PUBLIC_SUPABASE_*`, read-only, publishable key) and
   falls back to a direct `DATABASE_URL` query if REST fails. A database row **overrides**
-  the defaults baked into code, so editing the content collection in `/admin` changes the
+  the defaults baked into code, so editing the collection in Store Admin → Website changes the
   page even though the JSON in the repo is unchanged. Archived rows (`archived_at`) are
   ignored, so a collection can be reverted without deleting it.
 - **Current data:** 6 content blocks exist (`apple.footer`, `apple.gallery`,
   `apple.hero_tiles`, `apple.hero_video`, `apple.promo_section`, `apple.ribbon`).
-- **Caveat:** this is the legacy CMS path, not the new store-admin settings. There is no
-  store-admin screen that edits homepage content. The homepage has no product carousel
-  today; `product_collections` and `src/lib/storefront/collections.ts` are ready for the
-  first rail when collections are wired in a later phase, but no storefront component
-  consumes them yet (Phase 1 explicitly left collections alone).
+- **Editing:** Store Admin → Website → Content edits marketing overrides; Website →
+  Theme edits global font, homepage UI mode and the homepage copyright override.
+  The Gadzio hero and other hard-coded marketing copy listed in `MERGE_PLAN.md`
+  remain outside this editor. Marketing product cards do not write catalogue prices.
+  `product_collections` is a separate commerce merchandising source; this migration
+  does not wire a new storefront collection consumer.
 
 ### 2.2 Accessory category pages — 🟢 Live (database catalogue)
 
@@ -290,7 +744,8 @@ separate validation code.
      transition. A duplicate callback cannot double-mark an order paid. On the first
      verified PAID transition, `auto_confirm` and `default_fulfilment_status` are applied
      as legal `order-rules.ts` steps, each recorded in `order_status_history` with actor
-     `system`.
+     `system`. Automation stops at `PROCESSING` (Preparing); courier pickup and delivery
+     require explicit staff actions, even if a legacy default selected a later status.
   9. A verified failure or cancellation releases the stock claim once, through the movement
      ledger (`sale` minus `release`), so duplicate callbacks and reconcile runs cannot
      release twice. An admin cancelling an unpaid order releases too; cancelling a paid
@@ -310,6 +765,54 @@ separate validation code.
       the notification outbox and, when retention is switched on, scrubs old finished
       message bodies (§3.6). The production scheduler must POST this endpoint **every
       minute** with `CRON_SECRET`; it fails closed (503) when the secret is unset (§2.14).
+- **Callback test seams and simulator (2026-11-02):** `processPayUCallback` and
+  `verifyOrderWithPayU` accept a caller-owned SQL connection, verifier, reservation
+  policy and `sideEffects: false`. Reads, review flags, transitions and timeline rows
+  stay on that connection; notifications, global audit writes (including late-capture
+  audits inside the transition wrapper) and cache invalidation are suppressed only
+  when explicitly requested in-process. Production callers retain all defaults; no
+  HTTP field enables a verifier override.
+  - `scripts/simulate-payu-callback.mjs` constructs signed success/failure/cancel/pending,
+    duplicate, out-of-order and invalid-amount/unknown-reference POSTs. It is dry-run
+    by default; `--send` requires disposable test orders. Live-mode execution is
+    refused. Secrets, payloads and signed redirect links are never printed. The
+    receiving server still verifies with PayU: synthetic success alone cannot pay.
+  - Evidence: processor seam + pricing + reservation-rule suites: **30 passed,
+    0 failed, 0 skipped**. Typecheck and store-admin/account/boundary guards passed.
+    Four new real-SQL cases in `tests/payu-callback-integration.test.mjs` are **not
+    executed** pending explicit database-test approval; opt in with
+    `RUN_PAYU_CALLBACK_INTEGRATION=1` and an explicitly supplied `DATABASE_URL`.
+    They use a throwaway schema, local sequences and the real timeline migration,
+    covering duplicates, late capture, gateway-id reuse and append-only/RLS rules.
+    The notification checker reported **3 passed / 5 failed** due to unconfigured
+    mail/SMS and disabled notification matrix cells; no message was sent.
+- **Missed-return customer recovery (2026-11-02):** checkout now handles
+  `reservation_active` with a validated existing-payment link and expiry rather
+  than only a generic error. Owners can explicitly POST a payment check from the
+  status/processing page; summary-token visitors cannot authorize this action.
+  The endpoint checks ownership before PayU, applies process-local account/order
+  rate limits, and uses the same atomic settlement as staff verification with
+  honest `customer` audit/timeline attribution. Pending/outage results never
+  count as paid; customer checks do not extend the current active hold. Effective
+  PAID consumes the hold, and recovery success navigation preserves a newer bag.
+  Verification needs gateway credentials but no valid browser-return origin;
+  initiation still requires an explicit validated origin and production HTTPS.
+  - Migration `0048_customer_payment_verification.sql` extends only the timeline
+    source constraint. It has **not been applied**; customer timeline writes
+    require this migration after 0047. Append-only triggers and RLS are unchanged.
+  - Focused recovery/processor/pricing/reservation/sale suite: **75 passed,
+    0 failed, 4 database integration tests skipped**. API guard coverage includes
+    dependency-injected service tests, the real origin guard, and static route
+    wiring checks; frontend tests are pure helpers/source guards, not browser E2E.
+    Typecheck, account/store-admin/boundary checks and `git diff --check` passed
+    (Git emitted only line-ending warnings).
+  - Operational verification is **incomplete**: starting Next on port 3001 failed
+    because Next detected an existing dev process on port 3000; HTTP probes to
+    localhost, IPv4/IPv6 loopback and the reported LAN address were refused. No
+    existing process was stopped. The `.env.local` return-origin edit was blocked
+    pending explicit approval, so the expired tunnel origin remains configured.
+    No production build, real sandbox payment, actual order recovery, database
+    migration or database integration run was performed for this repair.
 - **No other payment method exists.** There is no cash-on-delivery path, no manual bank
   transfer path and no wallet. `payment_methods` in settings is not consulted, and
   `cod_enabled` ships off because checkout has no payment-method selector.
@@ -470,7 +973,7 @@ does not exist.
 |---|---|---|
 | `order_prefix` + `order_start_number` (Orders) | ignored; ids were `GDZ{time}{rand}` | new online orders get the prefix plus a 6-digit number from `order_number_counters` (migration `0034`), and that number **is** the `txnid`. Empty prefix keeps the old random id and leaves `order_number` NULL. Existing orders are untouched and never renumbered. |
 | `invoice_prefix` (Orders) | invoice printed the `txnid` | invoices print `invoice_prefix` + the padded order number; legacy orders still print `txnid`. |
-| `auto_confirm` + `default_fulfilment_status` (Orders) | ignored; a paid order stayed `PENDING` | on the first verified PAID transition the order walks legal `order-rules.ts` steps up to the configured status (auto-confirm lifts `PENDING` to at least `ACCEPTED`). Each step writes `order_status_history` with actor `system`. Invalid or `CANCELED` defaults mean “stay `PENDING`”. |
+| `auto_confirm` + `default_fulfilment_status` (Orders) | ignored; a paid order stayed `PENDING` | on the first verified PAID transition the order walks legal `order-rules.ts` steps up to the configured status, capped at `PROCESSING` (Preparing); auto-confirm lifts `PENDING` to at least `ACCEPTED`. Each step writes `order_status_history` with actor `system`. Invalid or `CANCELED` defaults fall back to `PENDING` before auto-confirm. Legacy pickup/delivered defaults are capped without rewriting settings or existing orders. |
 | `auto_cancel_unpaid_hours` (Orders) | reconcile used a hard-coded 2-hour cutoff and wrote no audit row | reconcile cancels unpaid orders older than the configured hours with a system reason, releases their stock claim once and writes an `order.auto_cancel` audit row. `0` or empty keeps the 2-hour abandoned-checkout rule. |
 | `return_window_days` (Orders) | hard-coded 7 | the account return window and its error message use the configured value; 7 when unset, empty or invalid. |
 | `shipping_enabled`, `free_shipping_over`, `shipping_methods` (Shipping) | ignored; PayU charged the cart subtotal | initiate quotes shipping server-side: disabled → free; store-wide free-over reached → free; otherwise the first active method (sort order, then name), using its own free-over or rate. The quote is stored as `orders.shipping_paise` and charged by PayU. The cart’s existing Shipping row shows the same figure. |
@@ -1028,8 +1531,8 @@ stored and editable but **nothing read them**; the storefront had no maintenance
   `/privacy` and `/terms` stay reachable on purpose. The Education Store is untouched.
 - **Badge.** `SCHEDULED` means the toggle is on and the start is still in the future; a
   window that has already ended shows `OFF`.
-- **What always works.** `/store-admin` and `/api/store-admin/*`, `/admin` and
-  `/api/admin/*`, every PayU callback (`success`, `failure`, `cancel`, `webhook`,
+- **What always works.** `/store-admin` and `/api/store-admin/*`, public media
+  (including `/api/admin/media/*`), every PayU callback (`success`, `failure`, `cancel`, `webhook`,
   `reconcile`), the order result pages (`/order/success|failed|cancelled|processing|status`),
   `/api/media/*`, `/maintenance`, `_next`, favicon, robots and static assets. An
   in-flight payment therefore settles and shows its result; `tests/maintenance-integration.test.mjs`
@@ -1164,6 +1667,45 @@ money breakdown, payment history, delivery, notes, status history and the action
 
 Status transitions are validated by `order-rules.ts`; illegal jumps are refused server
 side, not just hidden in the UI.
+
+#### Courier pickup and shipment visibility — implemented 2026-11-02
+
+The Fulfilment panel shows the complete workflow:
+**Pending → Accepted → Preparing → Pickup done / In transit → Delivered**.
+These labels reuse `PENDING → ACCEPTED → PROCESSING → ON_THE_WAY → DELIVERED`;
+there is no new database status or migration. Pickup here means courier collection
+from the store, not customer store pickup. Self delivery uses **Dispatched / Out for
+delivery** and **Mark dispatched** instead.
+
+- Staff can take only the next legal step: **Accept order**, **Start preparing**,
+  **Mark pickup done**, then **Mark delivered**. Acceptance still requires payment
+  `PAID`. Viewers see read-only progress. Cancellation is separate, requires a reason,
+  and remains owner-only after pickup.
+- Before pickup, use **Prepare shipment** to save method, courier name, required
+  tracking number, optional HTTPS tracking link, expected delivery date and slot
+  (or the existing delivery-person fields for self delivery). Saving does **not**
+  mark pickup. The pickup action requires valid, persisted delivery details.
+- The admin Shipment summary, signed-in customer order detail/live payload and
+  owner-visible `/order/status` reveal shipment metadata only from pickup onward.
+  Preparing a tracking label alone does not expose it. Fulfilment history preserves
+  shipment visibility after a later cancellation; payment history cannot prove pickup.
+  Shipping address and charges remain available before pickup. Summary-token visitors
+  remain summary-only, and customer snapshots omit private delivery-person contacts.
+- Existing recorded pickup/dispatch time is shown in the admin summary when present;
+  no historical timestamp, carrier event, live tracking integration or ETA is invented.
+- Paid-order automation stops at **Preparing**, including legacy later defaults.
+  Settings only offer Pending, Accepted and Preparing for automation. Existing orders
+  and stored defaults are not rewritten. Shipped/delivered notification mappings stay
+  tied to their existing fulfilment transitions.
+
+**Verification:** `npm run typecheck` passed; 110 focused tests passed across pickup,
+shared order rules, automation/settings, customer shipment/live snapshots, notifications,
+tracking templates and payment-recovery/processor regression tests. Account route checks
+(20 APIs / 11 pages), store-admin route checks (104 routes), the admin boundary check and
+CRLF-aware diff whitespace check passed. Local HTTP smoke reached the status page (200),
+redirected unauthenticated admin/customer order pages to sign-in (307), and rejected an
+unauthenticated pickup request (401). No actual order transition, real notification or
+SQL integration test was performed; the authenticated end-to-end workflow is untested.
 
 #### Tracking links — 🟢 Live
 `/store-admin/orders/[txnid]/delivery` accepts a courier name and tracking number. If no
@@ -1628,34 +2170,47 @@ lists/revokes their own sessions. Available to every role.
 
 ---
 
-## 4. Legacy CMS admin (`/admin`)
+## 4. Store Admin → Website (legacy CMS replacement)
 
-| Screen | Route | Status | Notes |
-|---|---|---|---|
-| Login | `/admin/login` | 🟢 Live | Email + password, optional TOTP |
-| Dashboard | `/admin` | 🟢 Live | Shows how many content collections have database overrides |
-| Content editor | `/admin/content/[key]` | 🟢 Live | Design/marketing `content_blocks` for homepage, OPPO, Education Store, cases. Commerce-shaped fields are rejected. |
-| Theme | `/admin/theme` | 🟢 Live | Theme settings read by `app/layout.tsx` |
-| Security | `/admin/security` | 🟢 Live | TOTP setup/enable/disable |
-| Media | `/api/admin/media` | 🟢 Live | Uploads into the shared `store_media` source; `/api/media/<id>` resolves it |
+| Screen | Route | Access / behaviour |
+|---|---|---|
+| Website overview | `/store-admin/website` | All staff; saved override metadata and links to shared Media/Audit |
+| Content | `/store-admin/website/content/[key]` | All staff read; owner saves/resets; marketing content only |
+| Theme | `/store-admin/website/theme` | All staff read; owner saves/resets; global layout revalidation |
+| Security | `/store-admin/profile#security` | Own TOTP enrolment, backup codes and password-confirmed disable |
+| Media | `/store-admin/media` | Shared library, with image/video picker in Website fields |
 
-This panel is functional but **separate** from the store admin. It cannot see orders,
-products, customers or settings, and the store admin cannot see content blocks. The
-storefront reads whatever this panel writes — but only for design/marketing content.
+Content resets archive `content_blocks` rows, and theme resets archive `site_settings`;
+neither deletes values. Writes enforce same-origin, role checks and audit logging
+without copying full content or secrets into audit rows. Content writes retain
+`validateLegacyContentWrite()` and the `edu.*` exemption.
 
-**Boundary rules (Phase 0)**
+The editor follows the current storefront, not removed OPPO components. Old-UI-only,
+unreachable and nonconsumed fields are labelled or removed from the editable schema;
+stored rows are not rewritten. Gadzio section prefills share the components' fallback
+values. Crowd Favorites uses display-only `priceDisplay`, with old `price` values
+still readable by the storefront; it is not a catalogue price-editing path.
+Footer copyright stays in Content, with the Theme field explicitly a homepage override.
+Settings → Pages & SEO is labelled as not consumed by the storefront and links here.
 
-- `/api/admin/content` runs `validateLegacyContentWrite()` before every save. A payload
-  carrying `price`, `cost_paise`, `sku`, `variants`, `product_id`, `stock`, `discount`,
-  `order_id`, `customer_id`, `shipping_method` or similar anywhere in a non-Education
-  block is refused with the offending path. `edu.*` is exempt by rule.
-- Removing a content override **archives it** (`archived_at = now()`), it does not delete
-  the row. Saving the block again clears the archive, so every edit is reversible.
-- The legacy media picker writes `store_media`, the same table and bucket Store Admin →
-  Media uses; existing `/api/admin/media/<id>` URLs still resolve, including legacy
-  `bytea` rows.
-- `scripts/check-admin-boundary.mjs` fails the build check if any of the above regresses
-  or if the legacy tree references `product_collections`.
+**Legacy bookmark compatibility**
+
+| Old path | Result |
+|---|---|
+| `/admin` | 308 → `/store-admin/website` |
+| `/admin/login` | 308 → `/store-admin/login?next=/store-admin/website` |
+| `/admin/content/:key` | 308 → `/store-admin/website/content/:key` |
+| `/admin/theme` | 308 → `/store-admin/website/theme` |
+| `/admin/security` | 308 → `/store-admin/profile#security` |
+| Other `/admin/*` | 308 → Website overview |
+| Retired `/api/admin/*` | 410 plain moved message, `Cache-Control: no-store`; fixed route/status hit events |
+| `GET /api/admin/media/:id` | Retained: shared media first, legacy storage/bytea fallback |
+| `GET /api/media/:id` | Retained: nonarchived shared media |
+
+The old UI/auth source is not deleted yet: manual owner content/theme round trips and
+migrated-account password/TOTP sign-in must be confirmed first. No session is created
+programmatically to bypass that gate. Old credential tables remain untouched; their
+backup, credential blanking and eventual removal require a separate approved task.
 
 ---
 
@@ -1741,7 +2296,7 @@ These are deliberate gaps, not bugs.
 |---|---|
 | Database access | Server-side only, `DATABASE_URL`, `postgres` tagged templates. The Supabase publishable key is used **only** for read-only `content_blocks`. |
 | RLS | Enabled on `users`, `user_sessions`, `orders` (migration `0013`), `product_collections` (`0033`), `order_number_counters` (`0034`), `notification_outbox` (`0035`), `waiting_list_entries`, `stock_reservations`, `refund_obligations` (`0037`), `sale_settings` (`0039`) and `coupons`, `coupon_targets`, `coupon_redemptions` (`0041`). Every table created since ships with RLS enabled in its own migration file, with no policies. |
-| Admin identities | Three completely separate stores: customer (`users`), store staff (`store_admins`), legacy CMS (`admin_users`). No cookie or session table is shared. |
+| Admin identities | One active staff store (`store_admins`) for commerce + Website; customer (`users`) stays separate. Old CMS tables/source are retained pending the documented removal gate, with legacy login APIs disabled. |
 | Role checks | Every store-admin API route calls `requireStoreRole(...)`; verified by `scripts/check-store-admin-routes.mjs`. |
 | CSRF | `assertSameOrigin(request)` on every mutating store-admin route and on account request routes. |
 | Audit | `store_admin_audit` is append-only at the database level (trigger). PII is masked; IP and user agent are hashed. |
@@ -1785,7 +2340,7 @@ Panels:
 - Storefront — `http://localhost:3000/`
 - Store admin — `http://localhost:3000/store-admin/login`
 - Customer account — `http://localhost:3000/auth`
-- Legacy CMS — `http://localhost:3000/admin/login`
+- Website — `http://localhost:3000/store-admin/website` (old `/admin/login` redirects to Store Admin login)
 
 Note: the session pooler allows 15 clients. A running `next dev` plus ad-hoc scripts can
 exhaust it; keep script connection pools at `max: 1`.
@@ -1820,13 +2375,54 @@ exhaust it; keep script connection pools at `max: 1`.
 | Store-admin auth | `src/lib/store-admin/auth.ts`, `src/app/api/store-admin/auth/*` |
 | Store-admin data | `src/lib/store-admin/*` |
 | Collections | `src/lib/store-admin/collections.ts`, `src/lib/store-admin/collection-rules.ts`, `src/lib/storefront/collections.ts`, `src/lib/storefront/collections-rules.ts`, `src/components/store-admin/CollectionManager.tsx` |
-| Admin boundary | `src/lib/admin/boundary.ts`, `scripts/check-admin-boundary.mjs`, `scripts/migrate-cms-products.mjs`, `src/lib/admin/cms-product-migration.ts`, `PHASE0-AUDIT.md` |
+| Admin boundary | `src/lib/website/boundary.ts`, `scripts/check-admin-boundary.mjs`, `scripts/migrate-cms-products.mjs`, `src/lib/catalogue/product-import.ts`, `PHASE0-AUDIT.md` |
 | Store-admin pages | `src/app/(store-admin)/store-admin/**` |
 | Store-admin APIs | `src/app/api/store-admin/**` |
 | Settings engine | `src/lib/store-admin/settings-rules.ts`, `setting-lists.ts`, `notification-settings.ts`, `secret-status.ts` |
 | Notifications | `src/lib/notifications/{types,rules,templates,settings,enqueue,queue,outbox,providers,order-context,stock-events}.ts`, `src/app/api/store-admin/settings/notifications/retry/route.ts`, `src/components/store-admin/{NotificationMatrix,NotificationRetryButton}.tsx`, `migrations/0035_notification_outbox.sql` |
 | Payment review flag | `src/lib/store-admin/payments.ts`, `src/app/api/store-admin/payments/review-flag/route.ts`, `src/components/store-admin/PaymentReviewFlagActions.tsx`, `migrations/0036_order_payment_review.sql` |
 | Audit | `src/lib/store-admin/audit.ts`, `audit-log.ts`, `migrations/0010_store_admin_auth.sql` |
-| Legacy CMS | `src/app/(admin)/admin/**`, `src/app/api/admin/**`, `src/lib/admin/*` |
+| Website + compatibility | `src/app/(store-admin)/store-admin/(protected)/website/**`, `src/app/api/store-admin/website/**`, `src/lib/website/*`, `src/app/api/admin/**`; old UI/auth source retained pending removal |
 | Database | `migrations/*.sql` |
 | Tests | `tests/*.test.mjs` |
+
+---
+
+### Product options Phase 0 audit — 4 November 2026
+
+Read-only product audit completed against `PRODUCT_OPTIONS_FINAL_PLAN.md`; no migration, seed, backfill, real business-table write, disposable-fixture write, product implementation change, push, or destructive git operation was performed. Existing source work was secured in local checkpoint `77c7dcf` on `backup/product-options-phase0-20261104`; documentation is saved separately. Public remote push is deferred for explicit publication confirmation. Findings are recorded in `OPTIONS_NOTES.md`. The referenced `PRODUCT_EDITOR_FINISH.md` and obsolete simple plan are absent.
+
+**Database read-only evidence**
+
+- Hostname only: `aws-0-ap-northeast-1.pooler.supabase.com`.
+- Applied migration ledger: `0001` through `0057`, including `0055_variant_identity_retirement.sql`, `0056_product_content_revisions.sql`, and `0057_catalog_edit_revision.sql`. No unapplied migration was found.
+- Product preflight: all expected Phase-B columns/indexes present; all reported conflict groups were zero.
+- Census: 15 products; 36 variants (1 purchasable, 3 regular price overrides, 0 sale overrides); 1 device brand/1 model; 23 live images; 89 price-history rows; 15 parent stock rows and 0 variant stock rows; 49 order items with 0 variant snapshots; 8 active reservations; 37 product facets and 0 colour facets.
+- Existing disposable namespaces were listed read-only only; none was adopted or removed. The inventory census found one candidate with a tracked parent balance and three active variants; no allocation was proposed or applied.
+
+**Checks run**
+
+| Check | Result |
+|---|---|
+| `npm test` | **1,532 tests: 1,445 passed, 4 failed, 83 skipped; 0 cancelled**. Exit 1. The four failures are source-contract assertions in `payment-recovery.test.mjs:85` and `stock-behaviour.test.mjs:230,262,319`; their runtime significance has not been resolved in this read-only phase. DB-opt-in tests were skipped, not passed. Full output: `.tmp-phase0-tests.txt`. |
+| `npm run typecheck` | Passed. |
+| `npm run build` | Passed with the existing external-lockfile warning; 25 static pages generated. |
+| `node scripts/check-store-admin-routes.mjs` | Passed: 115 routes guarded. |
+| `node scripts/check-account-routes.mjs` | Passed: 21 account APIs and 11 pages guarded. |
+| `node scripts/check-admin-boundary.mjs` | Passed. |
+| `node scripts/check-setting-lists.mjs` | Passed: all settings/list tables readable. |
+| `node scripts/check-notifications.mjs` | 3 passed / 5 failed; no message sent. Failures are missing provider configuration and notification matrix settings, not product-option code. |
+| `node --env-file=.env.local scripts/check-legacy-admin-compat.mjs` | Passed: 2/2 media routes; zero stored old-admin references. |
+| `node scripts/catalog-parity.mjs` | Failed (exit 2): static `Midnight Black` colour has no matching database variant; also reports two price drifts and specification differences. No data repair applied. |
+| `npm audit --json` | Passed: 0 vulnerabilities. |
+| `git diff --check` | No whitespace errors; Git emitted only existing line-ending warnings. |
+
+**Phase 0 conclusion:** stable variant identity, database-authoritative option pricing resolution, exact variant stock/payment plumbing, retirement/replacement, and availability infrastructure exist substantially. Shared colours, colour reconciliation, bulk model/colour import/export, unified options/price/stock table, unlocked option price writes, paired option history UI, colour photos, two-step selector, URL state, option-derived model/colour filters/counts, colour-aware search/cards, and structured model/colour/photo order snapshots remain incomplete. No product code was changed in this phase.
+
+**User decisions confirmed (4 November 2026)**
+
+1. Store admins may create a model/colour inline (create only); owners alone rename, deactivate and manage.
+2. Paste/CSV imports are capped at **500 rows and 256 KB**, not the plan's suggested larger limit.
+3. Price drops over 50%, rises over 100%, or prices below cost require confirmation, never a block.
+
+**Remaining Phase 0 gates:** approve public remote publication for the backup; retain and investigate the four failing baseline tests. No Phase 1 implementation or DB-backed fixture acceptance is claimed.

@@ -134,6 +134,52 @@ The Gadzio platform includes a production-grade, secure integration of **PayU Ho
 
 ---
 
+### Local sandbox returns and missed-return recovery
+
+For browser testing on the same machine, use an explicit development origin in
+`.env.local` (never commit this file):
+
+```env
+PAYU_ENV=test
+APP_BASE_URL=http://localhost:3000
+```
+
+Start with `npm run dev -- --port 3000`. If that port is occupied, choose another
+port and set **both** the command and `APP_BASE_URL` to that port. Restart Next.js
+after changing the configuration. Production still requires a public HTTPS
+origin; callback destinations never come from request Host headers.
+
+- Localhost browser returns work only from the same machine. PayU's servers cannot
+  deliver webhooks to your localhost. Actual PayU sandbox acceptance of a localhost
+  return must be checked with a sandbox walkthrough; if rejected, use a reachable
+  public HTTPS tunnel instead.
+- A Cloudflare quick-tunnel hostname changes when its tunnel restarts. An expired
+  hostname can produce `DNS_PROBE_FINISHED_NXDOMAIN` before this app receives any
+  return. Configure the current tunnel origin and keep the tunnel running.
+- Existing PayU attempts retain their originally submitted return URLs. Updating
+  `APP_BASE_URL` fixes **new attempts**, not the return URL of an old payment.
+- If checkout reports an existing reservation, use **View existing payment status**
+  and, while signed in as the order owner, **Check payment status**. This explicit
+  POST verifies with PayU and uses the shared atomic settlement path; it never
+  starts another charge or extends the existing reservation window. Success is
+  shown only for effective stored `PAID` status. Recovery keeps a newer bag intact.
+  GET refreshes remain read-only. If verification is unavailable, do not pay again
+  merely because the browser return failed.
+- Customer checks have process-local account/order rate limits and sanitized audit
+  attribution. Deploy migration `0048_customer_payment_verification.sql` after
+  `0047_payment_events.sql` using the approved migration procedure before relying
+  on customer timeline attribution; neither migration is applied by the UI.
+- Staff can use the existing order **Verify with PayU** action for authorized
+  recovery. Do not manually set PAID, remove a hold blindly, or use the legacy
+  `scripts/reconcile-orders.mjs` direct-update script for this recovery. The current
+  `/api/payu/reconcile` endpoint uses the shared settlement/reservation machinery.
+
+Focused recovery tests (mocked gateway and SQL doubles, no real payment):
+
+```bash
+node --test tests/customer-payment-verification.test.mjs tests/payu-local-recovery.test.mjs tests/payu-processor-seams.test.mjs tests/payment-recovery.test.mjs
+```
+
 ### How to Run Tests
 
 1. **Cryptographic Hash Unit Tests**:

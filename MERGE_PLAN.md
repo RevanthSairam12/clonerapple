@@ -1,8 +1,9 @@
 # MERGE_PLAN — retire the legacy `/admin` panel into Store Admin → **Website**
 
-Status: **Phase A complete — awaiting answers to questions (a)–(h) in §10.**
-No application code has been changed. The only new files are this plan and a read-only
-counting script that will be deleted before Phase B.
+Status: **Phase B underway — steps 0–6 complete; steps 7–9 and documentation continued on 2026-11-01.**
+Decisions (a)–(h) are recorded in §10.2. The inventory below is the original Phase A
+snapshot, not a description of the current file tree. Current status and evidence are
+at the end of §14. Final legacy source deletion is blocked on manual verification.
 
 Branch: `newbranchadminall`. Date: 2026-11-01.
 
@@ -289,7 +290,7 @@ are corrections to the editor so that "open, save, nothing edited" cannot change
 | `apple.hero_video.clips[].label` | schema says "for reference only"; never read |
 | `cases.page_header.sortLabel` | declared in schema + override type; "Sort by:" is hard-coded |
 | `gadzio.reviews.items[].rating` | card always renders five stars |
-| `gadzio.brand_bar.items[].name` (except index 0 `FEASTABLES`), `items[].subhead` | wordmarks are hard-coded; subhead never rendered |
+| `gadzio.brand_bar.items[].name`, `items[].subhead` | wordmarks are hard-coded; subhead never rendered |
 | theme `logoText`, `oppoPrimaryColor`, `oppoGreenDark`, `oppoGreenLight` | no consumer |
 | all 11 `oppo.*` keys | no component, `/android` is Coming Soon |
 | `edu.hero` | `EduHero` is commented out in `EduStorePage` |
@@ -722,8 +723,88 @@ once; reset it; round-trip the theme; sign in with the migrated account. Then co
 
 | Old URL | New URL |
 | --- | --- |
-| _pending Phase B_ | |
+| `/admin` | `/store-admin/website` (308) |
+| `/admin/login` | `/store-admin/login?next=/store-admin/website` (308) |
+| `/admin/content/:key` | `/store-admin/website/content/:key` (308, includes retired-key bookmarks) |
+| `/admin/theme` | `/store-admin/website/theme` (308) |
+| `/admin/security` | `/store-admin/profile#security` (308) |
+| Unknown `/admin/*` | Website overview (308) |
+| Old `/api/admin/*` | 410, plain moved message, no-store, route/status-only hit events |
+| Public `/api/admin/media/:id`, `/api/media/:id` GET | Preserved, including legacy fallback on the old URL |
 
-| Editor fields added | Editor fields removed |
+| Editor fields added / corrected | Editor fields removed |
 | --- | --- |
-| _pending Phase B_ | _pending Phase B_ |
+| Shared Gadzio component/editor defaults; Crowd Favorites display-only `priceDisplay` with legacy `price` read fallback | 11 dead OPPO collections (keys reserved), unused theme logo/colours, footer footnotes, gallery heading, clip labels, sort label, review rating, brand subheading |
+| Existing Education fields unchanged; old-UI/unreachable/unused-SEO notes corrected | Stored values and legacy tables are not removed or rewritten |
+
+
+### 14.1 Current status — 2026-11-01
+
+Steps 0–6 were complete at session start. Changes below are in the working tree;
+**no commits or pushes were made in this continuation**.
+
+| # | Step | Status |
+|---|------|--------|
+| 7 | Shared defaults, Crowd Favorites display-price correction, dead-field removal and accurate editor hints | Implemented; final targeted verification recorded below |
+| 8 | 308 bookmarks, 410 retired APIs, preserved public media | Implemented and tested locally; old UI/auth source retained for rollback |
+| 9 | Checkers, maintenance and old-table reference guard | Implemented with explicit transitional exceptions; strict zero-runtime-reference cleanup remains tied to step 10 |
+| 10 | Remove legacy UI/auth/creator/migration script | **Pending — blocked on manual verification. Nothing deleted from those trees.** |
+| 11 | FEATURES and this plan | Updated for current state; final retirement wording/exception cleanup follows step 10 |
+
+**Manual gate before step 10:** sign in at `/store-admin/login` as the owner, open
+Website Content and compare no-op saves with the storefront; make a small visible
+edit, verify it immediately, then reset; save/reset a theme setting; sign in with
+the migrated legacy account using its password and authenticator. Confirm those
+results before deleting the legacy source. Direct session creation was previously
+blocked and was not attempted in this continuation.
+
+### 14.2 Compatibility caller audit and evidence
+
+- Repo audit found old API fetches only in the legacy UI components; no outside
+  runtime/script/CI caller. Documentation references are historical/descriptive.
+  Existing public media URLs are the intentional exception and remain readable.
+- Social & analytics stored-value audit scanned `social_links.url`,
+  `analytics_scripts.script_id`, `store_integrations.webhook_url` through
+  `DATABASE_URL`: **0 rows, 0 old API references in each**. Values never printed.
+- `node --env-file=.env.local scripts/check-legacy-admin-compat.mjs`: **2/2 existing
+  legacy media routes resolved**, 0 active shared rows. Uses max:1, prepare:false,
+  closes its pool; never follows CDN redirects or prints stored IDs/URLs.
+  Initial attempt failed before HTTP completion; reruns passed. CDN bytes and
+  external provider settings not present in the repo/database were not verified.
+- Real local HTTP smoke: known/unknown old pages return **308**; old login,
+  content, theme, upload and unknown API mutations return **410**, `no-store`,
+  and the exact plain moved message. Concrete old endpoints are explicit 410
+  stubs so they cannot shadow the catch-all with working legacy writes.
+- `GET /api/admin/media/:id` retains shared-first lookup and legacy fallback;
+  `GET /api/media/:id` stays shared-only. Fixtures cover shared deletion guards,
+  storage redirects, old bytea CSP/nosniff and retired media mutation methods.
+- Registry count correction: the original inventory's “43 collections / 12 Education”
+  was off by one. Code has **31 editable collections (11 Education)** plus **11 reserved
+  retired OPPO keys**, **42 historical keys total**. Redirect tests cover all 42.
+- Store-admin route checker: **all 103 routes guarded**, with Website content/theme
+  writes now in its explicit owner-only set. Boundary checker passes with theme
+  whitelist/archive and shared-media-source checks. Maintenance tests cover
+  Website APIs and public compatibility media, not retired broad admin paths.
+- Old-table reference test explicitly permits only the retained legacy source,
+  migration/creator scripts and two historical comments while step 10 is blocked.
+  New dependencies fail. Once the old page tree is removed, transitional
+  exceptions stop applying. The account-route checker's defensive identity
+  denylist remains permitted (not an actual legacy-table reader).
+- Regression run during implementation: **878 tests passed, 0 failed, 0 skipped**.
+  Typecheck passed. Production build passed (only the existing warning about an
+  unrelated parent-directory lockfile).
+- Step-7 alignment tests: **22/22 pass** (14 new alignment cases + 8 boundary cases).
+  SSR-rendered untouched prefills match actual fallbacks for all eight Gadzio
+  sections; Education schema/data remain unchanged except the dead-hero description.
+  Combined compatibility/theme/boundary/maintenance rerun: **92/92 pass**.
+- **Final verification after alignment:** `npm test` **895/895 pass, 0 failed,
+  0 skipped**; `npm run typecheck` passes; `npm run build` passes. Both admin
+  checkers and the account-route checker pass; `git diff --check` passes.
+  The build's only warning is the unrelated parent-directory lockfile.
+
+**Remaining cleanup with step 10:** remove the retained legacy page/component/auth
+source, one-off migration script and `create-editor` command/script; remove obsolete
+identity comments/transitional exceptions; adjust retirement-test endpoint count
+when concrete 410 stubs are replaced by the catch-all alone; rerun full tests,
+checkers, typecheck and build. Keep both legacy DB tables untouched. No claim of a
+completed human sign-in or final legacy-code removal is made here.
