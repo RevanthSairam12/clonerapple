@@ -8,30 +8,52 @@ import { draftMoney, parseProductDraft, type ProductDraft } from './product-draf
 import { writeProductContentUsing } from './product-content';
 import { assertCatalogRevision, readCatalogRevision } from './catalog-revision';
 import { saveVariantIdentityUsing } from './variant-identity';
+import { largePriceChange } from './options-table-rules';
 
 const newId=(prefix:string)=>`${prefix}_${randomBytes(8).toString('hex')}`;
 export class ProductDraftError extends Error {
   constructor(message:string,public status=400){super(message);}
 }
-/** Price-only helper deliberately has no description-schema gate. Caller owns rollback. */
-export async function updateVariantPricingUsing(tx:TransactionSql,productId:string,variantId:string,patch:{pricePaise?:number|null;salePricePaise?:number|null},staffId:string,request?:Request){
+/**
+ * Price-only helper deliberately has no description-schema gate. Caller owns
+ * rollback.
+ *
+ * Option pricing is unlocked: checkout reads prices from the database, so the
+ * gate in `AGENTS.md` is satisfied. A change is still never silent — every
+ * save that moves a regular or sale price appends paired history rows under
+ * one `change_group`, writes an audit row, and a large change must be
+ * confirmed by the person making it. Confirmation is a prompt, never a block.
+ */
+export async function updateVariantPricingUsing(tx:TransactionSql,productId:string,variantId:string,patch:{pricePaise?:number|null;salePricePaise?:number|null;confirmLargeChange?:boolean},staffId:string,request?:Request){
   const [parent]=await tx`select price_paise,cost_paise from products where id=${productId} and deleted_at is null for update`;
   if(!parent)throw new ProductDraftError('Product not found.',404);
   const [variant]=await tx`select * from product_variants where id=${variantId} and product_id=${productId} for update`;
   if(!variant)throw new ProductDraftError('Option not found.',404);
+  const basePrice=Number(parent.price_paise),costPaise=parent.cost_paise==null?null:Number(parent.cost_paise);
   const oldPrice=variant.price_paise_override==null?null:Number(variant.price_paise_override),oldSale=variant.sale_price_paise==null?null:Number(variant.sale_price_paise);
   const price=patch.pricePaise===undefined?oldPrice:draftMoney(patch.pricePaise),sale=patch.salePricePaise===undefined?oldSale:draftMoney(patch.salePricePaise);
-  const checked=checkSalePrice({salePaise:sale,regularPaise:price??Number(parent.price_paise),costPaise:parent.cost_paise==null?null:Number(parent.cost_paise)});
+  const checked=checkSalePrice({salePaise:sale,regularPaise:price??basePrice,costPaise});
   if(checked.error)throw new ProductDraftError(checked.error);
+  const warnings=checked.warning?[checked.warning]:[];
+  const confirmation=largePriceChange({oldPricePaise:oldPrice??basePrice,newPricePaise:price??basePrice,costPaise});
+  if(confirmation){
+    if(patch.confirmLargeChange!==true)throw new ProductDraftError(confirmation,409);
+    warnings.push(confirmation);
+  }
   if(price!==oldPrice||sale!==oldSale){
+    const changeGroup=`pcg_${randomBytes(8).toString('hex')}`;
     await tx`update product_variants set price_paise_override=${price},sale_price_paise=${sale} where id=${variantId} and product_id=${productId}`;
-    for(const [before,after,kind] of [[oldPrice,price,'regular'],[oldSale,sale,'sale']] as const){
-      if(before===after)continue;
-      await tx`insert into price_history(product_id,variant_id,old_price_paise,new_price_paise,currency,reason,source,changed_by,price_kind) values(${productId},${variantId},${before},${after??(kind==='regular'?Number(parent.price_paise):0)},'INR',${after===null?`option_${kind}_cleared`:'option_price'},'store_admin',${staffId},${kind==='sale'&&after===null?'sale_cleared':kind})`;
+    // Each row carries the whole regular+sale pair, so one row reads as
+    // "was / now" for both prices even when only one of them moved.
+    const moved:[number|null,number,string,string][]=[];
+    if(price!==oldPrice)moved.push([oldPrice,price??basePrice,price===null?'option_regular_cleared':'option_price','regular']);
+    if(sale!==oldSale)moved.push([oldSale,sale??0,sale===null?'option_sale_cleared':'option_price',sale===null?'sale_cleared':'sale']);
+    for(const [before,after,reason,kind] of moved){
+      await tx`insert into price_history(product_id,variant_id,old_price_paise,new_price_paise,old_sale_price_paise,new_sale_price_paise,currency,reason,source,changed_by,price_kind,change_group) values(${productId},${variantId},${before},${after},${oldSale},${sale},'INR',${reason},'store_admin',${staffId},${kind},${changeGroup})`;
     }
     await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.variant.price',entity:'product',entityId:productId,before:{variantId,pricePaise:oldPrice,salePricePaise:oldSale},after:{variantId,pricePaise:price,salePricePaise:sale},request});
   }
-  return {warnings:checked.warning?[checked.warning]:[]};
+  return {warnings};
 }
 
 export async function saveProductDraft(raw:unknown,staffId:string,request?:Request){
@@ -65,7 +87,7 @@ export async function saveProductDraftInTransaction(tx:TransactionSql,draft:Prod
   const effectiveType=draft.metadata.productTypeId===undefined?(before?.product_type_id??null):draft.metadata.productTypeId;
   if(effectiveType){const retainInactive=!p.isActive&&before?.product_type_id===effectiveType&&before?.category_id===p.categoryId;const [type]=await tx`select id from product_types where id=${effectiveType} and category_id=${p.categoryId} and (is_active or ${retainInactive})`;if(!type)throw new ProductDraftError('Select a product type belonging to the selected category, or clear the type.');}
   if(draft.shortDescription!==undefined||draft.descriptionSections!==undefined)await writeProductContentUsing(tx,id,{shortDescription:draft.shortDescription,descriptionSections:draft.descriptionSections},staffId,{source:'product_draft',request});
-  await tx`update products set category_id=${p.categoryId},product_type_id=${effectiveType},slug=${p.slug},name=${p.name},subtitle=${p.subtitle},price_paise=${p.pricePaise},compare_at_paise=${p.compareAtPaise},sale_price_paise=${sale},brand=${p.brand},brand_id=${p.brandId},condition_id=${p.conditionId},material=${p.material},description=${p.description},badge=${p.badge||null},seo_title=${p.seoTitle},seo_description=${p.seoDescription},is_active=false,updated_at=now(),updated_by=${staffId} where id=${id}`;
+  await tx`update products set category_id=${p.categoryId},product_type_id=${effectiveType},slug=${p.slug},name=${p.name},subtitle=${p.subtitle},price_paise=${p.pricePaise},compare_at_paise=${p.compareAtPaise},sale_price_paise=${sale},brand=${p.brand},brand_id=${p.brandId},condition_id=${p.conditionId},material=${p.material},description=${p.description},badge=${p.badge||null},seo_title=${p.seoTitle},seo_description=${p.seoDescription},sell_by=${p.sellBy},sku_pattern=${p.skuPattern},is_active=false,updated_at=now(),updated_by=${staffId} where id=${id}`;
   if(draft.costPaise!==undefined)await tx`update products set cost_paise=${draft.costPaise} where id=${id}`;
   if(draft.sortOrder!==undefined)await tx`update products set sort_order=${draft.sortOrder} where id=${id}`;
   if(draft.inStock!==undefined)await tx`update products set in_stock=${draft.inStock} where id=${id}`;
@@ -83,7 +105,7 @@ export async function saveProductDraftInTransaction(tx:TransactionSql,draft:Prod
     const existing=await tx`select id from product_images where product_id=${id} and deleted_at is null for update`;
     for(const image of draft.gallery)if(image.id&&!existing.some(r=>r.id===image.id))throw new ProductDraftError('Image does not belong to this product.');
     await tx`update product_images set role='gallery',deleted_at=now() where product_id=${id} and deleted_at is null`;
-    for(const image of draft.gallery){if(image.id)await tx`update product_images set url=${image.url},alt=${image.alt},role=${image.role},sort_order=${image.sort_order},is_active=coalesce(${image.isActive??null}::boolean,is_active),deleted_at=null where id=${image.id} and product_id=${id}`;else await tx`insert into product_images(id,product_id,url,alt,role,sort_order,is_active) values(${newId('img')},${id},${image.url},${image.alt},${image.role},${image.sort_order},${image.isActive??true})`;}
+    for(const image of draft.gallery){const colourId=image.colourId??null;if(image.id)await tx`update product_images set url=${image.url},alt=${image.alt},role=${image.role},sort_order=${image.sort_order},colour_id=${colourId},is_active=coalesce(${image.isActive??null}::boolean,is_active),deleted_at=null where id=${image.id} and product_id=${id}`;else await tx`insert into product_images(id,product_id,url,alt,role,sort_order,colour_id,is_active) values(${newId('img')},${id},${image.url},${image.alt},${image.role},${image.sort_order},${colourId},${image.isActive??true})`;}
   }
   const optionIds:Record<string,string>={},warnings=saleCheck.warning?[saleCheck.warning]:[];
   // Sources are processed before replacements regardless of submitted order.
@@ -91,9 +113,8 @@ export async function saveProductDraftInTransaction(tx:TransactionSql,draft:Prod
     const v=option.input,variantId=v.id??newId('var');
     const [old]=await tx`select * from product_variants where id=${variantId} and product_id=${id} for update`;
     if(v.id&&!old)throw new ProductDraftError('Option not found.',404);
-    if((option.pricePaise!==undefined&&option.pricePaise!==(old?.price_paise_override==null?null:Number(old.price_paise_override)))||(option.salePricePaise!==undefined&&option.salePricePaise!==(old?.sale_price_paise==null?null:Number(old.sale_price_paise))))throw new ProductDraftError('Option price writes remain disabled until the authoritative checkout price gate is approved.',409);
     const saved=await saveVariantIdentityUsing(tx,id,v,staffId,request);
-    if(!saved.before?.retired_at)warnings.push(...(await updateVariantPricingUsing(tx,id,saved.id,{pricePaise:option.pricePaise,salePricePaise:option.salePricePaise},staffId,request)).warnings);
+    if(!saved.before?.retired_at)warnings.push(...(await updateVariantPricingUsing(tx,id,saved.id,{pricePaise:option.pricePaise,salePricePaise:option.salePricePaise,confirmLargeChange:draft.confirmLargePriceChanges},staffId,request)).warnings);
     if(option.clientKey)optionIds[option.clientKey]=saved.id;
     if(option.stock){if(saved.before?.retired_at)throw new ProductDraftError('Retired options cannot receive stock adjustments.');await adjustVariantInventoryUsing(tx,{...option.stock,productId:id,variantId:saved.id},staffId,request);}
   }

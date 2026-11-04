@@ -3,7 +3,7 @@ import { ProductHelp } from '@/components/store-admin/ProductHelp';
 
 import { ProductCreateForm } from '@/components/store-admin/ProductCreateForm';
 import { getStoreSession } from '@/lib/store-admin/auth';
-import { listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
+import { listBrands, listCategoryOptions, listColourOptions } from '@/lib/store-admin/catalog';
 import { listConditions } from '@/lib/store-admin/catalog-crud';
 import { loadMetadataEditor } from '@/lib/store-admin/product-metadata';
 
@@ -24,10 +24,11 @@ export default async function StoreAdminNewProductPage() {
   }
 
   const metadata = await loadMetadataEditor().catch(() => null);
-  const [categoriesResult, brandsResult, conditionsResult] = await Promise.all([
+  const [categoriesResult, brandsResult, conditionsResult, coloursResult] = await Promise.all([
     listCategoryOptions(),
     listBrands(),
     listConditions(),
+    listColourOptions(),
   ]);
 
   if (!categoriesResult.ok || !brandsResult.ok || !conditionsResult.ok || !metadata) {
@@ -88,7 +89,7 @@ export default async function StoreAdminNewProductPage() {
         </div>
       </div>
 
-      <ProductCreateForm categories={categories} brands={brands} conditions={conditions} metadataReferences={metadata.references} canManageDevices={session.role === 'store_owner'} canCreateShared={session.role === 'store_owner' || session.role === 'store_admin'} />
+      <ProductCreateForm categories={categories} brands={brands} conditions={conditions} colours={coloursResult.ok ? coloursResult.data : []} metadataReferences={metadata.references} canManageDevices={session.role === 'store_owner'} canCreateShared={session.role === 'store_owner' || session.role === 'store_admin'} />
     </div>
   );
 }

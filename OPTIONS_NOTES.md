@@ -1,6 +1,28 @@
 # Product options implementation notes
 
-Current results are in [Phase 1 shared-list verification](docs/phase1-shared-lists-20261104.md): 1,645 tests, 1,561 passed, 0 failed, 84 skipped; typecheck, production build and the component browser matrix pass. Imports now accept 2,000 data rows and 1,000,000 UTF-8 bytes. The accepted static fallback prices are ₹3,509 and ₹879; Midnight NLU was left alone. [DISPOSABLE_DB_RUNBOOK.md](DISPOSABLE_DB_RUNBOOK.md) documents every skipped-test connection and approval requirement. No database was contacted during this Phase 1 continuation. Backup branch: `backup/phase1-shared-lists-20261104`. Earlier checkpoints below are historical; PostgreSQL engine and authenticated application acceptance remain pending.
+## Phase 2 — options, price and stock (2026-11-05)
+
+The lock named in the Phase 1 notes is gone. Option pricing is editable and audited on both write paths:
+
+- `src/lib/store-admin/catalog-crud.ts#upsertVariant` no longer rejects an override change. It saves the identity, then calls `updateVariantPricingUsing` in the same transaction.
+- `src/lib/store-admin/product-draft.ts` no longer throws `Option price writes remain disabled…`. The draft loop calls the same helper, so the single-option route and the product draft share one price path.
+- `updateVariantPricingUsing` validates the sale pair, appends paired `price_history` rows (one per moved field, both carrying old/new regular **and** sale values under one `change_group`), and writes `catalog.variant.price` through `strictMetadataAudit`.
+- A drop over 50%, a rise over 100%, or a price below cost returns a confirmation message. Without `confirmLargeChange`/`confirmLargePriceChanges` the save rolls back with that message; with it the save proceeds and returns the message as a warning. It is never a permanent block.
+- Migration `0060_product_options_pricing.sql` adds `products.sell_by`, `products.sku_pattern`, the paired sale columns and `change_group` on `price_history`, an option history index, and `product_images.colour_id` plus its index. It is additive; it was **not applied** in this session.
+
+Editor changes (`src/components/store-admin/ProductWorkflow.tsx`):
+
+- A `Sell by` choice (one item, colour, model, model and colour, another option) plans rows through `src/lib/store-admin/options-table-rules.ts`. Only missing rows are proposed, capped at 60 per generation, and new rows start inactive with zero stock and a suggested SKU.
+- One table shows Model or option, Colour, SKU, Price, Sale, Stock, Active, History and Remove. Price and sale are editable; blank means the product price. A blank on a row that previously had an override sends an explicit clear, so untouched rows write no history.
+- Fast entry fills one price, sale or stock value into every active sellable row, or a different price for each colour into only the rows with that colour. Row warnings are plain words and never block a draft save.
+- The Stock step flags an options product that still keeps one shared stock count with a **Needs review** notice. It is a flag only: the existing explicit variant-inventory activation and transfer guard are unchanged, and no stock is split automatically.
+- Photos can be assigned to a shared colour. Colour photos are forced to the gallery role; primary and hover stay product-wide. A colour with no photo uses the default gallery.
+- A large option price change asks for confirmation before the request leaves the browser.
+- `product-duplicate.ts` now copies the product, its attributes, chosen models, colour links and photos. Copied options get new SKUs and combination keys; stock stays at zero and no price history is copied.
+
+Verification: `npm test` **1,654 tests / 1,570 passed / 0 failed / 84 skipped**; typecheck, production build, store-admin route guard (122 routes), account guard, admin boundary all pass; `npm audit` zero vulnerabilities; `git diff --check` clean apart from LF/CRLF advisories. `check:notifications` remains **3 passed / 5 failed** because mail and SMS are not configured; no message was sent. New tests: `tests/options-table-rules.test.mjs` plus updated draft/workflow/duplicate expectations. No migration, fixture or business-data write was performed. Report: `docs/phase2-options-table-20261105.md`.
+
+Historical Phase 1 results are in [Phase 1 shared-list verification](docs/phase1-shared-lists-20261104.md): 1,645 tests, 1,561 passed, 0 failed, 84 skipped; typecheck, production build and the component browser matrix pass. Imports now accept 2,000 data rows and 1,000,000 UTF-8 bytes. The accepted static fallback prices are ₹3,509 and ₹879; Midnight NLU was left alone. [DISPOSABLE_DB_RUNBOOK.md](DISPOSABLE_DB_RUNBOOK.md) documents every skipped-test connection and approval requirement. No database was contacted during this Phase 1 continuation. Backup branch: `backup/phase1-shared-lists-20261104`. Earlier checkpoints below are historical; PostgreSQL engine and authenticated application acceptance remain pending.
 
 ## Historical Phase 0 audit
 

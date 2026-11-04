@@ -11,6 +11,11 @@ import type { CatalogProductDetail, CatalogStockRow } from '@/lib/store-admin/ca
 import type { ProductMetadataState } from '@/lib/store-admin/product-metadata';
 import { parseRupeesToPaise } from '@/lib/store-admin/money';
 import { normalizeOptionIdentity, optionSemanticKey, productOptionCombinations, type OptionCombination } from '@/lib/store-admin/product-option-combinations';
+import {
+  SELL_BY_OPTIONS, generateOptionRows, isSellBy, largePriceChange,
+  missingOptionRows, optionRowWarnings, sellByUsesColour, sellByUsesModel, suggestedSku,
+  type GeneratedOptionRow, type SellBy,
+} from '@/lib/store-admin/options-table-rules';
 import { ProductSpecificationsEditor } from './ProductSpecificationsEditor';
 import { emptyMetadataDraft, ProductMetadataFields, scopedMetadataInput } from './ProductMetadataFields';
 import { ProductDescriptionEditor } from './ProductDescriptionEditor';
@@ -21,13 +26,15 @@ export interface ProductWorkflowProps {
   brands: Choice[];
   conditions: Choice[];
   metadataReferences: MetadataReferences;
+  /** Shared colours for a new product; an edited product carries its own list. */
+  colours?: Array<{ id: string; name: string; hex: string; isActive?: boolean }>;
   product?: CatalogProductDetail;
   metadataState?: ProductMetadataState | null;
   canEdit?: boolean;
   canManageDevices?: boolean;
   canCreateShared?: boolean;
 }
-type Photo = { id?: string; key: string; url: string; alt: string; role: string; sortOrder: number };
+type Photo = { id?: string; key: string; url: string; alt: string; role: string; sortOrder: number; colourId: string | null };
 type OptionDraft = {
   id?: string; clientKey: string; sku: string; optionName: string; optionValue: string;
   optionHex: string; deviceModelId: string; combinationKey: string; isActive: boolean;
@@ -35,17 +42,20 @@ type OptionDraft = {
   sourceWasActive?: boolean; allocation?: string; receiptConfirmed?: boolean;
   isPurchasable: boolean; sortOrder: number; price: string; salePrice: string;
   count: string; threshold: string; trackInventory: boolean; originalStock: CatalogStockRow | null;
+  /** Shared colour for this row; empty for a model, size or free-text option. */
+  colourId: string;
 };
 const steps = ['Basics', 'Photos', 'Price and options', 'Stock', 'Description', 'Review and publish'];
 const explanations = [
   'Give your product a name and choose where customers will find it. Verify its type, attributes and compatible devices.',
-  'Add image URLs and helpful descriptions of each photo. Choose one main photo and an optional hover photo.',
-  'Set a default price, then add options such as model, wattage, colour or size. Option prices are currently read-only; new options use the product price.',
+  'Add image URLs and helpful descriptions of each photo. Choose one main photo and an optional hover photo. A colour photo shows only when that colour is picked; colours without a photo use the main gallery.',
+  'Choose how you sell this product, then set one price and stock count for each real model or colour. A blank option price uses the product price.',
   'Decide whether customers can buy without a stock limit, or enter the exact quantities you have.',
   'Write a short summary and arrange the sections customers will read on the product page.',
   'Check your product, then save a draft or publish it. All sections save together.',
 ];
 const moneyInput = (value: number | null | undefined) => value == null ? '' : (value / 100).toFixed(2);
+const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
 function paise(value: string, label: string, optional = false, allowZero = false): number | null {
   const parsed = parseRupeesToPaise(value);
   if (!parsed.ok) throw new Error(`${label}: ${parsed.message}`);
@@ -68,7 +78,7 @@ function stockPatch(original: CatalogStockRow | null, quantity: string, threshol
 }
 
 /** One in-memory draft; no child editor commits independently. */
-export function ProductWorkflow({ categories, brands, conditions, metadataReferences: initialMetadataReferences, product, metadataState, canEdit = true, canManageDevices = false, canCreateShared = false }: ProductWorkflowProps) {
+export function ProductWorkflow({ categories, brands, conditions, metadataReferences: initialMetadataReferences, colours: colourChoices, product, metadataState, canEdit = true, canManageDevices = false, canCreateShared = false }: ProductWorkflowProps) {
   const router = useRouter();
   const [metadataReferences, setMetadataReferences] = useState(initialMetadataReferences);
   useEffect(() => { setMetadataReferences(initialMetadataReferences); }, [initialMetadataReferences]);
@@ -83,7 +93,8 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     cost: moneyInput(product?.costPaise), sortOrder: String(product?.sortOrder ?? 0), inStock: product?.inStock ?? true,
   }));
   const [metadata, setMetadata] = useState(() => emptyMetadataDraft(metadataState));
-  const [photos, setPhotos] = useState<Photo[]>(() => (product?.images ?? []).filter(image => !image.deletedAt).map(image => ({ id: image.id, key: image.id, url: image.url, alt: image.alt, role: image.role, sortOrder: image.sortOrder })));
+  const [photos, setPhotos] = useState<Photo[]>(() => (product?.images ?? []).filter(image => !image.deletedAt).map(image => ({ id: image.id, key: image.id, url: image.url, alt: image.alt, role: image.role, sortOrder: image.sortOrder, colourId: image.colourId })));
+  const sharedColours = product?.colours ?? colourChoices ?? [];
   const [options, setOptions] = useState<OptionDraft[]>(() => (product?.variants ?? []).map(option => ({
     id: option.id, clientKey: option.id, sku: option.sku ?? '', optionName: option.optionName, optionValue: option.optionValue,
     optionHex: option.optionHex ?? '', deviceModelId: option.deviceModelId ?? '', combinationKey: option.combinationKey ?? '',
@@ -91,7 +102,18 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     isActive: option.isActive, isPurchasable: option.isPurchasable, sortOrder: option.sortOrder,
     price: moneyInput(option.pricePaiseOverride), salePrice: moneyInput(option.salePricePaise), count: String(option.stock?.onHand ?? 0),
     threshold: String(option.stock?.lowStockThreshold ?? 0), trackInventory: option.stock?.trackInventory ?? false, originalStock: option.stock,
+    colourId: sharedColours.find(colour => option.optionHex && colour.hex.toLowerCase() === option.optionHex.toLowerCase())?.id ?? '',
   })));
+  const [sellBy, setSellBy] = useState<SellBy>(product?.sellBy ?? 'single');
+  const [skuPattern, setSkuPattern] = useState(product?.skuPattern ?? '');
+  const [otherName, setOtherName] = useState('Wattage');
+  const [otherValues, setOtherValues] = useState('');
+  const [generatedRows, setGeneratedRows] = useState<GeneratedOptionRow[]>([]);
+  const [generatedNotice, setGeneratedNotice] = useState('');
+  const [bulkPrice, setBulkPrice] = useState('');
+  const [bulkSale, setBulkSale] = useState('');
+  const [bulkStock, setBulkStock] = useState('');
+  const [colourPrices, setColourPrices] = useState<Record<string, string>>({});
   const [description, setDescription] = useState<ProductDescription>(() => convertLegacyProductDescription({
     shortDescription: product?.shortDescription, sections: product?.descriptionSections,
     description: product?.description, highlights: product?.highlights, specs: product?.specs, inTheBox: product?.inTheBox,
@@ -117,7 +139,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
   const [saved, setSaved] = useState('');
   const [initialDescription] = useState(() => JSON.stringify(description));
   const [initialSections] = useState(() => JSON.stringify(description.sections));
-  const snapshot = JSON.stringify({ form, metadata, photos, options, description, parentCount, parentThreshold, parentTracking, activateOptions, stockReason, stockNote, stockSource, receiptConfirmed, candidates });
+  const snapshot = JSON.stringify({ form, metadata, photos, options, description, parentCount, parentThreshold, parentTracking, activateOptions, stockReason, stockNote, stockSource, receiptConfirmed, candidates, sellBy, skuPattern });
   const [baseline, setBaseline] = useState(snapshot);
   const dirty = baseline !== snapshot || deviceDirty;
   const disabled = busy || saveState !== 'ready' || !canEdit;
@@ -198,11 +220,136 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
       if (liveOptions.length + selected.length > 100) throw new Error('Use at most 100 non-retired options, including inactive rows.');
       const added = selected.map((item, index): OptionDraft => {
         const key = `option-${crypto.randomUUID()}`;
-        return { ...item, clientKey: key, sku: `SKU-${key.slice(-12).toUpperCase()}`, optionHex: '', combinationKey: key,
+        return { ...item, clientKey: key, sku: `SKU-${key.slice(-12).toUpperCase()}`, optionHex: '', colourId: '', combinationKey: key,
           isActive: true, isPurchasable: true, sortOrder: options.length + index, price: '', salePrice: '', count: '0', threshold: '0', trackInventory: true, originalStock: null };
       });
       setOptions(current => [...current, ...added]); setCandidates([]); setOptionValues('');
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Review the combinations.'); }
+  }
+  function colourOf(option: OptionDraft) {
+    return sharedColours.find(colour => colour.id === option.colourId) ?? null;
+  }
+  function modelOf(option: OptionDraft) {
+    return option.deviceModelId ? metadataReferences.models.find(model => model.id === option.deviceModelId) ?? null : null;
+  }
+  function priceOf(value: string): number | null {
+    const parsed = parseRupeesToPaise(value);
+    return parsed.ok && parsed.paise !== null ? parsed.paise : null;
+  }
+  function pricePayload(option: OptionDraft): { pricePaise?: number | null; salePricePaise?: number | null } {
+    const saved = option.id ? product?.variants.find(variant => variant.id === option.id) : undefined;
+    const price = priceOf(option.price);
+    const sale = priceOf(option.salePrice);
+    // Blank means "use the product price". A clear is sent only when a saved
+    // override existed, so an untouched row never writes price history.
+    return {
+      ...(price === null ? (saved?.pricePaiseOverride != null ? { pricePaise: null } : {}) : { pricePaise: price }),
+      ...(sale === null ? (saved?.salePricePaise != null ? { salePricePaise: null } : {}) : { salePricePaise: sale }),
+    };
+  }
+  function planOptionRows() {
+    setError(''); setGeneratedRows([]);
+    try {
+      const rows = generateOptionRows({
+        sellBy,
+        models: metadataReferences.models.filter(model => metadata.deviceModelIds.includes(model.id)),
+        colours: sharedColours.filter(colour => colour.isActive !== false),
+        otherName,
+        otherValues: otherValues.split(/[\n,]/),
+      });
+      const existing = options.filter(option => !retiringIds.has(option.id ?? '')).map(option => ({
+        deviceModelId: option.deviceModelId || null,
+        colourId: option.colourId || null,
+        optionName: option.optionName,
+        optionValue: option.optionValue,
+        optionIdentity: option.optionIdentity,
+      }));
+      const missing = missingOptionRows(existing, rows);
+      setGeneratedRows(missing);
+      setGeneratedNotice(sellBy === 'single'
+        ? 'A product sold as one item needs no option rows. Everything uses the product price and stock.'
+        : missing.length
+        ? `${missing.length} new row${missing.length === 1 ? '' : 's'} will be added as inactive. Check them, then add.`
+        : 'Every row already exists, including inactive ones. Nothing new to add.');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Choose how to sell before generating rows.'); }
+  }
+  function addGeneratedRows() {
+    setError('');
+    try {
+      if (!generatedRows.length) throw new Error('Plan the missing rows first.');
+      if (liveOptions.length + generatedRows.length > 100) throw new Error('Use at most 100 non-retired options, including inactive rows.');
+      const added = generatedRows.map((row, index): OptionDraft => {
+        const key = `option-${crypto.randomUUID()}`;
+        const model = row.deviceModelId ? metadataReferences.models.find(item => item.id === row.deviceModelId) : undefined;
+        const colour = row.colourId ? sharedColours.find(item => item.id === row.colourId) : undefined;
+        const suggestion = suggestedSku(skuPattern, { product: form.name, model: model?.name, colour: colour?.name, value: row.optionValue });
+        return {
+          clientKey: key, sku: suggestion || `SKU-${key.slice(-12).toUpperCase()}`,
+          optionName: row.optionName, optionValue: row.optionValue, optionHex: colour?.hex ?? '',
+          deviceModelId: row.deviceModelId ?? '', combinationKey: key, optionIdentity: row.optionIdentity,
+          isActive: false, isPurchasable: true, sortOrder: options.length + index, price: '', salePrice: '',
+          count: '0', threshold: '0', trackInventory: true, originalStock: null, colourId: row.colourId ?? '',
+        };
+      });
+      setOptions(current => [...current, ...added]);
+      setGeneratedRows([]); setGeneratedNotice(''); setOtherValues('');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Review the rows before adding them.'); }
+  }
+  function applyBulk() {
+    setError('');
+    try {
+      const patch: Partial<OptionDraft> = {};
+      if (bulkPrice.trim()) { paise(bulkPrice, 'Price for all rows'); patch.price = bulkPrice.trim(); }
+      if (bulkSale.trim()) { const sale = paise(bulkSale, 'Sale price for all rows'); const regular = paise(bulkPrice.trim() || form.price, 'Price for all rows'); if (sale !== null && regular !== null && sale >= regular) throw new Error('Sale price must be below the price it applies to.'); patch.salePrice = bulkSale.trim(); }
+      if (bulkStock.trim()) { patch.count = String(count(bulkStock, 'Stock for all rows')); }
+      if (!Object.keys(patch).length) throw new Error('Type a price, sale price or stock count to fill into every row.');
+      const targets = new Set(commerceOptions.map(option => option.clientKey));
+      if (!targets.size) throw new Error('No active sellable rows to fill.');
+      setOptions(current => current.map(option => targets.has(option.clientKey) ? { ...option, ...patch } : option));
+      setBulkPrice(''); setBulkSale(''); setBulkStock('');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Check the fill values.'); }
+  }
+  function applyColourPrices() {
+    setError('');
+    try {
+      const prices = Object.entries(colourPrices).filter(([, value]) => value.trim());
+      if (!prices.length) throw new Error('Type a price beside at least one colour.');
+      const parsed = new Map(prices.map(([colourId, value]) => [colourId, paise(value, 'Colour price') ?? null]));
+      const targets = new Set(commerceOptions.filter(option => option.colourId && parsed.has(option.colourId)).map(option => option.clientKey));
+      if (!targets.size) throw new Error('No active sellable rows use those colours.');
+      setOptions(current => current.map(option => {
+        const price = option.colourId ? parsed.get(option.colourId) : undefined;
+        return targets.has(option.clientKey) && price != null ? { ...option, price: (price / 100).toFixed(2) } : option;
+      }));
+      setColourPrices({});
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Check the colour prices.'); }
+  }
+  function largePriceChanges(): string[] {
+    let base = 0;
+    try { base = paise(form.price, 'Product price') ?? 0; } catch { return []; }
+    const cost = form.cost.trim() ? priceOf(form.cost) : null;
+    const reasons = new Set<string>();
+    for (const option of commerceOptions) {
+      const saved = option.id ? product?.variants.find(variant => variant.id === option.id) : undefined;
+      const oldPrice = saved ? saved.pricePaiseOverride ?? base : base;
+      const newPrice = priceOf(option.price) ?? base;
+      const reason = largePriceChange({ oldPricePaise: oldPrice, newPricePaise: newPrice, costPaise: cost });
+      if (reason) reasons.add(reason);
+    }
+    return [...reasons];
+  }
+  function rowWarningList(option: OptionDraft, seenSkus: Set<string>): string[] {
+    if (option.retiredAt || retiringIds.has(option.id ?? '')) return [];
+    let base = 0;
+    try { base = paise(form.price, 'Product price') ?? 0; } catch { return []; }
+    return optionRowWarnings({
+      sku: option.sku,
+      pricePaise: priceOf(option.price),
+      basePricePaise: base,
+      stockOnHand: Number(option.count || 0),
+      trackInventory: option.trackInventory,
+      isPurchasable: option.isPurchasable,
+    }, seenSkus);
   }
   function replaceOption(option: OptionDraft) {
     if (!option.id || option.retiredAt || retiringIds.has(option.id)) return;
@@ -210,7 +357,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     const key = `option-${crypto.randomUUID()}`;
     setOptions(current => [...current.map(row => row.clientKey === option.clientKey ? { ...row, isActive: false } : row), {
       ...option, id: undefined, replacesVariantId: option.id, clientKey: key, sku: `SKU-${key.slice(-12).toUpperCase()}`, combinationKey: key,
-      optionIdentity: option.optionIdentity ?? null,
+      optionIdentity: option.optionIdentity ?? null, colourId: option.colourId,
       isActive: false, retiredAt: null, savedSku: null, sourceWasActive: option.isActive, trackInventory: true, threshold: '0', originalStock: null, count: '0', price: '', salePrice: '', sortOrder: current.length,
     }]);
   }
@@ -258,6 +405,8 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     try {
       if (deviceDirty) throw new Error('Create or reset the unsaved shared model, brand or colour input in Basics before saving this product. Shared references are saved separately.');
       validateBasics(); validatePrices();
+      const large = largePriceChanges();
+      if (large.length && !window.confirm(`${large.join('\n\n')}\n\nSave anyway?`)) throw new Error('Nothing was saved: the large price change was not confirmed.');
       if (product && (!Number.isInteger(product.catalogRevision) || product.catalogRevision < 0 || product.catalogRevision > 2_147_483_647)) throw new Error('The edit revision is unavailable. Reload the saved product before editing; this form cannot save without conflict protection.');
       if (photos.some(photo => !photo.url.trim())) throw new Error('Enter a URL for each photo, or remove the empty photo.');
       if (options.some(option => option.isActive && option.deviceModelId && !metadata.deviceModelIds.includes(option.deviceModelId))) throw new Error('An active sub-item uses a device that is no longer selected in Basics. Restore its compatible device, or archive and replace the sub-item.');
@@ -287,6 +436,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
         deviceModelId: option.deviceModelId || null, combinationKey: option.combinationKey || null,
         optionIdentity: option.optionIdentity,
     isActive: option.isActive, isPurchasable: option.isPurchasable, sortOrder: option.sortOrder,
+        ...(option.retiredAt ? {} : pricePayload(option)),
         ...(option.isActive && option.isPurchasable ? { stock: stockPatch(option.originalStock, transferring ? String(option.originalStock?.onHand ?? 0) : option.count, option.threshold, option.replacesVariantId ? true : option.trackInventory, option.replacesVariantId || (activateOptions && stockSource === 'receipt') ? 'receipt' : stockReason, stockNote) } : {}),
       }));
       const slug = form.slug.trim() || form.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -295,11 +445,13 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
         product: { ...form, id: product?.id ?? slug, slug, pricePaise: paise(form.price, 'Product price'), compareAtPaise: paise(form.compareAt, 'Compare-at price', true),
           description: product?.description ?? '', brandId: form.brandId || null, conditionId: form.conditionId || null,
           trackInventory: parentTracking, initialOnHand: editing ? 0 : count(parentCount, 'Opening stock'),
-          ...(form.cost !== moneyInput(product?.costPaise) ? { costPaise: paise(form.cost, 'Internal cost', true, true) } : {}), sortOrder: count(form.sortOrder, 'Display order'), inStock: form.inStock },
+          ...(form.cost !== moneyInput(product?.costPaise) ? { costPaise: paise(form.cost, 'Internal cost', true, true) } : {}), sortOrder: count(form.sortOrder, 'Display order'), inStock: form.inStock,
+          sellBy, skuPattern: skuPattern.trim() || null },
         metadata: metadataPayload,
         ...(!product || JSON.parse(initialDescription).shortDescription !== description.shortDescription ? { shortDescription: descriptionParsed.shortDescription } : {}),
         ...(!product || initialSections !== JSON.stringify(description.sections) ? { descriptionSections: descriptionParsed.sections } : {}),
         salePricePaise: paise(form.salePrice, 'Product sale price', true),
+        ...(large.length ? { confirmLargePriceChanges: true } : {}),
         gallery: photos.map(({ key: _key, ...photo }) => photo), options: draftOptions,
         ...(parentStock ? { stock: parentStock } : {}),
         ...(activateOptions && product?.inventoryMode !== 'variant' ? { activateVariantInventory: { confirm: true, reason: stockNote.trim(), allocations } } : {}),
@@ -327,6 +479,12 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
   const input = (key: 'name' | 'slug' | 'subtitle' | 'brand' | 'material' | 'badge' | 'seoTitle' | 'seoDescription', maxLength: number) => <input className="sa-input" maxLength={maxLength} value={form[key]} onChange={event => update(key, event.target.value)} />;
   const money = (key: 'price' | 'salePrice' | 'compareAt') => <input className="sa-input" type="number" min="0.01" step="0.01" value={form[key]} onChange={event => update(key, event.target.value)} />;
   const stockGuide = <p className="sa-hint">1. Turn on “Limit my stock”. 2. Type how many you have in each row. 3. Save. When a row reaches 0, customers can no longer buy it.</p>;
+  const colourFillRows = sharedColours.filter(colour => commerceOptions.some(option => option.colourId === colour.id));
+  const rowWarnings = new Map<string, string[]>();
+  {
+    const seenSkus = new Set<string>();
+    for (const option of options) rowWarnings.set(option.clientKey, rowWarningList(option, seenSkus));
+  };
 
   const sections: ReactNode[] = [
     <div key="basics">
@@ -355,9 +513,11 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
         <Field label="Image URL" help="Use a public https URL or a media path such as /media/photo.jpg."><input className="sa-input" maxLength={2048} value={photo.url} onChange={event => setPhotos(current => current.map(row => row.key === photo.key ? { ...row, url: event.target.value } : row))} /></Field>
         <Field label="Photo description (alt text)" help="Describe what is visible for customers using a screen reader."><input className="sa-input" maxLength={200} value={photo.alt} onChange={event => setPhotos(current => current.map(row => row.key === photo.key ? { ...row, alt: event.target.value } : row))} /></Field>
         <Field label="Use photo as"><select className="sa-input" value={photo.role} onChange={event => { const role = event.target.value; setPhotos(current => current.map(row => row.key === photo.key ? { ...row, role } : row.role === role && role !== 'gallery' ? { ...row, role: 'gallery' } : row)); }}><option value="primary">Main photo</option><option value="hover">Hover photo</option><option value="gallery">Gallery photo</option></select></Field>
+        <Field label="Colour (optional)" help="Choose a colour to show this photo only when that colour is picked. Leave blank for the main gallery."><select className="sa-input" value={photo.colourId ?? ''} onChange={event => { const colourId = event.target.value || null; setPhotos(current => current.map(row => row.key === photo.key ? { ...row, colourId, role: colourId && row.role !== 'gallery' ? 'gallery' : row.role } : row)); }}><option value="">All colours (main gallery)</option>{sharedColours.filter(colour => colour.isActive !== false || colour.id === photo.colourId).map(colour => <option key={colour.id} value={colour.id}>{colour.name} ({colour.hex})</option>)}</select></Field>
         <Field label="Display order"><input className="sa-input" type="number" min="0" step="1" value={photo.sortOrder} onChange={event => setPhotos(current => current.map(row => row.key === photo.key ? { ...row, sortOrder: Number(event.target.value) } : row))} /></Field>
       </div><button className="sa-btn sa-btn-quiet" type="button" onClick={() => setPhotos(current => current.filter(row => row.key !== photo.key))}>Remove photo {index + 1}</button></fieldset>)}
-      <button className="sa-btn" type="button" onClick={() => setPhotos(current => [...current, { key: crypto.randomUUID(), url: '', alt: '', role: current.some(photo => photo.role === 'primary') ? 'gallery' : 'primary', sortOrder: current.length }])}>Add photo</button>
+      <button className="sa-btn" type="button" onClick={() => setPhotos(current => [...current, { key: crypto.randomUUID(), url: '', alt: '', role: current.some(photo => photo.role === 'primary') ? 'gallery' : 'primary', sortOrder: current.length, colourId: null }])}>Add photo</button>
+      {sharedColours.length === 0 && <p className="sa-hint">No shared colours yet. Add colours under Shared lists in Basics to give each colour its own photos.</p>}
       <p className="sa-hint">Photo changes are staged until you save the product.</p>
     </div>,
     <div key="price"><div className="sa-control-grid">
@@ -365,16 +525,46 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
       <Field label="Sale price ₹" help="Optional; must be below the regular price. Used only while sale mode is on.">{money('salePrice')}</Field>
       <Field label="Compare-at price ₹" help="Optional reference price; cannot be below the regular price.">{money('compareAt')}</Field>
     </div>
-    <h3 className="sa-card-title">Options: colors, models and specifications</h3><p className="sa-hint">Sell more than one colour, size or model? Create a row for each choice below. Each sellable choice has its own stock.</p><p className="sa-lock-note">Option prices are read-only. Saved sellable identities stay locked to protect order history. Archive and replace creates a new identity with zero stock.</p><ProductHelp label="How option prices work">Blank regular prices use the product price. An independent regular price does not inherit the product sale. Option sales apply only while sale mode is on and the price is valid. Price editing remains locked.</ProductHelp>
-    <div className="sa-control-grid"><Field label="Option type"><select className="sa-input" value={optionType} onChange={event => setOptionType(event.target.value)}>{['Model', 'Wattage', 'Colour', 'Size', 'Specification'].map(type => <option key={type}>{type}</option>)}</select></Field><Field label="Option values" help="Separate values with commas or new lines, for example 20W, 30W, 65W."><textarea className="sa-input" rows={2} value={optionValues} onChange={event => setOptionValues(event.target.value)} /></Field></div>
+    <h3 className="sa-card-title">Options, price and stock</h3><p className="sa-hint">Choose how you sell this product, then check every row in one table. A blank price uses the product price. Saved SKUs never change; archive and replace a row to change one.</p><ProductHelp label="How option prices work">A blank regular price uses the product price. An option with its own price does not inherit the product sale, so set an option sale too when you want one. Option sales apply only while sale mode is on. A large price change asks you to confirm, then saves; it is never blocked.</ProductHelp>
+    <div className="sa-control-grid">
+      <Field label="Sell by" help="Changes only how rows are suggested. Saved rows are never rewritten."><select className="sa-input" value={sellBy} onChange={event => { if (isSellBy(event.target.value)) { setSellBy(event.target.value); setGeneratedRows([]); setGeneratedNotice(''); } }}>{SELL_BY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+      <Field label="SKU pattern (optional)" help="Used only to suggest new SKUs. Type {product}, {model}, {colour} or {value}; saved SKUs never change."><input className="sa-input" maxLength={120} placeholder="{product}-{model}-{colour}-{value}" value={skuPattern} onChange={event => setSkuPattern(event.target.value)} /></Field>
+      {sellBy === 'other' && <Field label="Option name" help="For example Wattage or Size."><input className="sa-input" maxLength={40} value={otherName} onChange={event => setOtherName(event.target.value)} /></Field>}
+    </div>
+    <p className="sa-hint">{SELL_BY_OPTIONS.find(option => option.value === sellBy)?.help}</p>
+    {sellBy === 'other' && <Field label="Option values" help="Separate values with commas or new lines, for example 20W, 30W, 65W."><textarea className="sa-input" rows={2} value={otherValues} onChange={event => setOtherValues(event.target.value)} /></Field>}
+    {sellByUsesColour(sellBy) && !sharedColours.some(colour => colour.isActive !== false) && <p className="sa-notice">Add colours under Shared lists in Basics before generating colour rows.</p>}
+    {sellByUsesModel(sellBy) && metadata.deviceModelIds.length === 0 && <p className="sa-notice">Select compatible devices in Basics before generating model rows.</p>}
+    <button className="sa-btn" type="button" onClick={planOptionRows}>Add missing rows</button>
+    {generatedNotice && <p className="sa-hint" role="status">{generatedNotice}</p>}
+    {generatedRows.length > 0 && <fieldset className="sa-detail-card"><legend>Rows to add</legend><p className="sa-hint">New rows start inactive with zero stock, so nothing goes on sale by accident. Add them, then set price and stock below.</p><ul className="sa-plain-list">{generatedRows.map(row => <li key={`${row.deviceModelId ?? ''}:${row.optionName}:${row.optionValue}`}>{row.optionValue} — {row.optionName}</li>)}</ul><button className="sa-btn" type="button" onClick={addGeneratedRows}>Add these rows</button><button className="sa-btn sa-btn-quiet" type="button" onClick={() => { setGeneratedRows([]); setGeneratedNotice(''); }}>Discard</button></fieldset>}
+    <details><summary>Other ways to add rows</summary><div className="sa-control-grid"><Field label="Option type"><select className="sa-input" value={optionType} onChange={event => setOptionType(event.target.value)}>{['Model', 'Wattage', 'Colour', 'Size', 'Specification'].map(type => <option key={type}>{type}</option>)}</select></Field><Field label="Option values" help="Separate values with commas or new lines, for example 20W, 30W, 65W."><textarea className="sa-input" rows={2} value={optionValues} onChange={event => setOptionValues(event.target.value)} /></Field></div>
     <label className="sa-check"><input type="checkbox" checked={combineModels} onChange={event => setCombineModels(event.target.checked)} />Create a sub-item for each selected compatible device</label>
-    <p className="sa-hint">For model × color combinations, select devices in Basics and enter colors above. With no values, this creates one sub-item per selected device. Compatibility is never guessed.</p>
+    <p className="sa-hint">For model × colour combinations, select devices in Basics and enter colours above. With no values, this creates one sub-item per selected device. Compatibility is never guessed.</p>
     <button className="sa-btn" type="button" onClick={generateOptions}>Generate options</button>
-    {candidates.length > 0 && <fieldset className="sa-detail-card"><legend>Review physical combinations</legend><p className="sa-hint" role="status">{candidateNotice}</p>{candidates.map((candidate, index) => <label className="sa-check" key={optionSemanticKey(candidate)}><input type="checkbox" checked={candidate.selected} onChange={event => setCandidates(current => current.map((row, i) => i === index ? { ...row, selected: event.target.checked } : row))} />{candidate.optionValue}</label>)}<button className="sa-btn" type="button" onClick={addReviewedOptions}>Add selected combinations</button><button className="sa-btn sa-btn-quiet" type="button" onClick={() => setCandidates([])}>Discard preview</button></fieldset>}
+    {candidates.length > 0 && <fieldset className="sa-detail-card"><legend>Review physical combinations</legend><p className="sa-hint" role="status">{candidateNotice}</p>{candidates.map((candidate, index) => <label className="sa-check" key={optionSemanticKey(candidate)}><input type="checkbox" checked={candidate.selected} onChange={event => setCandidates(current => current.map((row, i) => i === index ? { ...row, selected: event.target.checked } : row))} />{candidate.optionValue}</label>)}<button className="sa-btn" type="button" onClick={addReviewedOptions}>Add selected combinations</button><button className="sa-btn sa-btn-quiet" type="button" onClick={() => setCandidates([])}>Discard preview</button></fieldset>}</details>
+    <fieldset className="sa-detail-card"><legend>Fill several rows at once</legend><p className="sa-hint">Fills the same value into every active sellable row below. Blank boxes are left alone.</p><div className="sa-control-grid"><Field label="Price ₹ for all rows"><input className="sa-input" type="number" min="0.01" step="0.01" value={bulkPrice} onChange={event => setBulkPrice(event.target.value)} /></Field><Field label="Sale ₹ for all rows"><input className="sa-input" type="number" min="0.01" step="0.01" value={bulkSale} onChange={event => setBulkSale(event.target.value)} /></Field><Field label="Stock for all rows"><input className="sa-input" type="number" min="0" step="1" value={bulkStock} onChange={event => setBulkStock(event.target.value)} /></Field></div><button className="sa-btn" type="button" onClick={applyBulk}>Fill rows</button>
+    {colourFillRows.length > 0 && <><p className="sa-hint">Or set a different price for each colour, for example Red ₹100 and Black ₹120.</p><div className="sa-control-grid">{colourFillRows.map(colour => <Field key={colour.id} label={`${colour.name} price ₹`}><input aria-label={`Price for all ${colour.name} rows`} className="sa-input" type="number" min="0.01" step="0.01" value={colourPrices[colour.id] ?? ''} onChange={event => setColourPrices(current => ({ ...current, [colour.id]: event.target.value }))} /></Field>)}</div><button className="sa-btn" type="button" onClick={applyColourPrices}>Set these prices</button></>}</fieldset>
     {stockGuide}
     <label className="sa-check"><input type="checkbox" role="switch" checked={masterTracking} onChange={event => setMasterTracking(event.target.checked)} />Limit my stock</label>
     {!masterTracking && <p className="sa-notice">Stock is not limited, so this can be sold without end. <button type="button" className="sa-btn sa-btn-small" onClick={() => setMasterTracking(true)}>Turn on</button></p>}
-    <div className="sa-table-wrap"><table className="sa-table"><caption>Option prices and stock — changes save with the product</caption><thead><tr><th>Option</th><th>Price ₹</th><th>Sale price ₹</th><th>In stock</th><th>Active</th></tr></thead><tbody>{options.map(option => <tr key={option.clientKey}><td><Field label={`Option type for ${option.optionValue}`}><input className="sa-input" readOnly={!!option.retiredAt || (!!option.id && option.isPurchasable) || retiringIds.has(option.id ?? '')} maxLength={40} value={option.optionName} onChange={event => updateOption(option.clientKey, { optionName: event.target.value })} /></Field><Field label={`Color, model or specification for ${option.optionValue}`}><input className="sa-input" readOnly={!!option.retiredAt || (!!option.id && option.isPurchasable) || retiringIds.has(option.id ?? '')} maxLength={60} value={option.optionValue} onChange={event => updateOption(option.clientKey, { optionValue: event.target.value })} /></Field><span className="sa-row-sub">SKU: {option.sku || 'Not set'}</span>{option.retiredAt && <span className="sa-row-sub">Retired — read-only history</span>}{retiringIds.has(option.id ?? '') && <span className="sa-row-sub">Retires when replacement is saved</span>}{option.id && option.isPurchasable && !option.retiredAt && !retiringIds.has(option.id) && <button type="button" className="sa-btn sa-btn-small" disabled={liveOptions.length >= 100} onClick={() => replaceOption(option)}>Archive and replace</button>}{!option.isPurchasable && <span className="sa-row-sub">Display only</span>}</td><td><input aria-label={`Price for ${option.optionValue}`} readOnly className="sa-input" type="number" min="0.01" step="0.01" placeholder={form.price || 'Product price'} value={option.price} onChange={event => updateOption(option.clientKey, { price: event.target.value })} /></td><td><input aria-label={`Sale price for ${option.optionValue}`} readOnly className="sa-input" type="number" min="0.01" step="0.01" placeholder="No sale" value={option.salePrice} onChange={event => updateOption(option.clientKey, { salePrice: event.target.value })} /></td><td><label className="sa-check"><input aria-label={`Limit stock for ${option.optionValue}`} type="checkbox" role="switch" disabled={!!option.retiredAt || !option.isActive || !option.isPurchasable || transferring || !!option.replacesVariantId} checked={option.trackInventory} onChange={event => updateOption(option.clientKey, { trackInventory: event.target.checked })} />Limit my stock</label><input aria-label={`In stock for ${option.optionValue}`} className="sa-input" type="number" min="0" step="1" disabled={!!option.retiredAt || !option.isActive || !option.isPurchasable || transferring} value={option.count} onChange={event => updateOption(option.clientKey, { count: event.target.value })} /></td><td><label className="sa-check"><input aria-label={`Active ${option.optionValue}`} type="checkbox" disabled={!!option.retiredAt || retiringIds.has(option.id ?? '')} checked={option.isActive} onChange={event => updateOption(option.clientKey, { isActive: event.target.checked })} />Active</label></td></tr>)}</tbody></table></div>
+    <div className="sa-table-wrap"><table className="sa-table"><caption>One row per option — price, sale, stock and visibility save together</caption><thead><tr><th>Model or option</th><th>Colour</th><th>SKU</th><th>Price ₹</th><th>Sale ₹</th><th>Stock</th><th>Active</th><th>History</th><th>Remove</th></tr></thead><tbody>{options.map(option => {
+      const locked = !!option.retiredAt || (!!option.id && option.isPurchasable) || retiringIds.has(option.id ?? '');
+      const model = modelOf(option);
+      const colour = colourOf(option);
+      const history = option.id ? (product?.priceHistory ?? []).filter(row => row.variantId === option.id) : [];
+      const warnings = rowWarnings.get(option.clientKey) ?? [];
+      return <tr key={option.clientKey}>
+        <td><Field label={`Option type for ${option.optionValue}`}><input className="sa-input" readOnly={locked} maxLength={40} value={option.optionName} onChange={event => updateOption(option.clientKey, { optionName: event.target.value })} /></Field><Field label={`Model, colour or value for ${option.optionValue}`}><input className="sa-input" readOnly={locked} maxLength={60} value={option.optionValue} onChange={event => updateOption(option.clientKey, { optionValue: event.target.value })} /></Field>{model && <span className="sa-row-sub">Model: {model.brandName} {model.name}</span>}{option.retiredAt && <span className="sa-row-sub">Retired — read-only history</span>}{retiringIds.has(option.id ?? '') && <span className="sa-row-sub">Retires when replacement is saved</span>}{!option.isPurchasable && <span className="sa-row-sub">Display only</span>}</td>
+        <td>{sharedColours.length > 0 ? <select aria-label={`Colour for ${option.optionValue}`} className="sa-input" disabled={locked} value={option.colourId} onChange={event => { const next = sharedColours.find(item => item.id === event.target.value); updateOption(option.clientKey, { colourId: event.target.value, ...(next ? { optionHex: next.hex } : {}) }); }}><option value="">No colour</option>{sharedColours.filter(item => item.isActive !== false || item.id === option.colourId).map(item => <option key={item.id} value={item.id}>{item.name} ({item.hex})</option>)}</select> : <span className="sa-row-sub">Add colours in Basics</span>}{colour && <span className="sa-swatch" aria-hidden="true" style={{ background: colour.hex }} />}</td>
+        <td><input aria-label={`SKU for ${option.optionValue}`} className="sa-input sa-input-mono" maxLength={64} disabled={!!option.retiredAt || (!!option.id && option.savedSku != null) || retiringIds.has(option.id ?? '')} value={option.sku} onChange={event => updateOption(option.clientKey, { sku: event.target.value.toUpperCase() })} />{warnings.map(warning => <span className="sa-row-sub" key={warning}>{warning}</span>)}</td>
+        <td><input aria-label={`Price for ${option.optionValue}`} className="sa-input" type="number" min="0.01" step="0.01" disabled={!!option.retiredAt || retiringIds.has(option.id ?? '')} placeholder={form.price || 'Product price'} value={option.price} onChange={event => updateOption(option.clientKey, { price: event.target.value })} /></td>
+        <td><input aria-label={`Sale price for ${option.optionValue}`} className="sa-input" type="number" min="0.01" step="0.01" disabled={!!option.retiredAt || retiringIds.has(option.id ?? '')} placeholder="No sale" value={option.salePrice} onChange={event => updateOption(option.clientKey, { salePrice: event.target.value })} /></td>
+        <td><label className="sa-check"><input aria-label={`Limit stock for ${option.optionValue}`} type="checkbox" role="switch" disabled={!!option.retiredAt || !option.isActive || !option.isPurchasable || transferring || !!option.replacesVariantId} checked={option.trackInventory} onChange={event => updateOption(option.clientKey, { trackInventory: event.target.checked })} />Limit</label><input aria-label={`In stock for ${option.optionValue}`} className="sa-input" type="number" min="0" step="1" disabled={!!option.retiredAt || !option.isActive || !option.isPurchasable || transferring} value={option.count} onChange={event => updateOption(option.clientKey, { count: event.target.value })} /></td>
+        <td><label className="sa-check"><input aria-label={`Active ${option.optionValue}`} type="checkbox" disabled={!!option.retiredAt || retiringIds.has(option.id ?? '')} checked={option.isActive} onChange={event => updateOption(option.clientKey, { isActive: event.target.checked })} />Active</label></td>
+        <td>{option.id ? history.length ? <details><summary>{history.length} change{history.length === 1 ? '' : 's'}</summary><ul className="sa-plain-list">{history.map(row => <li key={row.id}>{row.priceKind === 'sale' ? 'Sale' : row.priceKind === 'sale_cleared' ? 'Sale cleared' : 'Regular'}: {row.oldPricePaise === null ? '—' : rupees(row.oldPricePaise)} → {row.priceKind === 'sale_cleared' && row.newPricePaise === 0 ? '—' : rupees(row.newPricePaise)}</li>)}</ul></details> : <span className="sa-row-sub">No changes</span> : <span className="sa-row-sub">New row</span>}</td>
+        <td>{!option.id ? <button type="button" className="sa-btn sa-btn-small sa-btn-quiet" disabled={!!option.retiredAt} onClick={() => option.replacesVariantId ? cancelReplacement(option) : setOptions(current => current.filter(row => row.clientKey !== option.clientKey))}>{option.replacesVariantId ? 'Cancel replacement' : 'Remove'}</button> : option.isPurchasable && !option.retiredAt && !retiringIds.has(option.id) ? <button type="button" className="sa-btn sa-btn-small" disabled={liveOptions.length >= 100} onClick={() => replaceOption(option)}>Archive and replace</button> : <span className="sa-row-sub">Read-only</span>}</td>
+      </tr>; })}</tbody></table></div>
     {options.length > 0 && <details><summary>Advanced option details</summary><p className="sa-hint">Saved commerce identities cannot be changed. Archive an option and create a new one to change its identity. New SKUs are generated for you. Choose a compatible device for each model option when the product type requires it.</p>{options.map(option => <fieldset key={option.clientKey} className="sa-detail-card"><legend>{option.optionName}: {option.optionValue}</legend><div className="sa-control-grid">
       <Field label="SKU"><input className="sa-input" disabled={!!option.retiredAt || (!!option.id && option.savedSku != null)} maxLength={60} value={option.sku} onChange={event => updateOption(option.clientKey, { sku: event.target.value })} /></Field>
       <Field label="Compatible device"><select className="sa-input" disabled={!!option.retiredAt || (!!option.id && option.isPurchasable) || retiringIds.has(option.id ?? '')} value={option.deviceModelId} onChange={event => updateOption(option.clientKey, { deviceModelId: event.target.value })}><option value="">No device mapping</option>{metadataReferences.models.filter(model => metadata.deviceModelIds.includes(model.id)).map(model => <option key={model.id} value={model.id}>{model.brandName} {model.name}</option>)}{option.deviceModelId && !metadata.deviceModelIds.includes(option.deviceModelId) && <option value={option.deviceModelId}>{option.deviceModelId} — compatibility needs review</option>}</select></Field>
@@ -386,7 +576,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     <div key="stock"><p className="sa-notice">Inventory mode: <strong>{useOptionStock ? 'Individual variant stock' : 'Shared product stock'}</strong>. Compatible devices alone do not change this mode.</p>{stockGuide}
       {product?.inventoryMode === 'variant' && <p className="sa-hint">Retained parent balance: {product.stock?.onHand ?? 0}. These units are not an additional customer stock pool.</p>}
       {activateOptions && product?.inventoryMode !== 'variant' && <fieldset className="sa-detail-card"><legend>Where do variant units come from?</legend><label className="sa-field"><span className="sa-label">Stock source</span><select className="sa-input" value={stockSource} onChange={event => { setStockSource(event.target.value as 'transfer' | 'receipt'); setReceiptConfirmed(false); }}><option value="transfer">Transfer existing parent units</option><option value="receipt">Receive genuinely new variant units</option></select></label>{transferring ? <><p className="sa-hint">Available parent units: {Math.max(0, (product?.stock?.onHand ?? 0) - (product?.stock?.reserved ?? 0))}. Existing destination counts remain unchanged before allocation. Receive additional units in a separate save afterward.</p>{commerceOptions.map(option => <Field key={option.clientKey} label={`Transfer to ${option.optionValue}`}><input className="sa-input" type="number" min="0" step="1" value={option.allocation ?? '0'} onChange={event => updateOption(option.clientKey, { allocation: event.target.value })} /></Field>)}<p className="sa-hint">Total transfer: {commerceOptions.reduce((sum, option) => sum + Number(option.allocation ?? 0), 0)}. Never enter the same units as opening variant stock.</p></> : <label className="sa-check"><input type="checkbox" checked={receiptConfirmed} onChange={event => setReceiptConfirmed(event.target.checked)} />I confirm these are new units, not units already counted in parent stock.</label>}</fieldset>}
-      {commerceOptions.length > 0 && product?.inventoryMode !== 'variant' && <div className="sa-notice"><label className="sa-check"><input type="checkbox" checked={activateOptions} onChange={event => setActivateOptions(event.target.checked)} />Use these options at checkout with their own stock counts</label><p className="sa-hint">This switches the product to option stock when saved. Enter each option count explicitly. Existing product stock stays separate and is never copied or split automatically. Outstanding checkouts or old stock obligations may prevent the switch.</p></div>}
+      {commerceOptions.length > 0 && product?.inventoryMode !== 'variant' && <div className="sa-notice"><p><strong>Needs review:</strong> this product sells options but keeps one shared stock count, so the store cannot tell which colour or model ran out. Nothing changes until you choose option stock and save.</p><label className="sa-check"><input type="checkbox" checked={activateOptions} onChange={event => setActivateOptions(event.target.checked)} />Use these options at checkout with their own stock counts</label><p className="sa-hint">This switches the product to option stock when saved. Enter each option count explicitly. Existing product stock stays separate and is never copied or split automatically. Outstanding checkouts or old stock obligations may prevent the switch.</p></div>}
       <label className="sa-check"><input type="checkbox" role="switch" checked={masterTracking} onChange={event => setMasterTracking(event.target.checked)} />Limit my stock</label>
       {!masterTracking && <p className="sa-notice">Stock is not limited, so this can be sold without end. <button type="button" className="sa-btn sa-btn-small" onClick={() => setMasterTracking(true)}>Turn on</button></p>}
       {useOptionStock && commerceOptions.length === 0 ? <p className="sa-notice">No active sellable variants. Review and activate physical options in Price and options. Parent stock cannot substitute for missing variants.</p> : useOptionStock ? <div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Option</th><th>In stock</th><th>Held in checkouts</th><th>Available to buy</th><th>Warn me when below</th></tr></thead><tbody>{commerceOptions.map(option => <tr key={option.clientKey}><td>{option.optionValue}<span className="sa-row-sub">{option.trackInventory ? 'Limited' : 'Not limited'}</span></td><td><input aria-label={`Stock count for ${option.optionValue}`} className="sa-input" type="number" min={option.originalStock?.reserved ?? 0} step="1" disabled={transferring} value={option.count} onChange={event => updateOption(option.clientKey, { count: event.target.value })} /></td><td>{option.originalStock?.reserved ?? 0}</td><td>{option.trackInventory ? Math.max(0, Number(option.count) - (option.originalStock?.reserved ?? 0)) : 'Not limited'}</td><td><input aria-label={`Warn below for ${option.optionValue}`} className="sa-input" type="number" min="0" step="1" value={option.threshold} onChange={event => updateOption(option.clientKey, { threshold: event.target.value })} /></td></tr>)}</tbody></table></div> : <div className="sa-control-grid"><Field label="In stock" help="The exact total you have, including units held in checkouts."><input className="sa-input" type="number" min={product?.stock?.reserved ?? 0} step="1" value={parentCount} onChange={event => setParentCount(event.target.value)} /></Field><Field label="Warn me when below"><input className="sa-input" type="number" min="0" step="1" value={parentThreshold} onChange={event => setParentThreshold(event.target.value)} /></Field><p className="sa-hint">Held in checkouts: {product?.stock?.reserved ?? 0} · Available to buy: {parentTracking ? Math.max(0, Number(parentCount) - (product?.stock?.reserved ?? 0)) : 'Not limited'}</p></div>}

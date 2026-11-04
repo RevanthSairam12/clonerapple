@@ -1,5 +1,6 @@
 import { getSql } from '@/lib/platform/db';
 import { readCatalogRevision } from './catalog-revision';
+import type { SellBy } from './options-table-rules';
 
 /**
  * Read-only catalogue queries for the store admin.
@@ -8,9 +9,9 @@ import { readCatalogRevision } from './catalog-revision';
  * allowed to see price_history and stock even though RLS gives anon and
  * authenticated no policy on those tables.
  *
- * Nothing in this module writes. Price editing is deliberately absent: the
- * checkout path still reads prices from the code catalogue, so enabling a
- * write path here would create a price the storefront does not charge.
+ * Nothing in this module writes. Checkout reads prices from the database, so
+ * the editor can change them; every write lives in `catalog-crud.ts` and
+ * `product-draft.ts`, both of which append history and an audit row.
  */
 
 export type CatalogLoad<T> =
@@ -71,6 +72,11 @@ export interface CatalogImage {
   role: string;
   sortOrder: number;
   isActive: boolean;
+  /**
+   * The shared colour this photo belongs to; null is the product's default
+   * gallery. Every model in that colour shows the same photos.
+   */
+  colourId: string | null;
   /** Set when the image was archived; archived rows are restorable. */
   deletedAt: string | null;
 }
@@ -95,8 +101,15 @@ export interface CatalogVariant {
 
 export interface CatalogPriceHistoryRow {
   id: number;
+  /** Null for the product's own base price; set for an option price. */
+  variantId: string | null;
   oldPricePaise: number | null;
   newPricePaise: number;
+  /** Paired sale values recorded with the same change, when one existed. */
+  oldSalePricePaise: number | null;
+  newSalePricePaise: number | null;
+  /** Rows written by one save share a change group so the UI shows one change. */
+  changeGroup: string | null;
   /** `regular`, `sale` or `sale_cleared` — which price the row records. */
   priceKind: string;
   currency: string;
@@ -130,7 +143,13 @@ export interface CatalogProductDetail extends CatalogProductSummary {
   /** Opaque bounded edit token; inventory balances do not advance it. */
   catalogRevision: number;
   inventoryMode: 'product' | 'variant';
+  /** Which option the owner chose to sell by. Never rewrites saved rows. */
+  sellBy: SellBy;
+  /** Editable SKU suggestion pattern; null uses the default. */
+  skuPattern: string | null;
   deviceModels: Array<{id:string;name:string;isActive?:boolean}>;
+  /** Every shared colour the editor can attach to an option row or a photo. */
+  colours: Array<{id:string;name:string;hex:string;isActive?:boolean}>;
   description: string;
   shortDescription: string | null;
   descriptionSections: unknown;
@@ -267,6 +286,11 @@ function highlightList(value: unknown): Array<{ title: string; desc: string }> {
 }
 
 /** Shared image row mapper: read paths and write paths return the same shape. */
+function sellByOf(value: unknown): SellBy {
+  const raw = text(value);
+  return raw === 'colour' || raw === 'model' || raw === 'model_colour' || raw === 'other' ? raw : 'single';
+}
+
 export function mapImageRow(row: Row): CatalogImage {
   return {
     id: text(row.id),
@@ -274,6 +298,7 @@ export function mapImageRow(row: Row): CatalogImage {
     alt: text(row.alt),
     role: text(row.role),
     sortOrder: number(row.sort_order),
+    colourId: row.colour_id === null || row.colour_id === undefined ? null : text(row.colour_id),
     isActive: Boolean(row.is_active),
     deletedAt:
       row.deleted_at === null || row.deleted_at === undefined
@@ -453,6 +478,7 @@ export async function getCatalogProduct(
              p.badge, p.highlights, p.in_the_box, p.seo_title,
              p.seo_description, p.in_stock, p.is_active, p.sort_order,
              p.created_at, p.updated_at, p.inventory_mode, p.catalog_revision,
+             p.sell_by, p.sku_pattern,
              (select coalesce(jsonb_agg(jsonb_build_object('id',dm.id,'name',dm.name,'isActive',dm.is_active and db.is_active) order by dm.name),'[]'::jsonb) from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.archived_at is null) as device_models,
              c.id as category_id, c.slug as category_slug, c.name as category_name
       from products p
@@ -465,7 +491,7 @@ export async function getCatalogProduct(
     const productRow = (productRows as Row[])[0];
     if (!productRow) return { ok: false, reason: 'not-found' };
 
-    const [facetRows, specRows, imageRows, variantRows, attributeRows, historyRows, stockRows] =
+    const [facetRows, specRows, imageRows, variantRows, attributeRows, historyRows, stockRows, colourRows] =
       await Promise.all([
         sql`
           select facet_key, facet_value, sort_order
@@ -480,7 +506,7 @@ export async function getCatalogProduct(
           order by sort_order, label
         `,
         sql`
-          select id, url, alt, role, sort_order, is_active, deleted_at
+          select id, url, alt, role, sort_order, colour_id, is_active, deleted_at
           from product_images
           where product_id = ${id}
           order by
@@ -507,12 +533,13 @@ export async function getCatalogProduct(
           order by a.sort_order, a.label
         `,
         sql`
-          select id, old_price_paise, new_price_paise, price_kind, currency, source,
-                 reason, changed_by, changed_at
+          select id, variant_id, old_price_paise, new_price_paise,
+                 old_sale_price_paise, new_sale_price_paise, change_group,
+                 price_kind, currency, source, reason, changed_by, changed_at
           from price_history
           where product_id = ${id}
           order by changed_at desc, id desc
-          limit 25
+          limit 50
         `,
         sql`
           select on_hand, reserved, low_stock_threshold, track_inventory,
@@ -520,6 +547,11 @@ export async function getCatalogProduct(
           from stock
           where product_id = ${id} and variant_id is null
           limit 1
+        `,
+        sql`
+          select id, name, hex, is_active, sort_order
+          from colours
+          order by sort_order, name, id
         `,
       ]);
 
@@ -578,8 +610,12 @@ export async function getCatalogProduct(
     const priceHistory: CatalogPriceHistoryRow[] = (historyRows as Row[]).map(
       (row) => ({
         id: number(row.id),
+        variantId: row.variant_id === null || row.variant_id === undefined ? null : text(row.variant_id),
         oldPricePaise: nullableNumber(row.old_price_paise),
         newPricePaise: number(row.new_price_paise),
+        oldSalePricePaise: nullableNumber(row.old_sale_price_paise),
+        newSalePricePaise: nullableNumber(row.new_sale_price_paise),
+        changeGroup: row.change_group === null || row.change_group === undefined ? null : text(row.change_group),
         priceKind: text(row.price_kind) || 'regular',
         currency: text(row.currency) || 'INR',
         source: text(row.source),
@@ -590,6 +626,13 @@ export async function getCatalogProduct(
         changedAt: iso(row.changed_at),
       }),
     );
+
+    const colours = (colourRows as Row[]).map((row) => ({
+      id: text(row.id),
+      name: text(row.name),
+      hex: text(row.hex),
+      isActive: Boolean(row.is_active),
+    }));
 
     const stockRow = (stockRows as Row[])[0];
     const stock: CatalogStockRow | null = stockRow
@@ -608,7 +651,10 @@ export async function getCatalogProduct(
         ...mapSummary(productRow),
         catalogRevision: readCatalogRevision(productRow.catalog_revision),
         inventoryMode:productRow.inventory_mode==='variant'?'variant':'product',
+        sellBy: sellByOf(productRow.sell_by),
+        skuPattern: productRow.sku_pattern == null ? null : text(productRow.sku_pattern),
         deviceModels:Array.isArray(productRow.device_models)?productRow.device_models as Array<{id:string;name:string;isActive?:boolean}>:[],
+        colours,
         trackInventory: stock ? stock.trackInventory : null,
         description: text(productRow.description),
         shortDescription: productRow.short_description == null ? null : text(productRow.short_description),
@@ -654,6 +700,39 @@ export async function getCatalogProduct(
 }
 
 /* ------------------------------------------------------------ reference */
+
+export interface CatalogColourOption {
+  id: string;
+  name: string;
+  hex: string;
+  isActive: boolean;
+}
+
+/** Shared colours a new product editor can use for rows and photos. */
+export async function listColourOptions(): Promise<CatalogLoad<CatalogColourOption[]>> {
+  const sql = getSql();
+  if (!sql) return { ok: false, reason: 'unavailable' };
+
+  try {
+    const rows = (await sql`
+      select id, name, hex, is_active
+      from colours
+      order by sort_order, name, id
+    `) as Row[];
+    return {
+      ok: true,
+      data: rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        hex: text(row.hex),
+        isActive: Boolean(row.is_active),
+      })),
+    };
+  } catch {
+    console.warn('[store-admin/catalog] could not read shared colours');
+    return { ok: false, reason: 'unavailable' };
+  }
+}
 
 /** Category options for the product editor's select. */
 export async function listCategoryOptions(): Promise<CatalogLoad<CatalogCategoryOption[]>> {

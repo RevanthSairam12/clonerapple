@@ -19,6 +19,7 @@ import {
   type VariantInput,
 } from './catalog-crud-rules';
 import type { CatalogWrite, CatalogWriteFailure } from './catalog-writes';
+import { ProductDraftError, updateVariantPricingUsing } from './product-draft';
 import { saveVariantIdentityUsing, VariantIdentityError } from './variant-identity';
 
 if (typeof window !== 'undefined') {
@@ -750,6 +751,8 @@ export interface VariantSnapshot {
   created: boolean;
   before: Row | null;
   after: Row;
+  /** Non-blocking notes, such as a below-cost sale or a confirmed large change. */
+  warnings: string[];
 }
 
 export async function upsertVariant(
@@ -778,31 +781,37 @@ export async function upsertVariant(
         : [];
       const before = beforeRows[0] ?? null;
       if (input.id && !before) return fail('not-found', 'Variant not found.');
-      if ((before?.price_paise_override == null ? null : number(before.price_paise_override)) !== input.priceOverridePaise) return fail('invalid-input','Variant price writes remain disabled until the authoritative checkout price gate is approved.');
       const saved=await saveVariantIdentityUsing(tx,productId,input,staffId);
       const rows=[saved.after];
 
       await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.variant.save',entity:'product',entityId:productId,before,after:rows[0] ?? {}});
-      const basePrice = number(product.price_paise);
-      const oldOverride = before?.price_paise_override == null
-        ? basePrice
-        : number(before.price_paise_override);
-      const newOverride = input.priceOverridePaise ?? basePrice;
-      if (!before || oldOverride !== newOverride) {
-        await tx`
-          insert into price_history (
-            product_id, variant_id, old_price_paise, new_price_paise, currency, reason,
-            source, changed_by
-          ) values (
-            ${productId}, ${saved.id}, ${before ? oldOverride : null}, ${newOverride}, 'INR',
-            'variant_price', 'store_admin', ${staffId}
-          )
-        `;
-      }
 
-      return { ok: true as const, data: { created: !before, before, after: rows[0] ?? {} } };
+      // Option pricing is unlocked and audited: the helper validates the sale
+      // pair, asks for confirmation on a large change and appends paired
+      // regular/sale history rows inside this same transaction.
+      const pricing = saved.before?.retired_at
+        ? { warnings: [] as string[] }
+        : await updateVariantPricingUsing(
+            tx,
+            productId,
+            saved.id,
+            {
+              pricePaise: input.priceOverridePaise,
+              salePricePaise: input.salePricePaise,
+              confirmLargeChange: input.confirmLargeChange,
+            },
+            staffId,
+          );
+
+      return {
+        ok: true as const,
+        data: { created: !before, before, after: rows[0] ?? {}, warnings: pricing.warnings },
+      };
     });
   } catch (error) {
+    if (error instanceof ProductDraftError) {
+      return fail(error.status === 404 ? 'not-found' : error.status === 409 ? 'conflict' : 'invalid-input', error.message);
+    }
     if (isUniqueViolation(error)) {
       return fail('conflict', 'That SKU or option value is already used on this product.');
     }

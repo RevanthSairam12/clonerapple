@@ -70,15 +70,36 @@ function draftTx({variant={},parent={},auditFails=false}={}){
 }
 const editProduct={id:'product-a',name:'Case',slug:'case',categoryId:'cases',pricePaise:10000};
 const savedOption={id:'variant-a',sku:'SKU',optionName:'Colour',optionValue:'Black',combinationKey:'black',isPurchasable:true,isActive:true};
-test('draft rejects option price changes and commerce identity changes inside enclosing rollback',async()=>{
-  for(const [patch,message] of [[{pricePaise:12000},/price writes remain disabled/],[{sku:'CHANGED'},/SKUs are immutable/]]){
-    const {sql,events}=draftTx();
-    const draft=rules.parseProductDraft({id:'product-a',product:editProduct,options:[{...savedOption,...patch}]});
-    await assert.rejects(service.saveProductDraftUsing(sql,draft,'staff'),message);
-    assert.equal(events.at(-1).query,'ROLLBACK');
-    assert.ok(!events.some(e=>e.query==='COMMIT'));
-    assert.ok(!events.some(e=>e.query.startsWith('update product_variants set sku')));
-  }
+test('draft saves option price changes with paired regular and sale history',async()=>{
+  const {sql,events}=draftTx();
+  const draft=rules.parseProductDraft({id:'product-a',product:editProduct,options:[{...savedOption,pricePaise:12000,salePricePaise:11000}]});
+  await service.saveProductDraftUsing(sql,draft,'staff');
+  assert.equal(events.at(-1).query,'COMMIT');
+  const history=events.filter(e=>e.query.startsWith('insert into price_history')&&e.values.includes('variant-a'));
+  assert.equal(history.length,2,'one row for the regular price, one for the sale');
+  assert.ok(history.some(e=>e.values.includes(12000)));
+  assert.ok(history.some(e=>e.values.includes(11000)));
+  const groups=history.map(e=>e.values.at(-1));
+  assert.equal(new Set(groups).size,1,'both rows share one change group');
+  assert.ok(events.some(e=>e.query.startsWith('insert into store_admin_audit')&&e.values.includes('catalog.variant.price')));
+});
+test('a large option price change asks for confirmation and never silently applies',async()=>{
+  const refused=draftTx();
+  const draft=rules.parseProductDraft({id:'product-a',product:editProduct,options:[{...savedOption,pricePaise:100}]});
+  await assert.rejects(service.saveProductDraftUsing(refused.sql,draft,'staff'),/confirm this price change/i);
+  assert.equal(refused.events.at(-1).query,'ROLLBACK');
+  const confirmed=draftTx();
+  const confirmedDraft=rules.parseProductDraft({id:'product-a',product:editProduct,confirmLargePriceChanges:true,options:[{...savedOption,pricePaise:100}]});
+  await service.saveProductDraftUsing(confirmed.sql,confirmedDraft,'staff');
+  assert.equal(confirmed.events.at(-1).query,'COMMIT');
+});
+test('draft rejects commerce identity changes inside enclosing rollback',async()=>{
+  const {sql,events}=draftTx();
+  const draft=rules.parseProductDraft({id:'product-a',product:editProduct,options:[{...savedOption,sku:'CHANGED'}]});
+  await assert.rejects(service.saveProductDraftUsing(sql,draft,'staff'),/SKUs are immutable/);
+  assert.equal(events.at(-1).query,'ROLLBACK');
+  assert.ok(!events.some(e=>e.query==='COMMIT'));
+  assert.ok(!events.some(e=>e.query.startsWith('update product_variants set sku')));
 });
 test('late summary audit failure aborts staged product and gallery changes',async()=>{
   const {sql,events}=draftTx({auditFails:true});

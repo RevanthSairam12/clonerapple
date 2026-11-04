@@ -194,7 +194,7 @@ test('Phase3 actual migration and metadata/duplicate service transactions in pri
       assert.equal((await state()).attributes.find(row => row.attributeId === 'colour').value, 'blue');
       assert.equal((await sql`select count(*)::int n from product_attribute_history`)[0].n, 3);
     });
-    await t.test('duplicate makes one draft and opening price only; repeated slug has no effects or stock writes', async () => {
+    await t.test('duplicate makes one draft with no price history; repeated slug has no effects or stock writes', async () => {
       await fixture.operation('duplicate draft once', client => client.begin(async tx => {
         assert.equal(await duplicate(tx, 'copy'), 'copy');
       }));
@@ -202,10 +202,8 @@ test('Phase3 actual migration and metadata/duplicate service transactions in pri
       assert.equal(copy.is_active, false); assert.equal(copy.product_type_id, 'type_a');
       assert.ok(copy.compatibility_reviewed_at); assert.equal(Number(copy.price_paise), 10000);
       assert.deepEqual(await state('copy'), await state());
-      const [price] = await sql`select product_id,old_price_paise,new_price_paise,reason,source from price_history`;
-      assert.equal(price.product_id, 'copy'); assert.equal(price.old_price_paise, null);
-      assert.equal(Number(price.new_price_paise), 10000); assert.equal(price.reason, 'product_duplicated');
-      assert.equal(price.source, 'store_admin');
+      // A duplicate starts with no price history at all.
+      assert.equal((await sql`select count(*)::int n from price_history where product_id='copy'`)[0].n, 0);
       const before = await sql`select id,action,after from store_admin_audit order by id`;
       await assert.rejects(sql.begin(tx => duplicate(tx, 'copy')), /already exists/);
       assert.deepEqual([...await sql`select id,action,after from store_admin_audit order by id`], [...before]);
@@ -213,7 +211,7 @@ test('Phase3 actual migration and metadata/duplicate service transactions in pri
       assert.equal((await sql`select count(*)::int n from products where id='rolled-back-copy'`)[0].n, 0);
       for (const table of ['stock_levels', 'stock_movements', 'stock_reservations']) assert.equal((await sql.unsafe(`select count(*)::int n from "${table}"`))[0].n, 0);
       const [audit] = await sql`select after from store_admin_audit where action='catalog.product.duplicate'`;
-      assert.deepEqual(audit.after, { sourceId: 'source', draft: true, stockCopied: false });
+      assert.deepEqual(audit.after, { sourceId: 'source', draft: true, stockCopied: false, priceHistoryCopied: false });
     });
     await t.test('final rows and all committed/rolled-back/rejected sequence advances match approval', async () => {
       await fixture.assertCounts();

@@ -1,6 +1,7 @@
 /** Pure validation for catalogue writes. No database, no framework. */
 
 import { slugify } from './catalog-rules';
+import { isSellBy, type SellBy } from './options-table-rules';
 import { parseMetadataInput, type MetadataInput } from '@/lib/catalog/product-metadata-rules';
 import {
   MAX_PRICE_PAISE,
@@ -226,6 +227,10 @@ export interface NewProductInput extends MetadataInput {
   isActive: boolean;
   trackInventory: boolean;
   initialOnHand: number;
+  /** Which options table the editor shows. Never rewrites saved rows. */
+  sellBy: SellBy;
+  /** Editable SKU suggestion pattern; null uses the default. */
+  skuPattern: string | null;
 }
 
 export const PRICE_MAX_PAISE = MAX_PRICE_PAISE;
@@ -283,6 +288,9 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
   try { metadata = parseMetadataInput(body); }
   catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Invalid product metadata.' }; }
   if (body.isActive !== undefined && typeof body.isActive !== 'boolean') return {ok:false,error:'Visibility must be true or false.'};
+  if (body.sellBy !== undefined && !isSellBy(body.sellBy)) return {ok:false,error:'Choose how this product is sold.'};
+  const skuPattern = optionalText(body.skuPattern, 120, 'The SKU pattern');
+  if (!skuPattern.ok) return skuPattern;
 
   return {
     ok: true,
@@ -306,6 +314,8 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
       ...metadata,
       trackInventory: body.trackInventory === true,
       initialOnHand: initialOnHand.value,
+      sellBy: isSellBy(body.sellBy) ? body.sellBy : 'single',
+      skuPattern: skuPattern.value || null,
     },
   };
 }
@@ -399,7 +409,9 @@ export interface VariantInput {
   optionName: string;
   optionValue: string;
   optionHex: string | null;
-  priceOverridePaise: number | null;
+  /** Omitted means "leave the saved price unchanged"; null means "use the base price". */
+  priceOverridePaise?: number | null;
+  salePricePaise?: number | null;
   isPurchasable?: boolean;
   deviceModelId?: string | null;
   combinationKey?: string | null;
@@ -407,6 +419,8 @@ export interface VariantInput {
   optionIdentity?: string | null;
   /** Owned saved variant to retire; only valid when creating a new identity. */
   replacesVariantId?: string;
+  /** The person confirmed a large option price change. Never sent by default. */
+  confirmLargeChange?: boolean;
   isActive: boolean;
   sortOrder: number;
 }
@@ -449,11 +463,26 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
     return { ok: false, error: 'The colour must be a hex value such as #1f2937.' };
   }
 
-  let priceOverridePaise: number | null = null;
-  if (body.priceOverridePaise !== undefined && body.priceOverridePaise !== null && body.priceOverridePaise !== '') {
-    const parsed = boundedPaise(body.priceOverridePaise, 1, PRICE_MAX_PAISE, 'Price override');
-    if (!parsed.ok) return parsed;
-    priceOverridePaise = parsed.value;
+  let priceOverridePaise: number | null | undefined;
+  if (body.priceOverridePaise !== undefined) {
+    if (body.priceOverridePaise === null || body.priceOverridePaise === '') {
+      priceOverridePaise = null;
+    } else {
+      const parsed = boundedPaise(body.priceOverridePaise, 1, PRICE_MAX_PAISE, 'Option price');
+      if (!parsed.ok) return parsed;
+      priceOverridePaise = parsed.value;
+    }
+  }
+  if (body.confirmLargeChange !== undefined && typeof body.confirmLargeChange !== 'boolean') return {ok:false,error:'Price change confirmation must be true or false.'};
+  let salePricePaise: number | null | undefined;
+  if (body.salePricePaise !== undefined) {
+    if (body.salePricePaise === null || body.salePricePaise === '') {
+      salePricePaise = null;
+    } else {
+      const parsed = boundedPaise(body.salePricePaise, 1, PRICE_MAX_PAISE, 'Option sale price');
+      if (!parsed.ok) return parsed;
+      salePricePaise = parsed.value;
+    }
   }
 
   const sortOrder = boundedInt(body.sortOrder ?? 0, 0, 9999, 'Sort order');
@@ -477,7 +506,9 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
       ...(body.combinationKey === undefined ? {} : {combinationKey}),
       ...(body.optionIdentity === undefined ? {} : {optionIdentity}),
       ...(body.replacesVariantId === undefined ? {} : {replacesVariantId:body.replacesVariantId as string}),
-      priceOverridePaise,
+      ...(priceOverridePaise === undefined ? {} : {priceOverridePaise}),
+      ...(salePricePaise === undefined ? {} : {salePricePaise}),
+      ...(body.confirmLargeChange === undefined ? {} : {confirmLargeChange:body.confirmLargeChange as boolean}),
       isActive: body.isActive === undefined ? true : Boolean(body.isActive),
       sortOrder: sortOrder.value,
     },

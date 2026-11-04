@@ -23,6 +23,8 @@ export interface ProductDraft {
   metadata: ReturnType<typeof parseMetadataInput>;
   shortDescription?: string|null; descriptionSections?: ReturnType<typeof parseProductDescription>['sections'];
   salePricePaise?: number|null; costPaise?: number|null; sortOrder?: number; inStock?: boolean;
+  /** The person confirmed a large price change; never inferred from the UI alone. */
+  confirmLargePriceChanges?: boolean;
   gallery?: Array<ProductImageInput & {id?:string;isActive?:boolean}>; options?: DraftOption[]; stock?: DraftStock;
   activateVariantInventory?: {confirm:true;reason:string;allocations:Array<{variantId:string;quantity:number}>};
 }
@@ -45,6 +47,7 @@ export function parseProductDraft(raw: unknown): ProductDraft {
   const result:ProductDraft={...(id?{id:id as string}:{}),product,metadata};
   if(Object.prototype.hasOwnProperty.call(body,'expectedRevision')) result.expectedRevision=validateExpectedRevision(body.expectedRevision);
   if(body.salePricePaise!==undefined) result.salePricePaise=draftMoney(body.salePricePaise);
+  if(body.confirmLargePriceChanges!==undefined){if(typeof body.confirmLargePriceChanges!=='boolean')throw new Error('Price change confirmation must be true or false.');result.confirmLargePriceChanges=body.confirmLargePriceChanges;}
   for(const key of ['costPaise','sortOrder','inStock'] as const){
     const value=p[key]; if(value===undefined) continue;
     if(key==='inStock'){if(typeof value!=='boolean') throw new Error('inStock must be boolean.');result.inStock=value;}
@@ -59,7 +62,10 @@ export function parseProductDraft(raw: unknown): ProductDraft {
   if(body.gallery!==undefined){
     if(!Array.isArray(body.gallery)||body.gallery.length>50)throw new Error('Supply at most 50 gallery images.');
     result.gallery=body.gallery.map((raw,index)=>{const r=draftRecord(raw);const checked=validateProductImageInput({...r,sort_order:r.sortOrder??r.sort_order??index});if(!checked.ok)throw new Error(checked.error);if(r.id!==undefined&&(typeof r.id!=='string'||!DRAFT_ID.test(r.id)))throw new Error('Invalid image identity.');if(r.isActive!==undefined&&typeof r.isActive!=='boolean')throw new Error('Invalid image visibility.');return {...checked.value,...(r.id?{id:r.id as string}:{}),...(r.isActive===undefined?{}:{isActive:r.isActive as boolean})};});
-    for(const role of ['primary','hover'])if(result.gallery.filter(r=>r.role===role).length>1)throw new Error(`Only one ${role} image is allowed.`);
+    for(const role of ['primary','hover']){
+      if(result.gallery.filter(r=>r.role===role).length>1)throw new Error(`Only one ${role} image is allowed.`);
+      if(result.gallery.some(r=>r.role===role&&r.colourId))throw new Error(`A ${role} image belongs to the whole product, not one colour.`);
+    }
     const ids=result.gallery.flatMap(r=>r.id?[r.id]:[]);if(new Set(ids).size!==ids.length)throw new Error('Duplicate image identities.');
   }
   if(body.options!==undefined){

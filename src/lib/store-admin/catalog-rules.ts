@@ -215,6 +215,8 @@ export interface ProductImageInput {
   alt: string;
   role: ImageRole;
   sort_order: number;
+  /** The shared colour this photo belongs to; null is the product default gallery. */
+  colourId?: string | null;
 }
 
 export function validateImageRole(value: unknown): value is ImageRole {
@@ -251,7 +253,17 @@ export function validateProductImageInput(input: unknown): FieldResult<ProductIm
     return { ok: false, error: 'Sort order must be a whole number between 0 and 10000.' };
   }
 
-  return { ok: true, value: { url: rawUrl, alt, role, sort_order: sortOrder } };
+  // Optional per-colour gallery. A missing value means the product default
+  // photos, which is also the fallback when a colour has no photos.
+  let colourId: string | null = null;
+  if (input.colourId !== undefined && input.colourId !== null && input.colourId !== '') {
+    if (typeof input.colourId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(input.colourId)) {
+      return { ok: false, error: 'Choose a valid shared colour.' };
+    }
+    colourId = input.colourId;
+  }
+
+  return { ok: true, value: { url: rawUrl, alt, role, sort_order: sortOrder, colourId } };
 }
 
 /* ------------------------------------------------------------- brands */

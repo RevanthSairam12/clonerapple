@@ -32,7 +32,8 @@ export const product: CatalogProductDetail = {
   catalogRevision: 0,
   id: 'fixture-case-blue', slug: 'fixture-case-blue', name: 'Fixture protective case', subtitle: 'Synthetic data — not a real product',
   pricePaise: 129900, salePricePaise: 99900, currency: 'INR', isActive: true, inStock: true, trackInventory: true,
-  optionCount: 2, inventoryMode: 'variant', available: 15, stockStatus: 'limited', sortOrder: 0, updatedAt: stamp,
+  optionCount: 2, inventoryMode: 'variant', sellBy: 'colour', skuPattern: null, available: 15, stockStatus: 'limited', sortOrder: 0, updatedAt: stamp,
+  colours: [{ id: 'fixture-colour-blue', name: 'Blue', hex: '#0055cc', isActive: true }],
   categoryId: 'fixture-cases', categorySlug: 'cases', categoryName: 'Cases', deviceModels: [{ id: 'fixture-phone-0', name: 'Phone A' }],
   description: '', shortDescription: 'A synthetic case for fixture browser verification.',
   descriptionSections: [
@@ -43,7 +44,7 @@ export const product: CatalogProductDetail = {
   ],
   material: 'Silicone', brand: 'Fixture brand', brandId: 'fixture-brand', compareAtPaise: 149900, costPaise: null, conditionId: 'fixture-new', conditionLabel: 'New', badge: 'Test only',
   highlights: [], inTheBox: [], seoTitle: '', seoDescription: '', createdAt: stamp, facets: [], specs: [], attributeValues: [], priceHistory: [], stock: stock(0, 0),
-  images: [{ id: 'fixture-photo', url: '/fixture-photo.svg', alt: 'Synthetic blue case', role: 'primary', sortOrder: 0, isActive: true, deletedAt: null }],
+  images: [{ id: 'fixture-photo', url: '/fixture-photo.svg', alt: 'Synthetic blue case', role: 'primary', sortOrder: 0, colourId: null, isActive: true, deletedAt: null }],
   variants: ['Blue', 'Black'].map((optionValue, index) => ({ id: `fixture-option-${index}`, sku: `FIXTURE-${index}`, optionName: 'Colour', optionValue,
     optionHex: index ? '#111111' : '#0055cc', pricePaiseOverride: index ? null : 139900, salePricePaise: null, isPurchasable: true,
     deviceModelId: 'fixture-phone-0', optionIdentity: optionValue.toLowerCase(), combinationKey: `fixture-combination-${index}`, stock: stock(index ? 5 : 12, index ? 0 : 2), isActive: true, sortOrder: index })),

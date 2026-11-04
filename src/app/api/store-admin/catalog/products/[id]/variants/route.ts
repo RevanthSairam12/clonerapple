@@ -69,7 +69,7 @@ export async function POST(
   revalidateCatalog(id);
 
   return NextResponse.json(
-    { ok: true, created: result.data.created, variant: result.data.after },
+    { ok: true, created: result.data.created, variant: result.data.after, warnings: result.data.warnings },
     { status: result.data.created ? 201 : 200 },
   );
 }

@@ -21,6 +21,43 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Phase 2 — options, price and stock — 5 November 2026
+
+**Implemented and offline-verified; the migration and database acceptance are not run.**
+Report: `docs/phase2-options-table-20261105.md`.
+
+- Option prices are editable again, on one audited path shared by the single-option
+  route (`upsertVariant`) and the product draft. Each save appends paired `price_history`
+  rows — one per moved field, both carrying old and new regular **and** sale values under
+  one `change_group` — and writes `catalog.variant.price` through the strict audit.
+- A drop over 50%, a rise over 100% or a price below cost asks the editor to confirm and
+  then saves. Without the confirmation flag the transaction rolls back with the same
+  message; it is never a permanent block.
+- `Sell by` (one item, colour, model, model and colour, another option) plans rows from
+  shared colours and selected compatible devices. Only missing rows are proposed, at most
+  60 per generation, and each new row starts inactive with zero stock and a suggested SKU.
+- One table holds Model or option, Colour, SKU, Price, Sale, Stock, Active, History and
+  Remove. Blank price means the product price; clearing a saved override sends an explicit
+  clear. Fast entry fills a price, sale or stock value into every active sellable row, or a
+  different price for each colour (Red ₹100, Black ₹120) into only the rows with that colour.
+- Stock stays a deliberate choice: a product with options that still keeps one shared stock
+  count shows a **Needs review** notice on the Stock step. Nothing is split or transferred
+  automatically; option stock turns on only through the existing explicit activation.
+- Photos can belong to a shared colour and fall back to the default gallery when that
+  colour has none. Primary and hover stay product-wide; colour photos use the gallery role.
+- Duplicating a product copies its details, chosen models, colour links and photos with new
+  SKUs, zero stock and no price history.
+- `0060_product_options_pricing.sql` is additive and **not applied**. It adds `sell_by`,
+  `sku_pattern`, the paired sale history columns, `change_group`, an option history index
+  and `product_images.colour_id` with its index.
+
+**Measured:** `npm test` **1,654 tests / 1,570 pass / 0 fail / 84 skipped**; `npm run
+typecheck` and `npm run build` pass; store-admin guards **122 routes**, account guards and
+admin boundary pass; `npm audit` **0 vulnerabilities**; `git diff --check` clean apart from
+LF/CRLF advisories. `check:notifications` remains **3 pass / 5 fail** because mail and SMS
+are not configured; no message was sent. PostgreSQL migration/fixture and authenticated
+browser acceptance were not run.
+
 ### Phase A — customer order flow — 2 November 2026
 
 **Implementation delivered; acceptance is not fully complete.** Required real SQL

@@ -136,7 +136,8 @@ test('saved sub-item replacement preserves old identity, exposes editable label 
   assert.equal(replacement.id, undefined); assert.equal(replacement.optionValue, 'Blue');
   assert.notEqual(replacement.sku, 'ORIGINAL');
   assert.equal(replacement.stock.onHand, 4); assert.equal(replacement.stock.trackInventory, true);
-  assert.equal(replacement.pricePaise, undefined, 'price gate remains closed');
+  assert.equal(replacement.pricePaise, undefined, 'an untouched blank price writes nothing');
+  assert.equal(replacement.salePricePaise, undefined, 'an untouched blank sale writes nothing');
 });
 
 test('new workflow renders confirmed six-step order, progress, draft default and one coordinated save form', () => {
@@ -149,7 +150,7 @@ test('new workflow renders confirmed six-step order, progress, draft default and
   assert.equal((html.match(/<form/g) ?? []).length, 1);
   assert.match(html, /All six sections save together/);
 });
-test('view-only edit renders every section, stock guide and read-only pricing without save action', () => {
+test('view-only edit renders every section, stock guide and the editable options table without save action', () => {
   const product = { id: 'case', name: 'Case', slug: 'case', categoryId: 'power', pricePaise: 10000, isActive: false, images: [], variants: [], stock: null, description: '', highlights: [], specs: [], inTheBox: [], inventoryMode: 'product' };
   const html = renderToStaticMarkup(React.createElement(ProductWorkflow, { ...props, product, canEdit: false }));
   assert.equal((html.match(/<section/g) ?? []).length, 6);
@@ -158,9 +159,10 @@ test('view-only edit renders every section, stock guide and read-only pricing wi
   assert.match(html, /Limit my stock/);
   assert.match(html, /Ready to publish/);
   assert.doesNotMatch(html, />Save changes</);
-  assert.match(html, /Option prices are read-only/);
+  assert.match(html, /Options, price and stock/);
+  assert.doesNotMatch(html, /Option prices are read-only/);
 });
-test('ordinary edit keeps coordinated payload and gated prices unchanged after rendering help', async () => {
+test('ordinary edit keeps the coordinated payload and untouched prices unchanged after rendering help', async () => {
   const requests = [];
   const h = harness('src/components/store-admin/ProductWorkflow.tsx', { fetch: async (url, init) => { requests.push(JSON.parse(init.body)); return { ok: true, json: async () => ({ product: { id: 'case', catalogRevision: 7 } }) }; } });
   const product = { ...productBase, stock: { onHand: 10, reserved: 2, lowStockThreshold: 3, trackInventory: true }, shortDescription: 'Useful case', descriptionSections: [] };

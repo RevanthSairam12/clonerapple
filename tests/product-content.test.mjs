@@ -115,7 +115,7 @@ test('duplicate SQL copies current canonical content, never revision lineage or 
   const events = [];
   const tx = async (strings, ...values) => {
     const query = strings.join('?').replace(/\s+/g, ' ').trim(); events.push({ query, values });
-    if (query.startsWith('select id from products')) return [{ id: 'source' }];
+    if (query.startsWith('select id,sell_by,sku_pattern from products')) return [{ id: 'source', sell_by: 'single', sku_pattern: null }];
     return [];
   }; tx.json = value => value;
   await duplicate.duplicateProductUsing(tx, 'source', { name: 'Copy', slug: 'copy' }, 'staff');
