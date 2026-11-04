@@ -10,7 +10,8 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 
 // Execute the actual customer hook/components with a deterministic hook host.
 // Imports are allowlisted; no application DB module or external fetch can load.
-function host({ addItem = async () => ({ status: 'added' }), fetch: request = async () => { throw new Error('Unexpected fetch'); } } = {}) {
+function host({ addItem = async () => ({ status: 'added' }), verifySelections = async () => ({ status: 'ready', prices: [{ price: 100 }] }), fetch: request = async () => { throw new Error('Unexpected fetch'); } } = {}) {
+  const navigations = [];
   const slots = [], effects = [], timers = new Map(), cache = new Map();
   let cursor = 0, nextTimer = 0, tree;
   const react = {
@@ -23,15 +24,23 @@ function host({ addItem = async () => ({ status: 'added' }), fetch: request = as
     if (cache.has(relative)) return cache.get(relative);
     const filename = path.join(root, relative), module = { exports: {} };
     const code = ts.transpileModule(readFileSync(filename, 'utf8'), { fileName: filename, compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-    vm.runInNewContext(code, { module, exports: module.exports, React: react, AbortController,
+    vm.runInNewContext(code, { module, exports: module.exports, React: react, AbortController, URLSearchParams,
+      window: { scrollY: 0, addEventListener() {}, removeEventListener() {} },
       setTimeout(fn) { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout(id) { timers.delete(id); }, fetch: request,
       require(name) {
         if (name === 'react') return react;
         if (name === 'next/link') return { __esModule: true, default: 'a' };
-        if (name === '@/lib/cart/CartContext') return { useCart: () => ({ addItem }) };
+        if (name === 'next/navigation') return { useRouter: () => ({ push: url => navigations.push(url) }) };
+        if (name === '@/lib/cart/CartContext') return { useCart: () => ({ addItem, items: [] }) };
+        if (name === '@/lib/storefront/use-availability') return { useAvailability: () => ({ blocked: false }) };
+        if (name === '@/components/shop/CommerceVariantSelector') return { CommerceVariantSelector: props => react.createElement('select', { 'data-variant-picker': true, onChange: event => props.onChange(event.target.value) }) };
+        if (name === '@/components/shop/ProductDescriptionSections') return { ProductDescriptionSections: () => null };
+        if (name.endsWith('/GlobalNav')) return { GlobalNav: () => null };
+        if (name.endsWith('/GlobalFooter')) return { GlobalFooter: () => null };
+        if (name.endsWith('/GadzioTrustBar')) return { GadzioTrustBar: () => null };
         if (name === '@/lib/storefront/use-purchase-action') return load('src/lib/storefront/use-purchase-action.ts');
-        if (name === '@/lib/storefront/selection') return { priceNeedsReview: (a, b) => a.price !== b.price || a.regularPrice !== b.regularPrice };
-        if (name === '@/lib/storefront/availability-rules') return { stockBlocked: (stock, sale) => !stock && !sale };
+        if (name === '@/lib/storefront/selection') return { verifySelections, priceNeedsReview: (a, b) => a.price !== b.price || a.regularPrice !== b.regularPrice };
+        if (name === '@/lib/storefront/availability-rules') return { STOCK_NOT_AVAILABLE: 'Stock not available', stockBlocked: (stock, sale) => !stock && !sale };
         if (name === '@/lib/utils') return { formatINR: value => `₹${value}` };
         throw new Error(`Blocked application/backend import: ${name}`);
       } });
@@ -40,7 +49,7 @@ function host({ addItem = async () => ({ status: 'added' }), fetch: request = as
   }
   function expand(node) { if (node == null || typeof node !== 'object') return node; if (typeof node.type === 'function') return expand(node.type(node.props)); return { ...node, props: { ...node.props, children: (node.props.children ?? []).map(expand) } }; }
   const nodes = node => node && typeof node === 'object' ? [node, ...(node.props.children ?? []).flatMap(nodes)] : [];
-  return { load, render(Component, props, flush = true) { cursor = 0; tree = expand(Component(props)); if (flush) this.flush(); return tree; },
+  return { load, navigations, render(Component, props, flush = true) { cursor = 0; tree = expand(Component(props)); if (flush) this.flush(); return tree; },
     flush() { while (effects.length) effects.shift()(); }, nodes() { return nodes(tree); }, unmount() { for (const slot of slots) slot?.cleanup?.(); },
     text() { const content = node => node == null ? '' : typeof node !== 'object' ? String(node) : (node.props.children ?? []).map(content).join(' '); return content(tree); },
   };
@@ -77,6 +86,43 @@ for (const [file, name] of cards) test(`${name}: pending, price review, explicit
   assert.equal(calls[1].regularPrice, 100);
   assert.equal(calls[1].model, undefined, 'shared compatibility never selects a stock identity');
   assert.match(ui.text(), /Added/);
+  ui.unmount();
+});
+
+for (const [file, name] of [
+  ['src/components/shop/ProductDetailPage.tsx', 'ProductDetailPage'],
+  ['src/components/sites/accessories/AccessoryDetailPage.tsx', 'AccessoryDetailPage'],
+]) test(`${name}: exact variant Add and Buy Now fail closed and require explicit price-review retry`, async () => {
+  const adds = [], checks = [];
+  let result = { status: 'unavailable', message: 'Exact option unavailable' };
+  const ui = host({
+    addItem: async input => { adds.push(input); return { status: 'unavailable', message: 'Exact option unavailable' }; },
+    verifySelections: async (lines, signal) => { checks.push({ lines, signal }); return result; },
+  });
+  const detail = { ...product, inventoryMode: 'variant', images: [], inTheBox: [], specs: {}, features: [], highlights: [],
+    purchasableVariants: [{ id: 'exact', sku: 'EXACT', label: 'Exact model', deviceModelName: 'Phone', optionValue: 'Blue', pricePaise: 10000, regularPricePaise: 10000, inStock: true }] };
+  const Component = ui.load(file)[name], props = { product: detail, saleLive: true };
+  const render = () => ui.render(Component, props);
+  const text = node => node == null ? '' : typeof node !== 'object' ? String(node) : (node.props.children ?? []).map(text).join(' ');
+  const buy = () => ui.nodes().find(node => node.type === 'button' && text(node).trim() === 'Buy Now').props.onClick();
+  const add = () => ui.nodes().find(node => node.type === 'button' && /Add to Bag/.test(text(node))).props.onClick();
+  render();
+  await buy(); await add();
+  assert.equal(checks.length, 0); assert.equal(adds.length, 0);
+  ui.nodes().find(node => node.props['data-variant-picker']).props.onChange({ target: { value: 'exact' } }); render();
+  await add(); render();
+  assert.equal(adds[0].variantId, 'exact'); assert.equal(adds[0].variantSku, 'EXACT');
+  assert.match(ui.text(), /Exact option unavailable/);
+  await buy(); render();
+  assert.equal(checks[0].lines[0].variantId, 'exact'); assert.equal(checks[0].lines[0].quantity, 1);
+  assert.equal(ui.navigations.length, 0, 'sale display cannot bypass exact-stock refusal');
+  result = { status: 'ready', prices: [{ price: 120, priceDisplay: '₹120' }] };
+  await buy(); render();
+  assert.equal(ui.navigations.length, 0, 'price change never auto-navigates');
+  assert.match(ui.text(), /press again/);
+  await buy(); render();
+  assert.equal(ui.navigations.length, 1);
+  assert.match(ui.navigations[0], /variantId=exact/);
   ui.unmount();
 });
 

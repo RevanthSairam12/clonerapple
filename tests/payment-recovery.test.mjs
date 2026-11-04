@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { checkoutFixture } from './helpers/checkout-component-fixture.mjs';
 import {
   isConfirmedRecoveryPayment,
   paymentRetryAfterSeconds,
@@ -82,13 +83,27 @@ test('the single cart-clearing mount requires authorized confirmed active paymen
   assert.match(policy, /state\.paymentSettled === true/);
 });
 
-test('an active reservation stops checkout before the gateway form and exposes only a validated link', () => {
-  const checkout = source('src/components/checkout/CheckoutForm.tsx');
-  assert.match(checkout, /if \(isSubmitting \|\| activeReservation\) return/);
-  assert.match(checkout, /res\.status === 409 && data\.code === 'reservation_active'/);
-  assert.match(checkout, /statusUrl: safePaymentStatusUrl\(data\.statusUrl\)/);
-  assert.match(checkout, /href=\{activeReservation\.statusUrl\} prefetch=\{false\}/);
-  assert.match(checkout, /dateTime=\{activeReservation\.expiresAt\}/);
-  assert.match(checkout, /disabled=\{isSubmitting \|\| Boolean\(activeReservation\)/);
-  assert.ok(checkout.indexOf("data.code === 'reservation_active'") < checkout.indexOf('const { actionUrl, fields }'));
+test('an active reservation stops checkout before the gateway form and exposes only a validated link', async () => {
+  for (const statusUrl of ['/order/status?txnid=GDZ1001', 'https://attacker.invalid/order/status?txnid=GDZ1001']) {
+    const checkout = checkoutFixture();
+    const expiresAt = '2030-01-01T00:00:00.000Z';
+    checkout.respond(async () => ({ status: 409, ok: false, json: async () => ({
+      code: 'reservation_active', statusUrl, reservationExpiresAt: expiresAt,
+      actionUrl: 'https://attacker.invalid/gateway', fields: { key: 'synthetic' },
+    }) }));
+    await checkout.submit(checkout.render());
+    const tree = checkout.render();
+    const pay = checkout.visit(tree, node => node.props?.id === 'checkout-pay-now-btn');
+    assert.equal(pay.props.disabled, true);
+    assert.equal(pay.props['aria-disabled'], true);
+    assert.match(checkout.text(tree), /current bag is kept/);
+    const safeUrl = safePaymentStatusUrl(statusUrl);
+    const link = checkout.visit(tree, node => node.props?.href === (safeUrl ?? '/account/orders'));
+    assert.ok(link, 'only the validated status path or account fallback is rendered');
+    assert.equal(link.props.prefetch, false);
+    assert.equal(checkout.visit(tree, node => node.type === 'time').props.dateTime, expiresAt);
+    assert.equal(checkout.visit(tree, node => node.props?.href?.startsWith('https://attacker.invalid')), null);
+    await checkout.submit(tree);
+    assert.deepEqual(checkout.counts(), { requests: 1, syncs: 0, removals: 0, submissions: 0 });
+  }
 });

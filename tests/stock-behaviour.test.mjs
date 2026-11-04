@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
 import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
+import { paymentConnection, resolveCartItemsFromDbUsing } from './helpers/payment-catalog-fixture.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -236,7 +237,8 @@ test('detail pages render the shared rule and re-check on click', async () => {
     const text = await source(file);
     assert.match(text, /useAvailability\(/, `${file} uses the hook`);
     assert.match(text, /const unavailable = availability\.blocked/);
-    assert.match(text, /await availability\.refresh\(\)/, `${file} re-checks on press`);
+    assert.match(text, /await verifySelections\(/, `${file} checks fresh exact selections before Buy Now`);
+    assert.match(text, /purchase\.run\(\(signal\) => addItem\(/, `${file} delegates Add to authoritative cart validation`);
     assert.match(text, /disabled=\{isAddingToBag \|\| unavailable\}/, `${file} disables both buttons`);
     assert.match(text, /\{unavailable \? STOCK_NOT_AVAILABLE :/, `${file} labels the block`);
   }
@@ -253,7 +255,8 @@ test('detail pages render the shared rule and re-check on click', async () => {
   for (const file of pages) {
     const text = await source(file);
     assert.match(text, /handleBuyNow/);
-    assert.match(text, /valid !== true/);
+    assert.match(text, /checked\.status !== 'ready'/);
+    assert.match(text, /variantId: selectedVariant\?\.id, quantity: 1/);
   }
   assert.match(hook, /cache: 'no-store'/);
   assert.match(hook, /return null/, 'a failed check keeps the last known state');
@@ -276,8 +279,14 @@ test('bag, checkout and listings all use the shared stock rule', async () => {
   assert.match(checkout, /expectedUnitPaise: i\.unitPaise/);
   assert.match(checkout, /data\.code === 'price_changed'/);
   assert.match(checkout, /syncPrices\(updates\)/);
-  assert.match(checkout, /disabled=\{isSubmitting \|\| Boolean\(activeReservation\) \|\| hasUnavailable \|\| paymentUnavailable \|\| coupon\.busy\}/);
-  assert.match(checkout, /aria-disabled=\{isSubmitting \|\| Boolean\(activeReservation\) \|\| hasUnavailable \|\| paymentUnavailable \|\| coupon\.busy\}/);
+  for (const attribute of ['disabled', 'aria-disabled']) {
+    const payButton = checkout.slice(checkout.indexOf('id="checkout-pay-now-btn"'));
+    const expression = payButton.match(new RegExp(`${attribute}=\\{([^}]+)\\}`))?.[1];
+    assert.ok(expression, `${attribute} exists`);
+    for (const blocker of ['isSubmitting', 'Boolean(activeReservation)', 'Boolean(selectionConflict)', 'hasUnavailable', 'paymentUnavailable', 'coupon.busy']) {
+      assert.ok(expression.split(' || ').includes(blocker), `${attribute} independently includes ${blocker}`);
+    }
+  }
 
   const checkoutPage = await source('src/app/checkout/page.tsx');
   assert.match(checkoutPage, /stockById\[product\.id\.trim\(\)\.toLowerCase\(\)\] = product\.inStock/);
@@ -317,13 +326,27 @@ test('initiate rejects a price boundary crossing and names an out-of-stock item'
 });
 
 test('normal-mode availability fails closed in the payment resolver', async () => {
-  const catalog = await source('src/lib/payu/db-catalog.ts');
-  assert.match(catalog, /in_stock === false/);
-  assert.match(catalog, /!saleLive && !hasStockRow && row\.in_stock === false/);
-  assert.match(catalog, /new InsufficientStockError/);
-  // Sale mode must never create the block on the server either; the locked
-  // claim at Pay is the only stock authority that still runs.
-  assert.match(catalog, /!saleLive && !hasStockRow/);
+  const parent = { id: 'cable', name: 'Cable', inventory_mode: 'product', price_paise: 10000, in_stock: false };
+  const lines = [{ id: 'cable', quantity: 1 }];
+  for (const track_inventory of [null, undefined, false]) {
+    const rows = [{ ...parent, track_inventory }];
+    await assert.rejects(resolveCartItemsFromDbUsing(paymentConnection({ expired: true, rows }).sql, lines),
+      error => error.name === 'InsufficientStockError' && /Out of stock: Cable/.test(error.message));
+    const saleCart = await resolveCartItemsFromDbUsing(paymentConnection({ rows }).sql, lines);
+    assert.equal(saleCart.totalPaise, 10000, 'a live sale defers tracked stock to the final claim');
+    const availableRows = [{ ...parent, track_inventory, in_stock: true }];
+    assert.equal((await resolveCartItemsFromDbUsing(paymentConnection({ expired: true, rows: availableRows }).sql, lines)).totalPaise, 10000);
+  }
+  const trackedRows = [{ ...parent, track_inventory: true }];
+  assert.equal((await resolveCartItemsFromDbUsing(paymentConnection({ expired: true, rows: trackedRows }).sql, lines)).totalPaise, 10000);
+  const exactRows = [{ ...parent, inventory_mode: 'variant', variant_id: 'exact', track_inventory: true }];
+  const exactCart = await resolveCartItemsFromDbUsing(paymentConnection({ expired: true, rows: exactRows }).sql, [{ ...lines[0], variantId: 'exact' }]);
+  assert.equal(exactCart.items[0].variantId, 'exact', 'an exact variant is not blocked by the legacy parent flag');
+  // The injected rows prove resolver behavior. The final claim must still
+  // target the exact identity and remain independent of the display sale switch.
+  const stock = await source('src/lib/payu/stock.ts');
+  assert.match(stock, /variant_id is not distinct from \$\{claim\.variantId \|\| null\}/);
+  assert.doesNotMatch(stock, /saleLive/);
 });
 
 test('sale state is read once per request and falls back to off', async () => {
