@@ -222,7 +222,7 @@ export function GadzioHeader({
   promoHref = '/in-edu/store',
   navItems = NAV_ITEMS,
   searchPlaceholder = SEARCH_PANEL.placeholder,
-  accountHref = '/auth',
+  accountHref = '/account',
   unreadMessagesCount,
   customerFirstName,
 }: GadzioHeaderProps) {

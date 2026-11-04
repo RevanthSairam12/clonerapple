@@ -415,12 +415,16 @@ async function seed(snapshot, reference) {
           summary.productImages += 1;
         }
 
-        // Variants are display metadata. Deactivate everything for this
-        // product, then reactivate the snapshot rows; a removed colour stays
-        // in the table as inactive rather than losing its history.
+        // Commerce identities are durable, including inactive SKUs and legacy
+        // variants referenced by stock/order history. Only disposable display rows
+        // may be archived or refreshed from position-based seed IDs.
         await tx`
           update product_variants set is_active = false
-          where product_id = ${product.id}
+          where product_id = ${product.id} and not is_purchasable and sku is null
+            and device_model_id is null and combination_key is null and retired_at is null
+            and not exists (select 1 from stock s where s.variant_id=product_variants.id)
+            and not exists (select 1 from stock_movements m where m.variant_id=product_variants.id)
+            and not exists (select 1 from order_items i where i.variant_id=product_variants.id)
         `;
         for (let index = 0; index < product.colors.length; index += 1) {
           const color = product.colors[index];
@@ -439,6 +443,11 @@ async function seed(snapshot, reference) {
               option_hex = excluded.option_hex,
               is_active = true,
               sort_order = excluded.sort_order
+            where not product_variants.is_purchasable and product_variants.sku is null
+              and product_variants.device_model_id is null and product_variants.combination_key is null and product_variants.retired_at is null
+              and not exists (select 1 from stock s where s.variant_id=product_variants.id)
+              and not exists (select 1 from stock_movements m where m.variant_id=product_variants.id)
+              and not exists (select 1 from order_items i where i.variant_id=product_variants.id)
           `;
           summary.productVariants += 1;
         }

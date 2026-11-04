@@ -4,10 +4,16 @@ import { notFound } from 'next/navigation';
 import { formatDate } from '@/lib/store-admin/catalog';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { getOrderDetail, type SaleState } from '@/lib/store-admin/orders';
+import { getDocumentState } from '@/lib/orders/document-data';
+import { getBillRequest } from '@/lib/account/bill-requests';
+import { getRefundRequests } from '@/lib/store-admin/refund-lifecycle';
+import { OrderDocumentStatus } from '@/components/orders/OrderDocument';
 import { orderTotals } from '@/lib/store-admin/order-documents';
+import { fulfilmentLabel, hasShipmentStarted } from '@/lib/orders/fulfilment';
 import { listOrderNotes } from '@/lib/store-admin/order-notes';
 import { listOrderEdits } from '@/lib/store-admin/order-edits';
 import { listOrderPayments } from '@/lib/store-admin/payments';
+import { listPaymentEvents, type PaymentEventOutcome } from '@/lib/payu/payment-events';
 import { ANY_METHOD_LABELS } from '@/lib/store-admin/payment-rules';
 import {
   listCancellationReasons,
@@ -17,10 +23,11 @@ import {
 } from '@/lib/store-admin/returns';
 import { OrderControls } from '@/components/store-admin/OrderControls';
 import { OrderCancelForm } from '@/components/store-admin/OrderCancelForm';
-import { RefundForm } from '@/components/store-admin/RefundForm';
+import { RefundForm, RefundRequestActions } from '@/components/store-admin/RefundForm';
 import { ReturnForm } from '@/components/store-admin/ReturnForm';
 import { CustomerRevealForm } from '@/components/store-admin/CustomerRevealForm';
 import { OrderPaymentControls } from '@/components/store-admin/OrderPaymentControls';
+import { VerifyWithPayUButton } from '@/components/store-admin/VerifyWithPayUButton';
 import { OrderDetailTabs, type DetailTab } from '@/components/store-admin/OrderDetailTabs';
 import { OrderNoteForm } from '@/components/store-admin/OrderNoteForm';
 import { OrderEditForm } from '@/components/store-admin/OrderEditForm';
@@ -57,10 +64,37 @@ const SALE_STATE_LABELS: Record<SaleState, string> = {
   PENDING: 'Pending',
 };
 
+const EVENT_SOURCE_LABELS: Record<string, string> = {
+  redirect: 'Customer return',
+  webhook: 'PayU webhook',
+  reconcile: 'Automatic check',
+  admin: 'Staff verification',
+  customer: 'Customer payment check',
+};
+
+const EVENT_OUTCOME_LABELS: Record<PaymentEventOutcome, string> = {
+  paid: 'Paid',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  pending: 'Pending',
+  processing: 'Processing',
+  unchanged: 'No change',
+  rejected: 'Rejected',
+};
+
+function eventClass(outcome: PaymentEventOutcome): string {
+  if (outcome === 'paid') return 'sa-status sa-status-on';
+  if (outcome === 'failed' || outcome === 'rejected' || outcome === 'cancelled') {
+    return 'sa-status sa-status-danger';
+  }
+  return 'sa-status';
+}
+
 export default async function StoreAdminOrderDetailPage({ params }: Props) {
   const { txnid } = await params;
   const session = await getStoreSession();
-  const result = await getOrderDetail(txnid, session?.role ?? 'store_viewer');
+  if (!session) notFound();
+  const result = await getOrderDetail(txnid, session.role);
 
   if (!result.ok) {
     if (result.reason === 'not-found') notFound();
@@ -74,7 +108,12 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
   }
 
   const order = result.data;
-  const [paymentsResult, notesResult, editsResult, returnsResult, refundsResult, returnableResult, reasonsResult] =
+  const [documentState, billRequest, refundRequests] = await Promise.all([
+    getDocumentState(order.id), getBillRequest(order.id), getRefundRequests(order.txnid),
+  ]);
+  const shipmentStarted = hasShipmentStarted(order.fulfilmentStatus, order.history);
+  const pickedUpAt = order.history.find((entry) => entry.domain === 'fulfilment' && entry.toStatus === 'ON_THE_WAY')?.createdAt;
+  const [paymentsResult, notesResult, editsResult, returnsResult, refundsResult, returnableResult, reasonsResult, eventsResult] =
     await Promise.all([
       listOrderPayments(order.id),
       listOrderNotes(order.id),
@@ -83,6 +122,8 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
       listOrderRefunds(order.id),
       orderReturnableLines(order.id),
       listCancellationReasons(true),
+      // A payment-timeline read failure must never hide the order.
+      listPaymentEvents(order.txnid, { limit: 200 }).catch(() => []),
     ]);
   const payments = paymentsResult.ok ? paymentsResult.data : [];
   const notes = notesResult.ok ? notesResult.data : [];
@@ -91,11 +132,11 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
   const refunds = refundsResult.ok ? refundsResult.data : [];
   const returnableLines = returnableResult.ok ? returnableResult.data : [];
   const cancelReasons = reasonsResult.ok ? reasonsResult.reasons : [];
-  const paidPaise = payments
-    .filter((payment) => payment.status === 'PAID')
-    .reduce((sum, payment) => sum + payment.amountPaise, 0);
-  const refundedPaise = refunds.reduce((sum, refund) => sum + refund.amountPaise, 0);
-  const refundablePaise = Math.max(0, paidPaise - refundedPaise);
+  const paymentEvents = eventsResult;
+  // The authoritative capture also covers gateway-only orders without ledger rows.
+  const paidPaise = documentState.capturedPaise;
+  const refundedPaise = documentState.refundedPaise;
+  const refundablePaise = Math.max(0, paidPaise - refundedPaise - documentState.pendingRefundPaise);
   const pendingReview = payments.filter((payment) => payment.reviewStatus === 'PENDING').length;
   const totals = orderTotals(order);
   const totalPaise = totals.totalPaise;
@@ -109,21 +150,29 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
       label: 'Overview',
       content: (
         <div className="sa-tab-stack">
+          <OrderDocumentStatus state={documentState} currency={order.currency} />
+          {billRequest && <section className="sa-detail-card">
+            <h2 className="sa-card-title">Bill request</h2>
+            <dl className="sa-meta">
+              <div><dt>Reason</dt><dd>{billRequest.reasonLabel}</dd></div>
+              {billRequest.otherText && <div><dt>Other reason</dt><dd>{billRequest.otherText}</dd></div>}
+              <div><dt>Requested</dt><dd>{formatDate(billRequest.createdAt)}</dd></div>
+            </dl>
+          </section>}
           <div className="sa-detail-grid">
             <section className="sa-detail-card">
               <h2 className="sa-card-title">Payment summary</h2>
               <dl className="sa-meta">
                 <div><dt>Sale state</dt><dd>{SALE_STATE_LABELS[order.saleState]}</dd></div>
-                <div><dt>Payment</dt><dd>{order.paymentStatus}</dd></div>
+                <div><dt>Current status</dt><dd>{documentState.label}</dd></div>
+                <div><dt>Payment record</dt><dd>{order.paymentStatus === 'PAID' ? 'Payment captured' : order.paymentStatus}</dd></div>
                 <div><dt>Items subtotal</dt><dd>{formatAmount(totals.subtotalPaise, order.currency)}</dd></div>
                 {totals.discountPaise > 0 ? (
                   <div><dt>Discount{order.couponCode ? ` (${order.couponCode})` : ''}</dt><dd>−{formatAmount(totals.discountPaise, order.currency)}</dd></div>
                 ) : null}
-                {totals.shippingPaise > 0 ? (
-                  <div><dt>Shipping</dt><dd>{formatAmount(totals.shippingPaise, order.currency)}</dd></div>
-                ) : null}
+                <div><dt>Shipping</dt><dd>{totals.shippingPaise === 0 ? 'Free' : formatAmount(totals.shippingPaise, order.currency)}</dd></div>
                 <div><dt>Total</dt><dd>{formatAmount(totalPaise, order.currency)}</dd></div>
-                <div><dt>Paid</dt><dd>{order.paidAt ? formatDate(order.paidAt) : '—'}</dd></div>
+                <div><dt>Payment captured at</dt><dd>{order.paidAt ? formatDate(order.paidAt) : '—'}</dd></div>
               </dl>
             </section>
 
@@ -238,6 +287,8 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                   <tr key={item.lineNumber}>
                     <td>
                       {item.productName}
+                      {item.variantLabel && <span className="sa-row-sub">{item.variantLabel}</span>}
+                      {item.variantSku && <span className="sa-row-sub">SKU: {item.variantSku}</span>}
                       <span className="sa-row-sub">{item.productId || `Line ${item.lineNumber}`}</span>
                       {item.referencePricePaise !== null &&
                       item.referencePricePaise !== item.unitPricePaise ? (
@@ -265,7 +316,7 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
         <div className="sa-tab-stack">
           <section className="sa-detail-card">
             <h2 className="sa-card-title">Delivery</h2>
-            {order.delivery ? (
+            {shipmentStarted && order.delivery ? (
               <dl className="sa-meta">
                 <div><dt>Method</dt><dd>{order.delivery.method || '—'}</dd></div>
                 {order.delivery.method === 'self' ? (
@@ -274,7 +325,8 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                     <div><dt>Person phone</dt><dd className="sa-mono">{order.delivery.personPhone ?? order.delivery.personPhoneMasked ?? '—'}</dd></div>
                   </>
                 ) : null}
-                <div><dt>Status</dt><dd>{order.delivery.status}</dd></div>
+                <div><dt>Status</dt><dd>{fulfilmentLabel(order.fulfilmentStatus, order.delivery.method)}</dd></div>
+                {pickedUpAt ? <div><dt>{order.delivery.method === 'self' ? 'Dispatched' : 'Pickup done'}</dt><dd>{formatDate(pickedUpAt)}</dd></div> : null}
                 {order.delivery.method === 'courier' ? <div><dt>Courier</dt><dd>{order.delivery.courierName || order.delivery.carrier || '—'}</dd></div> : null}
                 <div><dt>Tracking</dt><dd className="sa-mono">{order.delivery.trackingNumber || '—'}</dd></div>
                 {order.delivery.trackingUrl ? (
@@ -283,7 +335,7 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                 <div><dt>Scheduled</dt><dd>{order.delivery.scheduledFor ? formatDate(order.delivery.scheduledFor) : '—'}</dd></div>
                 <div><dt>Delivered</dt><dd>{order.delivery.deliveredAt ? formatDate(order.delivery.deliveredAt) : '—'}</dd></div>
               </dl>
-            ) : <p className="sa-empty">No delivery record is available.</p>}
+            ) : <p className="sa-empty">{shipmentStarted ? 'No delivery record is available.' : 'Shipping and delivery details appear here after courier pickup or dispatch. Prepare the shipment below first.'}</p>}
             <p className="sa-lock-note">Fulfilment and delivery changes are audited and available to admin and owner roles.</p>
           </section>
 
@@ -360,6 +412,63 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
               orderPaid={order.paymentStatus === 'PAID'}
             />
           ) : null}
+          <div className="sa-detail-section">
+            <h2 className="sa-section-title">Gateway check</h2>
+            <p className="sa-note">
+              Ask PayU directly. This runs the same rule the callbacks use, so a capture the
+              customer&apos;s browser never reported can still settle the order. It never starts a
+              charge and never refunds; a mismatch flags the order for review instead.
+            </p>
+            <VerifyWithPayUButton txnid={order.txnid} canVerify={canEdit} />
+          </div>
+        </section>
+      ),
+    },
+    {
+      key: 'payment-timeline',
+      label: 'Payment timeline',
+      count: paymentEvents.length,
+      content: (
+        <section className="sa-detail-section">
+          <p className="sa-note">
+            Every payment decision for this order, whichever path produced it. Only sanitised
+            status and reason values are stored — never a gateway payload, card data or a secret.
+          </p>
+          {paymentEvents.length ? (
+            <div className="sa-table-wrap">
+              <table className="sa-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Source</th>
+                    <th>PayU status</th>
+                    <th>Outcome</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paymentEvents.map((event) => (
+                    <tr key={event.id}>
+                      <td className="sa-date">{formatDate(event.createdAt)}</td>
+                      <td>{EVENT_SOURCE_LABELS[event.source] ?? event.source}</td>
+                      <td className="sa-mono">{event.payuStatus || '—'}</td>
+                      <td>
+                        <span className={eventClass(event.outcome)}>
+                          {EVENT_OUTCOME_LABELS[event.outcome]}
+                        </span>
+                      </td>
+                      <td>{event.reason || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="sa-empty">
+              No payment event has been recorded yet. Events appear here as soon as a callback,
+              the webhook, an automatic check or a staff verification runs.
+            </p>
+          )}
         </section>
       ),
     },
@@ -456,7 +565,7 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                       <td colSpan={2} className="sa-num">Refunded total</td>
                       <td className="sa-num"><strong>{formatAmount(refundedPaise, order.currency)}</strong></td>
                       <td colSpan={2} className="sa-num">
-                        {refundablePaise > 0 ? `${formatAmount(refundablePaise, order.currency)} still refundable` : 'Fully refunded'}
+                        {refundablePaise > 0 ? `${formatAmount(refundablePaise, order.currency)} available to refund` : documentState.pendingRefundPaise > 0 ? 'Remaining capture reserved for initiated refunds' : 'Fully refunded'}
                       </td>
                     </tr>
                   </tbody>
@@ -473,12 +582,14 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
             </p>
           )}
 
+          {refundRequests.ok ? <RefundRequestActions txnid={order.txnid} requests={refundRequests.data} canManage={canEdit} /> : <p className="sa-notice">Refund requests are temporarily unavailable.</p>}
+
           {canEdit && paidPaise > 0 && refundablePaise > 0 ? (
             <RefundForm
               endpoint={`/api/store-admin/orders/${encodeURIComponent(order.txnid)}/refund`}
               remainingPaise={refundablePaise}
               currency={order.currency}
-              title="Record a refund not tied to a return"
+              title="Initiate a refund not tied to a return"
               hint="For goodwill refunds or money back after a cancellation. The captured total is the hard ceiling."
             />
           ) : null}
@@ -496,7 +607,7 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
               {order.history.map((entry, index) => (
                 <li key={`${entry.createdAt}-${index}`}>
                   <span className="sa-timeline-dot" aria-hidden="true" />
-                  <div><strong>{entry.toStatus}</strong><span>{entry.domain} · {formatDate(entry.createdAt)}</span></div>
+                  <div><strong>{entry.domain === 'fulfilment' ? fulfilmentLabel(entry.toStatus, order.delivery?.method) : entry.toStatus}</strong><span>{entry.domain} · {formatDate(entry.createdAt)}</span></div>
                 </li>
               ))}
             </ol>
@@ -549,7 +660,7 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                 prefetch={false}
                 href={`/store-admin/orders/${encodeURIComponent(order.txnid)}/invoice`}
               >
-                Invoice
+                {documentState.kind === 'invoice' ? 'Invoice' : documentState.kind === 'status' ? 'Order / payment status' : 'Bill / payment receipt'}
               </Link>
               <Link
                 className="sa-btn sa-btn-quiet"

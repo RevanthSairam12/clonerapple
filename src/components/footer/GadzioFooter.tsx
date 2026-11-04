@@ -41,7 +41,7 @@ function GadzioWordmark({ className }: { className?: string }) {
  * Payment methods actually accepted at checkout — matches the PayU/UPI
  * disclosure in data/footer.ts, showing text only (not other companies' logos).
  */
-const PAYMENT_METHODS = ['UPI', 'PayU', 'Credit & Debit Cards', 'NetBanking'];
+const PAYMENT_METHODS = ['UPI', 'Credit & Debit Cards', 'NetBanking'];
 
 /** Shop / Support / Company directory columns. */
 const FOOTER_COLUMNS = [
@@ -145,7 +145,7 @@ export function GadzioFooter({ content }: { content?: FooterOverride } = {}) {
             {/* Statement */}
             <p className="text-xs sm:text-sm text-white leading-relaxed max-w-xl font-normal">
               Gadzio is an independent retailer of iPhone accessories in India. Cases, cables,
-              chargers and earphones &mdash; delivered free across India, and backed by our 1-Year
+              chargers and earphones &mdash; delivered across India, and backed by our 1-Year
               Limited Replacement Guarantee.
             </p>
 

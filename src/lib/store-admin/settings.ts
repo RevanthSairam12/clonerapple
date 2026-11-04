@@ -1,11 +1,13 @@
 import { getSql } from '@/lib/platform/db';
 import { clearMaintenanceCache } from '@/lib/storefront/maintenance';
+import { writeAudit, type AuditInput } from './audit';
 
 import {
   DEFAULT_SETTINGS,
   SETTING_KEYS,
   isOwnerOnlySetting,
   isStoreSettingKey,
+  isShippingSetting,
   validateSettingValue,
   type StoreSettingKey,
   type StoreSettings,
@@ -22,7 +24,7 @@ function text(value: unknown): string {
 }
 
 export type SettingsLoad =
-  | { ok: true; settings: StoreSettings }
+  | { ok: true; settings: StoreSettings; shippingInitialized: boolean }
   | { ok: false; reason: 'unavailable' };
 
 /** Read every known setting, falling back to defaults for missing rows. */
@@ -38,7 +40,10 @@ export async function getStoreSettings(): Promise<SettingsLoad> {
     for (const row of rows) {
       if (isStoreSettingKey(row.key)) settings[row.key] = text(row.value);
     }
-    return { ok: true, settings };
+    const shippingInitialized = ['shipping_charge_paise', 'free_shipping_threshold_paise'].every(
+      (key) => rows.some((row) => row.key === key && validateSettingValue(key, row.value).ok),
+    );
+    return { ok: true, settings, shippingInitialized };
   } catch {
     console.warn('[store-admin/settings] could not read store settings');
     return { ok: false, reason: 'unavailable' };
@@ -66,6 +71,7 @@ export async function updateStoreSettings(
   input: { key: unknown; value: unknown }[],
   staffId: string,
   canEditOwnerOnly: boolean,
+  auditContext: Pick<AuditInput, 'actorEmail' | 'request'> = {},
 ): Promise<SettingUpdateResult> {
   if (input.length === 0) {
     return { ok: false, reason: 'invalid-input', error: 'No settings were supplied.' };
@@ -105,6 +111,18 @@ export async function updateStoreSettings(
 
   try {
     return await sql.begin(async (tx) => {
+      // Serialize settings writes and bootstrap, including missing-row inserts.
+      // Bootstrap also locks shipping_methods against all legacy method writers.
+      await tx`lock table store_settings in share row exclusive mode`;
+      if (validated.some((item) => isShippingSetting(item.key))) {
+        const pair = await tx`
+          select key, value from store_settings
+          where key in ('shipping_charge_paise', 'free_shipping_threshold_paise')
+        `;
+        if (pair.length !== 2 || pair.some((row) => !validateSettingValue(String(row.key), row.value).ok)) {
+          return { ok: false as const, reason: 'unavailable' as const, error: 'Initialize shipping settings with the shipping-policy bootstrap before editing them.' };
+        }
+      }
       const changes: SettingChange[] = [];
       for (const item of validated) {
         const beforeRows = (await tx`
@@ -125,6 +143,19 @@ export async function updateStoreSettings(
             updated_at = now()
         `;
         changes.push({ key: item.key, before, after: item.value });
+        if (isShippingSetting(item.key)) {
+          const audited = await writeAudit({
+            ...auditContext,
+            actorId: staffId,
+            action: 'settings.update',
+            entity: 'store_settings',
+            entityId: item.key,
+            before: { key: item.key, value: before },
+            after: { key: item.key, value: item.value },
+            reason: 'settings_edit',
+          }, tx);
+          if (!audited) throw new Error('Shipping settings audit failed.');
+        }
       }
       // A maintenance change must be visible on the next request rather than
       // at the end of the cache window.

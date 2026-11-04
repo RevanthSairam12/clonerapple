@@ -27,12 +27,20 @@ import {
   flagPaymentForReview,
   recordReconcileResult,
   releaseOrderReservation,
-  transitionOrderStatusUsing,
+  transitionOrderStatus,
+  DuplicateGatewayPaymentError,
+  GatewayIdentityConflictError,
+  findOrderByMihpayid,
   type Order,
 } from './orders';
 import { listPendingRefundObligations } from './refund-obligations';
-import { verifyPaymentWithPayU } from './verify';
-import { logPayUEvent } from './process-response';
+import { checkVerificationIntegrity, safePaymentSummary, verifyPaymentWithPayU, type VerificationResult } from './verify';
+import { logPayUEvent, recordRejection } from './process-response';
+import {
+  formatPayUStatus,
+  recordPaymentEvent,
+  type PaymentEventOutcome,
+} from './payment-events';
 
 export const UNRESOLVED_PAYMENT_REVIEW_REASON =
   'The payment outcome could not be verified within the safe recovery window. The stock claim was released; check the gateway before fulfilling or refunding.';
@@ -62,7 +70,7 @@ export interface ReconcileOptions {
   limit?: number;
   /** Injected in tests so no network call is made. */
   verifier?: PaymentVerifier;
-  /** Fixed clock for tests; the coded default is the database's now(). */
+  /** Legacy test seam for retry backoff only; lifecycle decisions use database time. */
   now?: Date;
   /**
    * Connection the worker runs on. Defaults to the application pool; an
@@ -126,12 +134,13 @@ export async function reconcilePendingOrders(
 
   const { policy, autoCancelHours } = await readPolicy();
   const verifier = options.verifier ?? verifyPaymentWithPayU;
-  const now = options.now ?? new Date();
   const sql = options.sql ?? getSql();
   const summary = emptySummary();
 
   // No DATABASE_URL: the same silent no-op `claimDueOrders` gives.
   if (!sql) return summary;
+  const [clock] = await sql<{ now: Date }[]>`select now() as now`;
+  const now = options.now ?? new Date(clock.now);
 
   let dueOrders: Order[] = [];
   try {
@@ -143,9 +152,9 @@ export async function reconcilePendingOrders(
       },
       sql,
     );
-  } catch (error: unknown) {
-    summary.errors.push({ txnid: '', error: (error as Error).message });
-    console.error('[PayU Reconciliation] could not claim due orders:', (error as Error).message);
+  } catch {
+    summary.errors.push({ txnid: '', error: 'Could not claim due orders.' });
+    console.error('[PayU Reconciliation] could not claim due orders.');
     return summary;
   }
 
@@ -164,8 +173,8 @@ export async function reconcilePendingOrders(
         summary,
         sideEffects: options.sideEffects,
       });
-    } catch (err: unknown) {
-      const message = (err as Error).message;
+    } catch {
+      const message = 'Payment reconciliation unavailable.';
       summary.errors.push({ txnid: order.txnid, error: message });
       summary.unchanged += 1;
       console.error(`[PayU Reconciliation] Error processing order ${order.txnid}:`, message);
@@ -198,6 +207,29 @@ export interface ReconcileContext {
   sideEffects?: boolean;
 }
 
+/** PayU's own status pair for the timeline, derived from a verify API result. */
+function verificationStatus(verification: VerificationResult): string {
+  const safe = safePaymentSummary({ status: verification.status, unmappedstatus: verification.unmappedstatus });
+  return formatPayUStatus(safe.status, safe.unmappedstatus);
+}
+
+function eventOutcomeForStatus(status: string): PaymentEventOutcome {
+  switch (status) {
+    case 'PAID':
+      return 'paid';
+    case 'FAILED':
+      return 'failed';
+    case 'CANCELLED':
+      return 'cancelled';
+    case 'PENDING':
+      return 'pending';
+    case 'CREATED':
+      return 'pending';
+    default:
+      return 'processing';
+  }
+}
+
 /**
  * Resolve one claimed order on a caller-owned connection.
  *
@@ -212,22 +244,58 @@ export async function reconcileOrderUsing(
   order: Order,
   context: ReconcileContext,
 ): Promise<void> {
-  const { policy, autoCancelHours, verifier, now, summary } = context;
+  const { policy, autoCancelHours, verifier, summary } = context;
   const sideEffects = context.sideEffects !== false;
 
   const verification = await verifier(order.txnid, order.amount);
+  // Read after the provider round trip: an application clock must never release
+  // stock or decide a recovery deadline.
+  const [clock] = await sql<{ now: Date }[]>`select now() as now`;
+  const now = new Date(clock.now);
+  let mismatch = checkVerificationIntegrity(order, verification);
+  if (!mismatch && verification.mihpayid) {
+    const owner = await findOrderByMihpayid(verification.mihpayid, sql);
+    if (owner && owner.txnid !== order.txnid) {
+      mismatch = { code: 'duplicate_gateway_payment', detail: 'Gateway payment is attached to another order.' };
+    }
+  }
+  const reject = async (code: string, detail: string) => {
+    await recordRejection(order, order.txnid, 'reconcile', verificationStatus(verification), code, detail,
+      { sql, sideEffects: context.sideEffects });
+    summary.flagged += 1;
+    summary.unchanged += 1;
+    await recordReconcileResult({ txnid: order.txnid, nextAt: nextBackoff(order, now), consecutiveFailures: 0 }, sql);
+  };
+  if (mismatch) {
+    await reject(mismatch.code, mismatch.detail);
+    return;
+  }
   const outcome: PaymentOutcome = classifyVerification(verification);
   const attempt = recordReconcileAttempt(order.consecutiveReconcileFailures, outcome);
 
   if (outcome === 'paid') {
-    const res = await transitionOrderStatusUsing(sql, {
-      txnid: order.txnid,
-      targetStatus: 'PAID',
-      mihpayid: verification.mihpayid,
-      mode: verification.mode,
-      rawResponse: verification.raw,
-      policy,
-    });
+    let res;
+    try {
+      res = await transitionOrderStatus({
+        txnid: order.txnid,
+        targetStatus: 'PAID',
+        mihpayid: verification.mihpayid,
+        mode: verification.mode,
+        rawResponse: safePaymentSummary({
+          status: verification.status, unmappedstatus: verification.unmappedstatus,
+          mode: verification.mode, amount: verification.amount,
+        }),
+        policy,
+      }, sql, { sideEffects: false });
+    } catch (error) {
+      if (error instanceof GatewayIdentityConflictError) {
+        await reject('gateway_identity_mismatch', 'Gateway payment identity conflicts with the locked order.');
+        return;
+      }
+      if (!(error instanceof DuplicateGatewayPaymentError)) throw error;
+      await reject('duplicate_gateway_payment', 'Gateway payment is attached to another order.');
+      return;
+    }
 
     if (res.stockReclaimed && sideEffects) {
       revalidateCatalog();
@@ -302,6 +370,17 @@ export async function reconcileOrderUsing(
       },
       sql,
     );
+    await recordPaymentEvent({
+      orderId: res.order.id,
+      txnid: order.txnid,
+      source: 'reconcile',
+      payuStatus: verificationStatus(verification),
+      outcome: res.firstTimePaid ? 'paid' : 'unchanged',
+      reason: res.firstTimePaid
+        ? 'verified capture from the reconciliation worker'
+        : `No change; order is ${res.order.status}.`,
+      sql,
+    });
     return;
   }
 
@@ -359,18 +438,20 @@ export async function reconcileOrderUsing(
     return;
   }
 
-  if (outcome === 'failed') {
-    const res = await transitionOrderStatusUsing(sql, {
+  if (outcome === 'failed' || outcome === 'cancelled') {
+    const targetStatus = outcome === 'cancelled' ? 'CANCELLED' : 'FAILED';
+    const res = await transitionOrderStatus({
       txnid: order.txnid,
-      targetStatus: 'FAILED',
-      rawResponse: verification.raw,
+      targetStatus,
+      rawResponse: safePaymentSummary({ status: verification.status, unmappedstatus: verification.unmappedstatus, mode: verification.mode, amount: verification.amount }),
       policy,
-    });
+    }, sql, { sideEffects: false });
     if (res.transitioned) {
-      summary.markedFailed += 1;
+      if (targetStatus === 'CANCELLED') summary.markedCancelled += 1;
+      else summary.markedFailed += 1;
       if (res.stockReleased && sideEffects) revalidateCatalog();
       if (sideEffects) {
-        queueOrderEvent('payment_failed', res.order, { orderStatus: 'FAILED' });
+        queueOrderEvent(targetStatus === 'CANCELLED' ? 'cancelled' : 'payment_failed', res.order, { orderStatus: targetStatus });
       }
     } else {
       summary.unchanged += 1;
@@ -384,6 +465,17 @@ export async function reconcileOrderUsing(
       },
       sql,
     );
+    await recordPaymentEvent({
+      orderId: res.order.id,
+      txnid: order.txnid,
+      source: 'reconcile',
+      payuStatus: verificationStatus(verification),
+      outcome: res.transitioned ? eventOutcomeForStatus(res.order.status) : 'unchanged',
+      reason: res.transitioned
+        ? `verified ${outcome} from the reconciliation worker`
+        : `No change; order is ${res.order.status}.`,
+      sql,
+    });
     return;
   }
 
@@ -424,6 +516,17 @@ export async function reconcileOrderUsing(
         },
         sql,
       );
+      await recordPaymentEvent({
+        orderId: order.id,
+        txnid: order.txnid,
+        source: 'reconcile',
+        payuStatus: verificationStatus(verification),
+        outcome: release.statusChanged ? 'cancelled' : 'unchanged',
+        reason: release.statusChanged
+          ? 'the checkout window closed before payment was confirmed'
+          : `No change; order is ${release.order?.status ?? order.status}.`,
+        sql,
+      });
       return;
     }
 
@@ -441,13 +544,13 @@ export async function reconcileOrderUsing(
     }
 
     const reason = autoCancelReason(autoCancelHours);
-    const res = await transitionOrderStatusUsing(sql, {
+    const res = await transitionOrderStatus({
       txnid: order.txnid,
       targetStatus: 'CANCELLED',
       rawResponse: { reason },
       cancelReason: reason,
       policy,
-    });
+    }, sql, { sideEffects: false });
     if (!res.transitioned) {
       summary.unchanged += 1;
       await recordReconcileResult(
@@ -485,6 +588,15 @@ export async function reconcileOrderUsing(
       { txnid: order.txnid, nextAt: null, consecutiveFailures: 0 },
       sql,
     );
+    await recordPaymentEvent({
+      orderId: res.order.id,
+      txnid: order.txnid,
+      source: 'reconcile',
+      payuStatus: verificationStatus(verification),
+      outcome: 'cancelled',
+      reason: 'unpaid order auto-cancelled',
+      sql,
+    });
     return;
   }
 
@@ -526,21 +638,39 @@ export async function reconcileOrderUsing(
       },
       sql,
     );
+    await recordPaymentEvent({
+      orderId: order.id,
+      txnid: order.txnid,
+      source: 'reconcile',
+      payuStatus: verificationStatus(verification),
+      outcome: 'processing',
+      reason: 'unresolved window closed; the claim was released and a human must check the gateway',
+      sql,
+    });
     return;
   }
 
   if (!isProcessing) {
-    const res = await transitionOrderStatusUsing(sql, {
+    const res = await transitionOrderStatus({
       txnid: order.txnid,
       targetStatus: 'PROCESSING',
-      rawResponse: verification.raw,
+      rawResponse: safePaymentSummary({ status: verification.status, unmappedstatus: verification.unmappedstatus, mode: verification.mode, amount: verification.amount }),
       policy,
-    });
+    }, sql, { sideEffects: false });
     if (res.transitioned) {
       summary.markedProcessing += 1;
       if (sideEffects) {
         queueOrderEvent('payment_processing', res.order, { orderStatus: 'PROCESSING' });
       }
+      await recordPaymentEvent({
+        orderId: res.order.id,
+        txnid: order.txnid,
+        source: 'reconcile',
+        payuStatus: verificationStatus(verification),
+        outcome: 'processing',
+        reason: 'the gateway has not settled the payment yet',
+        sql,
+      });
     } else {
       summary.unchanged += 1;
     }

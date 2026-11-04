@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/platform/db';
+import { INVENTORY_REPORT_CTE, inventoryReportLabel } from './inventory-report';
 
 import { maskCustomerEmail } from './masking';
 import { maskCustomerName } from './orders';
@@ -507,6 +508,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
     sql`
       select
         split_part(oi.product_id, '::', 1) as base_id,
+        oi.variant_id, max(oi.variant_sku) as variant_sku, max(oi.variant_label) as variant_label,
         max(p.id) as product_id,
         coalesce(max(p.name), max(oi.product_name)) as name,
         max(c.name) as category_name,
@@ -521,20 +523,21 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       left join products p on p.id = split_part(oi.product_id, '::', 1)
       left join categories c on c.id = p.category_id and c.deleted_at is null
       left join brands b on b.id = p.brand_id and b.deleted_at is null
-      left join stock s on s.product_id = p.id and s.variant_id is null
+      left join stock s on s.product_id = p.id and s.variant_id is not distinct from oi.variant_id
       where o.status = 'PAID'
         and o.fulfilment_status <> 'CANCELED'
         and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
         and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
         and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
-      group by split_part(oi.product_id, '::', 1)
+      group by split_part(oi.product_id, '::', 1), oi.variant_id
       order by revenue desc, units desc, base_id
       limit ${SCAN_LIMIT}
     `,
     sql`
       select
         split_part(oi.product_id, '::', 1) as base_id,
+        oi.variant_id, max(oi.variant_sku) as variant_sku, max(oi.variant_label) as variant_label,
         max(p.id) as product_id,
         coalesce(max(p.name), max(oi.product_name)) as name,
         max(c.name) as category_name,
@@ -548,13 +551,13 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       left join products p on p.id = split_part(oi.product_id, '::', 1)
       left join categories c on c.id = p.category_id and c.deleted_at is null
       left join brands b on b.id = p.brand_id and b.deleted_at is null
-      left join stock s on s.product_id = p.id and s.variant_id is null
+      left join stock s on s.product_id = p.id and s.variant_id is not distinct from oi.variant_id
       where rr.created_at >= ${filters.fromIso}::timestamptz
         and rr.created_at < ${filters.toIso}::timestamptz
         and rr.status in ('APPROVED', 'RECEIVED', 'REFUNDED')
         and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
         and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
-      group by split_part(oi.product_id, '::', 1)
+      group by split_part(oi.product_id, '::', 1), oi.variant_id
       order by base_id
     `,
     sql`
@@ -577,7 +580,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
 
   const returnedByProduct = new Map<string, number>();
   for (const row of returnRows as Row[]) {
-    returnedByProduct.set(text(row.base_id), number(row.returned));
+    returnedByProduct.set(JSON.stringify([text(row.base_id), nullableText(row.variant_id)]), number(row.returned));
   }
 
   const summary = (summaryRows as Row[])[0] ?? {};
@@ -585,18 +588,21 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
 
   // Returns belong to their request date, even when the product had no sales
   // in this window. Keep those products in the table with zero sales figures.
-  const soldProductIds = new Set((itemRows as Row[]).map((row) => text(row.base_id)));
+  const soldProductIds = new Set((itemRows as Row[]).map((row) => JSON.stringify([text(row.base_id), nullableText(row.variant_id)])));
   const productRows = [
     ...(itemRows as Row[]),
-    ...(returnRows as Row[]).filter((row) => !soldProductIds.has(text(row.base_id))),
+    ...(returnRows as Row[]).filter((row) => !soldProductIds.has(JSON.stringify([text(row.base_id), nullableText(row.variant_id)]))),
   ];
   const allRows: ReportRow[] = productRows.map((row) => {
     const units = number(row.units);
-    const returned = returnedByProduct.get(text(row.base_id)) ?? 0;
+    const returned = returnedByProduct.get(JSON.stringify([text(row.base_id), nullableText(row.variant_id)])) ?? 0;
     const available = nullableNumber(row.available);
     const tracked = row.track_inventory === true || text(row.track_inventory) === 'true';
     return {
       product: text(row.name) || '(unnamed product)',
+      variantId: nullableText(row.variant_id),
+      variantSku: nullableText(row.variant_sku),
+      variantLabel: nullableText(row.variant_label),
       productId: nullableText(row.product_id),
       category: text(row.category_name) || 'Uncategorised',
       brand: text(row.brand_name) || '—',
@@ -618,6 +624,8 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
   return {
     columns: [
       { key: 'product', label: 'Product', link: 'product', linkKey: 'productId' },
+      { key: 'variantSku', label: 'Variant SKU' },
+      { key: 'variantLabel', label: 'Variant at sale' },
       { key: 'category', label: 'Category' },
       { key: 'brand', label: 'Brand' },
       { key: 'units', label: 'Units sold', format: 'int', align: 'right' },
@@ -625,7 +633,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       { key: 'orders', label: 'Orders', format: 'int', align: 'right' },
       { key: 'returned', label: 'Returned', format: 'int', align: 'right' },
       { key: 'returnRate', label: 'Return rate %', format: 'int', align: 'right' },
-      { key: 'available', label: 'Available', format: 'int', align: 'right' },
+      { key: 'available', label: 'Available to buy', format: 'int', align: 'right' },
       { key: 'sellThrough', label: 'Sell-through %', format: 'int', align: 'right' },
     ],
     rows,
@@ -1082,28 +1090,17 @@ interface StockRow extends Row {
 }
 
 async function stockRows(sql: Sql, filters: ReportFilters): Promise<Row[]> {
-  return (await sql`
-    select
-      p.id as product_id,
-      p.name,
-      coalesce(c.name, 'Uncategorised') as category_name,
-      coalesce(b.name, '—') as brand_name,
-      coalesce(s.on_hand, 0)::int as on_hand,
-      coalesce(s.reserved, 0)::int as reserved,
-      coalesce(s.low_stock_threshold, 0)::int as threshold,
-      coalesce(s.track_inventory, false) as track_inventory,
-      p.cost_paise,
-      p.price_paise
-    from products p
-    left join categories c on c.id = p.category_id and c.deleted_at is null
-    left join brands b on b.id = p.brand_id and b.deleted_at is null
-    left join stock s on s.product_id = p.id and s.variant_id is null
-    where p.deleted_at is null
-      and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
-      and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
-    order by p.name
-    limit ${SCAN_LIMIT}
-  `) as Row[];
+  return await sql.unsafe(`with ${INVENTORY_REPORT_CTE}
+    select i.*, coalesce(c.name, 'Uncategorised') as category_name,
+      coalesce(b.name, '—') as brand_name, i.low_stock_threshold as threshold,
+      (select to_char((max(m.created_at) at time zone $3::text), 'YYYY-MM-DD') from stock_movements m
+        where m.product_id=i.product_id and m.variant_id is not distinct from i.variant_id) as last_moved
+    from inventory i
+    left join categories c on c.id=i.category_id and c.deleted_at is null
+    left join brands b on b.id=i.brand_id and b.deleted_at is null
+    where ($1::text is null or i.category_id=$1) and ($2::text is null or i.brand_id=$2)
+    order by i.name, i.product_id, i.variant_id nulls first limit ${SCAN_LIMIT}`,
+    [filters.categoryId, filters.brandId, filters.timeZone]) as Row[];
 }
 
 function mapStockRow(row: Row): StockRow {
@@ -1112,7 +1109,7 @@ function mapStockRow(row: Row): StockRow {
   return {
     ...row,
     product_id: row.product_id,
-    product: text(row.name) || '(unnamed product)',
+    product: inventoryReportLabel(row),
     category: text(row.category_name) || 'Uncategorised',
     brand: text(row.brand_name) || '—',
     on_hand: onHand,
@@ -1123,6 +1120,13 @@ function mapStockRow(row: Row): StockRow {
     cost: nullableNumber(row.cost_paise),
     price: number(row.price_paise),
   };
+}
+
+// Product-mode reports retain recorded balances even when tracking is disabled.
+// Variant-mode sellable totals exclude untracked variants and retained parents.
+function countsRecordedStock(row: StockRow): boolean {
+  return row.inventory_bucket === 'product' ||
+    (row.inventory_bucket !== 'retained_legacy' && row.tracked);
 }
 
 async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData> {
@@ -1137,6 +1141,7 @@ async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData
   let retailValue = 0;
   let costedUnits = 0;
   for (const row of mapped) {
+    if (!countsRecordedStock(row)) continue;
     onHand += row.on_hand;
     reserved += row.reserved;
     retailValue += row.price * row.on_hand;
@@ -1145,37 +1150,46 @@ async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       costedUnits += row.on_hand;
     }
   }
-  const costed = mapped.filter((row) => row.cost !== null).length;
-  const low = mapped.filter((row) => row.tracked && row.available <= row.threshold).length;
+  const costed = mapped.filter((row) => countsRecordedStock(row) && row.cost !== null).length;
+  const low = mapped.filter((row) => row.inventory_bucket !== 'retained_legacy' && row.tracked && row.available <= row.threshold).length;
 
   return {
     columns: [
       { key: 'product', label: 'Product', link: 'product', linkKey: 'productId' },
+      { key: 'variantSku', label: 'Variant SKU' },
+      { key: 'inventoryBucket', label: 'Inventory bucket' },
+      { key: 'inventoryStatus', label: 'Inventory status' },
       { key: 'category', label: 'Category' },
       { key: 'brand', label: 'Brand' },
-      { key: 'onHand', label: 'On hand', format: 'int', align: 'right' },
-      { key: 'reserved', label: 'Reserved', format: 'int', align: 'right' },
-      { key: 'available', label: 'Available', format: 'int', align: 'right' },
-      { key: 'threshold', label: 'Threshold', format: 'int', align: 'right' },
+      { key: 'onHand', label: 'In stock', format: 'int', align: 'right' },
+      { key: 'reserved', label: 'Held in checkouts', format: 'int', align: 'right' },
+      { key: 'available', label: 'Available to buy', format: 'int', align: 'right' },
+      { key: 'threshold', label: 'Warn me when below', format: 'int', align: 'right' },
       { key: 'unitCost', label: 'Unit cost', format: 'money', align: 'right' },
       { key: 'costValue', label: 'Value at cost', format: 'money', align: 'right' },
       { key: 'unitPrice', label: 'Unit price', format: 'money', align: 'right' },
       { key: 'retailValue', label: 'Value at retail', format: 'money', align: 'right' },
     ],
-    rows: rows.map((row) => ({
-      product: row.product,
-      productId: nullableText(row.product_id),
-      category: row.category,
-      brand: row.brand,
-      onHand: row.on_hand,
-      reserved: row.reserved,
-      available: row.available,
-      threshold: row.threshold,
-      unitCost: row.cost,
-      costValue: row.cost === null ? null : row.cost * row.on_hand,
-      unitPrice: row.price,
-      retailValue: row.price * row.on_hand,
-    })),
+    rows: rows.map((row) => {
+      const showBalance = countsRecordedStock(row) || row.inventory_bucket === 'retained_legacy';
+      return {
+        product: row.product,
+        productId: nullableText(row.product_id),
+        variantSku: nullableText(row.variant_sku),
+        inventoryBucket: text(row.inventory_bucket),
+        inventoryStatus: row.variant_id && !row.stock_id ? 'Missing stock configuration' : row.tracked ? 'Limited' : 'Not limited',
+        category: row.category,
+        brand: row.brand,
+        onHand: showBalance ? row.on_hand : null,
+        reserved: showBalance ? row.reserved : null,
+        available: showBalance ? row.available : null,
+        threshold: row.tracked ? row.threshold : null,
+        unitCost: row.cost,
+        costValue: showBalance && row.cost !== null ? row.cost * row.on_hand : null,
+        unitPrice: row.price,
+        retailValue: showBalance ? row.price * row.on_hand : null,
+      };
+    }),
     totals: {
       product: 'Total',
       category: '',
@@ -1190,7 +1204,7 @@ async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData
       retailValue,
     },
     stats: [
-      { label: 'Units on hand', value: onHand, format: 'int' },
+      { label: 'Units in stock', value: onHand, format: 'int' },
       { label: 'Value at retail', value: retailValue, format: 'money' },
       {
         label: 'Value at cost',
@@ -1204,11 +1218,11 @@ async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData
         format: 'int',
         hint: `${costedUnits} units carry a cost`,
       },
-      { label: 'Low stock', value: low, format: 'int', hint: 'Tracked items at or below threshold' },
+      { label: 'Low stock', value: low, format: 'int', hint: 'Stock-limited items at or below warning level' },
     ],
     note:
       'Value at cost only counts products with a cost set — a missing cost is left blank rather than treated as zero. ' +
-      'Quantities come from the product-level stock row; display variants do not carry stock.',
+      'Product-level totals include recorded balances even when stock is not limited. Each sellable variant has its exact stock key; variants without stock limits and retained legacy parent balances are excluded from totals.',
     truncated: cut.truncated,
   };
 }
@@ -1216,44 +1230,22 @@ async function stockReport(sql: Sql, filters: ReportFilters): Promise<ReportData
 /* ------------------------------------------------------------ low stock */
 
 async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportData> {
-  const raw = (await sql`
-    select
-      p.id as product_id,
-      p.name,
-      coalesce(c.name, 'Uncategorised') as category_name,
-      coalesce(b.name, '—') as brand_name,
-      s.on_hand,
-      s.reserved,
-      s.low_stock_threshold,
-      (s.on_hand - s.reserved) as available,
-      to_char((m.last_moved at time zone ${filters.timeZone}::text), 'YYYY-MM-DD') as last_moved
-    from stock s
-    join products p on p.id = s.product_id
-    left join categories c on c.id = p.category_id and c.deleted_at is null
-    left join brands b on b.id = p.brand_id and b.deleted_at is null
-    left join (
-      select product_id, max(created_at) as last_moved
-      from stock_movements
-      group by product_id
-    ) m on m.product_id = p.id
-    where s.variant_id is null
-      and p.deleted_at is null
-      and s.track_inventory
-      and (s.on_hand - s.reserved) <= s.low_stock_threshold
-      and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
-      and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
-    order by (s.on_hand - s.reserved), p.name
-    limit ${SCAN_LIMIT}
-  `) as Row[];
+  const raw = (await stockRows(sql, filters)).filter((row) =>
+    row.inventory_bucket !== 'retained_legacy' && row.track_inventory === true &&
+    number(row.on_hand) - number(row.reserved) <= number(row.threshold)
+  ).sort((a,b) => number(a.on_hand)-number(a.reserved)-number(b.on_hand)+number(b.reserved));
+
 
   const cut = capped(raw, filters);
   const allRows = raw.map((row) => {
     const onHand = number(row.on_hand);
     const reserved = number(row.reserved);
-    const available = number(row.available);
-    const threshold = number(row.low_stock_threshold);
+    const available = onHand - reserved;
+    const threshold = number(row.threshold);
     return {
-      product: text(row.name),
+      product: inventoryReportLabel(row),
+      variantSku: nullableText(row.variant_sku),
+      inventoryBucket: text(row.inventory_bucket),
       productId: nullableText(row.product_id),
       category: text(row.category_name) || 'Uncategorised',
       brand: text(row.brand_name) || '—',
@@ -1262,7 +1254,7 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       available,
       threshold,
       reorder: Math.max(threshold * 2 - available, 1),
-      lastMoved: nullableText(row.last_moved),
+      lastMoved: iso(row.last_moved),
     };
   });
   const rows = allRows.slice(0, filters.rowLimit);
@@ -1273,12 +1265,14 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
   return {
     columns: [
       { key: 'product', label: 'Product', link: 'product', linkKey: 'productId' },
+      { key: 'variantSku', label: 'Variant SKU' },
+      { key: 'inventoryBucket', label: 'Inventory bucket' },
       { key: 'category', label: 'Category' },
       { key: 'brand', label: 'Brand' },
-      { key: 'onHand', label: 'On hand', format: 'int', align: 'right' },
-      { key: 'reserved', label: 'Reserved', format: 'int', align: 'right' },
-      { key: 'available', label: 'Available', format: 'int', align: 'right' },
-      { key: 'threshold', label: 'Threshold', format: 'int', align: 'right' },
+      { key: 'onHand', label: 'In stock', format: 'int', align: 'right' },
+      { key: 'reserved', label: 'Held in checkouts', format: 'int', align: 'right' },
+      { key: 'available', label: 'Available to buy', format: 'int', align: 'right' },
+      { key: 'threshold', label: 'Warn me when below', format: 'int', align: 'right' },
       { key: 'reorder', label: 'Suggested reorder', format: 'int', align: 'right' },
       { key: 'lastMoved', label: 'Last movement', format: 'date' },
     ],
@@ -1300,7 +1294,7 @@ async function lowStockReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       { label: 'Units to reorder', value: reorderUnits, format: 'int' },
     ],
     note:
-      'Only products that track inventory appear. Suggested reorder is twice the threshold minus what is available, with a floor of one unit. ' +
+      'Only products with stock limits appear. Suggested reorder is twice the warning level minus what is available to buy, with a floor of one unit. ' +
       'Quantities change through receipts, sales, returns and adjustments, so this table is read-only.',
     truncated: cut.truncated,
   };

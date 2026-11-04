@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/platform/db';
+import { readCatalogRevision } from './catalog-revision';
 
 /**
  * Read-only catalogue queries for the store admin.
@@ -36,8 +37,14 @@ export interface CatalogProductSummary {
   currency: string;
   isActive: boolean;
   inStock: boolean;
-  /** Null when the product has no stock row yet, which checkout treats as off. */
+  /** Null for missing stock; overviews also use null for mixed stock limits. */
   trackInventory: boolean | null;
+  /** All existing options, including inactive/display-only rows in the editor. */
+  optionCount?: number;
+  inventoryMode?: 'product' | 'variant';
+  /** Sellable units after reservations, only when every stock row is limited. */
+  available?: number | null;
+  stockStatus?: 'limited' | 'unlimited' | 'missing' | 'mixed';
   sortOrder: number;
   updatedAt: string;
   categoryId: string;
@@ -75,6 +82,13 @@ export interface CatalogVariant {
   optionValue: string;
   optionHex: string | null;
   pricePaiseOverride: number | null;
+  salePricePaise: number | null;
+  isPurchasable: boolean;
+  deviceModelId: string | null;
+  combinationKey: string | null;
+  optionIdentity?: string | null;
+  retiredAt?: string | null;
+  stock: CatalogStockRow | null;
   isActive: boolean;
   sortOrder: number;
 }
@@ -113,7 +127,13 @@ export interface CatalogProductAttributeValue {
 }
 
 export interface CatalogProductDetail extends CatalogProductSummary {
+  /** Opaque bounded edit token; inventory balances do not advance it. */
+  catalogRevision: number;
+  inventoryMode: 'product' | 'variant';
+  deviceModels: Array<{id:string;name:string}>;
   description: string;
+  shortDescription: string | null;
+  descriptionSections: unknown;
   material: string;
   brand: string;
   brandId: string | null;
@@ -188,6 +208,8 @@ export interface CatalogAttribute {
 }
 
 export interface CatalogLowStockRow {
+  variantId: string|null;
+  variantSku: string|null;
   productId: string;
   slug: string;
   name: string;
@@ -283,6 +305,54 @@ function mapSummary(row: Row): CatalogProductSummary {
   };
 }
 
+/** Map the overview's single-row stock aggregate without changing detail DTOs. */
+export function mapCatalogOverviewProduct(row: Row): CatalogProductSummary {
+  const inventoryMode = row.inventory_mode === 'variant' ? 'variant' : 'product';
+  const variantMode = inventoryMode === 'variant';
+  const stockCount = variantMode ? number(row.purchasable_count) : 1;
+  const missingCount = variantMode
+    ? number(row.missing_stock_count)
+    : row.stock_id == null ? 1 : 0;
+  const limitedCount = variantMode
+    ? number(row.limited_stock_count)
+    : row.track_inventory === true ? 1 : 0;
+  const unlimitedCount = variantMode
+    ? number(row.unlimited_stock_count)
+    : row.stock_id != null && row.track_inventory === false ? 1 : 0;
+  // Missing identities are setup work, never an implicit unlimited stock row.
+  const stockStatus = stockCount === 0 || missingCount > 0
+    ? 'missing'
+    : limitedCount === stockCount ? 'limited'
+    : unlimitedCount === stockCount ? 'unlimited'
+    : 'mixed';
+  const limitedAvailable = variantMode
+    ? number(row.variant_available)
+    : Math.max(0, number(row.on_hand) - number(row.reserved));
+
+  return {
+    ...mapSummary(row),
+    optionCount: number(row.option_count),
+    inventoryMode,
+    stockStatus,
+    available: stockStatus === 'limited' ? limitedAvailable : null,
+    trackInventory: stockStatus === 'limited' ? true : stockStatus === 'unlimited' ? false : null,
+    // The manual availability switch takes precedence even with unlimited stock.
+    inStock: Boolean(row.in_stock) && (unlimitedCount > 0 || (limitedAvailable > 0 && limitedCount > 0)),
+  };
+}
+
+/** Labels describe stock setup as well as availability; missing is not unlimited. */
+export function catalogStockLabel(product: CatalogProductSummary): string {
+  if (product.stockStatus === 'missing' || !product.stockStatus) return 'Stock setup needed';
+  if (!product.inStock) return 'Out of stock';
+  switch (product.stockStatus) {
+    case 'limited': return `${product.available ?? 0} left`;
+    case 'unlimited': return 'Not limited';
+    case 'mixed': return 'Mixed stock limits';
+    default: return 'Stock setup needed';
+  }
+}
+
 /** Format integer paise as the same en-IN string used by the storefront. */
 export function formatINR(paise: number): string {
   return `₹${(paise / 100).toLocaleString('en-IN', {
@@ -323,11 +393,26 @@ export async function listCatalogOverview(): Promise<CatalogLoad<CatalogOverview
       sql`
         select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
                p.currency, p.is_active, p.in_stock, p.sort_order, p.updated_at,
-               s.track_inventory,
+               p.inventory_mode, s.id as stock_id, s.track_inventory, s.on_hand, s.reserved,
+               options.option_count, options.purchasable_count, options.missing_stock_count,
+               options.limited_stock_count, options.unlimited_stock_count, options.variant_available,
                c.id as category_id, c.slug as category_slug, c.name as category_name
         from products p
         join categories c on c.id = p.category_id
         left join stock s on s.product_id = p.id and s.variant_id is null
+        left join lateral (
+          select count(*)::int as option_count,
+                 count(*) filter (where v.is_active and v.is_purchasable)::int as purchasable_count,
+                 count(*) filter (where v.is_active and v.is_purchasable and vs.id is null)::int as missing_stock_count,
+                 count(*) filter (where v.is_active and v.is_purchasable and vs.track_inventory)::int as limited_stock_count,
+                 count(*) filter (where v.is_active and v.is_purchasable and not vs.track_inventory)::int as unlimited_stock_count,
+                 coalesce(sum(greatest(0, vs.on_hand - vs.reserved)) filter (
+                   where v.is_active and v.is_purchasable and vs.track_inventory
+                 ), 0) as variant_available
+          from product_variants v
+          left join stock vs on vs.product_id = v.product_id and vs.variant_id = v.id
+          where v.product_id = p.id
+        ) options on true
         where p.deleted_at is null
         order by c.sort_order, p.sort_order, p.name
       `,
@@ -344,7 +429,7 @@ export async function listCatalogOverview(): Promise<CatalogLoad<CatalogOverview
       }),
     );
 
-    const products = (productRows as Row[]).map(mapSummary);
+    const products = (productRows as Row[]).map(mapCatalogOverviewProduct);
     return { ok: true, data: { categories, products } };
   } catch {
     console.warn('[store-admin/catalog] could not read the catalogue');
@@ -363,9 +448,12 @@ export async function getCatalogProduct(
       select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
              p.compare_at_paise, p.cost_paise, p.currency, p.material, p.brand, p.brand_id,
              p.condition_id, cond.label as condition_label, p.description,
+             to_jsonb(p)->>'short_description' as short_description,
+             to_jsonb(p)->'description_sections' as description_sections,
              p.badge, p.highlights, p.in_the_box, p.seo_title,
              p.seo_description, p.in_stock, p.is_active, p.sort_order,
-             p.created_at, p.updated_at,
+             p.created_at, p.updated_at, p.inventory_mode, p.catalog_revision,
+             (select coalesce(jsonb_agg(jsonb_build_object('id',dm.id,'name',dm.name) order by dm.name),'[]'::jsonb) from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.archived_at is null and dm.is_active and db.is_active) as device_models,
              c.id as category_id, c.slug as category_slug, c.name as category_name
       from products p
       join categories c on c.id = p.category_id
@@ -401,11 +489,13 @@ export async function getCatalogProduct(
             sort_order, id
         `,
         sql`
-          select id, sku, option_name, option_value, option_hex,
-                 price_paise_override, is_active, sort_order
-          from product_variants
-          where product_id = ${id}
-          order by sort_order, option_value
+          select v.id, v.sku, v.option_name, v.option_value, v.option_hex,
+                 v.price_paise_override, v.sale_price_paise, v.is_active, v.sort_order,
+                 v.is_purchasable,v.device_model_id,v.combination_key,v.option_identity,v.retired_at,
+                 s.id as stock_id,s.on_hand,s.reserved,s.track_inventory,s.low_stock_threshold,s.updated_at as stock_updated_at
+          from product_variants v left join stock s on s.product_id=v.product_id and s.variant_id=v.id
+          where v.product_id = ${id}
+          order by v.sort_order, v.option_value
         `,
         sql`
           select v.attribute_id, v.value_text, v.value_number, v.value_bool,
@@ -453,6 +543,10 @@ export async function getCatalogProduct(
         ? null
         : text(row.option_hex),
       pricePaiseOverride: nullableNumber(row.price_paise_override),
+      salePricePaise: nullableNumber(row.sale_price_paise),
+      isPurchasable:Boolean(row.is_purchasable),deviceModelId:row.device_model_id == null?null:text(row.device_model_id),combinationKey:row.combination_key == null?null:text(row.combination_key),
+      optionIdentity:row.option_identity==null?null:text(row.option_identity),retiredAt:iso(row.retired_at)||null,
+      stock:row.stock_id?{onHand:number(row.on_hand),reserved:number(row.reserved),trackInventory:Boolean(row.track_inventory),lowStockThreshold:number(row.low_stock_threshold),updatedAt:iso(row.stock_updated_at)}:null,
       isActive: Boolean(row.is_active),
       sortOrder: number(row.sort_order),
     }));
@@ -512,8 +606,13 @@ export async function getCatalogProduct(
       ok: true,
       data: {
         ...mapSummary(productRow),
+        catalogRevision: readCatalogRevision(productRow.catalog_revision),
+        inventoryMode:productRow.inventory_mode==='variant'?'variant':'product',
+        deviceModels:Array.isArray(productRow.device_models)?productRow.device_models as Array<{id:string;name:string}>:[],
         trackInventory: stock ? stock.trackInventory : null,
         description: text(productRow.description),
+        shortDescription: productRow.short_description == null ? null : text(productRow.short_description),
+        descriptionSections: productRow.description_sections ?? null,
         material: text(productRow.material),
         brand: text(productRow.brand),
         brandId:
@@ -733,11 +832,12 @@ export async function listLowStock(limit = 100): Promise<CatalogLoad<CatalogLowS
   try {
     const [rows, countRows] = await Promise.all([
       sql`
-        select s.product_id, p.slug, p.name, s.on_hand, s.reserved,
+        select s.product_id, s.variant_id,v.sku as variant_sku,p.slug, p.name || case when v.id is null then '' else ' — ' || v.option_value end as name, s.on_hand, s.reserved,
                s.low_stock_threshold, s.updated_at
         from stock s
         join products p on p.id = s.product_id
-        where s.variant_id is null
+        left join product_variants v on v.id=s.variant_id and v.product_id=p.id
+        where ((p.inventory_mode='product' and s.variant_id is null) or (p.inventory_mode='variant' and v.is_active and v.is_purchasable))
           and p.deleted_at is null
           and s.track_inventory
           and (s.on_hand - s.reserved) <= s.low_stock_threshold
@@ -752,7 +852,8 @@ export async function listLowStock(limit = 100): Promise<CatalogLoad<CatalogLowS
                )::int as low
         from stock s
         join products p on p.id = s.product_id
-        where s.variant_id is null and p.deleted_at is null
+        left join product_variants v on v.id=s.variant_id and v.product_id=p.id
+        where p.deleted_at is null and ((p.inventory_mode='product' and s.variant_id is null) or (p.inventory_mode='variant' and v.is_active and v.is_purchasable))
       `,
     ]);
 
@@ -765,6 +866,7 @@ export async function listLowStock(limit = 100): Promise<CatalogLoad<CatalogLowS
           const reserved = number(row.reserved);
           return {
             productId: text(row.product_id),
+            variantId:row.variant_id==null?null:text(row.variant_id),variantSku:row.variant_sku==null?null:text(row.variant_sku),
             slug: text(row.slug),
             name: text(row.name),
             onHand,

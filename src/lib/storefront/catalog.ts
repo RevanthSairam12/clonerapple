@@ -13,9 +13,9 @@
  * rather than up to 30 seconds later.
  *
  * Fallback rule: if the database is unreachable (or DATABASE_URL is unset),
- * every function returns the static bundle exactly as the storefront rendered
- * before this layer existed. If the database is reachable, a missing/inactive
- * product row is a 404 — a stale static product must not come back to life.
+ * static marketing remains available but managed compatibility, scoped attributes
+ * and their filters are suppressed. Missing schema is deployment-not-ready, not
+ * an outage fallback. A reachable missing/inactive product row remains a 404.
  *
  * Components never query the database; they receive props from a server page.
  */
@@ -36,8 +36,9 @@ import type { AccessoryProduct, CategoryConfig } from '@/components/sites/access
 import type { Product as CaseProduct } from '@/components/sites/cases-protection/data/products';
 import type { CollectionProduct } from '@/components/collection/types';
 
+import { isCatalogSchemaError, suppressManagedCatalog } from './catalog-rules';
 import { CATALOG_CACHE_TAG, productCacheTag } from './catalog-tags';
-import { readSaleState } from './sale-state';
+import { readSaleState, type SaleState } from './sale-state';
 import {
   accessoryProductFromDatabase,
   caseProductFromDatabase,
@@ -71,19 +72,20 @@ interface CatalogState {
 
 const readCachedCatalog = unstable_cache(
   async (): Promise<StorefrontCatalogSnapshot | null> => readStorefrontCatalog(),
-  ['storefront-catalog'],
+  ['storefront-catalog', 'phase-b2-option-prices-v2'],
   { tags: [CATALOG_CACHE_TAG], revalidate: 30 },
 );
 
 /**
- * One catalogue read per request. Never throws: an unreachable database is
- * the fallback signal, not a page error.
+ * One catalogue read per request. Connection outages fall back; missing schema
+ * throws a distinct deployment-not-ready error without inventing managed data.
  */
 const getCatalogState = cache(async (): Promise<CatalogState> => {
   try {
     const snapshot = await readCachedCatalog();
     return { ready: snapshot !== null, snapshot };
-  } catch {
+  } catch (error) {
+    if (isCatalogSchemaError(error)) throw new Error('Catalogue deployment is not ready.', { cause: error });
     console.warn('[storefront/catalog] catalogue database unavailable; rendering static data');
     return { ready: false, snapshot: null };
   }
@@ -104,7 +106,7 @@ function readCachedProduct(id: string) {
         snapshot.products.find((entry) => entry.id.toLowerCase() === normalised) ?? null;
       return { ready: true, product };
     },
-    ['storefront-product', normalised],
+    ['storefront-product', 'phase-b2-option-prices-v2', normalised],
     { tags: [CATALOG_CACHE_TAG, productCacheTag(id)], revalidate: 30 },
   );
 }
@@ -114,7 +116,8 @@ const getProductState = cache(async (id: string): Promise<ProductState> => {
   if (!id.trim()) return { ready: false, product: null };
   try {
     return await readCachedProduct(id)();
-  } catch {
+  } catch (error) {
+    if (isCatalogSchemaError(error)) throw new Error('Catalogue deployment is not ready.', { cause: error });
     console.warn('[storefront/catalog] product database unavailable; rendering static data');
     return { ready: false, product: null };
   }
@@ -140,6 +143,16 @@ function findCategory(
  */
 const getSaleState = cache(async () => readSaleState());
 
+function withDescription<T extends { description: string }>(product: T, source: StorefrontProduct): T & Pick<StorefrontProduct, 'shortDescription' | 'descriptionSections'> {
+  return { ...product, shortDescription: source.shortDescription ?? null, descriptionSections: source.descriptionSections ?? null };
+}
+
+function descriptionRef(product: StorefrontProduct, categoryName?: string): StorefrontProductRef {
+  const ref = refFromDatabase(product, categoryName);
+  // Compact search includes the short summary only; hidden/long sections stay out.
+  return { ...ref, keywords: [...ref.keywords, ...(product.shortDescription ?? '').toLowerCase().split(/\s+/).filter(Boolean)] };
+}
+
 function accessoryProductsFromCategory(
   category: StorefrontCategory,
   saleLive: boolean,
@@ -147,9 +160,9 @@ function accessoryProductsFromCategory(
   return category.products.map((row) => {
     const product = applySaleDisplay(row, saleLive);
     const staticProduct = getStaticAccessoryProduct(product.id);
-    return staticProduct
+    return withDescription(staticProduct
       ? mergeAccessoryProduct(staticProduct, product)
-      : accessoryProductFromDatabase(product);
+      : accessoryProductFromDatabase(product), product);
   });
 }
 
@@ -162,6 +175,13 @@ function caseProductsFromCategory(
     const staticProduct = getStaticCaseCollectionProduct(product.id);
     return collectionProductFromDatabase(product, staticProduct ?? null);
   });
+}
+
+/** Keep editorial furniture; only product-backed filters/pills are replaced. */
+function fallbackConfig(config: CategoryConfig, products: { brand: string }[]): CategoryConfig {
+  const options = [...new Set(products.map((product) => product.brand).filter(Boolean))];
+  return { ...config, filters: options.length ? [{ id: 'brand', label: 'Brand', options }] : [],
+    quickPillFacet: undefined, quickPills: undefined };
 }
 
 /* ------------------------------------------------------------ accessories */
@@ -183,9 +203,9 @@ export const getAccessoryCategoryView = cache(
     const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
     if (!state.ready) {
       const staticCategory = getStaticAccessoryCategory(slug);
-      return staticCategory
-        ? { ...staticCategory, source: 'static' }
-        : null;
+      if (!staticCategory) return null;
+      const products = staticCategory.products.map(suppressManagedCatalog);
+      return { config: fallbackConfig(staticCategory.config, products), products, source: 'static' };
     }
 
     const category = findCategory(state.snapshot!, slug);
@@ -200,6 +220,9 @@ export const getAccessoryCategoryView = cache(
 );
 
 export interface AccessoryProductsView {
+  filters: CategoryConfig['filters'];
+  quickPillFacet?: string;
+  quickPills?: string[];
   products: AccessoryProduct[];
   source: CatalogSourceKind;
 }
@@ -207,8 +230,8 @@ export interface AccessoryProductsView {
 /**
  * Products for one of the five explicit accessory routes. Those pages keep
  * their static `CONFIG` (page furniture is not moving in this phase); only the
- * product records are merged. If the category row or the database is missing,
- * the static records render exactly as before.
+ * products and filters come from projected rows. A missing database uses sanitized
+ * static marketing; a reachable missing category never revives static products.
  */
 export const getAccessoryProductsView = cache(
   async (slug: string): Promise<AccessoryProductsView> => {
@@ -217,15 +240,16 @@ export const getAccessoryProductsView = cache(
     const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
 
     if (!state.ready) {
-      return { products: staticCategory?.products ?? [], source: 'static' };
+      const products = (staticCategory?.products ?? []).map(suppressManagedCatalog);
+      const config = staticCategory ? fallbackConfig(staticCategory.config, products) : null;
+      return { products, filters: config?.filters ?? [], source: 'static' };
     }
 
     const category = findCategory(state.snapshot!, slug);
-    if (!category) {
-      return { products: staticCategory?.products ?? [], source: 'static' };
-    }
-
-    return { products: accessoryProductsFromCategory(category, sale.live), source: 'db' };
+    if (!category) return { products: [], filters: [], source: 'db' };
+    const { filters, quickPillFacet, quickPills } = toCategoryConfig(category);
+    return { products: accessoryProductsFromCategory(category, sale.live),
+      filters, quickPillFacet, quickPills, source: 'db' };
   },
 );
 
@@ -244,9 +268,10 @@ export interface CasesCategoryView {
 export const getCasesCategoryView = cache(async (): Promise<CasesCategoryView | null> => {
   const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
   if (!state.ready) {
+    const products = staticCaseCollectionProducts().map(suppressManagedCatalog);
     return {
-      config: STATIC_CASES_CONFIG,
-      products: staticCaseCollectionProducts(),
+      config: fallbackConfig(STATIC_CASES_CONFIG, products),
+      products,
       source: 'static',
     };
   }
@@ -293,8 +318,8 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
       availableStock: null,
     };
     return staticProduct.kind === 'case'
-      ? { kind: 'case', product: staticProduct.product, stock, source: 'static' }
-      : { kind: 'accessory', product: staticProduct.product, stock, source: 'static' };
+      ? { kind: 'case', product: suppressManagedCatalog(staticProduct.product), stock, source: 'static' }
+      : { kind: 'accessory', product: suppressManagedCatalog(staticProduct.product), stock, source: 'static' };
   }
 
   if (!state.product) return null;
@@ -311,9 +336,9 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
   if (staticCase || databaseProduct.categorySlug === 'cases-protection') {
     return {
       kind: 'case',
-      product: staticCase
+      product: withDescription(staticCase
         ? mergeCaseProduct(staticCase, databaseProduct)
-        : caseProductFromDatabase(databaseProduct),
+        : caseProductFromDatabase(databaseProduct), databaseProduct),
       stock,
       source: 'db',
     };
@@ -322,15 +347,24 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
   const staticAccessory = getStaticAccessoryProduct(databaseProduct.id);
   return {
     kind: 'accessory',
-    product: staticAccessory
+    product: withDescription(staticAccessory
       ? mergeAccessoryProduct(staticAccessory, databaseProduct)
-      : accessoryProductFromDatabase(databaseProduct),
+      : accessoryProductFromDatabase(databaseProduct), databaseProduct),
     stock,
     source: 'db',
   };
 });
 
 /* --------------------------------------------------------- search / bag */
+
+/** Purchase admission must not use cross-request cached rows or outage fallback. */
+export async function getFreshStorefrontRefs(): Promise<StorefrontRefs> {
+  const [snapshot, sale] = await Promise.all([readStorefrontCatalog(), readSaleState()]);
+  if (!snapshot || sale.unreadable) throw new Error('Current catalogue pricing is unavailable.');
+  const categories = new Map(snapshot.categories.map(category => [category.id, category.name]));
+  return { products: snapshot.products.map(product => descriptionRef(applySaleDisplay(product, sale.live), categories.get(product.categoryId))),
+    saleLive: sale.live, source: 'db' };
+}
 
 export interface StorefrontRefs {
   products: StorefrontProductRef[];
@@ -344,8 +378,8 @@ export interface StorefrontRefs {
  * and the bag. Explicit fields only: no cost, notes, audit data or customer
  * data can reach this shape.
  */
-export const getStorefrontRefs = cache(async (): Promise<StorefrontRefs> => {
-  const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
+export const getStorefrontRefs = cache(async (saleState?: SaleState): Promise<StorefrontRefs> => {
+  const [state, sale] = await Promise.all([getCatalogState(), saleState ?? getSaleState()]);
   if (!state.ready) {
     return { products: STATIC_PRODUCT_REFS, saleLive: sale.live, source: 'static' };
   }
@@ -355,7 +389,7 @@ export const getStorefrontRefs = cache(async (): Promise<StorefrontRefs> => {
   );
   return {
     products: state.snapshot!.products.map((product) =>
-      refFromDatabase(applySaleDisplay(product, sale.live), categoryNames.get(product.categoryId)),
+      descriptionRef(applySaleDisplay(product, sale.live), categoryNames.get(product.categoryId)),
     ),
     saleLive: sale.live,
     source: 'db',

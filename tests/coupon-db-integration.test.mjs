@@ -19,11 +19,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -38,23 +39,25 @@ if (!process.env.DATABASE_URL) {
 function connectionDetails() {
   const url = new URL(process.env.DATABASE_URL);
   return {
-    isPooler: url.hostname.includes('pooler') && url.port === '6543',
     transactionPooler: url.port === '6543',
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
-  const { isPooler } = connectionDetails();
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
-    prepare: !isPooler,
+    prepare: false,
+    connection: { search_path: 'pg_catalog' },
     onnotice: () => {},
   });
 }
@@ -180,14 +183,12 @@ before(async () => {
   if (skip) return;
   sql = client();
   secondSql = client();
-  await sql.unsafe(`create schema "${SCHEMA}"`);
-  await sql.unsafe(`set search_path to "${SCHEMA}"`);
+  await createFixtureSchema(sql, SCHEMA, ['coupons']);
   await secondSql.unsafe(`set search_path to "${SCHEMA}"`);
 
   // The coupon table is copied from the real one, so its constraints and
-  // indexes are the shipped ones. The other three are the minimum columns the
-  // helpers read; their foreign keys point outside this throwaway schema.
-  await sql.unsafe(`create table coupons (like public.coupons including all)`);
+  // indexes are the shipped ones. The other tables keep only the columns the
+  // helpers read, with local serial sequences and no production foreign keys.
   await sql.unsafe(`
     create table coupon_targets (
       id bigserial primary key,
@@ -195,7 +196,8 @@ before(async () => {
       product_id text,
       category_id text,
       brand_id text
-    )
+    );
+    alter table coupon_targets enable row level security
   `);
   await sql.unsafe(`
     create table coupon_redemptions (
@@ -211,16 +213,21 @@ before(async () => {
       released_at timestamptz,
       release_reason text,
       unique (coupon_id, order_id)
-    )
+    );
+    alter table coupon_redemptions enable row level security
   `);
-  await sql.unsafe(`create table users (id text primary key, customer_group text)`);
+  await sql.unsafe(`
+    create table users (id text primary key, customer_group text);
+    alter table users enable row level security
+  `);
   await sql.unsafe(`
     create table orders (
       id text primary key,
       status text,
       user_id text,
       customer_email text
-    )
+    );
+    alter table orders enable row level security
   `);
 });
 
@@ -235,13 +242,10 @@ beforeEach(async () => {
 after(async () => {
   if (skip) return;
   try {
-    await sql.unsafe('set search_path to public');
-    await sql.unsafe(`drop schema if exists "${SCHEMA}" cascade`);
-  } catch (error) {
-    console.warn('[coupon-db] cleanup did not finish:', error?.message ?? error);
+    if (sql) await dropFixtureSchema(sql, SCHEMA);
+  } finally {
+    await Promise.all([sql?.end({ timeout: 5 }), secondSql?.end({ timeout: 5 })]);
   }
-  await sql.end({ timeout: 5 });
-  await secondSql.end({ timeout: 5 });
 });
 
 /* ---------------------------------------------------------------- reads */

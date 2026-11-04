@@ -95,6 +95,11 @@ EXPECTED_OWNER_ROUTES.push('catalog/units/route.ts');
 EXPECTED_OWNER_ROUTES.push('catalog/attributes/route.ts');
 EXPECTED_OWNER_ROUTES.push('catalog/attributes/[id]/route.ts');
 EXPECTED_OWNER_ROUTES.push('catalog/attributes/[id]/options/route.ts');
+// Product type/attribute-set and device reference writes are owner-only.
+EXPECTED_OWNER_ROUTES.push('catalog/metadata/[kind]/route.ts');
+// Starter preview and confirmation both inspect privileged reference configuration.
+EXPECTED_OWNER_ROUTES.push('catalog/setup/preview/route.ts');
+EXPECTED_OWNER_ROUTES.push('catalog/setup/apply/route.ts');
 // Phase 7: erasing an account is irreversible, so it is owner-only.
 EXPECTED_OWNER_ROUTES.push('customers/[id]/anonymise/route.ts');
 // Phase 9: staff accounts, roles and credentials are owner-only. The staff
@@ -106,6 +111,9 @@ EXPECTED_OWNER_ROUTES.push('staff/[id]/password/route.ts');
 EXPECTED_OWNER_ROUTES.push('staff/[id]/sessions/route.ts');
 // Two-factor: resetting another staff member's second factor is owner-only.
 EXPECTED_OWNER_ROUTES.push('staff/[id]/totp/reset/route.ts');
+// Website reads remain available to every role; each write is owner-only.
+EXPECTED_OWNER_ROUTES.push('website/content/[key]/route.ts');
+EXPECTED_OWNER_ROUTES.push('website/theme/route.ts');
 
 const EXPECTED_MUTATING_ROUTES = [
   'orders/[txnid]/fulfilment/route.ts',
@@ -119,6 +127,8 @@ const EXPECTED_MUTATING_ROUTES = [
   'catalog/products/[id]/images/route.ts',
   'catalog/products/[id]/images/[imageId]/route.ts',
   'catalog/products/[id]/attributes/route.ts',
+  'catalog/products/[id]/metadata/route.ts',
+  'catalog/products/[id]/duplicate/route.ts',
   // Phase 5: the product list gained a create handler.
   'catalog/products/route.ts',
   // Phase 0: storefront collection membership (merchandising).
@@ -163,6 +173,9 @@ const EXPECTED_MUTATING_ROUTES = [
   // Phase 10: acknowledging a captured payment whose stock could not be
   // re-claimed is an audited mutation, though it moves no money.
   'payments/review-flag/route.ts',
+  // Phase 12: "Verify with PayU" re-reads the gateway and runs the shared
+  // payment transition, so it is a guarded, same-origin, audited mutation.
+  'orders/[txnid]/verify/route.ts',
   // Phase 11: coupon create/edit, pause/resume/archive, duplicate and bulk
   // generation. The list and detail routes also serve GET and therefore sit
   // here rather than in the read-only list.
@@ -171,6 +184,8 @@ const EXPECTED_MUTATING_ROUTES = [
   'coupons/[id]/status/route.ts',
   'coupons/[id]/duplicate/route.ts',
   'coupons/bulk/route.ts',
+  // Phase 5: selected-ID public visibility changes (not code generation).
+  'coupons/visibility/route.ts',
 ];
 
 const EXPECTED_ROUTES = [

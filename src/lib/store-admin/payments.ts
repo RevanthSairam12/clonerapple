@@ -1,4 +1,17 @@
 import { getSql } from '@/lib/platform/db';
+import type postgres from 'postgres';
+import { reclaimReleasedStock, releasedClaimLines } from '@/lib/payu/stock';
+
+/** Manual payment is not PayU verification, but must honor the same inventory hold. */
+async function settleManualInventory(tx: postgres.TransactionSql, orderId: string): Promise<void> {
+  const [order] = await tx`select reservation_state from orders where id=${orderId} for update`;
+  if (order && ['RELEASED','EXPIRED'].includes(String(order.reservation_state))) {
+    const reclaimed = await reclaimReleasedStock(tx,orderId,await releasedClaimLines(tx,orderId));
+    if (!reclaimed.ok) throw new Error('Stock unavailable for this payment; review the order before approval.');
+  }
+  await tx`update orders set reservation_state=case when reservation_state='NONE' then 'NONE' else 'CONSUMED' end,
+    next_reconcile_at=null,updated_at=now() where id=${orderId}`;
+}
 
 import {
   ADMIN_MAX_MARK_PAID_PAISE,
@@ -251,6 +264,7 @@ export async function recordManualPayment(input: {
 
       let orderPaidNow = false;
       if (!requiresReview && paymentCoversTotal(paidPaise, totalPaise)) {
+        await settleManualInventory(tx,orderId);
         await tx`
           update orders
           set status = 'PAID',
@@ -553,6 +567,7 @@ export async function reviewManualPayment(input: {
 
       let orderPaidNow = false;
       if (orderStatus !== 'PAID' && paymentCoversTotal(paidPaise, totalPaise)) {
+        await settleManualInventory(tx,orderId);
         await tx`
           update orders
           set status = 'PAID',

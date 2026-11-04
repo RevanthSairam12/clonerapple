@@ -16,10 +16,12 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 export async function loadEnv() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') return;
   if (process.env.DATABASE_URL) return;
   try {
     const env = await readFile(path.join(here, '..', '..', '.env.local'), 'utf8');
@@ -33,6 +35,7 @@ export async function loadEnv() {
 }
 
 export function skipReason() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') return 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval';
   if (!process.env.DATABASE_URL) return 'DATABASE_URL is not set';
   const url = new URL(process.env.DATABASE_URL);
   if (url.port === '6543') return 'temporary-schema isolation needs a session connection (not port 6543)';
@@ -40,13 +43,15 @@ export function skipReason() {
 }
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const url = new URL(process.env.DATABASE_URL);
-  const isPooler = url.hostname.includes('pooler') && url.port === '6543';
+  if (url.port === '6543') throw new Error('Requires a session connection, not transaction pooler port 6543.');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
-    prepare: !isPooler,
+    prepare: false,
     onnotice: () => {},
+    connection: { search_path: 'pg_catalog' },
   });
 }
 
@@ -54,6 +59,12 @@ const TABLES = [
   'categories',
   'brands',
   'products',
+  // Keep Phase 4 inventory joins local even though this catalogue has no variants.
+  'product_variants',
+  'device_models',
+  'device_brands',
+  'product_types',
+  'product_device_models',
   'stock',
   'stock_movements',
   'users',
@@ -76,24 +87,8 @@ export async function withSchema(label, fn) {
   const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
   const schema = `itest_${label}_${suffix}`;
   const sql = client();
-  const previous = globalThis.__gadzioSql;
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    // LIKE copies serial defaults verbatim, including references to public
-    // sequences. Give fixture columns their own sequences before any insert.
-    const serialDefaults = await sql`
-      select table_name, column_name from information_schema.columns
-      where table_schema = ${schema} and column_default like 'nextval(%'
-    `;
-    for (const { table_name, column_name } of serialDefaults) {
-      const sequence = `${table_name}_${column_name}_fixture_seq`;
-      await sql.unsafe(`create sequence "${schema}"."${sequence}"`);
-      await sql.unsafe(`alter table "${schema}"."${table_name}" alter column "${column_name}" set default nextval('"${schema}"."${sequence}"'::regclass)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
 
     // The real sale-state view, recreated against the throwaway tables.
     const migration = await readFile(
@@ -104,13 +99,10 @@ export async function withSchema(label, fn) {
     if (!view) throw new Error('order_sale_state view definition not found in migration 0037');
     await sql.unsafe(view[0]);
 
-    globalThis.__gadzioSql = sql;
     return await fn(sql);
   } finally {
-    globalThis.__gadzioSql = previous;
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(sql, schema);
     } finally {
       await sql.end({ timeout: 5 });
     }

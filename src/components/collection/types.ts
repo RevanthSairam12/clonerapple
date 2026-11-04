@@ -35,6 +35,8 @@ export interface CollectionConfig {
 }
 
 export interface CollectionProduct {
+  inventoryMode?: 'product' | 'variant';
+  purchasableVariants?: import('@/lib/catalog/storefront').StorefrontPurchasableVariant[];
   id: string;
   name: string;
   subtitle: string;
@@ -75,7 +77,7 @@ export function normalizeProduct(raw: AccessoryProduct | CaseProduct): Collectio
     const cp = raw as CaseProduct;
     const hover = cp.hoverImage || undefined;
     return {
-      id: cp.id,
+      id: cp.id, inventoryMode: cp.inventoryMode, purchasableVariants: cp.purchasableVariants,
       name: cp.name,
       subtitle: cp.subtitle || '',
       price: cp.price,
@@ -112,7 +114,7 @@ export function normalizeProduct(raw: AccessoryProduct | CaseProduct): Collectio
   const ap = raw as AccessoryProduct;
   const hover = ap.images && ap.images.length > 1 ? ap.images[1] : undefined;
   return {
-    id: ap.id,
+    id: ap.id, inventoryMode: ap.inventoryMode, purchasableVariants: ap.purchasableVariants,
     name: ap.name,
     subtitle: ap.subtitle || '',
     price: ap.price,

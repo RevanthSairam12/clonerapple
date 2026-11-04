@@ -1,4 +1,6 @@
 import type { CouponRejectReason } from './rules';
+import type { ShippingPolicy } from '@/lib/checkout/shipping-rules';
+import type { PricedCartItem } from '@/lib/payu/db-pricing';
 
 /**
  * Thrown inside the order transaction when the coupon cannot be honoured.
@@ -30,8 +32,12 @@ export interface ChangedTotals {
 export class TotalChangedError extends Error {
   readonly totals: ChangedTotals;
 
-  constructor(totals: ChangedTotals) {
-    super('Your order total has changed. Review the new total and pay again.');
+  constructor(
+    totals: ChangedTotals,
+    readonly items: readonly PricedCartItem[] = [],
+    readonly shippingPolicy?: ShippingPolicy,
+  ) {
+    super('Prices have changed, please review your cart.');
     this.name = 'TotalChangedError';
     this.totals = totals;
   }

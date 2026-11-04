@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { validateIndianAddress } from '@/lib/checkout/india-validation';
 
 export interface AddressInput {
   name?: unknown;
@@ -20,29 +21,8 @@ export interface ValidatedAddress {
   pincode: string;
 }
 
-function text(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-export function validateAddressInput(input: AddressInput):
-  | { ok: true; value: ValidatedAddress }
-  | { ok: false; error: string } {
-  const value: ValidatedAddress = {
-    name: text(input.name, 100),
-    phone: text(input.phone, 20).replace(/\D/g, ''),
-    line1: text(input.line1, 200),
-    line2: text(input.line2, 200),
-    city: text(input.city, 100),
-    state: text(input.state, 100),
-    pincode: text(input.pincode, 6),
-  };
-  if (value.name.length < 2) return { ok: false, error: 'A full name is required.' };
-  if (!/^\d{10}$/.test(value.phone)) return { ok: false, error: 'Phone must contain 10 digits.' };
-  if (!value.line1) return { ok: false, error: 'Address line 1 is required.' };
-  if (!value.city) return { ok: false, error: 'City is required.' };
-  if (!value.state) return { ok: false, error: 'State is required.' };
-  if (!/^\d{6}$/.test(value.pincode)) return { ok: false, error: 'Pincode must contain 6 digits.' };
-  return { ok: true, value };
+export function validateAddressInput(input: unknown) {
+  return validateIndianAddress(input);
 }
 
 export function maskAccountEmail(value: string): string {

@@ -1,7 +1,12 @@
 import { randomBytes } from 'node:crypto';
 
 import { getSql } from '@/lib/platform/db';
-import { normalizeCartLineId } from '@/lib/cart/cart-id';
+import { resolveEffectivePrice } from '@/lib/storefront/pricing';
+import { readSaleStateUsing } from '@/lib/storefront/sale-state';
+import { getStoreSession } from './auth';
+import { ensureInvoiceIssuedInTx } from '@/lib/orders/invoice';
+import { inventoryKey } from './variant-inventory-rules';
+import { strictMetadataAudit } from './product-metadata';
 import { restoreSoldStock } from '@/lib/payu/stock';
 import { maskCustomerPhone } from './masking';
 import {
@@ -54,9 +59,13 @@ function iso(value: unknown): string {
 
 export interface PosCatalogProduct {
   id: string;
+  productId: string;
+  variantId: string|null;
+  variantSku: string|null;
+  variantLabel: string|null;
   name: string;
   subtitle: string;
-  /** The regular catalogue price, shown only as a reference at the till. */
+  /** The effective catalogue price, shown only as a reference at the till. */
   listPricePaise: number;
   currency: string;
   onHand: number | null;
@@ -83,10 +92,13 @@ export interface PosSaleLine {
   lineNumber: number;
   productId: string;
   productName: string;
+  variantId: string|null;
+  variantSku: string|null;
+  variantLabel: string|null;
   quantity: number;
   /** The price charged, typed by the cashier. */
   unitPricePaise: number;
-  /** The regular catalogue price at the moment of sale, for reference only. */
+  /** The effective catalogue price at the moment of sale, for reference only. */
   referencePricePaise: number | null;
   lineTotalPaise: number;
   currency: string;
@@ -127,7 +139,7 @@ export type PosSaleResult =
 /**
  * The catalogue products for the POS search, read from the database through
  * the owner connection. The list price is a reference only: the cashier types
- * the price charged, and the server never resolves a sale price for POS.
+ * the price charged. Sale resolution supplies reference amounts only.
  */
 export type PosCatalogLoad =
   | { ok: true; products: PosCatalogProduct[] }
@@ -137,22 +149,38 @@ export type PosCatalogLoad =
 export async function getPosCatalog(): Promise<PosCatalogLoad> {
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable' };
+  return getPosCatalogUsing(sql);
+}
+
+/** Injected connection keeps reference-pricing tests entirely offline. */
+export async function getPosCatalogUsing(sql: Sql): Promise<PosCatalogLoad> {
   try {
+    const saleLive = await referenceSaleLiveUsing(sql);
     const rows = (await sql`
-      select p.id, p.name, p.subtitle, p.price_paise, p.currency,
-             s.on_hand, s.track_inventory
+      select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise, p.currency,
+             v.price_paise_override, v.sale_price_paise as variant_sale_price_paise,
+             v.id as variant_id,v.sku as variant_sku,concat_ws(' / ',dm.name,v.option_value) as variant_label,
+             s.on_hand-s.reserved as on_hand, s.track_inventory
       from products p
-      left join stock s on s.product_id = p.id and s.variant_id is null
-      where p.is_active and p.deleted_at is null
+      left join product_types pt on pt.id=p.product_type_id
+      left join product_variants v on p.inventory_mode='variant' and v.product_id=p.id and v.is_active and v.is_purchasable
+        and nullif(trim(v.sku),'') is not null and nullif(trim(v.combination_key),'') is not null
+        and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null)
+      left join device_models dm on dm.id=v.device_model_id
+      left join stock s on s.product_id = p.id and s.variant_id is not distinct from v.id
+      where p.is_active and p.deleted_at is null and (p.inventory_mode='product' or (v.id is not null and s.id is not null and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.device_model_id=v.device_model_id and pm.archived_at is null and dm.is_active and db.is_active))))
       order by p.name
     `) as Row[];
     return {
       ok: true,
       products: rows.map((row) => ({
-        id: text(row.id),
-        name: text(row.name),
+        id:inventoryKey(text(row.id),nullableText(row.variant_id)),productId:text(row.id),variantId:nullableText(row.variant_id),variantSku:nullableText(row.variant_sku),variantLabel:nullableText(row.variant_label),
+        name: text(row.name)+(row.variant_label?` — ${text(row.variant_label)}`:''),
         subtitle: text(row.subtitle),
-        listPricePaise: integer(row.price_paise),
+        listPricePaise: referencePriceOf(row, saleLive, row.variant_id ? {
+          price_paise_override: row.price_paise_override,
+          sale_price_paise: row.variant_sale_price_paise,
+        } : undefined),
         currency: text(row.currency) || 'INR',
         onHand: row.on_hand === null || row.on_hand === undefined ? null : integer(row.on_hand),
         trackInventory: Boolean(row.track_inventory),
@@ -162,6 +190,22 @@ export async function getPosCatalog(): Promise<PosCatalogLoad> {
     console.warn('[store-admin/pos] could not read the catalogue');
     return { ok: false, reason: 'unavailable' };
   }
+}
+
+async function referenceSaleLiveUsing(sql: Sql | import('postgres').TransactionSql): Promise<boolean> {
+  try {
+    return (await readSaleStateUsing(sql)).live;
+  } catch {
+    // A failed reference read must not change or prevent a cashier's charge.
+    return false;
+  }
+}
+
+function referencePriceOf(product: Row, saleLive: boolean, option?: Row): number {
+  return resolveEffectivePrice({ pricePaise: number(product.price_paise),
+    salePricePaise: product.sale_price_paise == null ? null : number(product.sale_price_paise) }, saleLive,
+  option ? { pricePaise: option.price_paise_override == null ? null : number(option.price_paise_override),
+    salePricePaise: option.sale_price_paise == null ? null : number(option.sale_price_paise) } : undefined).unitPaise;
 }
 
 /* ---------------------------------------------------------- shifts */
@@ -385,9 +429,9 @@ export async function getCurrentShift(staffId: string): Promise<
  * number + stock decrement + stock movements.
  *
  * The price charged is the integer paise the cashier typed for each line. The
- * product's regular price is stored beside it as a reference only. Nothing
- * here reads the sale resolver, so starting or ending sale mode mid-bill has
- * no effect on a price already entered. Product identity, quantity and stock
+ * effective catalogue price is stored beside it as a reference only. Starting
+ * or ending sale mode mid-bill has no effect on a price already entered.
+ * Product identity, quantity and stock
  * still come from the database, under row locks.
  */
 export interface CreatePosSaleInput {
@@ -433,12 +477,15 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
   const priced = validatePosPrices(input.lines, cart.lines);
   if (!priced.ok) return { ok: false, reason: 'invalid-input', error: priced.error };
 
+  const saleLive = await referenceSaleLiveUsing(sql);
   const txnid = `POS-${randomBytes(9).toString('hex').toUpperCase()}`;
   const orderId = `ord_${randomBytes(12).toString('hex')}`;
   const customerPhone = input.customerPhone?.trim() || null;
 
   try {
     return await sql.begin(async (tx) => {
+      // Configuration activation cannot race an old parent-identity sale.
+      await tx`select pg_advisory_xact_lock_shared(513031,3)`;
       // The shift must be open for the whole transaction.
       const shiftRows = (await tx`
         select id from pos_shifts
@@ -453,14 +500,14 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
       const shiftId = number(shift.id);
 
       // Read every product before writing anything. The entered price is the
-      // charged price; the regular price is captured as a reference snapshot.
+      // charged price; the effective option price is a reference snapshot only.
       const lines: PosSaleLine[] = [];
       const warnings: PosPriceWarning[] = [];
       for (let index = 0; index < priced.lines.length; index += 1) {
         const cartLine = priced.lines[index];
-        const baseId = normalizeCartLineId(cartLine.id).baseId || cartLine.id;
+        const baseId = cartLine.id;
         const productRows = (await tx`
-          select id, name, price_paise, cost_paise
+          select id, name, price_paise, cost_paise,inventory_mode,sale_price_paise
           from products
           where id = ${baseId} and is_active and deleted_at is null
           limit 1
@@ -473,7 +520,12 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
             error: `Product '${cartLine.id}' is not in the active catalogue.`,
           };
         }
-        const regularPricePaise = integer(product.price_paise);
+        const variantId=cartLine.variantId??null;
+        if((product.inventory_mode==='variant')!==Boolean(variantId)) return {ok:false as const,reason:'invalid-input' as const,error:'Select the exact purchasable combination; product-level selections cannot be substituted.'};
+        const variantRows=variantId?await tx`select v.* from product_variants v left join products p on p.id=v.product_id left join product_types pt on pt.id=p.product_type_id where v.id=${variantId} and v.product_id=${baseId} and v.is_active and v.is_purchasable and v.sku is not null and v.combination_key is not null and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null) and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null and dm.is_active and db.is_active))`:[];
+        const variant=variantRows[0];
+        if(variantId&&!variant)return {ok:false as const,reason:'invalid-input' as const,error:'Variant is missing, inactive or has an invalid model mapping.'};
+        const regularPricePaise = integer(variant?.price_paise_override??product.price_paise);
         const costPaise = product.cost_paise === null || product.cost_paise === undefined
           ? null
           : integer(product.cost_paise);
@@ -491,9 +543,10 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
           lineNumber: index + 1,
           productId,
           productName,
+          variantId,variantSku:nullableText(variant?.sku),variantLabel:variant?`${text(variant.option_name)}: ${text(variant.option_value)}`:null,
           quantity: cartLine.quantity,
           unitPricePaise: cartLine.unitPricePaise,
-          referencePricePaise: regularPricePaise,
+          referencePricePaise: referencePriceOf(product, saleLive, variant),
           lineTotalPaise: cartLine.unitPricePaise * cartLine.quantity,
           currency: 'INR',
         });
@@ -502,7 +555,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
       // Zero is allowed only after an explicit free-item confirmation.
       const zeroCandidates = priced.lines.map((line) => ({
         ...line,
-        id: normalizeCartLineId(line.id).baseId || line.id,
+        id: line.variantId?inventoryKey(line.id,line.variantId):line.id,
       }));
       const unconfirmedZero = unconfirmedFreeLines(zeroCandidates, input.confirmedFreeItemIds);
       if (unconfirmedZero.length > 0) {
@@ -537,14 +590,14 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
 
       // Lock and check stock before the order is written. Holding these row
       // locks until commit serialises two tills racing for the last unit.
-      for (const line of lines) {
+      for (const line of [...lines].sort((a,b)=>inventoryKey(a.productId,a.variantId).localeCompare(inventoryKey(b.productId,b.variantId)))) {
         const stockRows = (await tx`
-          select on_hand, track_inventory from stock
-          where product_id = ${line.productId} and variant_id is null
+          select on_hand, reserved,track_inventory from stock
+          where product_id = ${line.productId} and variant_id is not distinct from ${line.variantId}::text
           for update
         `) as Row[];
         const stockRow = stockRows[0];
-        if (stockRow && Boolean(stockRow.track_inventory) && integer(stockRow.on_hand) < line.quantity) {
+        if ((line.variantId&&!stockRow)||(stockRow && Boolean(stockRow.track_inventory) && integer(stockRow.on_hand)-integer(stockRow.reserved) < line.quantity)) {
           return {
             ok: false as const,
             reason: 'out-of-stock' as const,
@@ -568,6 +621,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
       const subtotalPaise = lines.reduce((sum, line) => sum + line.lineTotalPaise, 0);
       const itemsSnapshot = lines.map((line) => ({
         id: line.productId,
+        variantId:line.variantId,variantSku:line.variantSku,variantLabel:line.variantLabel,
         name: line.productName,
         quantity: line.quantity,
         unitPrice: line.unitPricePaise / 100,
@@ -594,15 +648,16 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
         returning id, txnid
       `) as Row[];
       const createdId = text(orderRows[0].id);
+      await ensureInvoiceIssuedInTx(tx, createdId, input.staffId);
 
       for (const line of lines) {
         await tx`
           insert into order_items (
-            order_id, line_number, product_id, product_name,
+            order_id, line_number, product_id, product_name,variant_id,variant_sku,variant_label,
             quantity, unit_price_paise, reference_price_paise,
             line_total_paise, currency
           ) values (
-            ${createdId}, ${line.lineNumber}, ${line.productId}, ${line.productName},
+            ${createdId}, ${line.lineNumber}, ${line.productId}, ${line.productName},${line.variantId},${line.variantSku},${line.variantLabel},
             ${line.quantity}, ${line.unitPricePaise}, ${line.referencePricePaise},
             ${line.lineTotalPaise}, 'INR'
           )
@@ -641,15 +696,15 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
           set on_hand = on_hand - ${line.quantity},
               updated_at = now(), updated_by = ${input.staffId}
           where product_id = ${line.productId}
-            and variant_id is null
+            and variant_id is not distinct from ${line.variantId}::text
             and track_inventory
-            and on_hand >= ${line.quantity}
+            and on_hand-reserved >= ${line.quantity}
           returning on_hand
         `) as Row[];
         if (!updated[0]) {
           const trackedRows = (await tx`
             select 1 from stock
-            where product_id = ${line.productId} and variant_id is null and track_inventory
+            where product_id = ${line.productId} and variant_id is not distinct from ${line.variantId}::text and track_inventory
             limit 1
           `) as Row[];
           if (trackedRows[0]) {
@@ -657,11 +712,12 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
           }
         }
         await tx`
-          insert into stock_movements (product_id, delta, reason, order_id, created_by)
-          values (${line.productId}, ${-line.quantity}, 'sale', ${createdId}, ${input.staffId})
+          insert into stock_movements (product_id, variant_id,delta, reason, order_id, created_by)
+          values (${line.productId}, ${line.variantId},${-line.quantity}, 'sale', ${createdId}, ${input.staffId})
         `;
       }
 
+      await strictMetadataAudit(tx,{actorId:input.staffId,action:'pos.sale',entity:'order',entityId:createdId,after:{txnid,receiptNo,totalPaise:subtotalPaise,lines:lines.map(l=>({productId:l.productId,variantId:l.variantId,quantity:l.quantity,unitPricePaise:l.unitPricePaise}))}});
       return {
         ok: true as const,
         data: {
@@ -766,7 +822,7 @@ export async function voidPosSale(input: {
       const receiptNo = text(order.pos_receipt_no);
 
       const itemRows = (await tx`
-        select product_id, quantity, product_name from order_items
+        select product_id, variant_id,quantity, product_name from order_items
         where order_id = ${orderId}
       `) as Row[];
 
@@ -794,6 +850,7 @@ export async function voidPosSale(input: {
         orderId,
         itemRows.map((item) => ({
           productId: text(item.product_id),
+          variantId:nullableText(item.variant_id),
           quantity: integer(item.quantity),
         })),
         { createdBy: input.staffId },
@@ -804,6 +861,7 @@ export async function voidPosSale(input: {
         values (${orderId}, 'payment', 'store_admin', ${text(order.status)}, 'CANCELLED')
       `;
 
+      await strictMetadataAudit(tx,{actorId:input.staffId,action:'pos.void',entity:'order',entityId:orderId,before:{status:order.status},after:{status:'CANCELLED'},reason:input.reason});
       return { ok: true as const, txnid: text(order.txnid), orderId, receiptNo, reason: input.reason };
     });
   } catch {
@@ -864,6 +922,7 @@ export async function getPosDashboard(): Promise<DashboardShiftLoad> {
 /* ---------------------------------------------------------- receipt */
 
 export interface ReceiptData {
+  id: string;
   txnid: string;
   receiptNo: string;
   createdAt: string;
@@ -881,6 +940,8 @@ export type ReceiptLoad =
   | { ok: false; reason: 'unavailable' | 'not-found' | 'not-pos' };
 
 export async function getPosReceipt(txnid: string): Promise<ReceiptLoad> {
+  const session = await getStoreSession();
+  if (!session) return { ok: false, reason: 'not-found' };
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable' };
   try {
@@ -898,7 +959,7 @@ export async function getPosReceipt(txnid: string): Promise<ReceiptLoad> {
     if (text(order.channel) !== 'pos') return { ok: false, reason: 'not-pos' };
 
     const itemRows = (await sql`
-      select line_number, product_id, product_name, quantity,
+      select line_number, product_id, product_name, variant_id,variant_sku,variant_label,quantity,
              unit_price_paise, reference_price_paise,
              line_total_paise, currency
       from order_items
@@ -917,6 +978,7 @@ export async function getPosReceipt(txnid: string): Promise<ReceiptLoad> {
       lineNumber: integer(row.line_number),
       productId: text(row.product_id),
       productName: text(row.product_name),
+      variantId:nullableText(row.variant_id),variantSku:nullableText(row.variant_sku),variantLabel:nullableText(row.variant_label),
       quantity: integer(row.quantity) || 1,
       unitPricePaise: integer(row.unit_price_paise),
       referencePricePaise: row.reference_price_paise === null || row.reference_price_paise === undefined
@@ -929,6 +991,7 @@ export async function getPosReceipt(txnid: string): Promise<ReceiptLoad> {
     return {
       ok: true,
       receipt: {
+        id: text(order.id),
         txnid: text(order.txnid),
         receiptNo: text(order.pos_receipt_no),
         createdAt: iso(order.created_at),

@@ -42,6 +42,14 @@ function values(overrides = {}) {
   return templateValues(valuesFor('customer', overrides));
 }
 
+test('staff stock notifications use available-to-buy wording without changing tokens', () => {
+  for (const event of ['back_in_stock', 'low_stock']) {
+    const parts = defaultTemplate(event, 'email', 'staff');
+    assert.match(parts.body, /\{\{stock_available\}\} available to buy/);
+    assert.match(renderText(parts.body, templateValues(valuesFor('staff'))), /3 available to buy/);
+  }
+});
+
 test('every event, channel and audience has a non-empty default', () => {
   for (const event of NOTIFICATION_EVENTS) {
     for (const channel of CHANNELS) {

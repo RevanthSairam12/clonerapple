@@ -6,20 +6,20 @@ import {
   isValidCouponCode,
   normalizeCouponCode,
 } from '@/lib/coupons/rules';
-import { getPayUConfig, assertPayUConfigured } from '@/lib/payu/config';
+import { getPayUConfig, checkPayUConfiguration, getPayUCallbackUrls } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
 import { createOrder, findActiveReservationForUser, getOrderByTxnid } from '@/lib/payu/orders';
 import { InsufficientStockError } from '@/lib/payu/stock';
-import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
+import { isValidCheckoutVariantId, MAX_CHECKOUT_LINES, SelectionUnavailableError } from '@/lib/payu/db-pricing';
+import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { getCustomerAddress } from '@/lib/account/addresses';
-import { validateAddressInput } from '@/lib/account/rules';
+import { validateCheckoutContact, validateIndianAddress } from '@/lib/checkout/india-validation';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { parseReservationPolicy } from '@/lib/checkout/reservation-rules';
-import { quoteShipping } from '@/lib/checkout/shipping-rules';
 import { hasUsableNumbering, readOrderNumberSettings } from '@/lib/orders/numbering';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
@@ -33,33 +33,6 @@ function getClientIp(req: NextRequest): string {
   const forwarded = req.headers.get('x-forwarded-for');
   if (forwarded) return forwarded.split(',')[0].trim();
   return req.headers.get('x-real-ip') || '127.0.0.1';
-}
-
-function sanitizeName(name: string): string {
-  return name.replace(/[^a-zA-Z\s]/g, '').trim();
-}
-
-function normalizePhone(phone: string): string | null {
-  const digits = phone.replace(/\D/g, '');
-  // If 12 digits starting with 91, strip 91
-  if (digits.length === 12 && digits.startsWith('91')) {
-    const raw = digits.slice(2);
-    return /^[6-9]\d{9}$/.test(raw) ? raw : null;
-  }
-  // If 11 digits starting with 0, strip 0
-  if (digits.length === 11 && digits.startsWith('0')) {
-    const raw = digits.slice(1);
-    return /^[6-9]\d{9}$/.test(raw) ? raw : null;
-  }
-  // Standard 10 digits starting with 6-9
-  if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) {
-    return digits;
-  }
-  return null;
-}
-
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 /**
@@ -164,68 +137,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Cart must contain at least one item.' }, { status: 400 });
     }
 
-    let cart;
-    try {
-      cart = await resolveCartItemsFromDb(rawItems);
-    } catch (err: unknown) {
-      // Normal mode's storefront availability is enforced here too, so a
-      // crafted request cannot buy what the shop has marked unavailable.
-      if (err instanceof InsufficientStockError) {
-        return NextResponse.json(
-          { success: false, error: err.message, code: 'out_of_stock' },
-          { status: 409 },
-        );
-      }
-      return NextResponse.json({ error: (err as Error).message }, { status: 400 });
+    if (rawItems.length > MAX_CHECKOUT_LINES) {
+      return NextResponse.json({ error: 'Cart must contain at most 50 items.' }, { status: 400 });
     }
+    if (rawItems.some((item) => !normalizeCartLineId(item?.id).baseId
+      || !isValidCheckoutVariantId(item?.variantId)
+      || !Number.isInteger(item?.quantity) || item.quantity < 1 || item.quantity > 50)) {
+      return NextResponse.json({ error: 'Invalid cart item or quantity.' }, { status: 400 });
+    }
+    // Resolve prices only inside the order transaction after stock is locked.
+    // Display expectations are compared there, never used as charge amounts.
 
-    // The client's displayed unit prices are advisory: they are never charged.
-    // If any of them no longer matches the database price (a sale started or
-    // ended between the bag and this request), stop before reserving stock or
-    // creating an order and make the customer review the new prices.
-    if (cart.priceChanges.length > 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Prices have changed, please review your cart.',
-          code: 'price_changed',
-          items: cart.items.map((item) => ({
-            id: item.id,
-            name: item.name,
-            quantity: item.quantity,
-            unitPaise: item.unitPaise,
-            totalPaise: item.unitPaise * item.quantity,
-            regularPricePaise: item.regularPricePaise ?? null,
-          })),
-        },
-        { status: 409 },
-      );
+    // Identical unknown-safe rules/messages on browser and server. No order or
+    // reservation may be created before these customer fields are accepted.
+    const contact = validateCheckoutContact(body.customer);
+    if (!contact.ok) {
+      return NextResponse.json({ error: contact.error, fieldErrors: contact.errors }, { status: 400 });
     }
-
-    // 2. Validate and sanitize customer details
-    const customer = body.customer || {};
-    const rawFirstName = customer.firstname || userSession?.firstName || '';
-    const firstname = sanitizeName(rawFirstName);
-    if (!firstname || firstname.length < 2 || firstname.length > 50) {
-      return NextResponse.json(
-        { error: 'A valid first name (2-50 alphabetic characters) is required.' },
-        { status: 400 }
-      );
-    }
-
-    const rawEmail = (customer.email || userSession?.email || '').trim().toLowerCase();
-    if (!isValidEmail(rawEmail)) {
-      return NextResponse.json({ error: 'A valid email address is required.' }, { status: 400 });
-    }
-
-    const rawPhone = String(customer.phone || '').trim();
-    const phone = normalizePhone(rawPhone);
-    if (!phone) {
-      return NextResponse.json(
-        { error: 'A valid 10-digit Indian mobile number is required.' },
-        { status: 400 }
-      );
-    }
+    const { firstname, email: rawEmail, phone } = contact.value;
 
     const addressId = typeof body.shippingAddressId === 'string' ? body.shippingAddressId.trim() : '';
     let shippingAddress;
@@ -239,20 +168,18 @@ export async function POST(req: NextRequest) {
       if (!savedAddress) {
         return NextResponse.json({ error: 'The selected shipping address is unavailable.' }, { status: 400 });
       }
-      shippingAddress = savedAddress;
+      const validation = validateIndianAddress(savedAddress);
+      if (!validation.ok) {
+        return NextResponse.json({ error: validation.error, fieldErrors: validation.errors, code: 'address_needs_correction' }, { status: 400 });
+      }
+      shippingAddress = validation.value;
     } else {
-      const addressValidation = validateAddressInput(body.shippingAddress);
+      const addressValidation = validateIndianAddress(body.shippingAddress);
       if (!addressValidation.ok) {
-        return NextResponse.json({ error: addressValidation.error }, { status: 400 });
+        return NextResponse.json({ error: addressValidation.error, fieldErrors: addressValidation.errors }, { status: 400 });
       }
       shippingAddress = addressValidation.value;
     }
-
-    // 3. Server-computed shipping. Shipping disabled or no active method means
-    //    no charge, which is what checkout did before shipping was wired. A
-    //    free-shipping coupon is applied inside the order transaction.
-    const shippingQuote = quoteShipping(cart.totalPaise, checkoutConfiguration.policy);
-    const subtotalPaise = cart.totalPaise;
 
     // The coupon code is the only coupon input accepted from the browser.
     // The discount and the total are computed under the coupon row lock.
@@ -283,14 +210,33 @@ export async function POST(req: NextRequest) {
     }
 
     const expectedTotal = body.expectedTotalPaise;
-    const expectedTotalPaise =
-      typeof expectedTotal === 'number' && Number.isSafeInteger(expectedTotal)
-        ? expectedTotal
-        : null;
+    if (expectedTotal !== undefined && expectedTotal !== null
+      && (typeof expectedTotal !== 'number' || !Number.isSafeInteger(expectedTotal) || expectedTotal < 0)) {
+      return NextResponse.json({ error: 'Invalid displayed total. Review your cart.' }, { status: 400 });
+    }
+    const expectedTotalPaise = expectedTotal ?? null;
 
-    // 4. Prepare PayU Config
+    // 4. Check the payment configuration before anything is written. A missing
+    //    key, salt or public site address must fail here, closed: no order row,
+    //    no stock claim, no reservation — and one message an operator can act
+    //    on instead of a PayU page that cannot return the customer.
+    const payuCheck = checkPayUConfiguration();
+    if (!payuCheck.ok) {
+      console.error(
+        `[payu/initiate] payment is not configured (${payuCheck.problem.code}); no order was created`,
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'payment_not_configured',
+          error: payuCheck.problem.message,
+          adminAction: payuCheck.problem.adminAction,
+        },
+        { status: 503 },
+      );
+    }
     const config = getPayUConfig();
-    assertPayUConfigured(config);
+    const callbackUrls = getPayUCallbackUrls(payuCheck.appBaseUrl);
 
     // 5. Number the order from Order settings, or fall back to the previous
     //    random transaction id when the prefix is empty. The amount charged is
@@ -306,10 +252,13 @@ export async function POST(req: NextRequest) {
         txnid: hasUsableNumbering(numbering) ? undefined : generateTxnId(),
         numbering: hasUsableNumbering(numbering) ? numbering : null,
         userId,
-        items: cart.items,
-        subtotalPaise,
-        shippingPaise: shippingQuote.shippingPaise,
-        totalPaise: subtotalPaise + shippingQuote.shippingPaise,
+        cartItems: rawItems.map((item) => ({
+          id: item.id,
+          variantId: item.variantId ?? null,
+          quantity: item.quantity,
+          expectedUnitPaise: item.expectedUnitPaise,
+        })),
+        expectedTotalPaise,
         currency: 'INR',
         coupon: couponCode
           ? {
@@ -322,18 +271,16 @@ export async function POST(req: NextRequest) {
         customerEmail: rawEmail,
         customerPhone: phone,
         paymentMethod: 'payu',
-        pricingSnapshot: {
-          shipping: {
-            methodId: shippingQuote.methodId,
-            methodName: shippingQuote.methodName,
-            reason: shippingQuote.reason,
-            shippingPaise: shippingQuote.shippingPaise,
-          },
-        },
         shippingAddress,
         reservationSeconds: reservationPolicy.reservationSeconds,
       });
     } catch (error: unknown) {
+      if (error instanceof SelectionUnavailableError) {
+        return NextResponse.json(
+          { success: false, code: 'selection_unavailable', error: error.message, selection: error.selection },
+          { status: 409 },
+        );
+      }
       if (error instanceof InsufficientStockError) {
         return NextResponse.json(
           { success: false, error: error.message, code: 'out_of_stock' },
@@ -353,6 +300,18 @@ export async function POST(req: NextRequest) {
             error: error.message,
             code: 'price_changed',
             totals: error.totals,
+            shippingPolicy: error.shippingPolicy,
+            items: error.items.map((item) => ({
+              id: item.id,
+              variantId: item.variantId || null,
+              variantSku: item.variantSku || null,
+              variantLabel: item.variantLabel || null,
+              name: item.name,
+              quantity: item.quantity,
+              unitPaise: item.unitPaise,
+              totalPaise: item.unitPaise * item.quantity,
+              regularPricePaise: item.regularPricePaise ?? null,
+            })),
           },
           { status: 409 },
         );
@@ -377,7 +336,10 @@ export async function POST(req: NextRequest) {
     const txnid = created.order.txnid;
     // The order transaction is the authority: this is the amount PayU is
     // asked for, matching the total the customer was shown.
-    const amountStr = created.order.amount.toFixed(2);
+    const amountStr = (created.order.totalPaise / 100).toFixed(2);
+    const names = created.order.items.map((item) => `${item.name} (x${item.quantity})`).join(', ');
+    const productSummary = (names.length > 90 ? `${names.slice(0, 87)}...` : names)
+      .replace(/[^a-zA-Z0-9\s,.-]/g, ' ').trim();
 
     // Availability changed when tracked stock was claimed.
     if (created.stockClaimed) revalidateCatalog();
@@ -410,16 +372,17 @@ export async function POST(req: NextRequest) {
       key: config.key,
       txnid,
       amount: amountStr,
-      productinfo: cart.productSummary,
+      productinfo: productSummary,
       firstname,
       email: rawEmail,
       salt: config.salt,
     });
 
-    // 7. Form parameters (public URLs over HTTPS)
-    const surl = `${config.appBaseUrl}/api/payu/success`;
-    const furl = `${config.appBaseUrl}/api/payu/failure`;
-    const curl = `${config.appBaseUrl}/api/payu/cancel`;
+    // 7. Form parameters. Every URL comes from the one validated site address;
+    //    none is derived from the request's Host header.
+    const surl = callbackUrls.surl;
+    const furl = callbackUrls.furl;
+    const curl = callbackUrls.curl;
 
     return NextResponse.json({
       success: true,
@@ -430,7 +393,7 @@ export async function POST(req: NextRequest) {
         key: config.key,
         txnid,
         amount: amountStr,
-        productinfo: cart.productSummary,
+        productinfo: productSummary,
         firstname,
         email: rawEmail,
         phone,

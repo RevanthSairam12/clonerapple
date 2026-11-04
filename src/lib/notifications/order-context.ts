@@ -1,4 +1,5 @@
 import { getOrderByTxnid, type Order } from '@/lib/payu/orders';
+import { getDocumentState } from '@/lib/orders/document-data';
 import type { FulfilmentStatus } from '@/lib/store-admin/order-rules';
 
 import { queueNotification } from './queue';
@@ -11,9 +12,9 @@ import type {
  * Build the template context for an order event.
  *
  * Only the fields the renderer whitelists are copied. `order.total_paise` is
- * derived from the persisted rupee amount, and shipping is the remainder after
- * the item snapshot, so a message cannot show a number the order did not
- * charge. Customer and staff links are separate: a guest can open the public
+ * derived from the persisted rupee amount, and shipping comes from the stored
+ * shipping snapshot, never the total-minus-items remainder (which includes
+ * discounts). Customer and staff links are separate: a guest can open the public
  * status page, while staff links stay inside Store Admin.
  */
 export interface OrderNotificationExtras {
@@ -30,17 +31,11 @@ export function orderNotificationContext(
     Order,
     'txnid' | 'orderNumber' | 'items' | 'amount' | 'status'
     | 'customerName' | 'customerEmail' | 'customerPhone'
-    | 'couponCode' | 'discountPaise'
+    | 'couponCode' | 'discountPaise' | 'shippingPaise'
   >,
   extras: OrderNotificationExtras = {},
 ): NotificationContext {
   const totalPaise = Math.round((Number(order.amount) || 0) * 100);
-  const subtotalPaise = Array.isArray(order.items)
-    ? order.items.reduce(
-        (sum, item) => sum + Math.round((Number(item.totalPrice) || 0) * 100),
-        0,
-      )
-    : 0;
   const itemCount = Array.isArray(order.items)
     ? order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
     : 0;
@@ -54,7 +49,7 @@ export function orderNotificationContext(
     customerPhone: order.customerPhone,
     customerUserId: ('userId' in order && order.userId ? String(order.userId) : null),
     orderTotalPaise: totalPaise,
-    shippingPaise: Math.max(0, totalPaise - subtotalPaise),
+    shippingPaise: order.shippingPaise ?? 0,
     orderStatus: extras.orderStatus ?? order.status,
     trackingNumber: extras.trackingNumber ?? null,
     trackingLink: extras.trackingLink ?? null,
@@ -93,7 +88,10 @@ export async function queueOrderEventByTxnid(
 ): Promise<void> {
   try {
     const order = await getOrderByTxnid(txnid);
-    if (order) queueOrderEvent(event, order, extras);
+    if (order) {
+      const state = await getDocumentState(order.id);
+      queueOrderEvent(event, order, { ...extras, orderStatus: state.label });
+    }
   } catch {
     console.warn(`[notifications] could not read the order for ${event}`);
   }

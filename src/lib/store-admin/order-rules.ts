@@ -28,6 +28,11 @@ export const FULFILMENT_TRANSITIONS: Readonly<Record<FulfilmentStatus, readonly 
   CANCELED: [],
 };
 
+/** Forward milestones; cancellation is a separate terminal action. */
+export const FULFILMENT_STEPS: readonly FulfilmentStatus[] = [
+  'PENDING', 'ACCEPTED', 'PROCESSING', 'ON_THE_WAY', 'DELIVERED',
+];
+
 export function canTransitionFulfilment(from: FulfilmentStatus, to: FulfilmentStatus): boolean {
   return FULFILMENT_TRANSITIONS[from].includes(to);
 }
@@ -37,10 +42,11 @@ export function mapSaleState(input: {
   fulfilmentStatus?: unknown;
   scheduledFor?: unknown;
   refundCount?: unknown;
+  refunded?: boolean;
 }): SaleState {
   const paymentStatus = String(input.paymentStatus ?? '').toUpperCase();
   const fulfilmentStatus = String(input.fulfilmentStatus ?? '').toUpperCase();
-  if (Number(input.refundCount ?? 0) > 0) return 'REFUNDED';
+  if (input.refunded || Number(input.refundCount ?? 0) > 0) return 'REFUNDED';
   // An unconfirmed payment is its own state: it is not "awaiting payment"
   // (PENDING) and must never look like a captured sale.
   if (paymentStatus === 'PROCESSING') return 'PROCESSING';

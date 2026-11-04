@@ -25,7 +25,8 @@ export async function GET(request: Request) {
   const search = url.searchParams.get('search') ?? '';
   const status = url.searchParams.get('status') ?? 'all';
 
-  const result = await listCoupons({ search, status, page: 1, pageSize: 2000 });
+  const visibility = url.searchParams.get('visibility') ?? 'all';
+  const result = await listCoupons({ search, status, visibility, page: 1, pageSize: 2000 });
   if (!result.ok) {
     return NextResponse.json({ error: 'Coupons are not available.' }, { status: 503 });
   }
@@ -37,6 +38,9 @@ export async function GET(request: Request) {
     'Value',
     'Scope',
     'Status',
+    'Visibility',
+    'Assigned email count',
+    'Assigned group count',
     'Uses',
     'Total limit',
     'Per customer',
@@ -53,6 +57,9 @@ export async function GET(request: Request) {
     couponValueLabel(row.type, row.value),
     couponScopeLabel(row.scope),
     row.badge.label,
+    row.showToAllUsers ? 'Public' : 'Hidden',
+    String(row.assignedToEmails.length),
+    String(row.assignedCustomerGroups.length),
     String(row.used),
     row.totalRedemptionLimit === null ? '' : String(row.totalRedemptionLimit),
     row.perCustomerLimit === null ? '' : String(row.perCustomerLimit),
@@ -68,7 +75,7 @@ export async function GET(request: Request) {
     action: 'coupon.export',
     entity: 'coupon',
     entityId: 'list',
-    after: { search, status, rows: rows.length, truncated: result.data.total > rows.length },
+    after: { search, status, visibility, rows: rows.length, truncated: result.data.total > rows.length },
     reason: 'csv_export',
     request,
   });

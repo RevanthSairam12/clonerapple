@@ -88,7 +88,11 @@ export async function POST(request: Request, context: Context) {
     before = current.ok ? findRow(current.data, existingId) : undefined;
   }
 
-  const result = await saveSettingRow(kind, { id: existingId ?? undefined, values: body.values });
+  const result = await saveSettingRow(kind, { id: existingId ?? undefined, values: body.values },
+    kind === 'bill-request-reasons' ? {
+      actorId: guard.session.adminId, actorEmail: guard.session.email,
+      action: 'settings.bill_request_reasons.save', entity: 'bill_request_reasons', request,
+    } : undefined);
   if (!result.ok) {
     const status =
       result.reason === 'invalid-input'
@@ -101,7 +105,7 @@ export async function POST(request: Request, context: Context) {
     return NextResponse.json({ error: result.error }, { status });
   }
 
-  await writeAudit({
+  if (kind !== 'bill-request-reasons') await writeAudit({
     actorId: guard.session.adminId,
     actorEmail: guard.session.email,
     action: `settings.${kind.replace(/-/g, '_')}.save`,

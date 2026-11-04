@@ -88,7 +88,27 @@ test('every coupon store-admin route is role-guarded, audited and same-origin', 
   for (const route of routes) {
     const text = await source(route);
     assert.match(text, /requireStoreRole\(/, `${route} must guard with requireStoreRole`);
-    assert.match(text, /writeAudit\(/, `${route} must write an audit row`);
+    const transactionalServices = {
+      'src/app/api/store-admin/coupons/route.ts': 'createCoupon',
+      'src/app/api/store-admin/coupons/[id]/route.ts': 'updateCoupon',
+      'src/app/api/store-admin/coupons/[id]/duplicate/route.ts': 'duplicateCoupon',
+      'src/app/api/store-admin/coupons/bulk/route.ts': 'bulkGenerateCoupons',
+      'src/app/api/store-admin/coupons/visibility/route.ts': 'setCouponsVisibility',
+    };
+    const service = transactionalServices[route];
+    if (service) {
+      assert.match(text, new RegExp(`await ${service}\\(`), `${route} delegates to its audited transaction`);
+      assert.match(text, /actorId: guard\.session\.adminId/);
+      assert.match(text, /actorEmail: guard\.session\.email, request/);
+      const lib = await source('src/lib/store-admin/coupons.ts');
+      const start = lib.indexOf(`export async function ${service}(`);
+      const end = lib.indexOf('\nexport ', start + 1);
+      const implementation = lib.slice(start, end < 0 ? undefined : end);
+      assert.match(implementation, /sql\.begin\(async \(tx\) =>/);
+      assert.match(implementation, /await auditCoupon\(tx, actor,/);
+    } else {
+      assert.match(text, /writeAudit\(/, `${route} must write an audit row`);
+    }
 
     const mutating = /export async function (POST|PATCH|PUT|DELETE)/.test(text);
     if (mutating) {
@@ -108,6 +128,7 @@ test('the route guard script lists every new route', async () => {
     'coupons/[id]/duplicate/route.ts',
     'coupons/bulk/route.ts',
     'coupons/export/route.ts',
+    'coupons/visibility/route.ts',
     'reports/coupon-usage/export/route.ts',
   ]) {
     assert.ok(script.includes(route), `${route} is missing from the guard script`);
@@ -195,7 +216,8 @@ test('checkout sends only the code and a comparison total', async () => {
   const route = await source('src/app/api/payu/initiate/route.ts');
   assert.match(route, /const rawCouponCode = body\.couponCode/);
   assert.match(route, /typeof rawCouponCode !== 'string' \|\| !isValidCouponCode/);
-  assert.match(route, /typeof expectedTotal === 'number' && Number\.isSafeInteger\(expectedTotal\)/);
+  assert.match(route, /const expectedTotal = body\.expectedTotalPaise/);
+  assert.match(route, /Number\.isSafeInteger\(expectedTotal\)/);
   assert.match(route, /coupon: couponCode\s*\?/);
   assert.match(route, /code: 'coupon_invalid'/);
   assert.match(route, /code: 'coupon_unavailable'/);
@@ -207,7 +229,7 @@ test('the storefront revalidates before Pay and handles every refusal', async ()
   assert.match(form, /useCoupon\(/);
   assert.match(form, /await coupon\.revalidate\(\)/);
   assert.match(form, /couponCode: checkedCoupon\?\.code/);
-  assert.match(form, /expectedTotalPaise: checkedCoupon\?\.totalPaise/);
+  assert.match(form, /expectedTotalPaise: acceptedTotalPaise/);
   assert.match(form, /data\.code === 'coupon_invalid'/);
   assert.match(form, /data\.code === 'coupon_unavailable'/);
   assert.match(form, /coupon\.remove\(\)/);
@@ -233,18 +255,18 @@ test('the Coupons setting hides the box and skips validation', async () => {
   }
 
   const bag = await source('src/components/cart/CartPageView.tsx');
-  assert.match(bag, /enabled: couponsEnabled &&/);
-  assert.match(bag, /\{couponsEnabled && \(/);
+  assert.match(bag, /enabled: Boolean\(shippingPolicy\) && couponsEnabled/);
+  assert.match(bag, /couponsEnabled &&/);
 
   const form = await source('src/components/checkout/CheckoutForm.tsx');
-  assert.match(form, /enabled: couponsEnabled &&/);
+  assert.match(form, /enabled: Boolean\(shippingPolicy\) && couponsEnabled/);
   assert.match(form, /couponsEnabled \? await coupon\.revalidate\(\) : null/);
-  assert.match(form, /\{couponsEnabled && \(/);
+  assert.match(form, /couponsEnabled &&/);
 });
 
 test('the client stores the code only, never a discount', async () => {
   const hook = await source('src/lib/cart/useCoupon.ts');
-  assert.match(hook, /localStorage\.setItem\(STORAGE_KEY, next\.code\)/);
+  assert.match(hook, /localStorage\.setItem\(STORAGE_KEY, code\)/);
   assert.doesNotMatch(hook, /setItem\(STORAGE_KEY, JSON\.stringify/);
   assert.doesNotMatch(hook, /discountPaise[\s\S]{0,80}setItem/);
   assert.match(hook, /\/api\/coupons\/validate/);

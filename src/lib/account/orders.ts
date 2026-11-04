@@ -2,6 +2,7 @@ import { getSql } from '@/lib/platform/db';
 import { formatPaise, getStorefrontProduct, getStorefrontProducts, type StorefrontProduct } from '@/lib/catalog/storefront';
 import { getProductImage, getProductFromCatalog } from '@/lib/payu/catalog';
 import { readSaleState } from '@/lib/storefront/sale-state';
+import { hasShipmentStarted } from '@/lib/orders/fulfilment';
 import { isBuyAgainVisible, selectBuyAgainProductIds } from './buy-again-rules';
 import { isWithinReturnWindow } from './rules';
 import { readReturnWindowDays } from './return-window';
@@ -39,6 +40,9 @@ export interface AccountOrderListItem {
 export interface AccountOrderItem {
   id: string;
   name: string;
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantLabel?: string | null;
   quantity: number;
   unitPrice: number;
   totalPrice: number;
@@ -64,6 +68,8 @@ export interface AccountOrderDetail extends AccountOrderListItem {
   trackingNumber: string | null;
   trackingUrl: string | null;
   deliveredAt: Date | null;
+  scheduledFor: string | null;
+  deliverySlot: string | null;
   address: AccountOrderAddress | null;
   items: AccountOrderItem[];
   history: Array<{ domain: string; fromStatus: string | null; toStatus: string; createdAt: Date }>;
@@ -116,12 +122,15 @@ function moneyFields(row: OrderRow) {
 type ItemRow = {
   product_id: string;
   product_name: string;
+  variant_id: string | null;
+  variant_sku: string | null;
+  variant_label: string | null;
   quantity: number;
   unit_price_paise: string | number;
   line_total_paise: string | number;
 };
 
-function parseItems(value: unknown): Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> {
+function parseItems(value: unknown): Array<Omit<AccountOrderItem, 'image'>> {
   if (typeof value === 'string') {
     try {
       value = JSON.parse(value);
@@ -139,7 +148,10 @@ function parseItems(value: unknown): Array<{ id: string; name: string; quantity:
     const unitPrice = Number(row.unitPrice);
     const totalPrice = Number(row.totalPrice);
     if (!id || !name || !Number.isFinite(quantity) || !Number.isFinite(unitPrice) || !Number.isFinite(totalPrice)) return [];
-    return [{ id, name, quantity, unitPrice, totalPrice }];
+    return [{ id, name, quantity, unitPrice, totalPrice,
+      variantId: typeof row.variantId === 'string' ? row.variantId : null,
+      variantSku: typeof row.variantSku === 'string' ? row.variantSku : null,
+      variantLabel: typeof row.variantLabel === 'string' ? row.variantLabel : null }];
   });
 }
 
@@ -148,6 +160,9 @@ function mapItems(rows: ItemRow[], snapshot: unknown): AccountOrderItem[] {
     ? rows.map((row) => ({
         id: row.product_id,
         name: row.product_name,
+        variantId: row.variant_id,
+        variantSku: row.variant_sku,
+        variantLabel: row.variant_label,
         quantity: Number(row.quantity),
         unitPrice: Number(row.unit_price_paise) / 100,
         totalPrice: Number(row.line_total_paise) / 100,
@@ -254,6 +269,8 @@ type DeliveryRow = {
   tracking_number: string | null;
   tracking_url: string | null;
   delivered_at: string | Date | null;
+  scheduled_for: string | Date | null;
+  delivery_slot: string | null;
 };
 
 /**
@@ -277,15 +294,23 @@ export async function getCustomerOrderLiveStatus(
     sale_state: string;
     updated_at: string | Date;
     delivery: unknown;
+    shipment_history_status: string | null;
     requests: unknown;
     refunds: unknown;
   }>>`
     select s.txnid, s.status, s.fulfilment_status, s.sale_state, s.updated_at,
            (
+             select h.to_status from order_status_history h
+             where h.order_id = s.id and h.domain = 'fulfilment'
+               and h.to_status in ('ON_THE_WAY', 'DELIVERED')
+             limit 1
+           ) as shipment_history_status,
+           (
              select to_jsonb(d)
              from (
                select status, delivery_method, courier_name, carrier,
-                      tracking_number, tracking_url
+                      tracking_number, tracking_url, scheduled_for, delivered_at,
+                      s.delivery_slot
                from order_deliveries
                where order_id = s.id
                limit 1
@@ -324,7 +349,9 @@ export async function getCustomerOrderLiveStatus(
     paymentStatus: order.status,
     fulfilmentStatus: order.fulfilment_status || 'PENDING',
     updatedAt: toDate(order.updated_at).toISOString(),
-    delivery: toDeliverySnapshot(order.delivery),
+    delivery: toDeliverySnapshot(order.delivery, hasShipmentStarted(order.fulfilment_status, [
+      { domain: 'fulfilment', toStatus: order.shipment_history_status },
+    ])),
     requests: toRequestSnapshots(order.requests),
     refunds: toRefundSnapshots(order.refunds),
   };
@@ -345,7 +372,7 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
   if (!order) return null;
 
   const itemRows = await sql<ItemRow[]>`
-    select product_id, product_name, quantity, unit_price_paise, line_total_paise
+    select product_id, product_name, variant_id, variant_sku, variant_label, quantity, unit_price_paise, line_total_paise
     from order_items where order_id = ${order.id} order by line_number asc
   `;
   const addressRows = await sql<Array<{
@@ -355,8 +382,10 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     from order_addresses where order_id = ${order.id} and address_type = 'shipping' limit 1
   `;
   const deliveryRows = await sql<DeliveryRow[]>`
-    select status, delivery_method, courier_name, carrier, tracking_number, tracking_url, delivered_at
-    from order_deliveries where order_id = ${order.id} limit 1
+    select d.status, d.delivery_method, d.courier_name, d.carrier,
+           d.tracking_number, d.tracking_url, d.delivered_at, d.scheduled_for, o.delivery_slot
+    from order_deliveries d join orders o on o.id = d.order_id
+    where d.order_id = ${order.id} limit 1
   `;
   const historyRows = await sql<Array<{ domain: string; from_status: string | null; to_status: string; created_at: string | Date }>>`
     select domain, from_status, to_status, created_at
@@ -375,14 +404,16 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     order by created_at desc
     limit 20
   `;
-  const delivery = deliveryRows[0];
-  const deliveredHistory = historyRows.find((row) => row.to_status === 'DELIVERED');
-  const deliveredAt = delivery?.delivered_at
-    ? new Date(delivery.delivered_at)
-    : deliveredHistory
-      ? new Date(deliveredHistory.created_at)
-      : null;
+  const refundTotalRows = await sql`select coalesce(sum(amount_paise),0)::text as total from refunds where order_id=${order.id}`;
   const fulfilmentStatus = order.fulfilment_status || 'PENDING';
+  const shipmentStarted = hasShipmentStarted(fulfilmentStatus, historyRows);
+  const delivery = toDeliverySnapshot(deliveryRows[0], shipmentStarted);
+  const deliveredHistory = historyRows.find((row) => row.domain === 'fulfilment' && row.to_status === 'DELIVERED');
+  const deliveredAt = shipmentStarted
+    ? delivery?.deliveredAt
+      ? new Date(delivery.deliveredAt)
+      : deliveredHistory ? new Date(deliveredHistory.created_at) : null
+    : null;
   const returnWindowDays = await readReturnWindowDays();
   const requests = toRequestSnapshots(requestRows);
   const refunds = toRefundSnapshots(refundRows);
@@ -392,11 +423,13 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     id: order.id,
     fulfilmentStatus,
     deliveredAt,
-    deliveryMethod: delivery?.delivery_method || null,
-    deliveryStatus: delivery?.status || null,
-    courier: delivery?.courier_name || delivery?.carrier || null,
-    trackingNumber: delivery?.tracking_number || null,
-    trackingUrl: delivery?.tracking_url || null,
+    deliveryMethod: delivery?.method ?? null,
+    deliveryStatus: delivery?.status ?? null,
+    courier: delivery?.carrier ?? null,
+    trackingNumber: delivery?.trackingNumber ?? null,
+    trackingUrl: delivery?.trackingUrl ?? null,
+    scheduledFor: delivery?.scheduledFor ?? null,
+    deliverySlot: delivery?.deliverySlot ?? null,
     address: addressRows[0]
       ? {
           name: addressRows[0].full_name,
@@ -417,7 +450,7 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     })),
     requests,
     refunds,
-    refundedPaise: refunds.reduce((sum, refund) => sum + refund.amountPaise, 0),
+    refundedPaise: Number(refundTotalRows[0]?.total) || 0,
     canRequestCancellation: fulfilmentStatus === 'PENDING' || fulfilmentStatus === 'ACCEPTED',
     canRequestReturn: fulfilmentStatus === 'DELIVERED' && isWithinReturnWindow(deliveredAt, new Date(), returnWindowDays),
     live: {
@@ -426,15 +459,7 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
       paymentStatus: order.status,
       fulfilmentStatus,
       updatedAt: base.updatedAt.toISOString(),
-      delivery: delivery
-        ? {
-            status: delivery.status,
-            method: delivery.delivery_method,
-            carrier: delivery.courier_name || delivery.carrier,
-            trackingNumber: delivery.tracking_number,
-            trackingUrl: delivery.tracking_url,
-          }
-        : null,
+      delivery,
       requests,
       refunds,
     },
@@ -455,6 +480,7 @@ export interface BuyAgainItem {
   wasPriceDisplay: string | null;
   onSale: boolean;
   inStock: boolean;
+  inventoryMode: NonNullable<StorefrontProduct['inventoryMode']>;
   lastOrderedAt: Date;
 }
 
@@ -474,6 +500,7 @@ function toBuyAgainItem(
     wasPriceDisplay: product.onSale ? formatPaise(product.regularPricePaise) : null,
     onSale: product.onSale,
     inStock: product.inStock,
+    inventoryMode: product.inventoryMode ?? 'product',
     lastOrderedAt,
   };
 }

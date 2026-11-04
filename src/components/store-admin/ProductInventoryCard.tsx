@@ -15,6 +15,8 @@ interface Props {
   productId: string;
   stock: StockValues | null;
   canEdit: boolean;
+  inventoryMode?: 'product'|'variant';
+  variants?: Array<{id:string;sku:string|null;optionValue:string;isActive:boolean;isPurchasable:boolean}>;
 }
 
 /**
@@ -23,7 +25,7 @@ interface Props {
  * the opening count as a receipt, and later corrections go through the stock
  * detail page so the append-only log stays complete.
  */
-export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
+export function ProductInventoryCard({ productId, stock, canEdit,inventoryMode='product',variants=[] }: Props) {
   const router = useRouter();
   const [tracking, setTracking] = useState(stock?.trackInventory ?? false);
   const [threshold, setThreshold] = useState(String(stock?.lowStockThreshold ?? 0));
@@ -32,6 +34,17 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const [allocations,setAllocations]=useState<Record<string,string>>({});
+  const [activationReason,setActivationReason]=useState('');
+  async function activate(){
+    const rows=Object.entries(allocations).map(([variantId,count])=>({variantId,quantity:Number(count)}));
+    if(Object.values(allocations).some(v=>!v.trim())||!activationReason.trim()){setError('Enter explicit allocation counts and an activation reason.');return;}
+    if(!window.confirm('Activate variant inventory? Legacy balances remain separate. Only the explicit counts entered will transfer; no split is inferred. Legacy holds or outstanding sales will block activation.'))return;
+    setBusy(true);setError(null);try{
+      const response=await fetch(`/api/store-admin/catalog/products/${encodeURIComponent(productId)}/variant-inventory`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'activate',confirm:true,reason:activationReason,allocations:rows})});
+      const body=await response.json();if(!response.ok)throw new Error(body.error??'Activation failed.');router.refresh();
+    }catch(e){setError(e instanceof Error?e.message:'Activation failed.');}finally{setBusy(false);}
+  }
   const available = stock ? Math.max(0, stock.onHand - stock.reserved) : null;
   const needsOpeningCount = stock === null && tracking;
 
@@ -41,7 +54,7 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
 
     if (stock && stock.trackInventory && !tracking) {
       const confirmed = window.confirm(
-        'Turn off stock tracking? Checkout will stop checking stock for this '
+        'Stop limiting stock? Checkout will stop checking stock for this '
           + 'product, so it can be oversold. Continue?',
       );
       if (!confirmed) return;
@@ -51,7 +64,7 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
     if (needsOpeningCount) {
       onHand = Number(openingOnHand);
       if (!Number.isInteger(onHand) || onHand < 0) {
-        setError('Enter the current on-hand count as a whole number.');
+        setError('Enter the current in-stock count as a whole number.');
         return;
       }
     }
@@ -94,7 +107,9 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
 
   return (
     <section className="sa-detail-card">
-      <h2 className="sa-card-title">Inventory</h2>
+      <h2 className="sa-card-title">{inventoryMode==='variant'?'Retained legacy inventory':'Product inventory'}</h2>
+      {inventoryMode==='variant'?<p className="sa-hint">Checkout and POS sell only exact variants above. This parent bucket is retained for historical settlement and returns; it is not added to variant availability.</p>:<p className="sa-hint">Product-level inventory remains in use until explicitly activated. Products without stock limits stay unchanged.</p>}
+      {canEdit&&inventoryMode==='product'?<div className="sa-control-card"><h3>Opt in to variant inventory</h3><p className="sa-hint">Warning: configure every SKU, required model mapping and stock row first. No stock split is suggested. Leave all allocation rows untouched to retain the entire parent balance, or enter explicit transfer counts. Transfers use paired ledger movements; historical balances are never deleted.</p>{variants.filter(v=>v.isActive&&v.isPurchasable).map(v=><label key={v.id} className="sa-field">Allocate to {v.sku??v.optionValue}<input className="sa-input" type="number" min={0} step={1} value={allocations[v.id]??''} placeholder="No transfer" onChange={e=>setAllocations({...allocations,[v.id]:e.target.value})}/></label>)}<label className="sa-field">Activation reason<input className="sa-input" maxLength={200} value={activationReason} onChange={e=>setActivationReason(e.target.value)}/></label><button className="sa-btn" disabled={busy} onClick={activate}>Review and activate / allocate stock</button></div>:null}
 
       {error ? (
         <p className="sa-error" role="alert">
@@ -109,19 +124,19 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
 
       <dl className="sa-meta">
         <div>
-          <dt>On hand</dt>
+          <dt>In stock</dt>
           <dd>{stock ? stock.onHand : '—'}</dd>
         </div>
         <div>
-          <dt>Reserved</dt>
+          <dt>Held in checkouts</dt>
           <dd>{stock ? stock.reserved : '—'}</dd>
         </div>
         <div>
-          <dt>Available</dt>
+          <dt>Available to buy</dt>
           <dd>{available === null ? '—' : available}</dd>
         </div>
         <div>
-          <dt>Tracking</dt>
+          <dt>Limit my stock</dt>
           <dd>{stock?.trackInventory ? 'Enabled' : 'Off'}</dd>
         </div>
       </dl>
@@ -135,10 +150,10 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
                 checked={tracking}
                 onChange={(event) => setTracking(event.target.checked)}
               />
-              Track inventory
+              Limit my stock
             </label>
             <label className="sa-field">
-              <span className="sa-label">Low-stock threshold</span>
+              <span className="sa-label">Warn me when below</span>
               <input
                 className="sa-input"
                 type="number"
@@ -150,7 +165,7 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
             {needsOpeningCount ? (
               <label className="sa-field">
                 <span className="sa-label">
-                  Current on hand <span className="sa-hint">required to start tracking</span>
+                  Current in stock <span className="sa-hint">required to limit stock</span>
                 </span>
                 <input
                   className="sa-input"
@@ -167,7 +182,7 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
 
           {!tracking ? (
             <p className="sa-lock-note">
-              Tracking is off: checkout ignores stock and this product can be
+              Stock is not limited: checkout ignores stock and this product can be
               oversold.
             </p>
           ) : null}
@@ -192,7 +207,7 @@ export function ProductInventoryCard({ productId, stock, canEdit }: Props) {
           className="sa-btn sa-btn-small"
           href={`/store-admin/stock/${encodeURIComponent(productId)}`}
         >
-          Adjust stock
+          Add or remove stock
         </Link>
       </div>
     </section>

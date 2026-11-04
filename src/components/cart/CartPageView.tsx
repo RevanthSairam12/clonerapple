@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
-import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
+import { GadzioTrustBar, DEFAULT_TRUST_BADGES } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
@@ -12,7 +12,12 @@ import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rule
 import { useCoupon } from '@/lib/cart/useCoupon';
 import { CouponBox } from '@/components/cart/CouponBox';
 import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
+import { verifyAvailabilityLines } from '@/lib/storefront/use-availability';
+import { useRouter } from 'next/navigation';
 import { stockBlocked } from '@/lib/storefront/availability-rules';
+import { priceCartLines, shippingNudge, type SaleRefreshClock } from '@/lib/checkout/client-quote';
+import { useCheckoutRefresh } from '@/lib/checkout/useCheckoutRefresh';
+import type { SelectionPrice } from '@/lib/storefront/selection';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface UserAuth {
@@ -29,7 +34,8 @@ interface Props {
    */
   initialProducts: StorefrontProductRef[];
   /** Server-computed Store Admin shipping rules; the same quote checkout charges. */
-  shippingPolicy: ShippingPolicy;
+  shippingPolicy: ShippingPolicy | null;
+  saleClock?: SaleRefreshClock;
   /**
    * The sale switch on the database clock. While a sale is live the bag never
    * disables a line for stock: the authoritative check happens at Pay.
@@ -37,12 +43,31 @@ interface Props {
   saleLive: boolean;
   /** Signed-in customer email, used to check account-restricted codes early. */
   customerEmail?: string | null;
+  guestCheckoutEnabled?: boolean;
   /** Payments → Coupons. Off hides the box; the server refuses codes anyway. */
   couponsEnabled?: boolean;
 }
 
-export function CartPageView({ initialProducts, shippingPolicy, saleLive, customerEmail = null, couponsEnabled = true }: Props) {
-  const { items, totalCount, updateQuantity, removeItem, addItem } = useCart();
+export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleClock, customerEmail = null, couponsEnabled = true, guestCheckoutEnabled = false }: Props) {
+  const { items, totalCount, updateQuantity, removeItem, addItem, stockNotice } = useCart();
+  const router = useRouter();
+  const [checkoutNotice, setCheckoutNotice] = useState<string | null>(null);
+  const checkingStock = React.useRef(false);
+  const handleCheckout = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    const destination = event.currentTarget.getAttribute('href') || '/checkout';
+    if (checkingStock.current) return;
+    checkingStock.current = true;
+    const valid = await verifyAvailabilityLines(items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity })));
+    checkingStock.current = false;
+    if (valid !== true) {
+      setCheckoutNotice(valid === false ? 'Stock not available for the selected quantity. Review your bag.' : 'Could not verify stock. Please try again.');
+      return;
+    }
+    setCheckoutNotice(null);
+    router.push(destination);
+  };
+  useCheckoutRefresh(saleClock);
 
   const productsById = useMemo(() => {
     const map = new Map<string, StorefrontProductRef>();
@@ -63,6 +88,27 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
   const [recommendationReason, setRecommendationReason] = useState<string>('Trending & Popular Products');
   const [topSearchTerms, setTopSearchTerms] = useState<string[]>([]);
   const [addedItemIds, setAddedItemIds] = useState<Record<string, boolean>>({});
+  const [suggestionPrices, setSuggestionPrices] = useState<Record<string, SelectionPrice>>({});
+  const [suggestionNotice, setSuggestionNotice] = useState<string | null>(null);
+  const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null);
+  const suggestionRequest = React.useRef<AbortController | null>(null);
+  useEffect(() => () => { suggestionRequest.current?.abort(); }, []);
+  const suggestionKey = JSON.stringify([suggestedProducts.map(({ id, price, wasPriceDisplay }) => {
+    const ref = findRef(id);
+    return [id, price, wasPriceDisplay, ref?.inventoryMode, ref?.pricePaise, ref?.regularPricePaise];
+  })]);
+  const latestSuggestionKey = React.useRef(suggestionKey);
+  if (latestSuggestionKey.current !== suggestionKey) {
+    suggestionRequest.current?.abort();
+    latestSuggestionKey.current = suggestionKey;
+  }
+  useEffect(() => {
+    suggestionRequest.current?.abort();
+    suggestionRequest.current = null;
+    setAddingSuggestion(null);
+    setSuggestionPrices({});
+    setSuggestionNotice(null);
+  }, [suggestionKey]);
   const [user, setUser] = useState<UserAuth | null>(null);
 
   // Only lines the live catalogue still sells are payable. An unknown,
@@ -81,34 +127,29 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
     [saleLive],
   );
 
-  const availableItems = items.filter((item) => lineAvailable(refFor(item)));
+  const pricedItems = priceCartLines(items, initialProducts, saleLive);
+  const availableItems = pricedItems.filter((item) => item.available);
   const hasUnavailable = availableItems.length !== items.length;
   const payableCount = availableItems.reduce((sum, item) => sum + item.quantity, 0);
-  const payableAmount = availableItems.reduce((sum, item) => {
-    const ref = refFor(item);
-    return sum + (ref ? ref.pricePaise / 100 : item.price) * item.quantity;
-  }, 0);
-  // The same quote the initiate route computes from the database subtotal.
-  const shippingAmount = quoteShipping(Math.round(payableAmount * 100), shippingPolicy).shippingPaise / 100;
-
-  // Coupon preview against the lines checkout will actually charge for. The
-  // server re-evaluates the same rules at Pay; this only shows the numbers.
+  const subtotalPaise = availableItems.reduce((sum, item) => sum + item.totalPaise, 0);
+  const payableAmount = subtotalPaise / 100;
+  const shippingPaise = shippingPolicy ? quoteShipping(subtotalPaise, shippingPolicy).shippingPaise : 0;
   const coupon = useCoupon({
-    items: availableItems.map((item) => {
-      const ref = refFor(item);
-      return {
-        id: getCartLineBaseId(item.productId || item.id) || item.productId || item.id,
-        quantity: item.quantity,
-        price: ref ? ref.pricePaise / 100 : item.price,
-      };
-    }),
-    subtotalPaise: Math.round(payableAmount * 100),
-    shippingPaise: Math.round(shippingAmount * 100),
+    items: availableItems.map((item) => ({
+      id: getCartLineBaseId(item.productId || item.id) || item.productId || item.id,
+      variantId: item.variantId,
+      quantity: item.quantity,
+      unitPaise: item.unitPaise,
+    })),
+    subtotalPaise,
+    shippingPaise,
+    policySignature: JSON.stringify(shippingPolicy),
     email: customerEmail || user?.email || '',
-    enabled: couponsEnabled && availableItems.length > 0,
+    enabled: Boolean(shippingPolicy) && couponsEnabled && availableItems.length > 0,
   });
   const discountAmount = coupon.totals.discountPaise / 100;
   const totalAmount = coupon.totals.totalPaise / 100;
+  const nudge = shippingNudge(subtotalPaise, shippingPolicy, coupon.totals.shippingPaise);
 
   // Check user session
   useEffect(() => {
@@ -145,37 +186,59 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
     return () => window.removeEventListener('gadzio_search_updated', handleSearchUpdate);
   }, [refreshSuggestions]);
 
-  const handleAddSuggested = (item: SearchResultItem, e: React.MouseEvent) => {
+  const handleAddSuggested = async (item: SearchResultItem, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
+    if (suggestionRequest.current) return;
     // Never invent a price for a suggestion. Without a live catalogue row it
     // is not addable — the card renders an "Unavailable" label instead.
     const ref = findRef(getCartLineBaseId(item.id) || '');
-    const price = ref ? ref.pricePaise / 100 : item.price;
+    const price = suggestionPrices[item.id]?.price ?? (ref ? ref.pricePaise / 100 : item.price);
     if (!ref || stockBlocked(ref.inStock, saleLive)) return;
+    if (ref.inventoryMode === 'variant') { router.push(`/shop/product/${encodeURIComponent(ref.id)}`); return; }
     if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
 
-    addItem({
-      productId: item.id,
-      name: item.name,
-      subtitle: item.subtitle,
-      price,
-      priceDisplay: ref.priceDisplay ?? item.priceDisplay,
-      wasPriceDisplay: ref.wasPriceDisplay ?? item.wasPriceDisplay,
-      regularPrice: ref.regularPricePaise ? ref.regularPricePaise / 100 : undefined,
-      // Existing Gadzio case art. The previous path
-      // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
-      // so a suggested item without its own image added a 404 to the bag.
-      image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
-      href: item.href,
-      quantity: 1,
-    });
+    const controller = new AbortController();
+    suggestionRequest.current = controller;
+    setAddingSuggestion(item.id);
+    setSuggestionNotice(null);
+    try {
+      const result = await addItem({
+        productId: item.id,
+        name: item.name,
+        subtitle: item.subtitle,
+        ...(suggestionPrices[item.id] ?? {
+          price, priceDisplay: ref.priceDisplay ?? item.priceDisplay,
+          wasPriceDisplay: ref.wasPriceDisplay,
+          regularPrice: ref.wasPriceDisplay && ref.regularPricePaise ? ref.regularPricePaise / 100 : undefined,
+        }),
+        // Existing Gadzio case art. The previous path
+        // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
+        // so a suggested item without its own image added a 404 to the bag.
+        image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
+        href: item.href,
+        quantity: 1,
+      }, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (result.status !== 'added') {
+        if (result.status === 'price_changed') setSuggestionPrices((previous) => ({ ...previous, [item.id]: result.price }));
+        setSuggestionNotice(result.status === 'price_changed' ? `${result.message} Review the updated price and press again to continue.` : result.message);
+        return;
+      }
 
-    setAddedItemIds((prev) => ({ ...prev, [item.id]: true }));
-    setTimeout(() => {
-      setAddedItemIds((prev) => ({ ...prev, [item.id]: false }));
-    }, 2000);
+      setAddedItemIds((prev) => ({ ...prev, [item.id]: true }));
+      setTimeout(() => {
+        setAddedItemIds((prev) => ({ ...prev, [item.id]: false }));
+      }, 2000);
+    } catch {
+      if (!controller.signal.aborted) setSuggestionNotice('Could not verify this item. Please try again.');
+    } finally {
+      if (suggestionRequest.current === controller) {
+        suggestionRequest.current = null;
+        setAddingSuggestion(null);
+      }
+    }
   };
 
   return (
@@ -209,11 +272,11 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                 🚚
               </span>
               <span>
-                <strong>Free delivery across India</strong> on all orders. Free 7-day returns.
+                <strong>Delivery across India.</strong> Shipping is shown in your order summary. Free 7-day returns.
               </span>
             </div>
             <div className="flex items-center gap-2 text-[#86868b]">
-              <span>🔒 256-Bit SSL Encrypted &amp; PayU Verified</span>
+              <span>Review your bag before checkout</span>
             </div>
           </div>
 
@@ -255,6 +318,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
             )}
           </div>
 
+          {(stockNotice || checkoutNotice) ? <p role="alert" className="mb-4 text-sm text-[#b42318]">{checkoutNotice || stockNotice}</p> : null}
           {/* Main Cart Body */}
           {items.length === 0 ? (
             <div className="py-12 px-6 rounded-3xl bg-[#fbfbfd] border border-[#e5e5ea] text-center mb-16">
@@ -286,15 +350,11 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 mb-16 items-start">
               {/* Left Column: Line Items */}
               <div className="lg:col-span-8 divide-y divide-[#e5e5ea] border-y border-[#e5e5ea]">
-                {items.map((item) => {
+                {pricedItems.map((item) => {
                   const ref = refFor(item);
-                  const isAvailable = lineAvailable(ref);
-                  const linePrice = ref ? ref.pricePaise / 100 : item.price;
-                  const lineWasPrice = ref?.regularPricePaise
-                    ? (ref.regularPricePaise / 100) * item.quantity
-                    : item.regularPrice
-                      ? item.regularPrice * item.quantity
-                      : null;
+                  const isAvailable = item.available;
+                  const lineWasPrice = item.regularPrice && item.regularPrice > item.price
+                    ? item.regularPrice * item.quantity : null;
                   return (
                   <div key={item.id} className="py-6 flex flex-col sm:flex-row gap-5 items-start">
                     {/* Thumbnail Image */}
@@ -319,9 +379,9 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                               item.name
                             )}
                           </h3>
-                          {(item.color || item.model) && (
+                          {(item.variantLabel || item.color || item.model) && (
                             <p className="text-xs text-[#86868b] mt-1">
-                              {[item.color, item.model].filter(Boolean).join(' • ')}
+                              {item.variantLabel || [item.color, item.model].filter(Boolean).join(' • ')}
                             </p>
                           )}
                         </div>
@@ -333,7 +393,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                                   ₹{lineWasPrice.toLocaleString('en-IN')}
                                 </s>
                               ) : null}
-                              ₹{(linePrice * item.quantity).toLocaleString('en-IN')}
+                              ₹{(item.totalPaise / 100).toLocaleString('en-IN')}
                             </>
                           ) : (
                             <span className="text-sm font-semibold text-[#e30000]">Unavailable</span>
@@ -351,7 +411,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                         </p>
                       ) : (
                         <p className="text-xs text-[#e30000] font-medium mt-2">
-                          This item is no longer in our catalog. Remove it to continue.
+                          This selection is unavailable. Reselect a model / specification on the product page or remove it to continue.
                         </p>
                       )}
 
@@ -420,7 +480,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                     <div className="flex justify-between text-[#86868b]">
                       <span>Shipping</span>
                       <span className={coupon.totals.shippingPaise > 0 ? 'text-[#1d1d1f] font-semibold' : 'text-[#34c759] font-semibold'}>
-                        {coupon.totals.shippingPaise > 0
+                        {!shippingPolicy ? 'Unavailable' : coupon.totals.shippingPaise > 0
                           ? `₹${(coupon.totals.shippingPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
                           : 'FREE'}
                       </span>
@@ -435,7 +495,9 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                     )}
                   </div>
 
-                  {couponsEnabled && (
+                  {nudge && <p className="mb-4 text-xs text-[#6e6e73]">{nudge}</p>}
+                  {!shippingPolicy && <p role="alert" className="mb-4 text-sm text-red-700">Shipping rates are temporarily unavailable. Please return shortly to check out.</p>}
+                  {shippingPolicy && couponsEnabled && (
                     <div className="mb-4">
                       <CouponBox coupon={coupon} />
                     </div>
@@ -444,7 +506,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                   <div className="flex justify-between items-baseline mb-6">
                     <span className="font-semibold text-base text-[#1d1d1f]">Total Payable</span>
                     <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
-                      ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      {shippingPolicy ? `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : 'Unavailable'}
                     </span>
                   </div>
 
@@ -474,21 +536,21 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                         </div>
                       </div>
 
-                      {hasUnavailable ? (
+                      {hasUnavailable || !shippingPolicy ? (
                         <button
                           type="button"
                           disabled
                           aria-describedby="cart-unavailable-note"
                           className="w-full bg-[#e8e8ed] text-[#6e6e73] text-[15px] font-semibold py-3.5 rounded-2xl text-center cursor-not-allowed"
                         >
-                          Remove unavailable items to check out
+                          {shippingPolicy ? 'Remove unavailable items to check out' : 'Checkout temporarily unavailable'}
                         </button>
                       ) : (
                         <Link
-                          href="/checkout"
+                          href="/checkout" onClick={handleCheckout}
                           className="w-full bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black text-[15px] font-black uppercase tracking-wider py-4 rounded-xl text-center transition-all active:scale-[0.99] shadow-md flex items-center justify-center gap-2"
                         >
-                          <span>Check Out with PayU</span>
+                          <span>Checkout</span>
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                           </svg>
@@ -503,19 +565,19 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                           </svg>
                           <div>
-                            <p className="text-xs font-semibold text-[#1d1d1f]">Account required to buy</p>
+                            <p className="text-xs font-semibold text-[#1d1d1f]">{guestCheckoutEnabled ? 'Guest checkout available' : 'Sign in at checkout'}</p>
                             <p className="text-[11px] text-[#6e6e73] mt-0.5 leading-snug">
-                              Please sign in to proceed, or create an account if you don&apos;t have one yet.
+                              {guestCheckoutEnabled ? 'Continue without an account, or sign in to use saved addresses.' : 'Continue to sign in or create an account before paying.'}
                             </p>
                           </div>
                         </div>
                       </div>
 
                       <Link
-                        href="/auth?redirect=/checkout"
+                        href="/checkout" onClick={handleCheckout}
                         className="w-full bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black text-[15px] font-black uppercase tracking-wider py-4 rounded-xl text-center transition-all active:scale-[0.99] shadow-md flex items-center justify-center gap-2"
                       >
-                        <span>Sign In to Check Out</span>
+                        <span>Checkout</span>
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                         </svg>
@@ -524,7 +586,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                       <div className="mt-3 text-center">
                         <span className="text-xs text-[#86868b]">Don&apos;t have an account? </span>
                         <Link
-                          href="/auth?mode=signup&redirect=/checkout"
+                          href="/auth?mode=signup&redirect=/checkout" onClick={handleCheckout}
                           className="text-xs font-semibold text-[#0071e3] hover:underline"
                         >
                           Create account
@@ -579,10 +641,12 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
               </Link>
             </div>
 
+            {suggestionNotice && <p role="alert" className="mb-3 text-sm text-[#b42318]">{suggestionNotice}</p>}
             {/* Suggested Products Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {suggestedProducts.map((item) => {
                 const isAdded = !!addedItemIds[item.id];
+                const displayedPrice = suggestionPrices[item.id] ?? findRef(item.id);
                 const suggestedRef = findRef(getCartLineBaseId(item.id) || '');
                 const canAdd =
                       (item.type === 'product' || item.type === 'accessory') &&
@@ -633,9 +697,10 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                       {/* Price & Action */}
                       <div className="mt-4 pt-3 border-t border-black/5 flex items-center justify-between">
                         <div>
-                          {item.priceDisplay ? (
+                          {displayedPrice?.priceDisplay ? (
                             <span className="text-[15px] font-bold text-[#1d1d1f]">
-                              {item.priceDisplay}
+                              {displayedPrice.wasPriceDisplay && <s className="mr-1 text-xs font-normal">{displayedPrice.wasPriceDisplay}</s>}
+                              {displayedPrice.priceDisplay}
                             </span>
                          ) : item.type === 'product' || item.type === 'accessory' ? (
                             <span className="text-xs font-semibold text-[#e30000]">Unavailable</span>
@@ -644,9 +709,12 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                           )}
                         </div>
 
-                        {canAdd ? (
+                        {suggestedRef?.inventoryMode === 'variant' ? (
+                          <Link href={item.href} className="text-xs font-semibold text-[#0071e3]">Choose options</Link>
+                        ) : canAdd ? (
                           <button
                             type="button"
+                            disabled={addingSuggestion !== null}
                             onClick={(e) => handleAddSuggested(item, e)}
                             className={`text-xs font-semibold px-3.5 py-1.5 rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs ${
                               isAdded
@@ -654,7 +722,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
                                 : 'bg-[#0071e3] hover:bg-[#0077ed] text-white'
                             }`}
                           >
-                            {isAdded ? 'Added ✓' : 'Add to Bag'}
+                            {addingSuggestion === item.id ? 'Checking…' : isAdded ? 'Added ✓' : 'Add to Bag'}
                           </button>
                         ) : item.type === 'product' ? (
                           <span className="text-xs font-semibold text-[#e30000]">Unavailable</span>
@@ -678,7 +746,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, custom
 
       {/* Trust Badges */}
       <div className="w-full mt-10 border-t border-[#e5e5ea]">
-        <GadzioTrustBar />
+        <GadzioTrustBar items={DEFAULT_TRUST_BADGES.map((badge, index) => index === 0 ? { ...badge, title: 'Delivery across India', subtitle: 'Shipping shown at checkout' } : badge)} />
       </div>
 
       <GlobalFooter />

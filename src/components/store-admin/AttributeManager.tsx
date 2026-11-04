@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import type { CatalogAttribute, CatalogUnit } from '@/lib/store-admin/catalog';
 
@@ -72,7 +73,9 @@ interface ApiAttribute {
  * The server enforces that; the UI shows why the control is disabled.
  */
 export function AttributeManager({ initialAttributes, units, canEdit }: Props) {
+  const router = useRouter();
   const [attributes, setAttributes] = useState<CatalogAttribute[]>(initialAttributes);
+  useEffect(() => setAttributes(initialAttributes), [initialAttributes]);
   const [form, setForm] = useState<AttributeForm>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [optionDrafts, setOptionDrafts] = useState<Record<string, string>>({});
@@ -149,7 +152,8 @@ export function AttributeManager({ initialAttributes, units, canEdit }: Props) {
           ? current.map((attribute) => (attribute.id === saved.id ? saved : attribute))
           : [...current, saved];
       });
-      setNotice(body.created ? 'Attribute created.' : 'Attribute saved.');
+      setNotice(body.created ? 'Attribute created. Assign it to a product type to use it.' : 'Attribute saved.');
+      router.refresh();
       setEditingId(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save this attribute.');
@@ -178,6 +182,7 @@ export function AttributeManager({ initialAttributes, units, canEdit }: Props) {
         deletedAt: new Date().toISOString(),
       });
       setNotice('Attribute removed. Saving the same key again restores it.');
+      router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not remove this attribute.');
     } finally {
@@ -214,6 +219,7 @@ export function AttributeManager({ initialAttributes, units, canEdit }: Props) {
       });
       setOptionDrafts((current) => ({ ...current, [attribute.id]: '' }));
       setNotice(`Option “${value}” added.`);
+      router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not add this option.');
     } finally {
@@ -241,6 +247,7 @@ export function AttributeManager({ initialAttributes, units, canEdit }: Props) {
         options: attribute.options.filter((option) => option.value !== value),
       });
       setNotice(`Option “${value}” removed.`);
+      router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not remove this option.');
     } finally {

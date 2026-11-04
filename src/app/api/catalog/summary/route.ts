@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { listStorefrontProductRefs } from '@/lib/catalog/storefront';
+import { getFreshStorefrontRefs, getStorefrontRefs } from '@/lib/storefront/catalog';
 
 /**
  * Public catalogue summary for client-side surfaces: site search, the bag
@@ -9,11 +9,18 @@ import { listStorefrontProductRefs } from '@/lib/catalog/storefront';
  *
  * Never cached at the edge: the payload already has the sale switch applied,
  * so a shared cache would keep serving the pre-sale price after a sale starts
- * or ends. The per-request React cache inside the read layer is the only
- * caching this route relies on.
+ * or ends. Ordinary summary reads retain catalogue caching; fresh=1 bypasses
+ * it and refuses outage/static fallback for click-time purchase validation.
  */
-export async function GET() {
-  const products = await listStorefrontProductRefs();
+export async function GET(request?: Request) {
+  if (request && new URL(request.url).searchParams.get('fresh') === '1') {
+    try {
+      return NextResponse.json(await getFreshStorefrontRefs(), { headers: { 'Cache-Control': 'no-store' } });
+    } catch {
+      return NextResponse.json({ error: 'Current catalogue pricing is unavailable.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+  }
+  const { products } = await getStorefrontRefs();
 
   return NextResponse.json(
     { products },

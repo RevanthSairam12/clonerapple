@@ -21,6 +21,9 @@ export interface ProductHighlight {
 }
 
 export interface AccessoryProduct {
+  inventoryMode?: 'product' | 'variant';
+  purchasableVariants?: import('@/lib/catalog/storefront').StorefrontPurchasableVariant[];
+
   id: string;
   name: string;
   subtitle: string;
@@ -47,6 +50,8 @@ export interface AccessoryProduct {
   facets: Record<string, string>;
   features: string[];
   description: string;
+  shortDescription?: string | null;
+  descriptionSections?: import('@/lib/catalog/product-description').ProductDescriptionSection[] | null;
   highlights: ProductHighlight[];
   specs: SpecRow[];
   inTheBox: string[];

@@ -1,63 +1,25 @@
-/**
- * Pure shipping-quote rules.
- *
- * The amount is always computed on the server from `shipping_methods` plus the
- * order settings; the client only renders the same function's result. No
- * client-sent rate, threshold or total is accepted anywhere.
- *
- * Order of precedence:
- *   1. Shipping off                     → no charge
- *   2. No active method                 → no charge (today's behaviour)
- *   3. Store-wide free-shipping threshold met → no charge
- *   4. The chosen method's own threshold met  → no charge
- *   5. Otherwise the method's rate
- *
- * Pickup does not exist: no pickup setting is read here, and
- * `pickupEnabled()` in settings-rules.ts is always false.
- */
-
-export interface ShippingMethodLike {
-  id: string;
-  name: string;
-  ratePaise: number;
-  freeOverPaise: number;
-  isActive: boolean;
-  sortOrder: number;
-}
-
+/** Pure checkout shipping rules. Compare the sale-priced subtotal BEFORE coupons. */
 export interface ShippingPolicy {
-  /** Orders → "Shipping enabled". */
   enabled: boolean;
-  /** Orders → "Free shipping over (₹)", converted to paise; 0 disables it. */
-  freeShippingOverPaise: number;
-  /** Rows from `shipping_methods`, including inactive ones. */
-  methods: readonly ShippingMethodLike[];
+  /** Whole paise. Zero is free shipping. */
+  chargePaise: number;
+  /** null disables threshold-based free shipping; zero qualifies every nonempty cart. */
+  freeShippingThresholdPaise: number | null;
 }
 
 export const EMPTY_SHIPPING_POLICY: ShippingPolicy = {
   enabled: false,
-  freeShippingOverPaise: 0,
-  methods: [],
+  chargePaise: 0,
+  freeShippingThresholdPaise: null,
 };
 
-export type ShippingQuoteReason =
-  | 'disabled'
-  | 'no-method'
-  | 'free-threshold'
-  | 'method-free'
-  | 'rate';
+export type ShippingQuoteReason = 'disabled' | 'free-coupon' | 'free-threshold' | 'rate';
 
 export interface ShippingQuote {
   shippingPaise: number;
-  methodId: string | null;
-  methodName: string | null;
+  methodId: null;
+  methodName: null;
   reason: ShippingQuoteReason;
-}
-
-function moneyPaise(value: unknown): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.trunc(parsed);
 }
 
 /** Whole paise, never negative. */
@@ -67,11 +29,39 @@ export function normalizeSubtotalPaise(value: unknown): number {
   return Math.trunc(parsed);
 }
 
-/** The method checkout uses: first active row by sort order, then name. */
+export function quoteShipping(
+  subtotalPaiseInput: unknown,
+  policy: ShippingPolicy,
+  validatedFreeShippingCoupon = false,
+): ShippingQuote {
+  const subtotalPaise = normalizeSubtotalPaise(subtotalPaiseInput);
+  const quote = (shippingPaise: number, reason: ShippingQuoteReason): ShippingQuote => ({
+    shippingPaise, methodId: null, methodName: null, reason,
+  });
+  if (!policy.enabled) return quote(0, 'disabled');
+  if (validatedFreeShippingCoupon) return quote(0, 'free-coupon');
+  const threshold = policy.freeShippingThresholdPaise;
+  if (threshold !== null && threshold >= 0 && subtotalPaise > 0 && subtotalPaise >= threshold) {
+    return quote(0, 'free-threshold');
+  }
+  return quote(normalizeSubtotalPaise(policy.chargePaise), 'rate');
+}
+
+/** Legacy records are retained ONLY for cutover compatibility, never checkout. */
+export interface ShippingMethodLike {
+  id: string;
+  name: string;
+  ratePaise: number;
+  freeOverPaise: number;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/** Exact legacy JS selector; preserve stable ties and localeCompare for backfill. */
 export function selectShippingMethod(methods: readonly ShippingMethodLike[]): ShippingMethodLike | null {
   const active = methods
     .filter((method) => method.isActive)
-    .filter((method) => moneyPaise(method.ratePaise) >= 0)
+    .filter((method) => normalizeSubtotalPaise(method.ratePaise) >= 0)
     .slice()
     .sort((a, b) => {
       const order = Number(a.sortOrder) - Number(b.sortOrder);
@@ -81,34 +71,20 @@ export function selectShippingMethod(methods: readonly ShippingMethodLike[]): Sh
   return active[0] ?? null;
 }
 
-export function quoteShipping(subtotalPaiseInput: unknown, policy: ShippingPolicy): ShippingQuote {
-  const subtotalPaise = normalizeSubtotalPaise(subtotalPaiseInput);
-  const none = (reason: ShippingQuoteReason): ShippingQuote => ({
-    shippingPaise: 0,
-    methodId: null,
-    methodName: null,
-    reason,
-  });
-
-  if (!policy.enabled) return none('disabled');
-
-  const method = selectShippingMethod(policy.methods);
-  if (!method) return none('no-method');
-
-  const threshold = moneyPaise(policy.freeShippingOverPaise);
-  if (threshold > 0 && subtotalPaise >= threshold) {
-    return { shippingPaise: 0, methodId: method.id, methodName: method.name, reason: 'free-threshold' };
-  }
-
-  const methodThreshold = moneyPaise(method.freeOverPaise);
-  if (methodThreshold > 0 && subtotalPaise >= methodThreshold) {
-    return { shippingPaise: 0, methodId: method.id, methodName: method.name, reason: 'method-free' };
-  }
-
+/** Keep configured rates even when shipping is disabled. Legacy zero means no threshold. */
+export function shippingPolicyFromLegacy(
+  enabled: boolean,
+  globalThresholdRupees: unknown,
+  methods: readonly ShippingMethodLike[],
+): ShippingPolicy {
+  const method = selectShippingMethod(methods);
+  const positiveThresholds = [
+    normalizeSubtotalPaise(Number(String(globalThresholdRupees ?? '').trim()) * 100),
+    normalizeSubtotalPaise(method?.freeOverPaise),
+  ].filter((value) => value > 0);
   return {
-    shippingPaise: moneyPaise(method.ratePaise),
-    methodId: method.id,
-    methodName: method.name,
-    reason: 'rate',
+    enabled,
+    chargePaise: normalizeSubtotalPaise(method?.ratePaise),
+    freeShippingThresholdPaise: positiveThresholds.length ? Math.min(...positiveThresholds) : null,
   };
 }

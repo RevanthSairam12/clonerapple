@@ -14,11 +14,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -38,16 +39,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -176,7 +181,8 @@ const CSV_CONTEXT = {
 };
 
 function csvRow(values) {
-  return IMPORT_COLUMNS.map((column) => (values[column] === undefined ? '' : String(values[column])));
+  const cells = { product_type_id: 'null', device_model_ids: '[]', attribute_values: '{}', ...values };
+  return IMPORT_COLUMNS.map((column) => (cells[column] === undefined ? '' : String(cells[column])));
 }
 
 test('CSV uses the same parser and keeps decimals', () => {
@@ -281,11 +287,7 @@ test('a decimal sale price is stored exactly and history records the paise', { s
   const sql = client();
 
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
 
     await sql`
       insert into categories (id, slug, name)
@@ -350,8 +352,7 @@ test('a decimal sale price is stored exactly and history records the paise', { s
     assert.equal(cleared.data.after.salePricePaise, null);
   } finally {
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(sql, schema);
     } catch (error) {
       console.warn('[sale-price-entry] cleanup did not finish:', error?.message ?? error);
     }

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { EVENT_BANNER_COPY } from '@/lib/website/section-defaults';
 
 export interface GadzioEventBannerProps {
   heading?: string;
@@ -12,14 +13,7 @@ export interface GadzioEventBannerProps {
   enabled?: boolean;
 }
 
-export const DEFAULT_EVENT_BANNER = {
-  heading: 'The Flagship Drop Of The Year',
-  subtitle:
-    'Order now to get the limited deluxe titanium edition—engineered with aerospace-grade defense and high-gauss MagSafe.',
-  ctaLabel: 'SHOP THE DROP',
-  ctaHref: '/in/shop/iphone/accessories/cases-protection',
-  image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
-};
+export const DEFAULT_EVENT_BANNER = EVENT_BANNER_COPY;
 
 export function GadzioEventBanner({
   heading = DEFAULT_EVENT_BANNER.heading,

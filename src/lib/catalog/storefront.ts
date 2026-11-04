@@ -12,9 +12,11 @@
  */
 
 import { getSql } from '@/lib/platform/db';
-import { stockStateFrom } from '@/lib/storefront/catalog-rules';
+import { sanitizeDescriptionSections, type ProductDescriptionSection } from '@/lib/catalog/product-description';
+import { projectManagedCatalog, stockStateFrom } from '@/lib/storefront/catalog-rules';
 import { resolveEffectivePrice } from '@/lib/storefront/pricing';
 import { readSaleState } from '@/lib/storefront/sale-state';
+import { aggregateVariantAvailability } from '@/lib/storefront/availability-rules';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: The storefront catalogue must be read on the server only.');
@@ -42,7 +44,25 @@ export interface StorefrontHighlight {
  */
 export type StorefrontStockState = 'in_stock' | 'low_stock' | 'out_of_stock';
 
+export interface StorefrontPurchasableVariant {
+  id: string;
+  sku: string;
+  label: string;
+  deviceModelId: string | null;
+  deviceModelName: string | null;
+  optionName: string;
+  optionValue: string;
+  combinationKey: string;
+  pricePaise: number;
+  regularPricePaise: number;
+  salePricePaise: number | null;
+  onSale: boolean;
+  inStock: boolean;
+}
+
 export interface StorefrontProduct {
+  inventoryMode?: 'product' | 'variant';
+  purchasableVariants?: StorefrontPurchasableVariant[];
   id: string;
   slug: string;
   name: string;
@@ -54,6 +74,11 @@ export interface StorefrontProduct {
   price: number;
   pricePaise: number;
   priceDisplay: string;
+  /** Stored parent defaults, never overwritten by the option display minimum. */
+  parentPricePaise?: number;
+  parentSalePricePaise?: number | null;
+  /** Only differing effective option amounts get a From label. */
+  priceFrom?: boolean;
   /** The regular price, shown struck through while `onSale`. */
   regularPricePaise: number;
   salePricePaise: number | null;
@@ -67,10 +92,15 @@ export interface StorefrontProduct {
   facets: Record<string, string>;
   /** Every facet value for a key, when a product matches more than one. */
   facetValues: Record<string, string[]>;
+  facetLabels: Record<string, string>;
+  /** Only explicitly searchable mapped attributes and current device joins. */
+  searchValues: string[];
   compatibility: string[];
   material: string;
   brand: string;
   description: string;
+  shortDescription?: string | null;
+  descriptionSections?: ProductDescriptionSection[] | null;
   highlights: StorefrontHighlight[];
   features: string[];
   specs: StorefrontSpec[];
@@ -119,6 +149,8 @@ export interface StorefrontCategory {
 }
 
 export interface StorefrontProductRef {
+  inventoryMode?: 'product' | 'variant';
+  purchasableVariants?: StorefrontPurchasableVariant[];
   id: string;
   name: string;
   subtitle: string;
@@ -202,14 +234,15 @@ function primaryImage(images: Row[]): string {
 interface ProductAggregate {
   row: Row;
   images: Row[];
-  facets: Row[];
-  specs: Row[];
+  attributes: Row[];
+  deviceModels: Row[];
   variants: Row[];
   stock?: Row;
+  variantStock: Row[];
 }
 
 function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontProduct {
-  const { row, images, facets, specs, variants, stock } = aggregate;
+  const { row, images, attributes, deviceModels, variants, stock } = aggregate;
 
   const price = resolveEffectivePrice(
     {
@@ -241,23 +274,49 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     .map((image) => text(image.url))
     .filter(Boolean);
 
-  const facetValues: Record<string, string[]> = {};
-  const facetsFlat: Record<string, string> = {};
-  for (const facet of facets) {
-    const key = text(facet.facet_key).trim();
-    const value = text(facet.facet_value).trim();
-    if (!key || !value) continue;
-    (facetValues[key] ??= []).push(value);
-    // The first value is the display value; the grid filter checks the full
-    // list under `facetValues`, so a multi-value facet still matches.
-    facetsFlat[key] ??= value;
+  const projection = projectManagedCatalog(attributes, deviceModels);
+  const { facets: facetsFlat, facetValues, compatibility } = projection;
+  // Product merchandising brand is global, unlike type-scoped attributes.
+  if (text(row.brand).trim()) {
+    facetsFlat.brand = text(row.brand).trim();
+    facetValues.brand = [facetsFlat.brand];
+    projection.facetLabels.brand = 'Brand';
   }
-
   const colors = asColors(row.__colors);
-  const compatibility = facetValues.model ?? [];
-  const stockState = stockStateFrom(stock, Boolean(row.in_stock));
+  const inventoryMode = row.inventory_mode === 'variant' ? 'variant' : 'product';
+  const configured = variants.filter((variant) => Boolean(variant.is_active) && Boolean(variant.is_purchasable) &&
+    text(variant.sku).trim() && text(variant.combination_key).trim() &&
+    aggregate.variantStock.some((entry) => entry.variant_id === variant.id) &&
+    (!row.__requires_compatibility || Boolean(variant.device_model_id)) &&
+    (!variant.device_model_id || deviceModels.some((model) => model.id === variant.device_model_id)));
+  const variantStates = configured.map((variant) => {
+    const variantStock = aggregate.variantStock.find((entry) => entry.variant_id === variant.id);
+    const snapshot = stockStateFrom(variantStock ?? { track_inventory: true, on_hand: 0, reserved: 0 }, true);
+    return { id: text(row.id), variantId: text(variant.id), inStock: snapshot.state !== 'out_of_stock',
+      tracked: snapshot.tracked, available: snapshot.tracked ? snapshot.available : null, lowStockThreshold: snapshot.threshold };
+  });
+  const purchasableVariants: StorefrontPurchasableVariant[] = inventoryMode === 'variant' ? configured.map((variant, index) => {
+    const variantPrice = resolveEffectivePrice(
+      { pricePaise: price.regularPaise, salePricePaise: price.salePaise }, saleLive,
+      { pricePaise: variant.price_paise_override == null ? null : number(variant.price_paise_override),
+        salePricePaise: variant.sale_price_paise == null ? null : number(variant.sale_price_paise) });
+    const deviceModelName = nullableText(deviceModels.find((model) => model.id === variant.device_model_id)?.name);
+    return { id: text(variant.id), sku: text(variant.sku),
+      label: [deviceModelName, [text(variant.option_name), text(variant.option_value)].filter(Boolean).join(': ')].filter(Boolean).join(' • ') || text(variant.sku),
+      deviceModelId: nullableText(variant.device_model_id), deviceModelName,
+      optionName: text(variant.option_name), optionValue: text(variant.option_value), combinationKey: text(variant.combination_key),
+      pricePaise: variantPrice.unitPaise, regularPricePaise: variantPrice.regularPaise, salePricePaise: variantPrice.salePaise,
+      onSale: variantPrice.onSale, inStock: variantStates[index].inStock };
+  }) : [];
+  const parentState = stockStateFrom(stock, Boolean(row.in_stock));
+  const aggregateState = aggregateVariantAvailability(text(row.id), variantStates);
+  const stockState = inventoryMode === 'variant' ? { state: aggregateState.inStock ? 'in_stock' as const : 'out_of_stock' as const,
+    available: aggregateState.available, threshold: null, tracked: aggregateState.tracked } : parentState;
 
   const product: StorefrontProduct = {
+    inventoryMode, purchasableVariants,
+    parentPricePaise: price.regularPaise,
+    parentSalePricePaise: price.salePaise,
     id: text(row.id),
     slug: text(row.slug) || text(row.id),
     name: text(row.name),
@@ -274,17 +333,17 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     colors,
     facets: facetsFlat,
     facetValues,
+    facetLabels: projection.facetLabels,
+    searchValues: projection.searchValues,
     compatibility,
-    material: text(row.material) || facetsFlat.material || '',
+    material: facetsFlat.material || '',
     brand: text(row.brand) || facetsFlat.brand || '',
     description: text(row.description),
+    shortDescription: row.short_description == null ? null : text(row.short_description),
+    descriptionSections: row.description_sections == null ? null : sanitizeDescriptionSections(row.description_sections),
     highlights: asHighlights(row.highlights),
     features: asHighlights(row.highlights).map((highlight) => highlight.title),
-    specs: specs
-      .slice()
-      .sort((a, b) => number(a.sort_order) - number(b.sort_order))
-      .map((spec) => ({ label: text(spec.label), value: text(spec.value) }))
-      .filter((spec) => spec.label),
+    specs: projection.specs,
     inTheBox: asStringArray(row.in_the_box),
     inStock: stockState.state !== 'out_of_stock',
     stockState: stockState.state,
@@ -315,7 +374,7 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     product.colors = variantColors;
   }
 
-  return product;
+  return applySaleDisplay(product, saleLive);
 }
 
 /* ------------------------------------------------------------------ query */
@@ -324,8 +383,8 @@ export interface CatalogLoad {
   categories: Row[];
   products: Row[];
   images: Row[];
-  facets: Row[];
-  specs: Row[];
+  attributes: Row[];
+  deviceModels: Row[];
   variants: Row[];
   stock: Row[];
 }
@@ -334,7 +393,7 @@ export interface CatalogLoad {
 export async function loadCatalogUsing(
   sql: NonNullable<ReturnType<typeof getSql>>,
 ): Promise<CatalogLoad> {
-  const [categories, products, images, facets, specs, variants, stock] = await Promise.all([
+  const [categories, products, images, attributes, deviceModels, variants, stock] = await Promise.all([
     sql`
       select c.id, c.slug, c.name, c.title, c.subhead, c.breadcrumb_leaf,
              c.count_noun, c.disclaimer, c.nav_label, c.nav_href,
@@ -346,10 +405,14 @@ export async function loadCatalogUsing(
     sql`
       select p.id, p.category_id, p.slug, p.name, p.subtitle, p.price_paise,
              p.sale_price_paise, p.compare_at_paise, p.currency, p.material, p.brand, p.description,
+             to_jsonb(p)->>'short_description' as short_description,
+             to_jsonb(p)->'description_sections' as description_sections,
              p.badge, p.highlights, p.in_the_box, p.seo_title, p.seo_description,
-             p.in_stock, p.is_active, p.sort_order,
-             c.slug as __category_slug, c.name as __category_name
+             p.in_stock, p.inventory_mode, p.is_active, p.sort_order,
+             c.slug as __category_slug, c.name as __category_name,
+             pt.requires_compatibility as __requires_compatibility
       from products p
+      left join product_types pt on pt.id = p.product_type_id
       join categories c on c.id = p.category_id
       where p.deleted_at is null
         and p.is_active
@@ -363,26 +426,36 @@ export async function loadCatalogUsing(
       where deleted_at is null and is_active
     `,
     sql`
-      select product_id, facet_key, facet_value, sort_order
-      from product_facets
-      order by sort_order asc
+      select p.id as product_id, a.key, a.label, a.data_type,
+             v.value_text, v.value_number, v.value_bool, v.option_value,
+             m.show_in_specs, m.show_in_filters, m.show_in_search
+      from products p
+      join product_types t on t.id = p.product_type_id
+        and t.category_id = p.category_id and t.is_active
+      join product_type_attributes m on m.product_type_id = t.id and m.is_active
+      join attributes a on a.id = m.attribute_id and a.is_active and a.deleted_at is null
+      join product_attribute_values v on v.product_id = p.id
+        and v.attribute_id = a.id and v.archived_at is null
+      where p.deleted_at is null and p.is_active and lower(a.key) <> 'model'
+      order by m.sort_order asc, a.key asc
     `,
     sql`
-      select product_id, label, value, sort_order
-      from product_specs
-      order by sort_order asc
+      select j.product_id, d.id, d.name
+      from product_device_models j
+      join device_models d on d.id = j.device_model_id and d.is_active
+      join device_brands b on b.id = d.brand_id and b.is_active
+      where j.archived_at is null
+      order by j.sort_order asc, b.sort_order asc, d.sort_order asc, d.name asc
     `,
     sql`
-      select id, product_id, option_value, option_hex, is_active, sort_order
+      select id, product_id, sku, option_name, option_value, option_hex, is_active, sort_order,
+             is_purchasable, device_model_id, combination_key, price_paise_override, sale_price_paise
       from product_variants
       order by sort_order asc
     `,
-    // Product-level stock only. Variant stock exists but carries no storefront
-    // meaning yet (variants have no price and no per-colour availability UI).
     sql`
-      select product_id, on_hand, reserved, low_stock_threshold, track_inventory
+      select product_id, variant_id, on_hand, reserved, low_stock_threshold, track_inventory
       from stock
-      where variant_id is null
     `,
   ]);
 
@@ -390,8 +463,8 @@ export async function loadCatalogUsing(
     categories: categories as Row[],
     products: products as Row[],
     images: images as Row[],
-    facets: facets as Row[],
-    specs: specs as Row[],
+    attributes: attributes as Row[],
+    deviceModels: deviceModels as Row[],
     variants: variants as Row[],
     stock: stock as Row[],
   };
@@ -419,8 +492,8 @@ function mapAll(load: CatalogLoad, saleLive: boolean): {
   byProductId: Map<string, StorefrontProduct>;
 } {
   const images = groupByProduct(load.images);
-  const facets = groupByProduct(load.facets);
-  const specs = groupByProduct(load.specs);
+  const attributes = groupByProduct(load.attributes ?? []);
+  const deviceModels = groupByProduct(load.deviceModels ?? []);
   const variants = groupByProduct(load.variants);
   const stock = groupByProduct(load.stock);
 
@@ -430,10 +503,11 @@ function mapAll(load: CatalogLoad, saleLive: boolean): {
     byProductId.set(id, mapProduct({
       row,
       images: images.get(id) ?? [],
-      facets: facets.get(id) ?? [],
-      specs: specs.get(id) ?? [],
+      attributes: attributes.get(id) ?? [],
+      deviceModels: deviceModels.get(id) ?? [],
       variants: variants.get(id) ?? [],
-      stock: stock.get(id)?.[0],
+      stock: stock.get(id)?.find((entry) => entry.variant_id == null),
+      variantStock: stock.get(id)?.filter((entry) => entry.variant_id != null) ?? [],
     }, saleLive));
   }
 
@@ -501,17 +575,46 @@ export function snapshotFromLoad(load: CatalogLoad): StorefrontCatalogSnapshot {
  * nothing here mutates the cached snapshot.
  */
 export function applySaleDisplay(product: StorefrontProduct, saleLive: boolean): StorefrontProduct {
-  const price = resolveEffectivePrice(
-    { pricePaise: product.regularPricePaise, salePricePaise: product.salePricePaise },
-    saleLive,
+  const parentPricePaise = product.parentPricePaise ?? product.regularPricePaise;
+  const parentSalePricePaise = product.parentSalePricePaise === undefined
+    ? product.salePricePaise : product.parentSalePricePaise;
+  const parent = resolveEffectivePrice(
+    { pricePaise: parentPricePaise, salePricePaise: parentSalePricePaise }, saleLive,
   );
-  // Skip the allocation when the answer is already what the snapshot holds.
-  if (price.unitPaise === product.pricePaise && price.onSale === product.onSale) return product;
+  // Each option already retains its resolved regular/stored sale pair. Resolve
+  // that pair independently: the minimum is presentation, not an inheritance source.
+  const purchasableVariants = product.purchasableVariants?.map((variant) => {
+    const resolved = resolveEffectivePrice({ pricePaise: variant.regularPricePaise, salePricePaise: variant.salePricePaise }, saleLive);
+    return resolved.unitPaise === variant.pricePaise && resolved.onSale === variant.onSale
+      ? variant : { ...variant, pricePaise: resolved.unitPaise, onSale: resolved.onSale };
+  });
+  // OOS configured options still participate; stock is a separate purchase check.
+  const options = product.inventoryMode === 'variant' ? purchasableVariants ?? [] : [];
+  const minimum = options.reduce<StorefrontPurchasableVariant | undefined>((best, option) =>
+    !best || option.pricePaise < best.pricePaise ? option : best, undefined);
+  const price = minimum ? { unitPaise: minimum.pricePaise, regularPaise: minimum.regularPricePaise,
+    salePaise: minimum.salePricePaise, onSale: minimum.onSale } : parent;
+  const priceFrom = options.some((option) => option.pricePaise !== price.unitPaise);
+  const noOptions = product.inventoryMode === 'variant' && !minimum;
+  const priceDisplay = noOptions ? 'Unavailable' : `${priceFrom ? 'From ' : ''}${formatPaise(price.unitPaise)}`;
+  const variantsUnchanged = purchasableVariants?.every((variant, index) => variant === product.purchasableVariants?.[index]) ?? true;
+  // Once provenance is normalized, a request with unchanged prices keeps the
+  // snapshot identity, including all option objects. Never normalize by mutation.
+  if (product.parentPricePaise === parentPricePaise && product.parentSalePricePaise === parentSalePricePaise &&
+    product.priceFrom === priceFrom && product.pricePaise === price.unitPaise && product.price === price.unitPaise / 100 &&
+    product.priceDisplay === priceDisplay && product.regularPricePaise === price.regularPaise &&
+    product.salePricePaise === price.salePaise && product.onSale === price.onSale && variantsUnchanged) return product;
   return {
     ...product,
+    parentPricePaise,
+    parentSalePricePaise,
+    purchasableVariants,
+    priceFrom,
     price: price.unitPaise / 100,
     pricePaise: price.unitPaise,
-    priceDisplay: formatPaise(price.unitPaise),
+    priceDisplay,
+    regularPricePaise: price.regularPaise,
+    salePricePaise: price.salePaise,
     onSale: price.onSale,
   };
 }
@@ -526,7 +629,9 @@ function buildFacetDefs(
   products: StorefrontProduct[],
 ): StorefrontFacetDef[] {
   const collected = new Map<string, Set<string>>();
+  const labels: Record<string, string> = {};
   for (const product of products) {
+    Object.assign(labels, product.facetLabels);
     for (const [key, values] of Object.entries(product.facetValues)) {
       const bucket = collected.get(key) ?? new Set<string>();
       for (const value of values) bucket.add(value);
@@ -545,7 +650,7 @@ function buildFacetDefs(
 
   return keys.map((key) => ({
     id: key,
-    label: FACET_LABELS[key] ?? key.replace(/(^|_)(\w)/g, (_, __, c) => ` ${c.toUpperCase()}`).trim(),
+    label: labels[key] ?? FACET_LABELS[key] ?? key.replace(/(^|_)(\w)/g, (_, __, c) => ` ${c.toUpperCase()}`).trim(),
     options: [...(collected.get(key) ?? [])].sort((a, b) => a.localeCompare(b)),
     isQuickPill: key === 'model',
   }));
@@ -655,10 +760,15 @@ export async function listStorefrontProductRefs(): Promise<StorefrontProductRef[
 
     return [...byProductId.values()].map((product) => ({
       id: product.id,
+      inventoryMode: product.inventoryMode, purchasableVariants: product.purchasableVariants,
       name: product.name,
       subtitle: product.subtitle,
       pricePaise: product.pricePaise,
       priceDisplay: product.priceDisplay,
+      ...(product.onSale ? {
+        regularPricePaise: product.regularPricePaise,
+        wasPriceDisplay: formatPaise(product.regularPricePaise),
+      } : {}),
       image: product.image,
       categorySlug: product.categorySlug,
       categoryName: categoryNames.get(product.categoryId) ?? product.categoryName,
@@ -666,12 +776,9 @@ export async function listStorefrontProductRefs(): Promise<StorefrontProductRef[
       keywords: [
         product.name,
         product.subtitle,
-        product.material,
         product.brand,
         product.categoryName,
-        ...product.compatibility,
-        ...Object.values(product.facets),
-        ...product.specs.map((spec) => `${spec.label} ${spec.value}`),
+        ...product.searchValues,
       ]
         .map((entry) => entry.toLowerCase())
         .filter(Boolean),

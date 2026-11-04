@@ -51,7 +51,7 @@ export async function PUT(request: Request, context: Params) {
   }
 
   const { id } = await context.params;
-  const result = await setProductAttributeValue(id, attributeId, body.value);
+  const result = await setProductAttributeValue(id, attributeId, body.value, guard.session.adminId, request);
 
   if (!result.ok) {
     await writeAudit({
@@ -101,7 +101,7 @@ export async function DELETE(request: Request, context: Params) {
   }
 
   const { id } = await context.params;
-  const result = await clearProductAttributeValue(id, attributeId);
+  const result = await clearProductAttributeValue(id, attributeId, guard.session.adminId, request);
 
   if (!result.ok) {
     await writeAudit({

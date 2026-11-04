@@ -18,6 +18,32 @@ import {
 } from '@/lib/coupons/rules';
 
 import { MAX_PRICE_PAISE, parseRupeesToPaise } from './money';
+import { CUSTOMER_GROUPS, isCustomerGroup } from './customer-rules';
+
+export const COUPON_VISIBILITY_HELP = 'Visibility controls discovery, not redemption. A hidden coupon can still be redeemed by anyone with its code unless customer restrictions apply. Assignments make the coupon discoverable; they do not override redemption restrictions. Hidden means not public: assigned eligible customers may still see it.';
+export const COUPON_MAX_VISIBILITY_IDS = 500;
+export type CouponVisibilityFilter = 'all' | 'public' | 'hidden';
+
+export function parseCouponVisibilityFilter(value: unknown): CouponVisibilityFilter {
+  return value === 'public' || value === 'hidden' ? value : 'all';
+}
+
+/** Bound the submitted selection before deduplication; lock order is stable. */
+export function parseCouponVisibilityInput(input: { ids?: unknown; showToAllUsers?: unknown }):
+  | { ok: true; ids: string[]; showToAllUsers: boolean }
+  | { ok: false; error: string } {
+  if (!input || !Array.isArray(input.ids) || input.ids.length < 1
+      || input.ids.length > COUPON_MAX_VISIBILITY_IDS) {
+    return { ok: false, error: `Select between 1 and ${COUPON_MAX_VISIBILITY_IDS} coupons.` };
+  }
+  if (typeof input.showToAllUsers !== 'boolean') {
+    return { ok: false, error: 'Choose whether the selected coupons are public or hidden.' };
+  }
+  if (input.ids.some((id) => typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/.test(id))) {
+    return { ok: false, error: 'One of the selected coupon IDs is not valid.' };
+  }
+  return { ok: true, ids: [...new Set(input.ids as string[])].sort(), showToAllUsers: input.showToAllUsers };
+}
 
 export const COUPON_NAME_LIMIT = 120;
 export const COUPON_DESCRIPTION_LIMIT = 500;
@@ -47,6 +73,9 @@ export interface CouponInput {
   allowWithSalePrice?: unknown;
   allowedCustomerGroups?: unknown;
   restrictedToEmails?: unknown;
+  showToAllUsers?: unknown;
+  assignedToEmails?: unknown;
+  assignedCustomerGroups?: unknown;
   productIds?: unknown;
   categoryIds?: unknown;
   brandIds?: unknown;
@@ -70,6 +99,10 @@ export interface CouponValues {
   allowWithSalePrice: boolean;
   allowedCustomerGroups: string[] | null;
   restrictedToEmails: string[] | null;
+  /** Undefined only for an omitted PATCH field; writes preserve the locked row. */
+  showToAllUsers?: boolean;
+  assignedToEmails?: string[];
+  assignedCustomerGroups?: string[];
   targets: CouponTarget[];
 }
 
@@ -113,7 +146,13 @@ function parseDate(value: unknown, label: string): Date | null | string {
 }
 
 /** Parse a staff form into the exact stored shape. */
-export function parseCouponInput(input: CouponInput): CouponParse {
+export function parseCouponInput(
+  input: CouponInput,
+  options: { preserveOmittedVisibility?: boolean } = {},
+): CouponParse {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { ok: false, error: 'Invalid coupon input.' };
+  }
   const code = normalizeCouponCode(input.code);
   if (!isValidCouponCode(code) || !COUPON_CODE_PATTERN.test(code)) {
     return { ok: false, error: `Enter a code. ${COUPON_CODE_HINT}` };
@@ -236,6 +275,34 @@ export function parseCouponInput(input: CouponInput): CouponParse {
     return { ok: false, error: 'One of the restricted email addresses is not valid.' };
   }
 
+  if (input.showToAllUsers !== undefined && typeof input.showToAllUsers !== 'boolean') {
+    return { ok: false, error: 'Show to all users must be true or false.' };
+  }
+  // Discovery assignments are separate from the unchanged redemption restrictions above.
+  const assignmentList = (raw: unknown): string[] | null => {
+    if (raw === undefined) return [];
+    if (typeof raw === 'string') return raw.trim() ? raw.trim().split(/[\s,;]+/) : [];
+    if (Array.isArray(raw) && raw.every((entry) => typeof entry === 'string')) return raw;
+    return null;
+  };
+  const assignmentEmails = assignmentList(input.assignedToEmails);
+  const assignmentGroups = assignmentList(input.assignedCustomerGroups);
+  if (!assignmentEmails || assignmentEmails.length > COUPON_MAX_EMAILS) {
+    return { ok: false, error: `Add at most ${COUPON_MAX_EMAILS} valid assignment email addresses.` };
+  }
+  if (!assignmentGroups || assignmentGroups.length > COUPON_MAX_GROUPS) {
+    return { ok: false, error: `Choose at most ${COUPON_MAX_GROUPS} assignment groups.` };
+  }
+  const assignedToEmails = [...new Set(assignmentEmails.map(normalizeEmail).filter(Boolean))];
+  if (assignedToEmails.some((email) => email.length > 254 || !EMAIL_PATTERN.test(email))) {
+    return { ok: false, error: 'One of the assignment email addresses is not valid.' };
+  }
+  const assignedCustomerGroups = [...new Set(assignmentGroups.map((group) => group.trim().toLowerCase()).filter(Boolean))];
+  if (assignedCustomerGroups.some((group) => !isCustomerGroup(group))) {
+    return { ok: false, error: `Choose assignment groups from ${CUSTOMER_GROUPS.join(', ')}.` };
+  }
+  const preserve = options.preserveOmittedVisibility === true;
+
   const productIds = idList(input.productIds);
   const categoryIds = idList(input.categoryIds);
   const brandIds = idList(input.brandIds);
@@ -276,6 +343,9 @@ export function parseCouponInput(input: CouponInput): CouponParse {
       allowWithSalePrice: boolValue(input.allowWithSalePrice),
       allowedCustomerGroups: groups.length > 0 ? groups : null,
       restrictedToEmails: emails.length > 0 ? emails : null,
+      ...(!preserve || input.showToAllUsers !== undefined ? { showToAllUsers: input.showToAllUsers === true } : {}),
+      ...(!preserve || input.assignedToEmails !== undefined ? { assignedToEmails } : {}),
+      ...(!preserve || input.assignedCustomerGroups !== undefined ? { assignedCustomerGroups } : {}),
       targets,
     },
   };
@@ -304,6 +374,9 @@ export function couponAuditSnapshot(values: {
   allowWithSalePrice: boolean;
   allowedCustomerGroups: string[] | null;
   restrictedToEmails: string[] | null;
+  showToAllUsers?: boolean;
+  assignedToEmails?: string[];
+  assignedCustomerGroups?: string[];
   targets: unknown[];
 }): Record<string, unknown> {
   return {
@@ -323,6 +396,9 @@ export function couponAuditSnapshot(values: {
     allowWithSalePrice: values.allowWithSalePrice,
     customerGroups: values.allowedCustomerGroups?.length ?? 0,
     restrictedEmails: values.restrictedToEmails?.length ?? 0,
+    showToAllUsers: values.showToAllUsers === true,
+    assignedEmails: values.assignedToEmails?.length ?? 0,
+    assignedCustomerGroups: values.assignedCustomerGroups?.length ?? 0,
     targets: values.targets.length,
   };
 }
@@ -345,6 +421,9 @@ export function couponAuditFromRow(row: {
   allowWithSalePrice: boolean;
   allowedCustomerGroups: string[] | null;
   restrictedToEmails: string[] | null;
+  showToAllUsers?: boolean;
+  assignedToEmails?: string[];
+  assignedCustomerGroups?: string[];
   targetCount: number;
 }): Record<string, unknown> {
   return couponAuditSnapshot({
@@ -364,6 +443,9 @@ export function couponAuditFromRow(row: {
     allowWithSalePrice: row.allowWithSalePrice,
     allowedCustomerGroups: row.allowedCustomerGroups,
     restrictedToEmails: row.restrictedToEmails,
+    showToAllUsers: row.showToAllUsers,
+    assignedToEmails: row.assignedToEmails,
+    assignedCustomerGroups: row.assignedCustomerGroups,
     targets: new Array(Math.max(0, row.targetCount)).fill(null),
   });
 }

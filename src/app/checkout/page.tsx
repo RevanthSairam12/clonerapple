@@ -1,27 +1,30 @@
 import { getUserSession } from '@/lib/user-auth';
 import { CheckoutForm } from '@/components/checkout/CheckoutForm';
-import { getProductFromDatabase } from '@/lib/payu/db-catalog';
+import { buildCartLineId } from '@/lib/cart/cart-id';
 import { parseCheckoutQuantity } from '@/lib/checkout/checkout-decision';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
-import { EMPTY_SHIPPING_POLICY } from '@/lib/checkout/shipping-rules';
+import { readSaleState } from '@/lib/storefront/sale-state';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
 import { getStorefrontRefs } from '@/lib/storefront/catalog';
 import Link from 'next/link';
+import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
+import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
 interface Props {
-  searchParams: Promise<{ productId?: string; qty?: string }>;
+  searchParams: Promise<{ productId?: string; variantId?: string; qty?: string }>;
 }
 
 export default async function CheckoutPage({ searchParams }: Props) {
   const session = await getUserSession();
   const settings = await readCustomerSettings();
   const checkoutConfiguration = await readCheckoutConfiguration();
-  const { products, saleLive } = await getStorefrontRefs();
-  const { productId: rawProductId, qty } = await searchParams;
+  const saleClock = await readSaleState();
+  const { products, saleLive } = await getStorefrontRefs(saleClock);
+  const { productId: rawProductId, variantId, qty } = await searchParams;
 
   // The same availability the bag and detail pages show. Checkout re-checks
   // under the stock row lock; this only stops an obviously unsellable order.
@@ -34,14 +37,14 @@ export default async function CheckoutPage({ searchParams }: Props) {
   // Customers → Customer settings. When it is off, an account is required.
   if (!session && !isOn(settings.guest_checkout)) {
     const returnUrl = rawProductId
-      ? `/checkout?productId=${encodeURIComponent(rawProductId)}${qty ? `&qty=${encodeURIComponent(qty)}` : ''}`
+      ? `/checkout?productId=${encodeURIComponent(rawProductId)}${variantId ? `&variantId=${encodeURIComponent(variantId)}` : ''}${qty ? `&qty=${encodeURIComponent(qty)}` : ''}`
       : '/checkout';
     redirect(`/auth?redirect=${encodeURIComponent(returnUrl)}`);
   }
 
   const productId = rawProductId;
   const parsedQty = parseCheckoutQuantity(qty);
-  const requestedProduct = productId ? await getProductFromDatabase(productId) : null;
+  const requestedProduct = productId ? products.find((product) => product.id.toLowerCase() === productId.trim().toLowerCase()) ?? null : null;
   // A productId in the URL that resolves to nothing is an unavailable state,
   // but only if the customer has nothing in their bag. The live bag is read on
   // the client; CheckoutForm applies that rule after hydration.
@@ -49,13 +52,16 @@ export default async function CheckoutPage({ searchParams }: Props) {
   let items = undefined;
 
   if (requestedProduct) {
+    const variant = requestedProduct.purchasableVariants?.find((entry) => entry.id === variantId);
     items = [
       {
-        id: requestedProduct.id,
-        name: requestedProduct.name,
-        price: requestedProduct.price,
-        ...(requestedProduct.regularPrice !== undefined
-          ? { regularPrice: requestedProduct.regularPrice }
+        id: buildCartLineId({ productId: requestedProduct.id, variantId }),
+        productId: requestedProduct.id, variantId, variantSku: variant?.sku, variantLabel: variant?.label,
+        name: requestedProduct.name + (variant ? ` (${variant.label})` : ''),
+        price: requestedProduct.pricePaise / 100,
+        image: requestedProduct.image,
+        ...(requestedProduct.regularPricePaise !== undefined
+          ? { regularPrice: requestedProduct.regularPricePaise! / 100 }
           : {}),
         quantity: parsedQty,
       },
@@ -63,8 +69,10 @@ export default async function CheckoutPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] py-10 px-4 sm:px-6 lg:px-8" style={{ fontFamily: 'transducer, sans-serif' }}>
-      <div className="max-w-4xl mx-auto mb-6 flex justify-between items-center text-sm">
+    <div className="gz-storefront-page min-h-screen bg-[#e8eaee]" style={{ fontFamily: 'transducer, sans-serif' }}>
+      <GlobalNav bannerVisible={false} />
+      <main className="px-4 py-10 sm:px-8">
+      <div className="max-w-6xl mx-auto mb-6 flex flex-wrap justify-between items-center gap-3 text-sm">
         <div className="flex items-center gap-3">
           <Link href="/cart" className="text-[#0071e3] hover:underline font-medium">
             ← Review Bag
@@ -75,7 +83,7 @@ export default async function CheckoutPage({ searchParams }: Props) {
           </Link>
         </div>
         {session ? (
-          <span className="text-[#86868b] text-xs">
+          <span className="min-w-0 break-words text-[#6e6e73] text-xs">
             Logged in as <strong className="text-[#1d1d1f]">{session.email}</strong>
           </span>
         ) : (
@@ -91,12 +99,16 @@ export default async function CheckoutPage({ searchParams }: Props) {
         productUnavailable={productUnavailable}
         productIdFromQuery={productId}
         marketingOptInEnabled={isOn(settings.checkout_marketing_optin)}
-        shippingPolicy={checkoutConfiguration.ok ? checkoutConfiguration.policy : EMPTY_SHIPPING_POLICY}
+        shippingPolicy={checkoutConfiguration.ok ? checkoutConfiguration.policy : null}
         paymentNote={checkoutConfiguration.ok ? checkoutConfiguration.settings.payment_note : ''}
         saleLive={saleLive}
+        initialProducts={products}
+        saleClock={{ enabled: saleClock.enabled, databaseNow: saleClock.databaseNow, startsAt: saleClock.startsAt, endsAt: saleClock.endsAt }}
         stockById={stockById}
         couponsEnabled={checkoutConfiguration.ok && isOn(checkoutConfiguration.settings.coupons_enabled)}
       />
+      </main>
+      <GlobalFooter />
     </div>
   );
 }

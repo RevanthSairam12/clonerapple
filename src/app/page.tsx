@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import { GadzioHomePage } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import type { HomePageOverrides } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import { getContent, getContentMany, getThemeSettings } from '@/lib/content';
+import { getStorefrontProducts } from '@/lib/catalog/storefront';
+import { normalizeHomepageSlots, resolveHomepageSlots } from '@/lib/website/homepage-products';
 
 /** Admin edits must appear without a rebuild, so render per-request. */
 export const dynamic = 'force-dynamic';
@@ -86,6 +88,16 @@ export default async function Home() {
   // UI Mode: 'new' (Modern Gadzio Storefront) or 'old' (Classic Apple clone)
   const uiMode: 'new' | 'old' = settings.homepageUiMode === 'old' ? 'old' : 'new';
 
+  const sections = [
+    ['gadzio.diwali_campaign', c.diwaliCampaign],
+    ['gadzio.crowd_favorites', c.crowdFavorites],
+  ] as const;
+  const ids = sections.flatMap(([key, value]) =>
+    (normalizeHomepageSlots(key, value).items as { productId: string }[])
+      .map(item => item.productId).filter(Boolean),
+  );
+  const products = await getStorefrontProducts([...new Set(ids)]);
+
   const overrides: HomePageOverrides = {
     trustBar: c.trustBar as HomePageOverrides['trustBar'],
     trustBarEnabled: (c.trustBar as { enabled?: boolean }).enabled !== false,
@@ -93,9 +105,9 @@ export default async function Home() {
     categoryGridEnabled: (c.categoryGrid as { enabled?: boolean }).enabled !== false,
     brandBar: c.brandBar as HomePageOverrides['brandBar'],
     brandBarEnabled: (c.brandBar as { enabled?: boolean }).enabled !== false,
-    diwaliCampaign: c.diwaliCampaign as HomePageOverrides['diwaliCampaign'],
+    diwaliCampaign: resolveHomepageSlots('gadzio.diwali_campaign', c.diwaliCampaign, products) as HomePageOverrides['diwaliCampaign'],
     diwaliCampaignEnabled: (c.diwaliCampaign as { enabled?: boolean }).enabled !== false,
-    crowdFavorites: c.crowdFavorites as HomePageOverrides['crowdFavorites'],
+    crowdFavorites: resolveHomepageSlots('gadzio.crowd_favorites', c.crowdFavorites, products) as HomePageOverrides['crowdFavorites'],
     crowdFavoritesEnabled: (c.crowdFavorites as { enabled?: boolean }).enabled !== false,
     reviews: c.reviews as HomePageOverrides['reviews'],
     reviewsEnabled: (c.reviews as { enabled?: boolean }).enabled !== false,

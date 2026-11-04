@@ -1,15 +1,13 @@
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { legacyAdminGone } from "@/lib/website/legacy-gone";
 
-import { assertSameOrigin } from '@/lib/platform/api-guard';
-import { logout, sessionCookie } from '@/lib/admin/auth';
-
-export async function POST(request: Request) {
-  const originViolation = assertSameOrigin(request);
-  if (originViolation) return originViolation;
-
-  await logout();
-  const store = await cookies();
-  store.delete(sessionCookie.name);
-  return NextResponse.json({ ok: true });
+function gone() {
+  return legacyAdminGone("/api/admin/auth/logout");
 }
+
+export const GET = gone;
+export const POST = gone;
+export const PUT = gone;
+export const PATCH = gone;
+export const DELETE = gone;
+export const HEAD = gone;
+export const OPTIONS = gone;

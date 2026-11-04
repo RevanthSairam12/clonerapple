@@ -17,11 +17,12 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..', '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -41,16 +42,20 @@ function connectionDetails() {
   };
 }
 
-export const skip = !process.env.DATABASE_URL
+export const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 export function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -84,8 +89,6 @@ export const TABLES = [
   'order_status_history',
   'stock_movements',
   'store_settings',
-  'waiting_list_entries',
-  'stock_reservations',
   'refund_obligations',
 ];
 
@@ -94,19 +97,57 @@ export function suffix() {
 }
 
 export async function openSchema(a, schema) {
-  await a.unsafe(`create schema "${schema}"`);
-  for (const table of TABLES) {
-    await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-  }
-  await a.unsafe(`set search_path to "${schema}"`);
+  await createFixtureSchema(a, schema, TABLES);
+  // Reconcile records a timeline even with sideEffects:false. Keep this local
+  // as migration 0047 may not have been deployed on the source database.
+  await a.unsafe(`create table "${schema}".payment_events (
+    id bigint generated always as identity primary key,
+    order_id text not null,
+    txnid text not null,
+    source text not null,
+    payu_status text not null default '',
+    outcome text not null,
+    reason text not null default '',
+    created_at timestamptz not null default now()
+  )`);
+  await a.unsafe(`alter table "${schema}".payment_events enable row level security`);
+  // Retired tables need not exist on the source deployment. Keep only the
+  // local contracts exercised by the one-time hold cleanup regression.
+  await a.unsafe(`create table "${schema}".waiting_list_entries (
+    id text primary key,
+    product_id text not null,
+    user_id text not null,
+    status text not null default 'ACTIVE'
+      check (status in ('ACTIVE', 'INVITED', 'PURCHASED', 'EXPIRED', 'CANCELLED')),
+    invited_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  )`);
+  await a.unsafe(`alter table "${schema}".waiting_list_entries enable row level security`);
+  await a.unsafe(`create table "${schema}".stock_reservations (
+    id text primary key,
+    product_id text not null,
+    user_id text not null,
+    waiting_list_entry_id text,
+    quantity integer not null default 1 check (quantity > 0),
+    status text not null default 'HELD'
+      check (status in ('HELD', 'CLAIMED', 'EXPIRED', 'CANCELLED')),
+    token_hash text not null unique,
+    expires_at timestamptz not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  )`);
+  await a.unsafe(`alter table "${schema}".stock_reservations enable row level security`);
   const pinned = await a`show search_path`;
   assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 }
 
 export async function closeSchema(a, schema) {
-  await a.unsafe('set search_path to public');
-  await a.unsafe(`drop schema if exists "${schema}" cascade`);
-  await a.end();
+  try {
+    await dropFixtureSchema(a, schema);
+  } finally {
+    await a.end({ timeout: 5 });
+  }
 }
 
 export async function addProduct(a, { categoryId, productId, stockId, quantity }) {

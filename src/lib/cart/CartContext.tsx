@@ -2,8 +2,18 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { buildCartLineId, normalizeCartLineId } from './cart-id';
+import { verifyAvailabilityLines } from '@/lib/storefront/use-availability';
+import { verifySelections, priceNeedsReview, type SelectionPrice } from '@/lib/storefront/selection';
+
+export type AddItemResult =
+  | { status: 'added' }
+  | { status: 'price_changed'; price: SelectionPrice; message: string }
+  | { status: 'unavailable' | 'verification_failed' | 'invalid_quantity' | 'stale'; message: string };
 
 export interface CartItem {
+  variantId?: string;
+  variantSku?: string;
+  variantLabel?: string;
   id: string; // Composite key: `${productId}::${color || ''}::${model || ''}`
   productId: string;
   name: string;
@@ -27,6 +37,7 @@ export type CartItemInput = Omit<CartItem, 'id' | 'quantity'> & {
 
 /** An authoritative price for one product, in integer paise. */
 export interface CartPriceUpdate {
+  variantId?: string;
   /** The product id (any line id is normalised to its base id). */
   id: string;
   unitPaise: number;
@@ -36,8 +47,9 @@ export interface CartPriceUpdate {
 interface CartContextValue {
   items: CartItem[];
   totalCount: number;
+  stockNotice: string | null;
   totalAmount: number;
-  addItem: (item: CartItemInput) => void;
+  addItem: (item: CartItemInput, options?: { signal?: AbortSignal }) => Promise<AddItemResult>;
   removeItem: (id: string) => void;
   updateQuantity: (id: string, qty: number) => void;
   /**
@@ -95,7 +107,7 @@ function migrateStoredItems(value: unknown): CartItem[] {
       const normalized = normalizeCartLineId(item.id || item.productId);
       return {
         ...item,
-        id: item.id || normalized.baseId || '',
+        id: item.variantId ? buildCartLineId({ productId: item.productId || normalized.baseId || '', variantId: item.variantId }) : item.id || normalized.baseId || '',
         productId: item.productId || normalized.baseId || '',
         color: item.color || normalized.color,
         model: item.model || normalized.model,
@@ -150,6 +162,15 @@ const CartContext = createContext<CartContextValue | null>(null);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
+  const [stockNotice, setStockNotice] = useState<string | null>(null);
+  const currentItems = React.useRef(items);
+  const quantityGeneration = React.useRef(0);
+  // Synchronous source updates prevent a second completion from overwriting a commit.
+  const commitItems = useCallback((next: CartItem[]) => {
+    quantityGeneration.current += 1;
+    currentItems.current = next;
+    setItems(next);
+  }, []);
   const [isBagOpen, setIsBagOpen] = useState(false);
   const [lastAddedItem, setLastAddedItem] = useState<CartItem | null>(null);
   const [badgeBouncing, setBadgeBouncing] = useState(false);
@@ -162,7 +183,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (raw === null) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        setItems(migrateStoredItems(parsed));
+        commitItems(migrateStoredItems(parsed));
       }
     } catch {
       // ignore JSON errors
@@ -193,11 +214,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         value = readLegacyCart();
         if (value !== null) retireLegacyCart(value);
       }
+      if (e.key === STORAGE_KEY && value === null) { commitItems([]); return; }
       if (value === null) return;
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) {
-           setItems(migrateStoredItems(parsed));
+           commitItems(migrateStoredItems(parsed));
         }
       } catch {
         // ignore
@@ -212,70 +234,68 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => setBadgeBouncing(false), 800);
   }, []);
 
-  const addItem = useCallback(
-    (input: CartItemInput) => {
-      const normalizedProductId = normalizeCartLineId(input.productId).baseId;
-      if (!normalizedProductId) return;
-      const lineId = input.id || buildCartLineId({
-        productId: normalizedProductId,
-        color: input.color,
-        model: input.model,
-      });
-      const qtyToAdd = input.quantity && input.quantity > 0 ? input.quantity : 1;
-
-      setItems((prev) => {
-        const existingIdx = prev.findIndex((i) => i.id === lineId);
-        if (existingIdx >= 0) {
-          const updated = [...prev];
-          const curr = updated[existingIdx];
-          const newQty = curr.quantity + qtyToAdd;
-          updated[existingIdx] = {
-            ...curr,
-            quantity: newQty,
-          };
-          setLastAddedItem(updated[existingIdx]);
-          return updated;
-        }
-
-        const newItem: CartItem = {
-          id: lineId,
-           productId: normalizedProductId,
-          name: input.name,
-          subtitle: input.subtitle,
-          price: input.price,
-          priceDisplay: input.priceDisplay || `₹${input.price.toLocaleString('en-IN')}`,
-          regularPrice: input.regularPrice,
-          wasPriceDisplay: input.wasPriceDisplay,
-          image: input.image,
-          color: input.color,
-          model: input.model,
-          quantity: qtyToAdd,
-           href: input.href || `/shop/product/${encodeURIComponent(normalizedProductId)}`,
-        };
-
-        setLastAddedItem(newItem);
-        return [newItem, ...prev];
-      });
-
-      triggerBadgeBounce();
-      setIsBagOpen(true);
-    },
-    [triggerBadgeBounce]
-  );
+  const addItem = useCallback(async (input: CartItemInput, options?: { signal?: AbortSignal }): Promise<AddItemResult> => {
+    const ticket = ++quantityGeneration.current;
+    const source = currentItems.current;
+    const productId = normalizeCartLineId(input.productId).baseId;
+    const quantity = input.quantity ?? 1;
+    const reject = (result: Exclude<AddItemResult, { status: 'added' }>): AddItemResult => {
+      setStockNotice(result.message);
+      return result;
+    };
+    if (options?.signal?.aborted) return { status: 'stale', message: 'Selection changed. Please try again.' };
+    if (!productId || (input.variantId !== undefined && (typeof input.variantId !== 'string' || !input.variantId.trim() || input.variantId.length > 256)) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 50) {
+      return reject({ status: 'invalid_quantity', message: 'Choose a whole quantity between 1 and 50.' });
+    }
+    const id = (!input.variantId && input.id) || buildCartLineId({ productId, variantId: input.variantId, color: input.color, model: input.model });
+    const existing = source.find(item => item.id === id);
+    const addition: CartItem = { ...input, id, productId, quantity: (existing?.quantity ?? 0) + quantity,
+      href: input.href || `/shop/product/${encodeURIComponent(productId)}` };
+    const prospective = existing ? source.map(item => item.id === id ? addition : item) : [addition, ...source];
+    if (prospective.length > 50 || prospective.some(item => !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 50)) {
+      return reject({ status: 'invalid_quantity', message: 'Review your bag: up to 50 lines and 1–50 units per line.' });
+    }
+    setStockNotice(null);
+    const checked = await verifySelections(prospective.map(item => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity })), options?.signal);
+    if (ticket !== quantityGeneration.current || currentItems.current !== source || options?.signal?.aborted) {
+      return { status: 'stale', message: 'Your bag or selection changed. Please try again.' };
+    }
+    if (checked.status !== 'ready') return reject(checked);
+    const selectedPrice = checked.prices[prospective.findIndex(item => item.id === id)];
+    if (priceNeedsReview(input, selectedPrice)) {
+      return reject({ status: 'price_changed', price: selectedPrice, message: 'The price changed. Review the updated price, then add again.' });
+    }
+    const next = prospective.map((item, index) => ({ ...item, ...checked.prices[index] }));
+    commitItems(next);
+    setLastAddedItem(next.find(item => item.id === id)!);
+    triggerBadgeBounce();
+    setIsBagOpen(true);
+    return { status: 'added' };
+  }, [commitItems, triggerBadgeBounce]);
 
   const removeItem = useCallback((id: string) => {
-    setItems((prev) => prev.filter((i) => i.id !== id));
-  }, []);
+    commitItems(currentItems.current.filter((i) => i.id !== id));
+  }, [commitItems]);
 
-  const updateQuantity = useCallback((id: string, qty: number) => {
-    if (qty <= 0) {
-      setItems((prev) => prev.filter((i) => i.id !== id));
-    } else {
-      setItems((prev) =>
-        prev.map((i) => (i.id === id ? { ...i, quantity: Math.min(qty, 50) } : i))
-      );
+  const updateQuantity = useCallback(async (id: string, qty: number) => {
+    const ticket = ++quantityGeneration.current;
+    if (!Number.isSafeInteger(qty) || qty > 50) return;
+    const source = currentItems.current;
+    const item = source.find((entry) => entry.id === id);
+    if (!item) return;
+    setStockNotice(null);
+    if (qty > item.quantity) {
+      const valid = await verifyAvailabilityLines(source.map((entry) => ({ productId: entry.productId,
+        variantId: entry.variantId, quantity: entry.id === id ? qty : entry.quantity })));
+      if (ticket !== quantityGeneration.current || currentItems.current !== source) return;
+      if (valid !== true) {
+        setStockNotice(valid === false ? 'Stock not available for the requested quantity.' : 'Could not verify stock. Please try again.');
+        return;
+      }
     }
-  }, []);
+    commitItems(qty <= 0 ? source.filter((entry) => entry.id !== id)
+      : source.map((entry) => entry.id === id ? { ...entry, quantity: qty } : entry));
+  }, [commitItems]);
 
   const syncPrices = useCallback((updates: CartPriceUpdate[]) => {
     if (!Array.isArray(updates) || updates.length === 0) return;
@@ -285,15 +305,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (!baseId) continue;
       const unitPaise = Number(update.unitPaise);
       if (!Number.isSafeInteger(unitPaise) || unitPaise < 0) continue;
-      byId.set(baseId.toLowerCase(), { ...update, unitPaise });
+      byId.set(JSON.stringify([baseId.toLowerCase(), update.variantId || null]), { ...update, unitPaise });
     }
     if (byId.size === 0) return;
 
-    setItems((prev) => {
+    {
       let changed = false;
-      const next = prev.map((item) => {
+      const next = currentItems.current.map((item) => {
         const baseId = normalizeCartLineId(item.productId || item.id).baseId;
-        const update = baseId ? byId.get(baseId.toLowerCase()) : undefined;
+        const update = baseId ? byId.get(JSON.stringify([baseId.toLowerCase(), item.variantId || null])) : undefined;
         if (!update) return item;
 
         const price = update.unitPaise / 100;
@@ -320,12 +340,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             : undefined,
         };
       });
-      return changed ? next : prev;
-    });
-  }, []);
+      if (changed) commitItems(next);
+    }
+  }, [commitItems]);
 
   const clearCart = useCallback(() => {
-    setItems([]);
+    commitItems([]);
     try {
       localStorage.removeItem(STORAGE_KEY);
       // Also drop the pre-rename key: otherwise a cart that was never migrated
@@ -334,7 +354,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore
     }
-  }, []);
+  }, [commitItems]);
 
   const toggleBag = useCallback(() => {
     setIsBagOpen((open) => !open);
@@ -352,6 +372,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     () => ({
       items,
       totalCount,
+      stockNotice,
       totalAmount,
       addItem,
       removeItem,
@@ -368,6 +389,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     [
       items,
       totalCount,
+      stockNotice,
       totalAmount,
       addItem,
       removeItem,

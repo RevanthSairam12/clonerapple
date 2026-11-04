@@ -14,11 +14,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -38,16 +39,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -62,22 +67,24 @@ const { updateStockSettingsUsing } = await jiti.import(
   path.join(root, 'src/lib/store-admin/catalog-crud.ts'),
 );
 
-const TABLES = ['categories', 'products', 'stock', 'stock_movements'];
+const TABLES = ['categories', 'products', 'stock', 'stock_movements', 'store_admin_audit'];
 
 test('inventory controls are rendered on the product, stock and product-list pages', async () => {
   const productPage = await readFile(
     path.join(root, 'src/app/(store-admin)/store-admin/(protected)/products/[id]/page.tsx'),
     'utf8',
   );
-  assert.match(productPage, /<ProductInventoryCard/);
+  assert.match(productPage, /<Product(?:InventoryCard|Workflow)/);
 
   const card = await readFile(
     path.join(root, 'src/components/store-admin/ProductInventoryCard.tsx'),
     'utf8',
   );
-  assert.match(card, /Track inventory/);
-  assert.match(card, /Low-stock threshold/);
-  assert.match(card, /Adjust stock/);
+  assert.match(card, /Limit my stock/);
+  assert.match(card, /Warn me when below/);
+  assert.match(card, /Add or remove stock/);
+  assert.match(card, /Held in checkouts/);
+  assert.match(card, /Available to buy/);
   assert.match(card, /can be oversold/i);
   assert.match(card, /window\.confirm/);
 
@@ -86,15 +93,40 @@ test('inventory controls are rendered on the product, stock and product-list pag
     'utf8',
   );
   assert.match(stockPage, /filter=tracking-off/);
-  assert.match(stockPage, /Tracked/);
-  assert.match(stockPage, />\s*Adjust\s*</);
+  assert.match(stockPage, /Limit my stock/);
+  assert.match(stockPage, />\s*Add or remove stock\s*</);
 
   const productsPage = await readFile(
     path.join(root, 'src/app/(store-admin)/store-admin/(protected)/products/page.tsx'),
     'utf8',
   );
-  assert.match(productsPage, /Can be oversold/);
-  assert.match(productsPage, /trackInventory/);
+  assert.match(productsPage, /catalogStockLabel\(product\)/);
+  assert.match(productsPage, /Set stock/);
+  assert.match(productsPage, /stockStatus/);
+  const catalog = await readFile(path.join(root, 'src/lib/store-admin/catalog.ts'), 'utf8');
+  assert.match(catalog, /export function catalogStockLabel\(/);
+  for (const label of ['Not limited', 'Out of stock', 'Stock setup needed', 'Mixed stock limits']) {
+    assert.ok(catalog.includes(label), `catalog stock label includes ${label}`);
+  }
+});
+
+test('stock terminology is consistent across inventory, CSV help, sale and POS displays', async () => {
+  const source = async (file) => readFile(path.join(root, file), 'utf8');
+  for (const file of [
+    'src/components/store-admin/StockControls.tsx',
+    'src/components/store-admin/VariantEditor.tsx',
+    'src/app/(store-admin)/store-admin/(protected)/low-stock/page.tsx',
+  ]) {
+    const text = await source(file);
+    assert.match(text, /Warn me when below/, file);
+    assert.doesNotMatch(text, /Track inventory|On hand|Reserved|Low-stock threshold|Adjust stock/, file);
+  }
+  const help = await source('src/components/store-admin/CatalogTransfer.tsx');
+  assert.match(help, /Units held in checkouts are never imported/);
+  assert.match(help, /<code>confirm_tracking<\/code>/);
+  assert.match(help, /<code>inventory_variants<\/code>/);
+  assert.match(await source('src/app/(store-admin)/store-admin/(protected)/sale/page.tsx'), /Available to buy/);
+  assert.match(await source('src/components/store-admin/PosTill.tsx'), /Not limited/);
 });
 
 test('stock writes stay behind the admin guards', async () => {
@@ -115,11 +147,7 @@ test('tracking on without a stock row needs an opening count and records it', { 
   const sql = client();
 
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
     const pinned = await sql`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is not pinned');
 
@@ -170,6 +198,18 @@ test('tracking on without a stock row needs an opening count and records it', { 
     assert.equal(String(movements[0].reason), 'receipt');
     assert.match(String(movements[0].note), /opening count/i);
 
+    const audits = await sql`
+      select actor_id, action, entity_id, before, after
+      from store_admin_audit where entity_id = ${productId} order by id
+    `;
+    assert.equal(audits.length, 1, 'the opening balance and its audit commit together');
+    assert.equal(audits[0].actor_id, 'integration-owner');
+    assert.equal(audits[0].action, 'catalog.stock.settings');
+    assert.deepEqual(audits[0].before, { onHand: 0, reserved: 0, trackInventory: false });
+    assert.deepEqual(audits[0].after, {
+      onHand: 7, reserved: 0, trackInventory: true, lowStockThreshold: 2,
+    });
+
     const productRows = await sql`select in_stock from products where id = ${productId}`;
     assert.equal(Boolean(productRows[0].in_stock), true);
 
@@ -201,8 +241,7 @@ test('tracking on without a stock row needs an opening count and records it', { 
     assert.equal(Boolean(offRows[0].in_stock), true);
   } finally {
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(sql, schema);
     } catch (error) {
       console.warn('[inventory-controls] cleanup did not finish:', error?.message ?? error);
     }

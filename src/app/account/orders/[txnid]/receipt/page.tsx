@@ -2,16 +2,65 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AccountFrame } from '@/components/account/AccountFrame';
 import { PrintButton } from '@/components/account/PrintButton';
+import { OrderDocument } from '@/components/orders/OrderDocument';
 import { requireAccountPageSession } from '@/lib/account/auth';
-import { RECEIPT_TRADE_NAME } from '@/lib/account/config';
 import { getCustomerOrderDetail } from '@/lib/account/orders';
+import { getCustomerDocumentState } from '@/lib/orders/document-data';
+import { parseCustomerDocumentMode } from '@/lib/orders/document-policy';
+import { orderTotals } from '@/lib/store-admin/order-documents';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AccountReceiptPage({ params }: { params: Promise<{ txnid: string }> }) {
+export default async function AccountReceiptPage({ params, searchParams }: {
+  params: Promise<{ txnid: string }>;
+  searchParams: Promise<{ document?: string | string[] }>;
+}) {
   const { txnid } = await params;
-  const session = await requireAccountPageSession(`/account/orders/${encodeURIComponent(txnid)}/receipt`);
+  const mode = parseCustomerDocumentMode((await searchParams).document);
+  const suffix = mode === 'invoice' || mode === 'receipt' ? `?document=${mode}` : '';
+  const session = await requireAccountPageSession(`/account/orders/${encodeURIComponent(txnid)}/receipt${suffix}`);
   const order = await getCustomerOrderDetail(session.userId, txnid);
   if (!order) notFound();
-  return <AccountFrame session={session} active="/account/orders"><div className="mx-auto max-w-3xl"><div className="mb-4 flex justify-between gap-3 print:hidden"><Link href={`/account/orders/${encodeURIComponent(order.txnid)}`} className="text-sm font-semibold text-[#0071e3]">← Back to order</Link><PrintButton /></div><article className="rounded-3xl border border-[#e5e5ea] bg-white p-6 shadow-sm sm:p-10"><div className="flex flex-col justify-between gap-5 border-b border-[#e5e5ea] pb-6 sm:flex-row"><div><p className="text-sm text-[#6e6e73]">{RECEIPT_TRADE_NAME}</p><h1 className="mt-1 text-3xl font-semibold">Receipt / Bill of Supply</h1><p className="mt-2 text-sm text-[#6e6e73]">Order {order.txnid}</p></div><div className="text-sm sm:text-right"><p>{order.createdAt.toLocaleDateString('en-IN')}</p><p className="mt-1 font-semibold">{order.paymentStatus}</p></div></div><div className="mt-8 divide-y divide-[#e5e5ea]">{order.items.map((item) => <div key={item.id} className="flex justify-between gap-4 py-3 text-sm"><span>{item.name} × {item.quantity}</span><span className="font-semibold">₹{item.totalPrice.toLocaleString('en-IN')}</span></div>)}</div><div className="mt-5 space-y-2 border-t border-[#e5e5ea] pt-5 text-sm"><div className="flex justify-between"><span className="text-[#6e6e73]">Subtotal</span><span>₹{(order.subtotalPaise / 100).toLocaleString('en-IN')}</span></div>{order.discountPaise > 0 && <div className="flex justify-between text-emerald-700"><span>Discount{order.couponCode ? ` (${order.couponCode})` : ''}</span><span>−₹{(order.discountPaise / 100).toLocaleString('en-IN')}</span></div>}<div className="flex justify-between"><span className="text-[#6e6e73]">Shipping</span><span>{order.shippingPaise === 0 ? 'Free' : `₹${(order.shippingPaise / 100).toLocaleString('en-IN')}`}</span></div><div className="mt-3 flex justify-between text-lg font-semibold"><span>Total</span><span>₹{order.amount.toLocaleString('en-IN')}</span></div></div><p className="mt-8 text-sm text-[#6e6e73]">This receipt is provided for your records. Gadzio is not GST-registered and this is not a tax invoice. Need help? <Link href="/support" className="font-semibold text-[#0071e3] print:hidden">Contact support</Link></p></article></div></AccountFrame>;
+  if (mode === null) notFound();
+  // Ownership is established first. Gate explicit invoice access before constructing
+  // any address/item/totals document DTO; never substitute a receipt in this mode.
+  const state = await getCustomerDocumentState(order.id, mode);
+  const back = <Link href={`/account/orders/${encodeURIComponent(order.txnid)}`} className="text-sm font-semibold text-[#0071e3]">← Back to order</Link>;
+  if ((mode === 'invoice' && !state.canViewInvoice) || !state.canViewBill) {
+    return <AccountFrame session={session} active="/account/orders">
+      <div className="mx-auto max-w-4xl space-y-5">
+        {back}
+        <section className="rounded-3xl border border-[#e5e5ea] bg-white p-6" aria-label="Document unavailable">
+          <h1 className="text-2xl font-semibold">Document unavailable</h1>
+          <p className="mt-3 text-sm text-[#6e6e73]">This document is not available for the current order and payment state.</p>
+        </section>
+      </div>
+    </AccountFrame>;
+  }
+  const address = order.address ? {
+    type: 'shipping', fullName: order.address.name, phone: order.address.phone,
+    line1: order.address.line1, line2: order.address.line2 || null,
+    city: order.address.city, state: order.address.state,
+    postalCode: order.address.pincode, country: 'IN',
+  } : null;
+  const items = order.items.map((item, index) => ({
+    lineNumber: index + 1, productName: item.name, productId: item.id,
+    variantId: item.variantId, variantSku: item.variantSku, variantLabel: item.variantLabel,
+    quantity: item.quantity, unitPricePaise: Math.round(item.unitPrice * 100),
+    lineTotalPaise: Math.round(item.totalPrice * 100), currency: order.currency,
+  }));
+  const totals = orderTotals({ ...order, items });
+
+  return <AccountFrame session={session} active="/account/orders">
+    <div className="mx-auto max-w-4xl space-y-5">
+      <div className="mb-4 flex justify-between gap-3 print:hidden">
+        {back}
+        <PrintButton />
+      </div>
+      <OrderDocument customer state={state} totals={totals} order={{
+        txnid: order.txnid, createdAt: order.createdAt.toISOString(), currency: order.currency,
+        couponCode: order.couponCode, shipTo: address, items,
+      }} />
+    </div>
+  </AccountFrame>;
 }

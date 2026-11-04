@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/platform/db';
+import { hasShipmentStarted } from '@/lib/orders/fulfilment';
 import { validateHttpsTrackingUrl } from '@/lib/store-admin/delivery';
 import { isSaleState, type SaleState } from '@/lib/store-admin/orders';
 
@@ -31,12 +32,18 @@ export interface CustomerStatusDelivery {
   trackingUrl: string | null;
   scheduledFor: string | null;
   deliverySlot: string | null;
+  deliveredAt: string | null;
 }
 
 export interface CustomerStatusData {
   id: string;
   txnid: string;
+  /** Display number; null for orders created before numbering shipped. */
+  orderNumber: number | null;
   userId: string | null;
+  /** Order total in integer paise. Safe to show without the full order. */
+  totalPaise: number;
+  currency: string;
   saleState: SaleState;
   paymentStatus: string;
   fulfilmentStatus: string;
@@ -73,6 +80,7 @@ export async function getCustomerOrderStatus(
       select s.id, s.txnid, o.user_id, s.sale_state, s.status,
              s.fulfilment_status, s.channel, s.delivery_slot,
              s.created_at, s.updated_at,
+             o.order_number, o.total_paise, o.amount, o.currency,
              o.reservation_state, o.reservation_expires_at,
              o.reservation_released_reason, o.payment_review_required,
              o.processing_deadline
@@ -88,7 +96,7 @@ export async function getCustomerOrderStatus(
       sql`
         select d.status, d.delivery_method, d.courier_name, d.carrier,
                d.tracking_number, d.tracking_url,
-               d.scheduled_for, latest.details as latest_details
+               d.scheduled_for, d.delivered_at, latest.details as latest_details
         from order_deliveries d
         left join lateral (
           select details
@@ -108,7 +116,13 @@ export async function getCustomerOrderStatus(
       `,
     ]);
 
-    const deliveryRow = (deliveryRows as Row[])[0];
+    const history = (historyRows as Row[]).map((row) => ({
+      domain: text(row.domain),
+      toStatus: text(row.to_status),
+      createdAt: iso(row.created_at),
+    }));
+    const shipmentStarted = hasShipmentStarted(order.fulfilment_status, history);
+    const deliveryRow = shipmentStarted ? (deliveryRows as Row[])[0] : undefined;
     let details: Record<string, unknown> = {};
     if (deliveryRow?.latest_details && typeof deliveryRow.latest_details === 'object') {
       details = deliveryRow.latest_details as Record<string, unknown>;
@@ -126,17 +140,26 @@ export async function getCustomerOrderStatus(
       : details.method === 'self' || details.method === 'courier' ? details.method : null;
     const trackingUrl = validateHttpsTrackingUrl(deliveryRow?.tracking_url ?? details.trackingUrl);
 
+    const orderNumber = Number(order.order_number);
+    const totalPaise = Math.max(
+      0,
+      Math.round(Number(order.total_paise ?? Number(order.amount ?? 0) * 100)),
+    );
+
     return {
       ok: true,
       data: {
         id: text(order.id),
         txnid: text(order.txnid),
+        orderNumber: Number.isSafeInteger(orderNumber) && orderNumber > 0 ? orderNumber : null,
         userId: nullableText(order.user_id),
+        totalPaise,
+        currency: text(order.currency) || 'INR',
         saleState: isSaleState(order.sale_state) ? order.sale_state : 'PENDING',
         paymentStatus: text(order.status),
         fulfilmentStatus: text(order.fulfilment_status) || 'PENDING',
         channel: text(order.channel) || 'web',
-        deliverySlot: nullableText(order.delivery_slot),
+        deliverySlot: shipmentStarted ? nullableText(order.delivery_slot) : null,
         reservationState: text(order.reservation_state) || 'NONE',
         reservationExpiresAt: nullableIso(order.reservation_expires_at),
         reservationReleasedReason: text(order.reservation_released_reason),
@@ -148,18 +171,15 @@ export async function getCustomerOrderStatus(
           ? {
               method,
               status: text(deliveryRow.status) || 'PENDING',
-               carrier: nullableText(deliveryRow.courier_name) ?? nullableText(deliveryRow.carrier),
+              carrier: nullableText(deliveryRow.courier_name) ?? nullableText(deliveryRow.carrier),
               trackingNumber: nullableText(deliveryRow.tracking_number),
-               trackingUrl,
+              trackingUrl,
               scheduledFor: nullableIso(deliveryRow.scheduled_for),
               deliverySlot: nullableText(details.deliverySlot) || nullableText(order.delivery_slot),
+              deliveredAt: nullableIso(deliveryRow.delivered_at),
             }
           : null,
-        history: (historyRows as Row[]).map((row) => ({
-          domain: text(row.domain),
-          toStatus: text(row.to_status),
-          createdAt: iso(row.created_at),
-        })),
+        history,
       },
     };
   } catch {

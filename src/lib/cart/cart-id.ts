@@ -7,6 +7,7 @@ export interface NormalizedCartLineId {
 }
 
 export interface CartLineVariantInput {
+  variantId?: string;
   productId: string;
   color?: string;
   model?: string;
@@ -51,8 +52,9 @@ export function normalizeCartLineId(
 
   const compositeParts = rawId.split('::').map((part) => part.trim());
   const rawBase = (compositeParts[0] || '').toLowerCase();
-  const color = cleanPart(compositeParts[1]);
-  const model = cleanPart(compositeParts[2]);
+  const commerceLine = compositeParts[1] === 'variant';
+  const color = commerceLine ? undefined : cleanPart(compositeParts[1]);
+  const model = commerceLine ? undefined : cleanPart(compositeParts[2]);
   const variantParts = [color, model].filter((part): part is string => Boolean(part));
 
   if (!rawBase) {
@@ -83,6 +85,7 @@ export function normalizeCartLineId(
 export function buildCartLineId(input: CartLineVariantInput): string {
   const productId = normalizeCartLineId(input.productId).baseId?.toLowerCase();
   if (!productId) return '';
+  if (input.variantId?.trim()) return `${productId}::variant::${encodeURIComponent(input.variantId.trim())}`;
   return `${productId}::${input.color?.trim() || ''}::${input.model?.trim() || ''}`;
 }
 

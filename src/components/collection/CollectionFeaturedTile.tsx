@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import type { CollectionProduct } from './types';
+import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
 import { useCart } from '@/lib/cart/CartContext';
 import { formatINR } from '@/lib/utils';
 
@@ -12,15 +13,18 @@ export interface CollectionFeaturedTileProps {
   saleLive?: boolean;
 }
 
-export function CollectionFeaturedTile({ product, saleLive = false }: CollectionFeaturedTileProps) {
-  const [isAdded, setIsAdded] = useState(false);
+export function CollectionFeaturedTile({ product: sourceProduct, saleLive = false }: CollectionFeaturedTileProps) {
+  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, '', sourceProduct.inventoryMode, sourceProduct.price, sourceProduct.regularPrice]));
+  const { added: isAdded, pending, notice } = purchase;
+  const product = { ...sourceProduct, ...purchase.priceOverride };
   const { addItem } = useCart();
 
-  const handleQuickAdd = (e: React.MouseEvent) => {
+  const handleQuickAdd = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (product.inventoryMode === 'variant') return;
 
-    addItem({
+    await purchase.run((signal) => addItem({
       productId: product.id,
       name: product.name,
       subtitle: product.subtitle,
@@ -30,10 +34,8 @@ export function CollectionFeaturedTile({ product, saleLive = false }: Collection
       regularPrice: product.regularPrice,
       image: product.image,
       href: product.href,
-    });
+    }, { signal }));
 
-    setIsAdded(true);
-    setTimeout(() => setIsAdded(false), 1500);
   };
 
   const isOutOfStock = !saleLive && product.inStock === false;
@@ -87,11 +89,15 @@ export function CollectionFeaturedTile({ product, saleLive = false }: Collection
                   {product.wasPriceDisplay}
                 </s>
               ) : null}
-              {formatINR(product.price)}
+              {product.priceDisplay || formatINR(product.price)}
             </span>
 
             <div className="flex items-center gap-3">
-              <button
+              {product.inventoryMode === 'variant' ? (
+                <Link href={product.href} className="min-h-[44px] px-6 rounded-full font-semibold text-sm inline-flex items-center bg-[#1d1d1f] text-white hover:bg-[#333336]" aria-label={`Choose options for ${product.name}`}>
+                  Choose options
+                </Link>
+              ) : <button
                 type="button"
                 className={`min-h-[44px] px-6 rounded-full font-semibold text-sm transition-all duration-200 cursor-pointer ${
                   isOutOfStock
@@ -101,11 +107,11 @@ export function CollectionFeaturedTile({ product, saleLive = false }: Collection
                     : 'bg-[#1d1d1f] text-white hover:bg-[#333336]'
                 }`}
                 onClick={handleQuickAdd}
-                disabled={isOutOfStock}
+                disabled={pending || isOutOfStock || product.priceUnavailable}
                 aria-label={`Quick add ${product.name} to bag`}
               >
-                {isOutOfStock ? 'Sold Out' : isAdded ? 'Added to Bag ✓' : 'Add to Bag'}
-              </button>
+                {isOutOfStock ? 'Sold Out' : isAdded ? 'Added to Bag ✓' : pending ? 'Checking…' : 'Add to Bag'}
+              </button>}
 
               <Link
                 href={product.href}
@@ -116,6 +122,7 @@ export function CollectionFeaturedTile({ product, saleLive = false }: Collection
             </div>
           </div>
         </div>
+      {notice && <p role="alert" className="relative z-20 mt-2 text-xs text-[#b42318]">{notice}</p>}
       </div>
     </div>
   );

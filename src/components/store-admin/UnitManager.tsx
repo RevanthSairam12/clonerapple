@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import type { CatalogUnit } from '@/lib/store-admin/catalog';
 
@@ -59,7 +60,9 @@ function fromApi(unit: ApiUnit, attributeCount: number): CatalogUnit {
  * a unit that disappears would leave the value unreadable.
  */
 export function UnitManager({ initialUnits, canEdit }: Props) {
+  const router = useRouter();
   const [units, setUnits] = useState<CatalogUnit[]>(initialUnits);
+  useEffect(() => setUnits(initialUnits), [initialUnits]);
   const [form, setForm] = useState<UnitForm>(emptyForm);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -111,6 +114,7 @@ export function UnitManager({ initialUnits, canEdit }: Props) {
           : [...current, saved];
       });
       setNotice(body.created ? 'Unit created.' : 'Unit saved.');
+      router.refresh();
       setEditing(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save this unit.');

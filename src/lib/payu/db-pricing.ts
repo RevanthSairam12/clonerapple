@@ -9,6 +9,27 @@ import { normalizeCartLineId } from '@/lib/cart/cart-id';
  * floating-point round-trip per line.
  */
 
+/** Text IDs include legacy seeded product/colour IDs, not just generated var_* IDs. */
+export const MAX_CHECKOUT_VARIANT_ID_LENGTH = 256;
+export const MAX_CHECKOUT_LINES = 50;
+
+export function isValidCheckoutVariantId(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null ||
+    (typeof value === 'string' && value.trim().length > 0 && value.length <= MAX_CHECKOUT_VARIANT_ID_LENGTH);
+}
+
+/** Only an exact eligible lookup miss is recoverable as a stale selection. */
+export class SelectionUnavailableError extends Error {
+  readonly selection: { id: string; variantId: string | null };
+
+  constructor(id: string, variantId?: string | null) {
+    super('This selection is no longer available. Review your bag or choose options.');
+    this.name = 'SelectionUnavailableError';
+    // The response describes one selection, never the catalogue or database error.
+    this.selection = { id: id.slice(0, 256), variantId: variantId?.slice(0, MAX_CHECKOUT_VARIANT_ID_LENGTH) ?? null };
+  }
+}
+
 export interface CartPricingInput {
   id: string;
   quantity: number;
@@ -18,10 +39,15 @@ export interface CartPricingInput {
    * `price_changed` conflict so the customer re-confirms the new price.
    */
   expectedUnitPaise?: number | null;
+  variantId?: string | null;
 }
 
 export interface CatalogPriceRow {
   id: string;
+  inventory_mode?: string;
+  variant_id?: string | null;
+  variant_sku?: string | null;
+  variant_label?: string | null;
   name: string;
   subtitle?: string | null;
   price_paise: number | string;
@@ -37,6 +63,9 @@ export interface CatalogPriceRow {
 
 export interface PricedCartItem {
   id: string;
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantLabel?: string | null;
   name: string;
   quantity: number;
   /** Rupees, matching the PayU amount unit. */
@@ -58,6 +87,7 @@ export interface PricedCartItem {
 /** One line whose displayed price no longer matches the database price. */
 export interface PriceChange {
   id: string;
+  variantId?: string | null;
   name: string;
   expectedPaise: number;
   actualPaise: number;
@@ -99,10 +129,12 @@ export function priceCartLines(
     throw new Error('Cart is empty.');
   }
 
+  if (cartItems.length > MAX_CHECKOUT_LINES) throw new Error('Cart has too many items.');
+
   const byId = new Map<string, CatalogPriceRow>();
   for (const row of rows) {
     if (row && typeof row.id === 'string' && row.id.trim()) {
-      byId.set(row.id.trim().toLowerCase(), row);
+      byId.set(JSON.stringify([row.id.trim().toLowerCase(), row.variant_id || null]), row);
     }
   }
   const knownIds = [...byId.values()].map((row) => row.id);
@@ -120,12 +152,15 @@ export function priceCartLines(
       throw new Error(`Invalid quantity for item '${rawId}'. Must be between 1 and 50.`);
     }
 
+    if (!isValidCheckoutVariantId(cartItem.variantId)) throw new Error('Invalid variant id.');
+
     const normalized = normalizeCartLineId(rawId, knownIds);
     const row = normalized.baseId
-      ? byId.get(normalized.baseId.toLowerCase())
+      ? byId.get(JSON.stringify([normalized.baseId.toLowerCase(), cartItem.variantId || null]))
       : undefined;
-    if (!row) {
-      throw new Error(`Product '${rawId}' not found in catalog.`);
+    if (!row || (row.inventory_mode === 'variant' && !cartItem.variantId) ||
+      (row.inventory_mode === 'product' && Boolean(cartItem.variantId))) {
+      throw new SelectionUnavailableError(normalizeCartLineId(rawId).baseId || rawId, cartItem.variantId);
     }
 
     const unitPaise = Math.round(Number(row.price_paise));
@@ -147,6 +182,7 @@ export function priceCartLines(
     const name = displayName(row);
     items.push({
       id: row.id,
+      ...(row.variant_id ? { variantId: row.variant_id, variantSku: row.variant_sku, variantLabel: row.variant_label } : {}),
       name,
       quantity,
       unitPrice: unitPaise / 100,
@@ -164,9 +200,9 @@ export function priceCartLines(
 
     // Same order as the input array: priceCartLines pushes exactly one item
     // per valid input line.
-    const expected = Number(cartItem.expectedUnitPaise);
+    const expected = cartItem.expectedUnitPaise == null ? Number.NaN : Number(cartItem.expectedUnitPaise);
     if (Number.isSafeInteger(expected) && expected >= 0 && expected !== unitPaise) {
-      priceChanges.push({ id: row.id, name, expectedPaise: expected, actualPaise: unitPaise });
+      priceChanges.push({ id: row.id, ...(row.variant_id ? { variantId: row.variant_id } : {}), name, expectedPaise: expected, actualPaise: unitPaise });
     }
   }
 

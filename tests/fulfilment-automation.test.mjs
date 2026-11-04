@@ -41,7 +41,7 @@ test('the configured default walks the chain step by step', () => {
   );
   assert.deepEqual(
     planFulfilmentAutomation('PENDING', { autoConfirm: true, defaultStatus: 'ON_THE_WAY' }),
-    ['ACCEPTED', 'PROCESSING', 'ON_THE_WAY'],
+    ['ACCEPTED', 'PROCESSING'],
   );
 });
 
@@ -68,7 +68,7 @@ test('cancelled orders never move and invalid settings fall back to PENDING', ()
   assert.equal(resolveFulfilmentTarget({ autoConfirm: false, defaultStatus: 'PACKED' }), 'PENDING');
   assert.equal(resolveFulfilmentTarget({ autoConfirm: false, defaultStatus: 'CANCELED' }), 'PENDING');
   assert.equal(resolveFulfilmentTarget({ autoConfirm: true, defaultStatus: 'SHIPPED' }), 'ACCEPTED');
-  assert.equal(resolveFulfilmentTarget({ autoConfirm: true, defaultStatus: 'ON_THE_WAY' }), 'ON_THE_WAY');
+  assert.equal(resolveFulfilmentTarget({ autoConfirm: true, defaultStatus: 'ON_THE_WAY' }), 'PROCESSING');
 });
 
 test('every planned step is a legal transition from the previous status', () => {
@@ -76,6 +76,7 @@ test('every planned step is a legal transition from the previous status', () => 
     for (const autoConfirm of [true, false]) {
       for (const defaultStatus of ['PENDING', 'ACCEPTED', 'PROCESSING', 'ON_THE_WAY', 'DELIVERED']) {
         const steps = planFulfilmentAutomation(from, { autoConfirm, defaultStatus });
+        assert.ok(!steps.includes('ON_THE_WAY') && !steps.includes('DELIVERED'), 'payment cannot prove physical pickup/delivery');
         let previous = from;
         for (const step of steps) {
           assert.ok(

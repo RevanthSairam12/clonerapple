@@ -1,48 +1,28 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { processPayUCallback, PayUResponseData } from '@/lib/payu/process-response';
-import { getPayUConfig } from '@/lib/payu/config';
+import { NextRequest } from 'next/server';
+
+import { handlePayUCallback } from '@/lib/payu/callback-route';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-async function parseFormData(req: NextRequest): Promise<PayUResponseData> {
-  const contentType = req.headers.get('content-type') || '';
-  const data: PayUResponseData = {};
-
-  if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-    const formData = await req.formData();
-    for (const [key, value] of formData.entries()) {
-      data[key] = typeof value === 'string' ? value : value.name;
-    }
-  } else if (contentType.includes('application/json')) {
-    const json = await req.json().catch(() => ({}));
-    Object.assign(data, json);
-  } else {
-    try {
-      const formData = await req.formData();
-      for (const [key, value] of formData.entries()) {
-        data[key] = typeof value === 'string' ? value : value.name;
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  return data;
+/**
+ * `curl` — the customer closed or cancelled the PayU page.
+ *
+ * PayU normally sends `status=failure` with `unmappedstatus=userCancelled`;
+ * both are supplied as fallbacks for flows that omit them. The fallbacks only
+ * pick the result page: a verified capture still wins, so a customer who paid
+ * and then reached this URL is shown the success page.
+ */
+export async function POST(request: NextRequest) {
+  return handlePayUCallback(request, {
+    fallbackStatus: 'failure',
+    fallbackUnmapped: 'userCancelled',
+  });
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const data = await parseFormData(req);
-    data.status = 'failure';
-    data.unmappedstatus = 'userCancelled';
-    const result = await processPayUCallback(data, 'return');
-    const config = getPayUConfig();
-    const destination = new URL(result.redirectUrl, config.appBaseUrl);
-
-    return NextResponse.redirect(destination, { status: 303 });
-  } catch (err: unknown) {
-    console.error('[PayU Cancel Route Error]:', (err as Error).message);
-    const config = getPayUConfig();
-    return NextResponse.redirect(new URL('/order/cancelled', config.appBaseUrl), { status: 303 });
-  }
+export async function GET(request: NextRequest) {
+  return handlePayUCallback(request, {
+    fallbackStatus: 'failure',
+    fallbackUnmapped: 'userCancelled',
+  });
 }

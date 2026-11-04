@@ -2,41 +2,31 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { BRAND_BAR_ITEMS, type BrandLogoItem } from '@/lib/website/section-defaults';
 
-export interface BrandLogoItem {
-  name: string;
-  subhead?: string;
-  href?: string;
-}
+export type { BrandLogoItem };
 
 export interface GadzioBrandBarProps {
   items?: BrandLogoItem[];
   enabled?: boolean;
 }
 
-export const DEFAULT_BRANDS: BrandLogoItem[] = [
-  { name: 'GADZIO FEASTABLES', subhead: 'SWEET TREATS & EDITIONS', href: '/in/shop/iphone/accessories/cases-protection' },
-  { name: 'GADZIO GAMES', subhead: 'CHALLENGES & ARENA', href: '/in/shop/iphone/accessories/cases-protection' },
-  { name: 'GADZIO BY MRBEAST', subhead: 'OFFICIAL STORE', href: '/in/shop/iphone/accessories/cases-protection' },
-  { name: 'GADZIO ATHLETICS', subhead: 'PERFORMANCE GEAR', href: '/in/shop/iphone/accessories/power-adapter-cable' },
-  { name: 'GADZIO LAB', subhead: 'TECH EXPERIMENTS', href: '/in/shop/iphone/accessories/wired-earphones' },
-  { name: 'GADZIO SIGNATURE', subhead: 'PREMIUM ESSENTIALS', href: '/in/shop/iphone/accessories/cable-plug-case' },
-];
+export const DEFAULT_BRANDS = BRAND_BAR_ITEMS;
 
 /**
  * Render brand logos with unique typographic marks matching the screenshot:
- * 1. FEASTABLES (bubble-fun lettering)
+ * 1. GADZIO (playful bold lettering)
  * 2. BEAST GAMES (bold futuristic block lettering)
  * 3. BEAST by MrBeast (heavy wide sans)
  * 4. BEAST ATHLETICS (athletic collegiate lettering)
  * 5. MrBEAST LAB (dynamic comic-style lettering)
  * 6. GADZIO SIGNATURE (classic bold wordmark)
  */
-function BrandWordmark({ brand, index }: { brand: BrandLogoItem; index: number }) {
+function BrandWordmark({ index }: { index: number }) {
   const i = index % 6;
 
   if (i === 0) {
-    // Feastables-style bubble / playful bold font
+    // Playful bold wordmark
     return (
       <div className="flex flex-col items-center">
         <span
@@ -46,7 +36,7 @@ function BrandWordmark({ brand, index }: { brand: BrandLogoItem; index: number }
             textShadow: '1px 1px 0px rgba(0,0,0,0.15)',
           }}
         >
-          {brand.name.includes('FEASTABLES') ? 'FEASTABLES' : brand.name}
+          GADZIO
         </span>
         <span className="text-[9px] font-black tracking-widest text-neutral-500 uppercase -mt-0.5">
           BY GADZIO
@@ -123,14 +113,14 @@ function BrandWordmark({ brand, index }: { brand: BrandLogoItem; index: number }
     );
   }
 
-  // Gadzio Signature / Feastables repeat
+  // Gadzio Signature wordmark
   return (
     <div className="flex flex-col items-center text-center">
       <span
         className="text-xl sm:text-2xl font-black tracking-tight uppercase text-neutral-900 group-hover:text-blue-600 transition-colors"
         style={{ fontFamily: '"Impact", "Arial Black", system-ui, sans-serif' }}
       >
-        FEASTABLES
+        GADZIO SIGNATURE
       </span>
       <span className="text-[8px] font-bold tracking-widest text-neutral-400 uppercase">
         LIMITED EDITION
@@ -154,7 +144,7 @@ export function GadzioBrandBar({ items, enabled = true }: GadzioBrandBarProps) {
         {brands.map((brand, idx) => {
           const content = (
             <div className="group flex-shrink-0 flex items-center justify-center px-4 py-1 transition-transform duration-200 hover:scale-105">
-              <BrandWordmark brand={brand} index={idx} />
+              <BrandWordmark index={idx} />
             </div>
           );
 

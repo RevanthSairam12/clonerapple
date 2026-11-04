@@ -3,21 +3,27 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useCart, type CartPriceUpdate } from '@/lib/cart/CartContext';
-import { getProductFromCatalog } from '@/lib/payu/catalog';
-import { stockBlocked } from '@/lib/storefront/availability-rules';
+import { priceCartLines, baseProductId, parsePriceChangedQuote, quoteMatchesLines, applyQuotePrices, shippingNudge, createQuoteGeneration, type PriceChangedQuote, type SaleRefreshClock, type PriceRef } from '@/lib/checkout/client-quote';
+import { useCheckoutRefresh } from '@/lib/checkout/useCheckoutRefresh';
+import { safePaymentStatusUrl } from '@/lib/checkout/payment-recovery';
+import { verifyAvailabilityLines } from '@/lib/storefront/use-availability';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { decideCheckoutView } from '@/lib/checkout/checkout-decision';
 import {
-  EMPTY_SHIPPING_POLICY,
   quoteShipping,
   type ShippingPolicy,
 } from '@/lib/checkout/shipping-rules';
 import { useCoupon } from '@/lib/cart/useCoupon';
 import { CouponBox } from '@/components/cart/CouponBox';
+import { INDIAN_STATES, normalizeIndianMobile, normalizeIndianState, validateCheckoutContact, validateIndianAddress, checkoutFieldErrors, type CheckoutField, type FieldErrors } from '@/lib/checkout/india-validation';
+import { formatRupees } from '@/lib/store-admin/money';
 
 interface CartItem {
   id: string;
   productId?: string;
+  variantId?: string;
+  variantSku?: string;
+  variantLabel?: string;
   name: string;
   price: number;
   /** The regular price shown struck through while a sale is live. */
@@ -53,7 +59,9 @@ interface Props {
   /** Customers → Customer settings controls this checkbox. */
   marketingOptInEnabled?: boolean;
   /** Store Admin shipping rules; the same quote initiate charges. */
-  shippingPolicy?: ShippingPolicy;
+  shippingPolicy: ShippingPolicy | null;
+  initialProducts: PriceRef[];
+  saleClock?: SaleRefreshClock;
   /** Payments → "Checkout payment note". Empty by default. */
   paymentNote?: string;
   /**
@@ -71,8 +79,14 @@ interface Props {
   couponsEnabled?: boolean;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy = EMPTY_SHIPPING_POLICY, paymentNote = '', saleLive = false, stockById, couponsEnabled = true }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy: serverPolicy, initialProducts, saleClock, paymentNote = '', saleLive = false, couponsEnabled = true }: Props) {
   const { items: bagItems, removeItem, syncPrices, isHydrated } = useCart();
+  useCheckoutRefresh(saleClock);
+  const [recovery, setRecovery] = useState<{ key: string; quote: PriceChangedQuote; couponCode: string | null } | null>(null);
+  const [quoteUnavailable, setQuoteUnavailable] = useState(false);
+  const [selectionConflict, setSelectionConflict] = useState<{ id: string; name: string; variantLabel?: string } | null>(null);
+  const quoteGeneration = React.useRef(createQuoteGeneration());
+  React.useEffect(() => () => quoteGeneration.current.invalidate(), []);
 
   const decision = decideCheckoutView({
     isHydrated,
@@ -91,11 +105,12 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     window.history.replaceState(window.history.state, '', '/checkout');
   }, [decision.clearProductQueryFromUrl]);
 
-  const items: CartItem[] =
+  const sourceItems: CartItem[] =
     decision.view === 'bag'
       ? bagItems.map((b) => ({
           id: b.id,
           productId: b.productId,
+          variantId: b.variantId, variantSku: b.variantSku, variantLabel: b.variantLabel,
           name: b.name + (b.subtitle ? ` (${b.subtitle})` : ''),
           price: b.price,
           ...(b.regularPrice !== undefined ? { regularPrice: b.regularPrice } : {}),
@@ -107,21 +122,15 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         ? initialItems ?? []
         : [];
 
-  // A line is only payable when the catalogue still sells it. The storefront
-  // stock state decides (sale mode ignores stock); a missing catalogue id is
-  // unavailable. Without `stockById` the static PayU catalogue is the fallback.
-  const lineAvailable = (item: CartItem): boolean => {
-    const baseId = (getCartLineBaseId(item.productId || item.id) || '').trim().toLowerCase();
-    if (!stockById) return Boolean(getProductFromCatalog(baseId));
-    const inStock = stockById[baseId];
-    if (typeof inStock !== 'boolean') return false;
-    return !stockBlocked(inStock, saleLive);
-  };
-  const unavailableIds = new Set(
-    items.filter((item) => !lineAvailable(item)).map((item) => item.id)
-  );
+  const sourceKey = JSON.stringify({ lines: sourceItems.map((item) => [baseProductId(item), item.variantId || null, item.quantity]), products: initialProducts, serverPolicy, saleLive });
+  const activeRecovery = !selectionConflict && recovery?.key === sourceKey ? recovery : null;
+  const shippingPolicy = activeRecovery?.quote.shippingPolicy ?? serverPolicy;
+  const products = activeRecovery ? applyQuotePrices(initialProducts, activeRecovery.quote) : initialProducts;
+  // Both bag and direct-buy lines use live integer-paise catalogue prices.
+  const items = priceCartLines(sourceItems, products, saleLive);
+  const unavailableIds = new Set(items.filter((item) => !item.available).map((item) => item.id));
   const hasUnavailable = unavailableIds.size > 0;
-  const payableItems = items.filter((item) => !unavailableIds.has(item.id));
+  const payableItems = items.filter((item) => item.available);
 
   const [firstName, setFirstName] = useState(userSession?.firstName || '');
   const [email, setEmail] = useState(userSession?.email || '');
@@ -138,8 +147,13 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     state: '',
     pincode: '',
   });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [addressNotice, setAddressNotice] = useState('');
+  const uncertainAddressSave = React.useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [activeReservation, setActiveReservation] = useState<{ statusUrl: string | null; expiresAt: string | null } | null>(null);
   const [marketingOptIn, setMarketingOptIn] = useState(false);
 
   React.useEffect(() => {
@@ -150,14 +164,16 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         setSavedAddresses(addresses);
         const preferred = addresses.find((address: SavedAddress) => address.isDefault) || addresses[0];
         if (preferred) {
-          setSelectedAddressId(preferred.id);
+          const valid = validateIndianAddress(preferred);
+          setSelectedAddressId(valid.ok ? preferred.id : '');
+          if (!valid.ok) setAddressNotice('Please correct this saved address before paying. Your saved address has not been changed.');
           setShippingAddress({
             name: preferred.name,
             phone: preferred.phone,
             line1: preferred.line1,
             line2: preferred.line2 || '',
             city: preferred.city,
-            state: preferred.state,
+            state: normalizeIndianState(preferred.state) || preferred.state,
             pincode: preferred.pincode,
           });
           setPhone(preferred.phone);
@@ -173,44 +189,72 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   };
 
   const selectSavedAddress = (id: string) => {
-    setSelectedAddressId(id);
     const selected = savedAddresses.find((address) => address.id === id);
-    if (!selected) return;
-    setShippingAddress({
-      name: selected.name,
-      phone: selected.phone,
-      line1: selected.line1,
-      line2: selected.line2 || '',
-      city: selected.city,
-      state: selected.state,
-      pincode: selected.pincode,
-    });
-    setPhone(selected.phone);
+    setFieldErrors({});
+    setAddressNotice('');
+    if (!selected) {
+      setSelectedAddressId('');
+      setShippingAddress({ name: firstName, phone, line1: '', line2: '', city: '', state: '', pincode: '' });
+      return;
+    }
+    const valid = validateIndianAddress(selected);
+    setSelectedAddressId(valid.ok ? id : '');
+    if (!valid.ok) setAddressNotice('Please correct this saved address before paying. Your saved address has not been changed.');
+    setShippingAddress({ ...selected, line2: selected.line2 || '', state: normalizeIndianState(selected.state) || selected.state });
+    setPhone(normalizeIndianMobile(selected.phone));
   };
-
-  const subtotalAmount = payableItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
-  const shippingAmount =
-    quoteShipping(Math.round(subtotalAmount * 100), shippingPolicy).shippingPaise / 100;
-
-  // The coupon preview runs the same server rules checkout will run under the
-  // row lock. The shown total is only ever the server's answer.
-  const coupon = useCoupon({
-    items: payableItems.map((i) => ({
-      id: getCartLineBaseId(i.productId || i.id) || i.productId || i.id,
-      quantity: i.quantity,
-      price: i.price,
-    })),
-    subtotalPaise: Math.round(subtotalAmount * 100),
-    shippingPaise: Math.round(shippingAmount * 100),
-    email,
-    enabled: couponsEnabled && payableItems.length > 0,
+  const addressForCheckout = {
+    ...shippingAddress,
+    name: selectedAddressId ? shippingAddress.name : firstName,
+    phone,
+  };
+  const contactForCheckout = { firstname: firstName, email, phone };
+  const validateField = (field: CheckoutField) => {
+    const errors = checkoutFieldErrors(contactForCheckout, addressForCheckout);
+    setFieldErrors(current => ({ ...current, [field]: errors[field] }));
+    if (field === 'phone') setPhone(normalizeIndianMobile(phone));
+  };
+  const errorFor = (field: CheckoutField) => fieldErrors[field] ? <p id={`checkout-${field}-error`} className="mt-1 text-sm text-red-700" role="alert">{fieldErrors[field]}</p> : null;
+  const fieldProps = (field: CheckoutField) => ({
+    id: `checkout-${field}`, name: field,
+    'aria-invalid': Boolean(fieldErrors[field]),
+    'aria-describedby': fieldErrors[field] ? `checkout-${field}-error` : undefined,
+    onBlur: () => validateField(field),
   });
-  const discountAmount = coupon.totals.discountPaise / 100;
-  const totalAmount = coupon.totals.totalPaise / 100;
+
+  const subtotalPaise = payableItems.reduce((sum, item) => sum + item.totalPaise, 0);
+  const subtotalAmount = subtotalPaise / 100;
+  const shippingPaise = shippingPolicy ? quoteShipping(subtotalPaise, shippingPolicy).shippingPaise : 0;
+  const coupon = useCoupon({
+    items: payableItems.map((item) => ({ id: baseProductId(item), variantId: item.variantId, quantity: item.quantity, unitPaise: item.unitPaise })),
+    subtotalPaise, shippingPaise,
+    policySignature: JSON.stringify(shippingPolicy),
+    email,
+    enabled: Boolean(shippingPolicy) && couponsEnabled && payableItems.length > 0,
+  });
+  const recoveredTotals = activeRecovery && activeRecovery.couponCode === coupon.appliedCode &&
+    (!activeRecovery.couponCode || coupon.input.trim().toUpperCase() === activeRecovery.couponCode)
+    ? activeRecovery.quote.totals : null;
+  const totals = coupon.applied ? coupon.totals : recoveredTotals ?? coupon.totals;
+  const discountAmount = totals.discountPaise / 100;
+  const totalAmount = totals.totalPaise / 100;
+  const nudge = shippingNudge(subtotalPaise, shippingPolicy, totals.shippingPaise);
+  const paymentUnavailable = !shippingPolicy || quoteUnavailable;
+  const currentSignature = JSON.stringify({ sourceKey, shippingPolicy, items: items.map((item) => [item.id, item.quantity, item.unitPaise]), code: coupon.input, total: totals.totalPaise });
+  const latestSignature = React.useRef(currentSignature);
+  latestSignature.current = currentSignature;
+  quoteGeneration.current.update(currentSignature);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
+    if (isSubmitting || activeReservation || selectionConflict) return;
+    if (paymentUnavailable) {
+      setErrorMessage('Shipping rates are unavailable. Refresh the page before paying.');
+      return;
+    }
+    const acceptedTotalPaise = totals.totalPaise;
+    const acceptedSignature = currentSignature;
+    const quoteTicket = quoteGeneration.current.capture();
 
     setErrorMessage(null);
 
@@ -227,32 +271,28 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       return;
     }
 
-    // Basic client validation
-    if (!firstName.trim() || firstName.trim().length < 2) {
-      setErrorMessage('Please enter a valid first name.');
+    const contactValidation = validateCheckoutContact(contactForCheckout);
+    const addressValidation = validateIndianAddress(addressForCheckout);
+    const errors = checkoutFieldErrors(contactForCheckout, addressForCheckout);
+    setFieldErrors(errors);
+    if (!contactValidation.ok || !addressValidation.ok) {
+      const field = Object.keys(errors)[0];
+      document.getElementById(`checkout-${field}`)?.focus();
       return;
     }
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setErrorMessage('Please enter a valid email address.');
-      return;
-    }
-    const cleanPhone = phone.replace(/\D/g, '');
-    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
-      setErrorMessage('Please enter a valid 10-digit Indian mobile number (starting with 6, 7, 8, or 9).');
-      return;
-    }
-    if (!selectedAddressId) {
-      const addressPhone = shippingAddress.phone.replace(/\D/g, '');
-      if (shippingAddress.name.trim().length < 2 || !/^\d{10}$/.test(addressPhone) || !shippingAddress.line1.trim() || !shippingAddress.state.trim() || !/^\d{6}$/.test(shippingAddress.pincode)) {
-        setErrorMessage('Enter a valid shipping name, 10-digit phone, address line 1, state, and 6-digit pincode.');
-        return;
-      }
-    }
+    const cleanPhone = contactValidation.value.phone;
+    const normalizedAddress = addressValidation.value;
 
     // Disable the button to prevent double submission
     setIsSubmitting(true);
 
     try {
+      const stockValid = await verifyAvailabilityLines(items.map((item) => ({ productId: baseProductId(item), variantId: item.variantId, quantity: item.quantity })));
+      if (stockValid !== true) {
+        setIsSubmitting(false);
+        setErrorMessage(stockValid === false ? 'Stock not available for the selected quantity. Review your bag.' : 'Could not verify stock. Please try again.');
+        return;
+      }
       // Re-check the code against the cart as it stands right now. If it no
       // longer holds, nothing is sent: the customer must see the new total
       // before paying instead of being charged something they did not agree to.
@@ -263,20 +303,59 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         return;
       }
 
+      if ((checkedCoupon && checkedCoupon.totalPaise !== acceptedTotalPaise) || latestSignature.current !== acceptedSignature || !quoteGeneration.current.current(quoteTicket)) {
+        setRecovery(null);
+        setIsSubmitting(false);
+        setErrorMessage('Your order total has changed. Please review the updated total and pay again.');
+        return;
+      }
+
       let shippingAddressId = selectedAddressId;
+      // A response can be lost after the server saves. Recover the owned row
+      // before another insert, rather than creating a duplicate on Pay retry.
+      if (!shippingAddressId && saveNewAddress && userSession && uncertainAddressSave.current) {
+        const response = await fetch('/api/account/addresses');
+        if (!response.ok) throw new Error('Could not check whether your address was saved. Uncheck Save this address to continue without saving.');
+        const data = await response.json();
+        const match = (Array.isArray(data.addresses) ? data.addresses : []).find((entry: SavedAddress) => {
+          const checked = validateIndianAddress(entry);
+          return checked.ok && (Object.keys(normalizedAddress) as Array<keyof typeof normalizedAddress>).every(key => checked.value[key] === normalizedAddress[key]);
+        });
+        if (match) {
+          shippingAddressId = match.id;
+          setSelectedAddressId(match.id);
+          setSavedAddresses(data.addresses);
+        } else {
+          throw new Error('The previous save could not be confirmed. Uncheck Save this address to continue; your order address will still be included.');
+        }
+        uncertainAddressSave.current = false;
+      }
       // Guests have no address book; the address rides along with the order.
       if (!shippingAddressId && saveNewAddress && userSession) {
+        uncertainAddressSave.current = true;
         const saveResponse = await fetch('/api/account/addresses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...shippingAddress, isDefault: savedAddresses.length === 0 }),
+          body: JSON.stringify({ ...normalizedAddress, isDefault: savedAddresses.length === 0 }),
         });
         const saveData = await saveResponse.json();
-        if (!saveResponse.ok) throw new Error(saveData.error || 'Could not save shipping address.');
+        if (!saveResponse.ok) {
+          uncertainAddressSave.current = false;
+          throw new Error(saveData.error || 'Could not save shipping address. Uncheck Save this address to pay without saving it.');
+        }
         shippingAddressId = saveData.address.id;
+        uncertainAddressSave.current = false;
+        setSelectedAddressId(shippingAddressId);
+        setShippingAddress(normalizedAddress);
+        setSavedAddresses(current => [...current.filter(address => address.id !== shippingAddressId), { ...normalizedAddress, id: shippingAddressId, isDefault: current.length === 0 }]);
       }
 
-      // 1. Call server initiate endpoint (never passing prices/amounts)
+      if (latestSignature.current !== acceptedSignature || !quoteGeneration.current.current(quoteTicket)) {
+        setIsSubmitting(false);
+        setErrorMessage('Your order changed. Please review it before paying.');
+        return;
+      }
+      // Displayed prices and total are comparison guards, never charge amounts.
       const res = await fetch('/api/payu/initiate', {
         method: 'POST',
         headers: {
@@ -286,43 +365,85 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           // `expectedUnitPaise` is a display hint only: the server charges its
           // own resolved price and answers 409 when the two disagree.
           items: items.map((i) => ({
-            id: i.productId || i.id,
+            id: baseProductId(i),
+            variantId: i.variantId,
             quantity: i.quantity,
-            expectedUnitPaise: Math.round(i.price * 100),
+            expectedUnitPaise: i.unitPaise,
           })),
           // Only the code is sent. The discount and the amount are computed
           // server-side inside the order transaction; `expectedTotalPaise` is
           // a comparison guard, never a charge amount.
           couponCode: checkedCoupon?.code,
-          expectedTotalPaise: checkedCoupon?.totalPaise,
+          expectedTotalPaise: acceptedTotalPaise,
           customer: {
             firstname: firstName.trim(),
             email: email.trim().toLowerCase(),
             phone: cleanPhone,
           },
           shippingAddressId: shippingAddressId || undefined,
-          shippingAddress: shippingAddressId ? undefined : shippingAddress,
+          shippingAddress: shippingAddressId ? undefined : normalizedAddress,
           marketingOptIn: marketingOptInEnabled && marketingOptIn,
         }),
       });
 
       const data = await res.json();
+      // Never adopt an old quote (including A → B → A), or submit a gateway
+      // form after the selection changed or this checkout was invalidated.
+      if (!quoteGeneration.current.current(quoteTicket)) {
+        setRecovery(null);
+        setIsSubmitting(false);
+        setErrorMessage('Your order changed. Review your bag before continuing.');
+        return;
+      }
       if (!res.ok || !data.success) {
+        if (res.status === 409 && data.code === 'selection_unavailable') {
+          const selected = sourceItems.find((item) => baseProductId(item) === data.selection?.id &&
+            (item.variantId || null) === (data.selection?.variantId ?? null));
+          quoteGeneration.current.invalidate();
+          setRecovery(null);
+          setSelectionConflict({
+            id: selected ? baseProductId(selected) : '',
+            name: selected?.name || 'An item in your order',
+            variantLabel: selected?.variantLabel || selected?.variantId,
+          });
+          setIsSubmitting(false);
+          setErrorMessage(null);
+          return;
+        }
+        if (res.status === 400 && data.fieldErrors) {
+          const { name: recipientError, ...apiErrors } = data.fieldErrors;
+          const visibleErrors: FieldErrors = { ...apiErrors, ...(recipientError ? { firstname: recipientError } : {}) };
+          setFieldErrors(visibleErrors);
+          if (data.code === 'address_needs_correction') setSelectedAddressId('');
+          setIsSubmitting(false);
+          document.getElementById(`checkout-${Object.keys(visibleErrors)[0]}`)?.focus();
+          return;
+        }
+        if (res.status === 409 && data.code === 'reservation_active') {
+          const expiresAt = typeof data.reservationExpiresAt === 'string' && Number.isFinite(Date.parse(data.reservationExpiresAt))
+            ? new Date(data.reservationExpiresAt).toISOString() : null;
+          setActiveReservation({ statusUrl: safePaymentStatusUrl(data.statusUrl), expiresAt });
+          setIsSubmitting(false);
+          setErrorMessage(null);
+          return;
+        }
         // A sale started or ended while the customer was checking out. Adopt
         // the server's prices and stop: no order, no reservation, no charge.
         if (res.status === 409 && data.code === 'price_changed') {
-          const updates: CartPriceUpdate[] = Array.isArray(data.items)
-            ? data.items
-                .filter((line: { id?: unknown }) => typeof line?.id === 'string')
-                .map((line: { id: string; unitPaise: number; regularPricePaise?: number | null }) => ({
-                  id: line.id,
-                  unitPaise: Number(line.unitPaise),
-                  regularPricePaise: line.regularPricePaise ?? null,
-                }))
-            : [];
+          const quote = parsePriceChangedQuote(data);
+          if (!quote || !quoteMatchesLines(quote, sourceItems)) {
+            setQuoteUnavailable(true);
+            setIsSubmitting(false);
+            setErrorMessage('Updated pricing is unavailable. Refresh the page before paying.');
+            return;
+          }
+          const updates: CartPriceUpdate[] = quote.items.map((line) => ({
+            id: line.id, variantId: line.variantId, unitPaise: line.unitPaise, regularPricePaise: line.regularPricePaise,
+          }));
+          setRecovery({ key: sourceKey, quote, couponCode: checkedCoupon?.code ?? null });
           syncPrices(updates);
           setIsSubmitting(false);
-          setErrorMessage('Prices have changed, please review your cart.');
+          setErrorMessage('Prices or shipping have changed. Please review your updated order total and pay again.');
           return;
         }
         // The server refused the code at Pay. The discount is already gone
@@ -393,7 +514,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   // items the customer actually has.
   if (decision.view === 'loading') {
     return (
-      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-center text-sm text-[#86868b]">
+      <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-center text-sm text-[#6e6e73]">
         Loading your bag…
       </div>
     );
@@ -406,7 +527,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     return (
       <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
         <h1 className="text-3xl font-semibold tracking-tight">This item is unavailable</h1>
-        <p className="text-sm text-[#86868b] mt-3 max-w-md mx-auto">
+        <p className="text-sm text-[#6e6e73] mt-3 max-w-md mx-auto">
           The item you tried to buy isn&apos;t in our catalog. It may have been
           removed, or the link may be out of date.
         </p>
@@ -436,7 +557,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     return (
       <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f] text-center">
         <h1 className="text-3xl font-semibold tracking-tight">Your bag is empty</h1>
-        <p className="text-sm text-[#86868b] mt-3 max-w-md mx-auto">
+        <p className="text-sm text-[#6e6e73] mt-3 max-w-md mx-auto">
           Add something to your bag before checking out. If you were part-way
           through a payment, your bag is still here — nothing was lost.
         </p>
@@ -459,10 +580,10 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   }
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-sm border border-[#e5e5ea] max-w-2xl mx-auto text-[#1d1d1f]">
+    <div className="mx-auto max-w-6xl text-[#1d1d1f]">
       <div className="mb-8">
-        <h1 className="text-3xl font-semibold tracking-tight">Express Checkout</h1>
-        <p className="text-sm text-[#86868b] mt-1">Complete your order with PayU Hosted Checkout.</p>
+        <h1 className="text-3xl font-semibold tracking-tight">Checkout</h1>
+        <p className="text-sm text-[#6e6e73] mt-1">Review your order and enter your delivery details.</p>
       </div>
 
       {errorMessage && (
@@ -475,10 +596,42 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         </div>
       )}
 
-      {/* Order Summary */}
-      <div className="mb-8 p-6 bg-[#fbfbfd] rounded-2xl border border-[#e5e5ea]">
+      {selectionConflict && (
+        <section role="alert" className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">{selectionConflict.name}{selectionConflict.variantLabel ? ` — ${selectionConflict.variantLabel}` : ''} is no longer available.</p>
+          <p className="mt-2">No payment was started. Your bag is unchanged. Review the affected selection or choose options before returning to checkout.</p>
+          <div className="mt-3 flex flex-wrap gap-4">
+            <Link href="/cart" className="font-semibold text-[#0071e3] hover:underline">Review bag</Link>
+            {selectionConflict.id && <Link href={`/shop/product/${encodeURIComponent(selectionConflict.id)}`} className="font-semibold text-[#0071e3] hover:underline">Choose options</Link>}
+          </div>
+        </section>
+      )}
+
+      {activeReservation && (
+        <section role="status" className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">A checkout is already in progress.</p>
+          <p className="mt-2">No new payment was started. Your current bag is kept. Check the existing payment before trying another checkout. If your bank shows a debit, do not pay again.</p>
+          {activeReservation.expiresAt && (
+            <p className="mt-2">Reservation expiry: <time dateTime={activeReservation.expiresAt}>{new Date(activeReservation.expiresAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</time>. Expiry alone does not confirm whether a payment was taken.</p>
+          )}
+          {activeReservation.statusUrl ? (
+            <Link href={activeReservation.statusUrl} prefetch={false} className="mt-3 inline-block font-semibold text-[#0071e3] hover:underline">View existing payment status</Link>
+          ) : (
+            <Link href="/account/orders" prefetch={false} className="mt-3 inline-block font-semibold text-[#0071e3] hover:underline">Find the checkout in your orders</Link>
+          )}
+          <p className="mt-2">After resolving the existing checkout, refresh this page to review your bag before starting a new payment.</p>
+        </section>
+      )}
+
+      <div className="grid min-w-0 grid-cols-1 items-start gap-6 lg:grid-cols-2 lg:gap-10">
+      <section aria-label="Order summary" className="min-w-0 rounded-2xl border border-[#d2d2d7] bg-white p-5 sm:p-6 lg:sticky lg:top-28">
+        <button type="button" aria-expanded={summaryOpen} aria-controls="checkout-summary-details" onClick={() => setSummaryOpen(open => !open)} className="flex w-full items-center justify-between gap-3 text-left font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#0066cc] lg:hidden">
+          <span>Order summary <span aria-hidden="true">{summaryOpen ? '−' : '+'}</span></span>
+          <span>{paymentUnavailable ? 'Unavailable' : formatRupees(totals.totalPaise)}</span>
+        </button>
+        <div id="checkout-summary-details" className={`${summaryOpen ? 'block' : 'hidden'} pt-4 lg:block lg:pt-0`}>
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[#86868b]">Order Summary</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73]">Order Summary</h2>
           {bagItems.length > 0 && (
             <span className="text-xs text-[#0071e3] font-medium">{bagItems.length} {bagItems.length === 1 ? 'item' : 'items'} in Bag</span>
           )}
@@ -491,12 +644,13 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                 <div className="flex items-center gap-3 min-w-0">
                   {item.image && (
                     <div className="w-12 h-12 rounded-lg bg-white p-1 border border-black/5 flex items-center justify-center shrink-0">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-contain" />
+                      <img src={item.image} alt="" width={48} height={48} className="w-full h-full object-contain" />
                     </div>
                   )}
                   <div className="min-w-0">
-                    <div className="font-medium text-[#1d1d1f] line-clamp-1">{item.name}</div>
-                    <div className="text-xs text-[#86868b] flex items-center gap-2 mt-0.5">
+                    <div className="font-medium text-[#1d1d1f] break-words">{item.name}</div>
+                    {item.variantLabel && <p className="mt-1 text-xs text-[#6e6e73]">{item.variantLabel}</p>}
+                    <div className="text-xs text-[#6e6e73] flex items-center gap-2 mt-0.5">
                       <span>Qty: {item.quantity}</span>
                       {bagItems.length > 0 && (
                         <>
@@ -516,11 +670,11 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                 {isAvailable ? (
                   <div className="font-semibold text-[#1d1d1f] shrink-0">
                     {item.regularPrice ? (
-                      <s className="mr-2 font-normal text-[#86868b]">
+                      <s className="mr-2 font-normal text-[#6e6e73]">
                         ₹{(item.regularPrice * item.quantity).toLocaleString('en-IN')}
                       </s>
                     ) : null}
-                    ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+                    ₹{(item.totalPaise / 100).toLocaleString('en-IN')}
                   </div>
                 ) : (
                   <div className="font-semibold text-[#e30000] shrink-0">Unavailable</div>
@@ -542,17 +696,17 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           </div>
         )}
         <div className="mt-4 space-y-2 border-t border-[#e5e5ea] pt-4 text-sm">
-          <div className="flex justify-between text-[#86868b]">
+          <div className="flex justify-between text-[#6e6e73]">
             <span>Subtotal</span>
             <span className="font-medium text-[#1d1d1f]">
               ₹{subtotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </span>
           </div>
-          <div className="flex justify-between text-[#86868b]">
+          <div className="flex justify-between text-[#6e6e73]">
             <span>Shipping</span>
-            <span className={coupon.totals.shippingPaise > 0 ? 'font-semibold text-[#1d1d1f]' : 'font-semibold text-[#34c759]'}>
-              {coupon.totals.shippingPaise > 0
-                ? `₹${(coupon.totals.shippingPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+            <span className={totals.shippingPaise > 0 ? 'font-semibold text-[#1d1d1f]' : 'font-semibold text-[#34c759]'}>
+              {totals.shippingPaise > 0
+                ? `₹${(totals.shippingPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
                 : 'FREE'}
             </span>
           </div>
@@ -566,7 +720,9 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           )}
         </div>
 
-        {couponsEnabled && (
+        {nudge && <p className="py-3 text-xs text-[#6e6e73]">{nudge}</p>}
+        {paymentUnavailable && <p role="alert" className="py-3 text-sm text-red-700">Shipping rates are temporarily unavailable. Refresh the page before paying.</p>}
+        {!paymentUnavailable && couponsEnabled && (
           <div className="py-3">
             <CouponBox coupon={coupon} compact />
           </div>
@@ -575,19 +731,22 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         <div className="border-t border-[#e5e5ea] pt-4 flex justify-between items-baseline font-semibold">
           <span>Total Payable</span>
           <span className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
-            ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            {paymentUnavailable ? 'Unavailable' : `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
           </span>
         </div>
-      </div>
+        </div>
+      </section>
 
-      {/* Contact and Billing Details Form */}
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} noValidate className="min-w-0 space-y-5 rounded-2xl border border-[#d2d2d7] bg-white p-5 sm:p-6">
+        <h2 className="text-xl font-semibold">Your details</h2>
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-[#86868b] mb-2">
-            First Name
+          <label htmlFor="checkout-firstname" className="block text-sm font-semibold text-[#333336] mb-2">
+            First name
           </label>
           <input
+            {...fieldProps('firstname')}
             type="text"
+            autoComplete="given-name"
             required
             value={firstName}
             onChange={(e) => setFirstName(e.target.value)}
@@ -595,14 +754,17 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
             className="w-full px-4 py-3 rounded-xl border border-[#d2d2d7] focus:outline-none focus:ring-2 focus:ring-[#0071e3] text-sm"
             disabled={isSubmitting}
           />
+          {errorFor('firstname')}
         </div>
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-[#86868b] mb-2">
-            Email Address (for Receipt)
+          <label htmlFor="checkout-email" className="block text-sm font-semibold text-[#333336] mb-2">
+            Email address (for receipt)
           </label>
           <input
+            {...fieldProps('email')}
             type="email"
+            autoComplete="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -610,28 +772,39 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
             className="w-full px-4 py-3 rounded-xl border border-[#d2d2d7] focus:outline-none focus:ring-2 focus:ring-[#0071e3] text-sm"
             disabled={isSubmitting}
           />
+          {errorFor('email')}
         </div>
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-[#86868b] mb-2">
-            10-digit Indian Mobile Number
+          <label htmlFor="checkout-phone" className="block text-sm font-semibold text-[#333336] mb-2">
+            Mobile number
           </label>
           <div className="flex">
-            <span className="inline-flex items-center px-4 rounded-l-xl border border-r-0 border-[#d2d2d7] bg-[#f5f5f7] text-sm text-[#86868b]">
+            <span className="inline-flex items-center px-4 rounded-l-xl border border-r-0 border-[#d2d2d7] bg-[#f5f5f7] text-sm text-[#6e6e73]">
               +91
             </span>
             <input
+              {...fieldProps('phone')}
               type="tel"
+              inputMode="tel"
+              autoComplete="tel-national"
               required
-              maxLength={10}
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => {
+                const value = normalizeIndianMobile(e.target.value);
+                setPhone(value);
+                if (selectedAddressId) {
+                  setSelectedAddressId('');
+                  setShippingAddress(current => ({ ...current, phone: value }));
+                }
+              }}
               placeholder="9876543210"
               className="w-full px-4 py-3 rounded-r-xl border border-[#d2d2d7] focus:outline-none focus:ring-2 focus:ring-[#0071e3] text-sm"
               disabled={isSubmitting}
             />
           </div>
-          <p className="text-xs text-[#6e6e73] mt-1">PayU will send SMS payment notifications to this number.</p>
+          {errorFor('phone')}
+          <p className="text-xs text-[#6e6e73] mt-1">Enter 10 digits. You can also paste a number starting with +91.</p>
         </div>
 
         <div className="pt-4">
@@ -639,7 +812,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
             <legend className="px-1 text-sm font-semibold text-[#1d1d1f]">Shipping address</legend>
             {savedAddresses.length > 0 && (
               <div>
-                <label htmlFor="saved-address" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#86868b]">Choose a saved address</label>
+                <label htmlFor="saved-address" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#6e6e73]">Choose a saved address</label>
                 <select
                   id="saved-address"
                   value={selectedAddressId}
@@ -654,33 +827,26 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                 </select>
               </div>
             )}
-            {!selectedAddressId && (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {([
-                  ['name', 'Full name'],
-                  ['phone', '10-digit phone'],
-                  ['line1', 'Address line 1'],
-                  ['line2', 'Address line 2 (optional)'],
-                  ['city', 'City'],
-                  ['state', 'State'],
-                  ['pincode', '6-digit pincode'],
-                ] as const).map(([field, label]) => (
-                  <div key={field} className={field === 'line1' || field === 'line2' ? 'sm:col-span-2' : ''}>
-                    <label htmlFor={`shipping-${field}`} className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#86868b]">{label}</label>
-                    <input
-                      id={`shipping-${field}`}
-                      type={field === 'phone' || field === 'pincode' ? 'tel' : 'text'}
-                      value={shippingAddress[field]}
-                      onChange={(event) => updateShippingAddress(field, event.target.value)}
-                      maxLength={field === 'phone' ? 10 : field === 'pincode' ? 6 : undefined}
-                      className="w-full rounded-xl border border-[#d2d2d7] bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
-                      disabled={isSubmitting}
-                      required={field !== 'line2'}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
+            {addressNotice && <p role="status" className="text-sm text-amber-900">{addressNotice}</p>}
+            {selectedAddressId && <p className="text-sm text-[#333336]">Delivering to <strong>{shippingAddress.name}</strong>. Editing an address creates a new checkout snapshot; it does not change your saved address.</p>}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {([
+                ['line1', 'House or flat and street', 'address-line1'],
+                ['line2', 'Area or landmark (optional)', 'address-line2'],
+                ['city', 'City', 'address-level2'],
+                ['state', 'State or union territory', 'address-level1'],
+                ['pincode', 'PIN code', 'postal-code'],
+              ] as const).map(([field, label, autoComplete]) => (
+                <div key={field} className={field === 'line1' || field === 'line2' ? 'sm:col-span-2' : 'min-w-0'}>
+                  <label htmlFor={`checkout-${field}`} className="mb-2 block text-sm font-semibold text-[#333336]">{label}</label>
+                  {field === 'state' ? <select {...fieldProps(field)} autoComplete={autoComplete} value={shippingAddress.state} onChange={event => updateShippingAddress(field, event.target.value)} disabled={isSubmitting} required className="w-full rounded-xl border border-[#d2d2d7] bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                    <option value="">Choose a state or union territory</option>
+                    {INDIAN_STATES.map(state => <option key={state} value={state}>{state}</option>)}
+                  </select> : <input {...fieldProps(field)} type="text" inputMode={field === 'pincode' ? 'numeric' : undefined} autoComplete={autoComplete} value={shippingAddress[field]} onChange={event => updateShippingAddress(field, event.target.value)} className="w-full rounded-xl border border-[#d2d2d7] bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]" disabled={isSubmitting} required={field !== 'line2'} />}
+                  {errorFor(field)}
+                </div>
+              ))}
+            </div>
             {!selectedAddressId && userSession && (
               <label className="flex items-center gap-2 text-xs text-[#6e6e73]">
                 <input type="checkbox" checked={saveNewAddress} onChange={(event) => setSaveNewAddress(event.target.checked)} disabled={isSubmitting} />
@@ -705,13 +871,13 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           <div className="pt-4">
           <button
             type="submit"
-            id="payu-pay-now-btn"
-            disabled={isSubmitting || hasUnavailable}
-            aria-disabled={isSubmitting || hasUnavailable}
+            id="checkout-pay-now-btn"
+            disabled={isSubmitting || Boolean(activeReservation) || Boolean(selectionConflict) || hasUnavailable || paymentUnavailable || coupon.busy}
+            aria-disabled={isSubmitting || Boolean(activeReservation) || Boolean(selectionConflict) || hasUnavailable || paymentUnavailable || coupon.busy}
             aria-describedby={hasUnavailable ? 'checkout-unavailable-note' : undefined}
-            className={`w-full py-4 rounded-full text-base font-semibold text-white transition flex items-center justify-center space-x-2 ${
-              isSubmitting || hasUnavailable
-                ? 'bg-[#86868b] cursor-not-allowed'
+            className={`w-full py-4 rounded-full text-base font-semibold transition flex items-center justify-center space-x-2 ${
+              isSubmitting || Boolean(activeReservation) || Boolean(selectionConflict) || hasUnavailable || paymentUnavailable || coupon.busy
+                ? 'bg-[#6e6e73] text-white cursor-not-allowed'
                 : 'bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black font-black uppercase tracking-wider active:scale-[0.99] shadow-md'
             }`}
           >
@@ -721,22 +887,29 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                <span>Redirecting to PayU Secure Gateway...</span>
+                <span>Opening secure payment…</span>
               </>
+            ) : selectionConflict ? (
+              <span>Review your selection before paying</span>
+            ) : activeReservation ? (
+              <span>Check your existing payment first</span>
+            ) : paymentUnavailable ? (
+              <span>Checkout temporarily unavailable</span>
             ) : hasUnavailable ? (
               <span>Remove unavailable items to continue</span>
             ) : (
-              <span>Pay Now with PayU • ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              <span>Pay Rs {totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
             )}
           </button>
         </div>
 
         <div className="text-center text-xs text-[#6e6e73] pt-2">
-          <span>🔒 256-bit SSL Encrypted • Card, UPI, NetBanking & Wallets via PayU</span>
-          {paymentNote ? <span className="block mt-1">{paymentNote}</span> : null}
+          <span>Secure online payment</span>
+          {paymentNote && !/payu/i.test(paymentNote) ? <span className="block mt-1">{paymentNote}</span> : null}
         </div>
         </div>
       </form>
+      </div>
     </div>
   );
 }

@@ -12,19 +12,20 @@
  *   Gadzio homepage (`/`) — data files under
  *     src/components/sites/www-apple-com-736d3707/root-8a5edab2/data/
  *     plus inline defaults in Ribbon.tsx / PromoSection.tsx.
- *   OPPO — inline DEFAULT_* constants in src/components/sites/oppo-india/*.tsx.
+ *   Gadzio sections — shared plain data in ./section-defaults.ts.
  *   Edu store — src/components/sites/edu-store/data/content.ts plus inline
  *     defaults in EduStorePage.tsx.
  *   Cases — src/components/sites/cases-protection/data/products.ts plus inline
  *     CATEGORY_LINKS in CasesProtectionPage.tsx.
  *   SEO — the hardcoded `metadata` objects in each page.tsx.
  *
- * Image fields collapse art-directed multi-breakpoint PictureData to a single
- * `imageSrc` string: the primary `img.src` (largest rendered asset). Tile
- * subheads flatten their {kind, value} segments to the concatenated values.
+ * Art-directed image slots stay blank so original breakpoint art is retained;
+ * getCollectionCurrentArt supplies their display-only previews. Single-image
+ * sections prefill their image paths. Tile subheads flatten their {kind, value}
+ * segments to the concatenated values.
  */
 
-import { FOOTER_BOTTOM, FOOTER_FOOTNOTES_HTML } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/footer';
+import { FOOTER_BOTTOM } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/footer';
 import { TV_GALLERY_ITEMS } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/gallery';
 import { LOCALE_BANNER } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/locale-banner';
 import { NAV_ITEMS, SEARCH_PANEL } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
@@ -36,6 +37,13 @@ import {
   SHELVES as EDU_SHELVES,
   type EduCard,
 } from '@/components/sites/edu-store/data/content';
+
+import {
+  TRUST_BADGES_ITEMS, CATEGORY_GRID_ITEMS, BRAND_BAR_ITEMS,
+  DIWALI_ITEMS, DIWALI_COPY, CROWD_FAVORITES_ITEMS, CROWD_FAVORITES_COPY,
+  REVIEWS_ITEMS, REVIEWS_COPY, IN_THE_WILD_ITEMS, IN_THE_WILD_COPY,
+  EVENT_BANNER_COPY,
+} from './section-defaults';
 
 /* ------------------------------------------------------------- helpers */
 
@@ -150,15 +158,14 @@ const APPLE_NAV_DEFAULTS = {
 };
 
 const APPLE_FOOTER_DEFAULTS = {
-  footnotesHtml: FOOTER_FOOTNOTES_HTML,
   copyright: FOOTER_BOTTOM.copyright,
   localeLabel: FOOTER_BOTTOM.localeLabel,
   localeHref: FOOTER_BOTTOM.localeHref,
 };
 
 const APPLE_GALLERY_DEFAULTS = {
-  // GALLERY_META.headline is null — the gallery renders no section heading.
-  heading: '',
+  // No row is hidden by src/app/page.tsx; an untouched save must stay hidden.
+  enabled: false,
   secondRowEnabled: true,
   // Card overrides: captions + per-size replacement artwork (blank = keep original).
   items: TV_GALLERY_ITEMS.map((item) => ({
@@ -174,6 +181,8 @@ const APPLE_GALLERY_DEFAULTS = {
 };
 
 const APPLE_HERO_VIDEO_DEFAULTS = {
+  // HeroSection opts in only when enabled === true; no row has no stage.
+  enabled: false,
   // Poster per-size slots (blank = keep the original start-frame art).
   imageSrc: '',
   imageSmallSrc: '',
@@ -184,7 +193,6 @@ const APPLE_HERO_VIDEO_DEFAULTS = {
   imageLarge2xSrc: '',
   // The three autoplaying clips with their measured positions.
   clips: HERO_INLINE_MEDIA.clips.map((clip) => ({
-    label: clip.id,
     src: clip.src,
     left: String(clip.left),
     width: String(clip.width),
@@ -199,224 +207,6 @@ const APPLE_SEO_DEFAULTS = {
   description:
     'Shop Gadzio mobile accessories, cases, chargers, cables, audio accessories and everyday tech essentials.',
   ogTitle: 'Gadzio',
-};
-
-/* ---------------------------------------------------------- OPPO India */
-
-const OPPO_ANNOUNCE_DEFAULTS = {
-  text: 'SHOP LIVE: Tap to unlock live discounts! ',
-  linkLabel: 'Watch Now',
-  linkHref: '#',
-};
-
-const OPPO_NAV_DEFAULTS = {
-  logoText: 'OPPO',
-  leftLinks: [
-    { label: 'Smartphones', href: '#' },
-    { label: 'Tablets', href: '#' },
-    { label: 'Audio', href: '#' },
-    { label: 'Accessories', href: '#' },
-    { label: 'About OPPO', href: '#' },
-  ],
-  rightLinks: [
-    { label: 'Store', href: '#' },
-    { label: 'ColorOS', href: '#' },
-    { label: 'Support', href: '#' },
-    { label: 'Student Offer', href: '#' },
-    { label: 'My OPPO', href: '#' },
-  ],
-};
-
-const OPPO_HERO_SLIDES_DEFAULTS = {
-  slides: [
-    {
-      title: 'OPPO Reno16 5G - AI Remix Collage',
-      subtitle: '10% Instant Bank Discount',
-      image: '/sites/oppo-india/images/hero_banner_reno16.jpg',
-      learnMoreHref: '#',
-      buyNowHref: '#',
-    },
-    {
-      title: 'OPPO Reno16c 5G - AI Remix Collage',
-      subtitle: '10% Instant Bank Discount',
-      image: '/sites/oppo-india/images/hero_banner_reno16c.jpg',
-      learnMoreHref: '#',
-      buyNowHref: '#',
-    },
-    {
-      title: 'OPPO Bubble - Ultra-Clear Rear Selfie View',
-      subtitle: 'Custom Vibe E-Badge',
-      image: '/sites/oppo-india/images/hero_banner_bubble.jpg',
-      learnMoreHref: '#',
-      buyNowHref: '#',
-    },
-  ],
-};
-
-const OPPO_HOT_SALE_DEFAULTS = {
-  badge: 'OPPO AI Phone',
-  title: 'OPPO Find X9s',
-  tagline: 'Your Story Matters.\nCreate with Find.',
-  image: '/sites/oppo-india/images/find_x9s.jpg',
-  learnLabel: 'Learn more',
-  buyLabel: 'Buy now',
-};
-
-const OPPO_PRODUCTS_DEFAULTS = {
-  items: [
-    {
-      title: 'Charging Adapters',
-      titleSup: '',
-      image: '/sites/oppo-india/images/chargingadpters.png',
-      descriptions: 'Browse our full collection of adapters',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO F33',
-      titleSup: '5G',
-      image: '/sites/oppo-india/images/f33.jpg',
-      descriptions: 'Wide for Big Moments',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO Bubble',
-      titleSup: '',
-      image: '/sites/oppo-india/images/oppo_bubble.jpg',
-      descriptions: 'Ultra-Clear Rear Selfie View\nCustom Vibe E-Badge',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO Enco Air5',
-      titleSup: '',
-      image: '',
-      descriptions: 'True Wireless\nNoise Cancelling Earbuds',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO Enco Air5 Pro',
-      titleSup: '',
-      image: '',
-      descriptions: 'True Wireless Noise Cancelling Earbuds',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO Enco Buds3 Pro+',
-      titleSup: '',
-      image: '',
-      descriptions: 'True Wireless Noise Cancelling Earbuds\nNon-Stop Grooves\nUnmatched Battery Life',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO Magnetic Charger 2 AIRVOOC 50W',
-      titleSup: '',
-      image: '',
-      descriptions: 'Fast Wireless Charging',
-      learnHref: '#',
-      buyHref: '#',
-    },
-    {
-      title: 'OPPO Magnetic Cooling Card',
-      titleSup: '',
-      image: '',
-      descriptions: 'Keep Your Phone Cool',
-      learnHref: '#',
-      buyHref: '#',
-    },
-  ],
-};
-
-const OPPO_OFFERS_DEFAULTS = {
-  heading: 'Offers made for you',
-  items: [
-    {
-      title: 'Exchange Program',
-      description: 'Upgrade Now and Save Up to ₹43,900',
-      image: '/sites/oppo-india/images/offer_exchange.png',
-      href: '#',
-    },
-    {
-      title: 'Welcome Gift',
-      description: 'Limited-time offer for all new members.',
-      image: '/sites/oppo-india/images/offer_gift.png',
-      href: '#',
-    },
-    {
-      title: 'Student Offer',
-      description: 'Students Get up to 44% OFF on\nSmartphone',
-      image: '/sites/oppo-india/images/offer_student.png',
-      href: '#',
-    },
-  ],
-};
-
-const OPPO_EXPLORE_DEFAULTS = {
-  heading: 'Explore OPPO',
-  items: [
-    {
-      title: 'OPPO Apex Guard',
-      description: 'Next Level Quality',
-      image: '/sites/oppo-india/images/explore_guard.png',
-      href: '#',
-    },
-    {
-      title: 'About OPPO',
-      description: 'Make Your Moment',
-      image: '/sites/oppo-india/images/explore_about.png',
-      href: '#',
-    },
-    {
-      title: 'OPPO AI',
-      description: 'Leading AI Experiences',
-      image: '/sites/oppo-india/images/explore_ai.png',
-      href: '#',
-    },
-    {
-      title: 'ColorOS',
-      description: 'New Generation Experience',
-      image: '/sites/oppo-india/images/explore_coloros.jpg',
-      href: '#',
-    },
-  ],
-};
-
-const OPPO_SUPPORT_DEFAULTS = {
-  heading: 'OPPO Support',
-  items: [
-    'Authenticity and Warranty Status Check',
-    'Service Centers & Reservation',
-    'Contact Us',
-    'Find More Service',
-    'Retail Store Locator',
-  ],
-};
-
-const OPPO_COMMUNITY_DEFAULTS = {
-  heading: 'OPPO Community',
-  viewAllLabel: 'View all',
-  tagline: 'A home for all OPPO fans to experience content, inspiration, and our beautiful technology.',
-  cards: [
-    { title: 'Quick reply speech to text', subtitle: '#OPPOFindN2Flip', image: '' },
-    { title: 'CAPTURE THE SM:)ING EARTH', subtitle: 'Winners of the #ShotonOPPO #SmilingEarth day contest', image: '' },
-  ],
-};
-
-const OPPO_FOOTER_DEFAULTS = {
-  disclaimer1: '*The product pictures are for reference only, please refer to the actual product.',
-  disclaimer2: '*The UI is only for demonstration purposes, please refer to the UI design of actual product.',
-  disclaimer3: '*The prices displayed are the official suggested retail Prices, the actual price may vary depending on the purchasing channel.',
-  tagline: 'Make Your Moment',
-};
-
-const OPPO_SEO_DEFAULTS = {
-  title: 'OPPO Official Site - OPPO India',
-  description:
-    'Discover OPPO smartphones, tablets, audio accessories, and IoT products. Explore the latest Reno, Find, and F series phones with cutting-edge AI features powered by ColorOS.',
 };
 
 /* -------------------------------------------------------- Edu store */
@@ -487,7 +277,6 @@ const CASES_CATEGORY_LINKS_DEFAULTS = {
 
 const CASES_PAGE_HEADER_DEFAULTS = {
   title: 'Cases & Protection',
-  sortLabel: 'Sort by',
 };
 
 // Mirrors the hardcoded `metadata` in the cases-protection page. Apple product
@@ -499,300 +288,23 @@ const CASES_SEO_DEFAULTS = {
     'Shop Gadzio protective cases for iPhone. Find MagSafe liquid silicone cases, crystal clear cases, and AeroWeave technical textile cases with military-grade drop defense.',
 };
 
-export const GADZIO_TRUST_BADGES_DEFAULTS = {
-  enabled: true,
-  items: [
-    {
-      title: 'FREE SHIPPING OVER ₹999',
-      subtitle: 'Free delivery on all prepaid orders',
-      icon: 'shipping',
-      href: '',
-    },
-    {
-      title: '30-DAY RETURNS',
-      subtitle: 'Hassle-free replacement guarantee',
-      icon: 'returns',
-      href: '',
-    },
-    {
-      title: '1% DONATED',
-      subtitle: 'Giving back with every single order',
-      icon: 'heart',
-      href: '',
-    },
-  ],
-};
-
-export const GADZIO_CATEGORY_GRID_DEFAULTS = {
-  enabled: true,
-  heading: '',
-  items: [
-    {
-      title: 'CASES',
-      subtitle: 'Drop Protection & MagSafe',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
-      href: '/in/shop/iphone/accessories/cases-protection',
-      badge: 'BESTSELLER',
-    },
-    {
-      title: 'CHARGERS',
-      subtitle: 'High-speed adapters & braided cables',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
-      href: '/in/shop/iphone/accessories/power-adapter-cable',
-      badge: '',
-    },
-    {
-      title: 'AUDIO',
-      subtitle: 'Studio grade sound & noise isolation',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
-      href: '/in/shop/iphone/accessories/wired-earphones',
-      badge: 'NEW',
-    },
-    {
-      title: 'ACCESSORIES',
-      subtitle: 'Everyday tech essentials',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg',
-      href: '/in/shop/iphone/accessories/cable-plug-case',
-      badge: '',
-    },
-  ],
-};
-
+// Share the storefront fallback values, never a client-component export.
+export const GADZIO_TRUST_BADGES_DEFAULTS = { enabled: true, items: TRUST_BADGES_ITEMS };
+export const GADZIO_CATEGORY_GRID_DEFAULTS = { enabled: true, heading: '', items: CATEGORY_GRID_ITEMS };
 export const GADZIO_CROWD_FAVORITES_DEFAULTS = {
-  enabled: true,
-  heading: 'The Crowd Favorites',
-  subtitle: 'See what everyone is adding to their cart right now.',
-  rightLinkLabel: 'SHOP BEST SELLERS',
-  rightLinkHref: '/in/shop/iphone/accessories/cases-protection',
-  items: [
-    {
-      title: 'Gadzio CrystalArmor Clear Case with MagSafe',
-      price: '₹3,499',
-      image: '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
-      href: '/shop/product/iphone18pro-max-clear-magsafe',
-      badge: 'LIMITED RELEASE',
-      badgeColor: 'lavender',
-      secondaryBadge: '⚡ NEW',
-      secondaryBadgeColor: 'yellow',
-      colorDots: '#e8e8ed, #1d1d1f',
-    },
-    {
-      title: 'Gadzio MagPulse Liquid Silicone Case',
-      price: '₹3,499',
-      image: '/sites/cases-protection/images/iphone17-silicone-black.jpg',
-      href: '/shop/product/iphone17-silicone-black',
-      badge: '⚡ NEW',
-      badgeColor: 'yellow',
-      secondaryBadge: 'TOP ITEM',
-      secondaryBadgeColor: 'pink',
-      colorDots: '#1d1d1f, #8e8e93',
-    },
-    {
-      title: 'Gadzio 20W USB-C GaN Fast Power Adapter',
-      price: '₹1,499',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
-      href: '/in/shop/iphone/accessories/power-adapter-cable',
-      badge: 'TRENDING',
-      badgeColor: 'green',
-      secondaryBadge: '',
-      secondaryBadgeColor: 'default',
-      colorDots: '#f5f5f7, #1d1d1f',
-    },
-    {
-      title: 'Gadzio Pulse USB-C Studio Hi-Res Earphones',
-      price: '₹1,499',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
-      href: '/in/shop/iphone/accessories/wired-earphones',
-      badge: 'TRENDING',
-      badgeColor: 'green',
-      secondaryBadge: '',
-      secondaryBadgeColor: 'default',
-      colorDots: '#ffffff, #1d1d1f',
-    },
-    {
-      title: 'Gadzio Ultra-Durable Braided USB-C Cable',
-      price: '₹999',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg',
-      href: '/in/shop/iphone/accessories/cable-plug-case',
-      badge: 'BESTSELLER',
-      badgeColor: 'yellow',
-      secondaryBadge: '',
-      secondaryBadgeColor: 'default',
-      colorDots: '#1d1d1f',
-    },
-    {
-      title: 'Gadzio Rugged Armor Case for AirPods Pro',
-      price: '₹1,299',
-      image: '/sites/cases-protection/images/iphone17pro-max-silicone.jpg',
-      href: '/in/shop/iphone/accessories/airpods-case',
-      badge: 'NEW',
-      badgeColor: 'yellow',
-      secondaryBadge: '',
-      secondaryBadgeColor: 'default',
-      colorDots: '#1d1d1f, #4f6f8f',
-    },
-  ],
+  enabled: true, ...CROWD_FAVORITES_COPY, items: CROWD_FAVORITES_ITEMS,
 };
-
-export const GADZIO_EVENT_BANNER_DEFAULTS = {
-  enabled: true,
-  heading: 'The Flagship Drop Of The Year',
-  subtitle:
-    'Order now to get the limited deluxe titanium edition—engineered with aerospace-grade defense and high-gauss MagSafe.',
-  ctaLabel: 'SHOP THE DROP',
-  ctaHref: '/in/shop/iphone/accessories/cases-protection',
-  image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
-};
-
-export const GADZIO_BRAND_BAR_DEFAULTS = {
-  enabled: true,
-  items: [
-    { name: 'GADZIO FEASTABLES', subhead: 'SWEET TREATS & EDITIONS', href: '/in/shop/iphone/accessories/cases-protection' },
-    { name: 'GADZIO GAMES', subhead: 'CHALLENGES & ARENA', href: '/in/shop/iphone/accessories/cases-protection' },
-    { name: 'GADZIO BY MRBEAST', subhead: 'OFFICIAL STORE', href: '/in/shop/iphone/accessories/cases-protection' },
-    { name: 'GADZIO ATHLETICS', subhead: 'PERFORMANCE GEAR', href: '/in/shop/iphone/accessories/power-adapter-cable' },
-    { name: 'GADZIO LAB', subhead: 'TECH EXPERIMENTS', href: '/in/shop/iphone/accessories/wired-earphones' },
-    { name: 'GADZIO SIGNATURE', subhead: 'PREMIUM ESSENTIALS', href: '/in/shop/iphone/accessories/cable-plug-case' },
-  ],
-};
-
+export const GADZIO_EVENT_BANNER_DEFAULTS = { enabled: true, ...EVENT_BANNER_COPY };
+export const GADZIO_BRAND_BAR_DEFAULTS = { enabled: true, items: BRAND_BAR_ITEMS };
 export const GADZIO_DIWALI_CAMPAIGN_DEFAULTS = {
-  enabled: true,
-  bannerKicker: 'DIWALI 2026',
-  bannerTitle: 'ARE YOU READY?',
-  bannerButtonLabel: 'SHOP DIWALI',
-  bannerButtonHref: '/in/shop/iphone/accessories/cases-protection',
-  bannerImage: '',
-  items: [
-    {
-      title: 'Gadzio Diwali Festive Tech Hamper 2026 (Limited Box)',
-      tagPrimary: 'LIMITED RELEASE',
-      tagSecondary: '⚡ NEW',
-      amountText: '₹2,999',
-      originalAmountText: '₹4,499',
-      savingsText: 'SAVE 33%',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (3).jpg',
-      href: '/in/shop/iphone/accessories/cases-protection',
-    },
-    {
-      title: 'Diwali Gold Edition 3-in-1 Fast Wireless Charging Station',
-      tagPrimary: '',
-      tagSecondary: '⚡ NEW',
-      amountText: '₹1,899',
-      originalAmountText: '₹2,699',
-      savingsText: 'SAVE 30%',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
-      href: '/in/shop/iphone/accessories/power-adapter-cable',
-    },
-    {
-      title: 'Gadzio Pulse ANC Wireless Earphones - Festive Edition',
-      tagPrimary: 'SAVE',
-      tagSecondary: '⚡ NEW',
-      amountText: '₹1,499',
-      originalAmountText: '₹2,199',
-      savingsText: 'SAVE 32%',
-      image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
-      href: '/in/shop/iphone/accessories/wired-earphones',
-    },
-    {
-      title: 'Diwali Elite MagSafe Protection Combo (Case + Screen Glass)',
-      tagPrimary: 'BESTSELLER',
-      tagSecondary: '⚡ FESTIVE',
-      amountText: '₹1,299',
-      originalAmountText: '₹1,899',
-      savingsText: 'SAVE 31%',
-      image: '/sites/cases-protection/images/iphone16pro-clear-magsafe.jpg',
-      href: '/in/shop/iphone/accessories/cases-protection',
-    },
-  ],
+  enabled: true, ...DIWALI_COPY, bannerImage: '', items: DIWALI_ITEMS,
+};
+export const GADZIO_REVIEWS_DEFAULTS = { enabled: true, ...REVIEWS_COPY, items: REVIEWS_ITEMS };
+export const GADZIO_IN_THE_WILD_DEFAULTS = {
+  enabled: true, ...IN_THE_WILD_COPY, items: IN_THE_WILD_ITEMS,
 };
 
 /* -------------------------------------------------------------- build */
-
-export const GADZIO_REVIEWS_DEFAULTS = {
-  enabled: true,
-  kicker: 'LOVED BY CREATORS & CUSTOMERS',
-  heading: '4.9 Average Star Rating',
-  subheading:
-    'With over 25,000 5-star reviews, Gadzio tech and everyday essentials are trusted by creators and tech lovers across India!',
-  items: [
-    {
-      headline: 'CrystalArmor Case is unbelievable!',
-      rating: '5',
-      content:
-        'The MagSafe magnets are insanely strong, and the drop protection saved my iPhone twice already. Crystal clear finish with zero yellowing even after months of daily use.',
-      author: 'Aarav M.',
-      badgeText: 'Verified Buyer',
-    },
-    {
-      headline: 'Insane charging speed & durable cable!',
-      rating: '5',
-      content:
-        'The 65W GaN adapter and braided cable charge my phone from 0 to 80% in half an hour. The metal reinforced connectors feel practically indestructible.',
-      author: 'Priya S.',
-      badgeText: 'Verified Buyer',
-    },
-    {
-      headline: 'Studio earphones blew me away!!',
-      rating: '5',
-      content:
-        'Crisp highs, deep punchy bass, and phenomenal noise isolation. Outstanding audio clarity for daily travel and long work calls. Truly 10/10!',
-      author: 'Rohan K.',
-      badgeText: 'Verified Buyer',
-    },
-  ],
-};
-
-export const GADZIO_IN_THE_WILD_DEFAULTS = {
-  enabled: true,
-  heading: 'Gadzio in the Wild',
-  subheading:
-    "Want to be featured here? Tag your photos with #GadzioInTheWild and show us how you're representing the brand every day.",
-  items: [
-    {
-      image: '/images/wild/gadzio-wild-1.jpg',
-      alt: 'Creator working outdoors with Gadzio phone case and accessories',
-      caption: 'Campus & creator essentials • @aarav_tech',
-      href: '/in/shop/iphone/accessories/cases-protection',
-    },
-    {
-      image: '/images/wild/gadzio-wild-2.jpg',
-      alt: 'Gadzio CrystalArmor MagSafe clear case in studio',
-      caption: 'CrystalArmor MagSafe setup • @priya_creations',
-      href: '/in/shop/iphone/accessories/cases-protection',
-    },
-    {
-      image: '/images/wild/gadzio-wild-3.jpg',
-      alt: 'Listening to music with Gadzio Studio Earphones',
-      caption: 'Commute in pure sound • @rohan_pulse',
-      href: '/in/shop/iphone/accessories/wired-earphones',
-    },
-    {
-      image: '/images/wild/gadzio-wild-4.jpg',
-      alt: 'Minimalist desk setup with Gadzio charging station',
-      caption: 'Studio desk setup • @vikram_workstation',
-      href: '/in/shop/iphone/accessories/power-adapter-cable',
-    },
-    {
-      image: '/images/wild/gadzio-wild-5.jpg',
-      alt: 'Tech creator inspecting Gadzio gear',
-      caption: 'Unboxing day with Gadzio • @neha_daily',
-      href: '/in/shop/iphone/accessories/cases-protection',
-    },
-    {
-      image: '/images/wild/gadzio-wild-6.jpg',
-      alt: 'Heavy-duty braided cables on desk',
-      caption: 'High-speed charging setup • @kabir_edits',
-      href: '/in/shop/iphone/accessories/power-adapter-cable',
-    },
-    {
-      image: '/images/wild/gadzio-wild-7.jpg',
-      alt: 'Silicone protection case and AirTag accessory',
-      caption: 'Travel ready with Gadzio • @ananya_travels',
-      href: '/in/shop/iphone/accessories/cases-protection',
-    },
-  ],
-};
 
 const DEFAULTS: Record<string, Record<string, unknown>> = {
   /* Gadzio homepage */
@@ -813,19 +325,6 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
   'apple.footer': APPLE_FOOTER_DEFAULTS,
   'apple.gallery': APPLE_GALLERY_DEFAULTS,
   'apple.seo': APPLE_SEO_DEFAULTS,
-
-  /* OPPO India */
-  'oppo.announce': OPPO_ANNOUNCE_DEFAULTS,
-  'oppo.nav': OPPO_NAV_DEFAULTS,
-  'oppo.hero_slides': OPPO_HERO_SLIDES_DEFAULTS,
-  'oppo.hot_sale': OPPO_HOT_SALE_DEFAULTS,
-  'oppo.products': OPPO_PRODUCTS_DEFAULTS,
-  'oppo.offers': OPPO_OFFERS_DEFAULTS,
-  'oppo.explore': OPPO_EXPLORE_DEFAULTS,
-  'oppo.support': OPPO_SUPPORT_DEFAULTS,
-  'oppo.community': OPPO_COMMUNITY_DEFAULTS,
-  'oppo.footer': OPPO_FOOTER_DEFAULTS,
-  'oppo.seo': OPPO_SEO_DEFAULTS,
 
   /* Education store */
   'edu.hero': EDU_HERO_DEFAULTS,

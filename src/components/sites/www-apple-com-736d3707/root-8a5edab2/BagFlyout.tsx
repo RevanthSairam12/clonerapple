@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useCart } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
+import { useLiveCatalog, findLiveProduct } from '@/lib/catalog/client-catalog';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
+import type { SelectionPrice } from '@/lib/storefront/selection';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
 interface Props {
@@ -15,9 +17,31 @@ interface Props {
 
 export function BagFlyout({ isOpen, onClose }: Props) {
   const { items, totalCount, removeItem, updateQuantity, addItem } = useCart();
+  const { products: liveProducts } = useLiveCatalog();
   const flyoutRef = useRef<HTMLDivElement>(null);
   const [suggestedProducts, setSuggestedProducts] = useState<SearchResultItem[]>([]);
   const [addedIds, setAddedIds] = useState<Record<string, boolean>>({});
+  const [suggestionPrices, setSuggestionPrices] = useState<Record<string, SelectionPrice>>({});
+  const [suggestionNotice, setSuggestionNotice] = useState<string | null>(null);
+  const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null);
+  const suggestionRequest = React.useRef<AbortController | null>(null);
+  useEffect(() => () => { suggestionRequest.current?.abort(); }, []);
+  const suggestionKey = JSON.stringify([isOpen, suggestedProducts.map(({ id, price, wasPriceDisplay }) => {
+    const ref = findLiveProduct(liveProducts, id);
+    return [id, price, wasPriceDisplay, ref?.inventoryMode, ref?.pricePaise, ref?.regularPricePaise];
+  })]);
+  const latestSuggestionKey = React.useRef(suggestionKey);
+  if (latestSuggestionKey.current !== suggestionKey) {
+    suggestionRequest.current?.abort();
+    latestSuggestionKey.current = suggestionKey;
+  }
+  useEffect(() => {
+    suggestionRequest.current?.abort();
+    suggestionRequest.current = null;
+    setAddingSuggestion(null);
+    setSuggestionPrices({});
+    setSuggestionNotice(null);
+  }, [suggestionKey]);
 
   // Only catalog-backed lines are payable; stale ids render as unavailable and
   // do not contribute to the displayed total.
@@ -67,34 +91,57 @@ export function BagFlyout({ isOpen, onClose }: Props) {
     setSuggestedProducts(products);
   }, [isOpen, items]);
 
-  const handleQuickAdd = (item: SearchResultItem, e: React.MouseEvent) => {
+  const handleQuickAdd = async (item: SearchResultItem, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
+    if (suggestionRequest.current) return;
     // Never invent a price. Anything without a real catalog price stays
     // unaddable.
-    const price = item.price;
+    const ref = findLiveProduct(liveProducts, item.id);
+    if (!ref || ref.inventoryMode === 'variant') return;
+    const price = suggestionPrices[item.id]?.price ?? ref.pricePaise / 100;
     if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
 
-    addItem({
-      productId: item.id,
-      name: item.name,
-      subtitle: item.subtitle,
-      price,
-      priceDisplay: item.priceDisplay,
-      wasPriceDisplay: item.wasPriceDisplay,
-      // Existing Gadzio case art. The previous path
-      // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
-      // so a result without its own image added a 404 to the bag.
-      image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
-      href: item.href,
-      quantity: 1,
-    });
+    const controller = new AbortController();
+    suggestionRequest.current = controller;
+    setAddingSuggestion(item.id);
+    setSuggestionNotice(null);
+    try {
+      const result = await addItem({
+        productId: item.id,
+        name: item.name,
+        subtitle: item.subtitle,
+        ...(suggestionPrices[item.id] ?? {
+          price, priceDisplay: ref.priceDisplay, wasPriceDisplay: ref.wasPriceDisplay,
+          regularPrice: ref.wasPriceDisplay && ref.regularPricePaise ? ref.regularPricePaise / 100 : undefined,
+        }),
+        // Existing Gadzio case art. The previous path
+        // (`/sites/edu-store/images/category-iphone.png`) was never in public/,
+        // so a result without its own image added a 404 to the bag.
+        image: item.image || '/sites/cases-protection/images/iphone17-silicone-black.jpg',
+        href: item.href,
+        quantity: 1,
+      }, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (result.status !== 'added') {
+        if (result.status === 'price_changed') setSuggestionPrices((previous) => ({ ...previous, [item.id]: result.price }));
+        setSuggestionNotice(result.status === 'price_changed' ? `${result.message} Review the updated price and press again to continue.` : result.message);
+        return;
+      }
 
-    setAddedIds((prev) => ({ ...prev, [item.id]: true }));
-    setTimeout(() => {
-      setAddedIds((prev) => ({ ...prev, [item.id]: false }));
-    }, 2000);
+      setAddedIds((prev) => ({ ...prev, [item.id]: true }));
+      setTimeout(() => {
+        setAddedIds((prev) => ({ ...prev, [item.id]: false }));
+      }, 2000);
+    } catch {
+      if (!controller.signal.aborted) setSuggestionNotice('Could not verify this item. Please try again.');
+    } finally {
+      if (suggestionRequest.current === controller) {
+        suggestionRequest.current = null;
+        setAddingSuggestion(null);
+      }
+    }
   };
 
   if (!isOpen) return null;
@@ -294,6 +341,7 @@ export function BagFlyout({ isOpen, onClose }: Props) {
         </div>
       )}
 
+      {suggestionNotice && <p role="alert" className="mt-3 text-xs text-[#b42318]">{suggestionNotice} <Link href="/cart" onClick={onClose}>Review bag / Choose options</Link></p>}
       {/* Suggested Products Section in Cart Flyout */}
       {suggestedProducts.length > 0 && (
         <div className="mt-4 pt-3 border-t border-black/8">
@@ -312,11 +360,13 @@ export function BagFlyout({ isOpen, onClose }: Props) {
           <div className="space-y-2">
             {suggestedProducts.map((p) => {
               const isAdded = !!addedIds[p.id];
+              const ref = findLiveProduct(liveProducts, p.id);
+              const displayedPrice = suggestionPrices[p.id] ?? { priceDisplay: ref?.priceDisplay, wasPriceDisplay: ref?.wasPriceDisplay };
               const canAdd =
                 typeof p.price === 'number' &&
                 Number.isFinite(p.price) &&
                 p.price > 0 &&
-                Boolean(getProductFromCatalog(getCartLineBaseId(p.id) || ''));
+                Boolean(ref);
               return (
                 <div
                   key={p.id}
@@ -339,12 +389,12 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                       <p className={`text-[10px] ${canAdd ? 'text-[#86868b]' : 'text-[#e30000]'}`}>
                         {canAdd ? (
                           <>
-                            {p.wasPriceDisplay ? (
+                            {displayedPrice.wasPriceDisplay ? (
                               <s className="mr-1 text-[9px] text-[#86868b]">
-                                {p.wasPriceDisplay}
+                                {displayedPrice.wasPriceDisplay}
                               </s>
                             ) : null}
-                            {p.priceDisplay || `₹${(p.price as number).toLocaleString('en-IN')}`}
+                            {displayedPrice.priceDisplay}
                           </>
                         ) : (
                           'Unavailable'
@@ -353,9 +403,12 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                     </div>
                   </Link>
 
-                  {canAdd && (
+                  {ref?.inventoryMode === 'variant' ? (
+                    <Link href={p.href} onClick={onClose} className="text-xs font-semibold text-[#0071e3]">Choose options</Link>
+                  ) : canAdd && (
                     <button
                       type="button"
+                      disabled={addingSuggestion !== null}
                       onClick={(e) => handleQuickAdd(p, e)}
                       className={`text-[10px] font-semibold px-2 py-1 rounded-lg shrink-0 transition-all cursor-pointer ${
                         isAdded
@@ -363,7 +416,7 @@ export function BagFlyout({ isOpen, onClose }: Props) {
                           : 'bg-white hover:bg-[#0071e3] text-[#1d1d1f] hover:text-white border border-black/10'
                       }`}
                     >
-                      {isAdded ? 'Added ✓' : '+ Add'}
+                      {addingSuggestion === p.id ? 'Checking…' : isAdded ? 'Added ✓' : '+ Add'}
                     </button>
                   )}
                 </div>

@@ -265,8 +265,8 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
               }
               className="auth-input"
               placeholder="Password"
-              value={mode === 'signup' ? password : undefined}
-              onChange={mode === 'signup' ? (e) => setPassword(e.target.value) : undefined}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
             />
             <button
               type="button"

@@ -246,6 +246,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/store-admin/collections', label: 'Collections', icon: 'image' },
       { href: '/store-admin/stock', label: 'Stock', icon: 'scroll' },
       { href: '/store-admin/catalog', label: 'Catalogue data', icon: 'grid', exact: true },
+      { href: '/store-admin/device-models', label: 'Device models', icon: 'layers' },
       { href: '/store-admin/low-stock', label: 'Low stock', icon: 'alert' },
       { href: '/store-admin/reviews', label: 'Reviews', icon: 'star' },
       { href: '/store-admin/media', label: 'Media library', icon: 'image' },

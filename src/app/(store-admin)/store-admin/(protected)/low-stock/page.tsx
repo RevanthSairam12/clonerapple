@@ -34,8 +34,8 @@ export default async function StoreAdminLowStockPage() {
         <div>
           <h1 className="sa-page-title">Low stock</h1>
           <p className="sa-page-sub">
-            Products whose available count has reached its threshold. Only
-            products that track inventory are counted — for everything else
+            Products whose available-to-buy count has reached the warning level. Only
+            products with stock limits are counted — for everything else
             checkout ignores the number.
           </p>
         </div>
@@ -51,11 +51,11 @@ export default async function StoreAdminLowStockPage() {
 
       <div className="sa-order-counts">
         <div className="sa-order-count">
-          <span>Tracked products</span>
+          <span>Products with stock limits</span>
           <strong>{trackedCount}</strong>
         </div>
         <div className="sa-order-count">
-          <span>At or below threshold</span>
+          <span>At or below warning level</span>
           <strong>{lowCount}</strong>
         </div>
       </div>
@@ -64,7 +64,7 @@ export default async function StoreAdminLowStockPage() {
         <p className="sa-empty">
           Nothing is low right now.{' '}
           {trackedCount === 0
-            ? 'No product tracks inventory yet, so this list stays empty.'
+            ? 'No product has a stock limit yet, so this list stays empty.'
             : ''}
         </p>
       ) : (
@@ -73,16 +73,16 @@ export default async function StoreAdminLowStockPage() {
             <thead>
               <tr>
                 <th>Product</th>
-                <th className="sa-num">On hand</th>
-                <th className="sa-num">Reserved</th>
-                <th className="sa-num">Available</th>
-                <th className="sa-num">Threshold</th>
+                <th className="sa-num">In stock</th>
+                <th className="sa-num">Held in checkouts</th>
+                <th className="sa-num">Available to buy</th>
+                <th className="sa-num">Warn me when below</th>
                 <th>Stock updated</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.productId}>
+                <tr key={JSON.stringify([row.productId,row.variantId])}>
                   <td>
                     <Link
                       className="sa-product-link"
@@ -90,7 +90,7 @@ export default async function StoreAdminLowStockPage() {
                     >
                       {row.name}
                     </Link>
-                    <div className="sa-row-sub sa-mono">{row.slug}</div>
+                    <div className="sa-row-sub sa-mono">{row.variantSku??row.slug}</div>
                   </td>
                   <td className="sa-num">{row.onHand}</td>
                   <td className="sa-num">{row.reserved}</td>

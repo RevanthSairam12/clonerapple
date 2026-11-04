@@ -275,7 +275,7 @@ export async function getDashboardRecommendations(userId: string): Promise<{
       from products p
       left join stock s on s.product_id = p.id
       where p.is_active = true
-        and p.is_archived = false
+        and p.deleted_at is null
         and (
           p.category_id = any(${catArray}::text[])
           or lower(p.brand) = any(${brandArray}::text[])

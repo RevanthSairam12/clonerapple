@@ -20,10 +20,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(here, '..', '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -43,16 +44,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -176,11 +181,7 @@ test('late payment re-claims released stock and continues normally', { skip }, a
   const a = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, TABLES);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -227,9 +228,11 @@ test('late payment re-claims released stock and continues normally', { skip }, a
     assert.equal(await onHand(a, productId), 0, 'a duplicate never claims again');
     assert.equal((await movements(a, await orderId(a, txnid))).length, 3);
   } finally {
-    await a.unsafe('set search_path to public');
-    await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    await a.end();
+    try {
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await a.end({ timeout: 5 });
+    }
   }
 });
 
@@ -242,11 +245,7 @@ test('late payment with no stock flags the order, claims nothing and never retri
   const a = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, TABLES);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -318,9 +317,11 @@ test('late payment with no stock flags the order, claims nothing and never retri
     assert.equal(String(obligations[0].status), 'PENDING');
     assert.equal(Number(obligations[0].amount_paise), 100000);
   } finally {
-    await a.unsafe('set search_path to public');
-    await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    await a.end();
+    try {
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await a.end({ timeout: 5 });
+    }
   }
 });
 
@@ -332,11 +333,7 @@ test('a late payment for a legacy order with no claim is paid without a flag', {
   const a = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, TABLES);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -366,8 +363,10 @@ test('a late payment for a legacy order with no claim is paid without a flag', {
     assert.equal(String(row[0].status), 'PAID');
     assert.equal(row[0].payment_review_required, false);
   } finally {
-    await a.unsafe('set search_path to public');
-    await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    await a.end();
+    try {
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await a.end({ timeout: 5 });
+    }
   }
 });

@@ -5,15 +5,41 @@ import { getSql } from '@/lib/platform/db';
 import { generateCouponCode } from '@/lib/coupons/codes';
 
 import { formatPaise } from './amount';
-import { maskEmail } from './audit';
+import { maskEmail, writeAudit, type AuditInput } from './audit';
 import type { CatalogWrite } from './catalog-writes';
 import type { CouponValues } from './coupon-rules';
-import { couponListBadge, type CouponBadge } from './coupon-rules';
+import { couponAuditFromRow, couponAuditSnapshot, couponListBadge, parseCouponVisibilityFilter, parseCouponVisibilityInput, type CouponBadge, type CouponVisibilityFilter } from './coupon-rules';
 
 type Tx = postgres.TransactionSql;
 /** Anything that can run a tagged query: the pool or one transaction. */
 type Queryable = postgres.ISql;
 type Row = Record<string, unknown>;
+
+export interface CouponActorContext {
+  actorId: string | null;
+  actorEmail?: string | null;
+  request?: Request | null;
+}
+
+/** Per-call seams: an isolated-schema client and optional audit failure stub.
+ * No global overrides or runtime schema selection. Reads accept { sql }; audited
+ * writes accept { sql, audit }. An audit false/throw always aborts the transaction.
+ */
+export interface CouponServiceOptions {
+  sql?: postgres.Sql;
+  audit?: typeof writeAudit;
+}
+
+async function auditCoupon(
+  tx: Tx,
+  actor: CouponActorContext,
+  input: Omit<AuditInput, 'actorId' | 'actorEmail' | 'request'>,
+  options: CouponServiceOptions,
+): Promise<void> {
+  if (!await (options.audit ?? writeAudit)({ ...input, ...actor }, tx)) {
+    throw new Error('Coupon audit failed');
+  }
+}
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Coupons are read and written on the server only.');
@@ -100,6 +126,9 @@ export interface CouponAdminRow {
   allowWithSalePrice: boolean;
   allowedCustomerGroups: string[] | null;
   restrictedToEmails: string[] | null;
+  showToAllUsers: boolean;
+  assignedToEmails: string[];
+  assignedCustomerGroups: string[];
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
@@ -141,6 +170,7 @@ export interface CouponDetail {
 export interface CouponListFilters {
   search?: string;
   status?: string;
+  visibility?: CouponVisibilityFilter | string;
   page?: number;
   pageSize?: number;
 }
@@ -176,6 +206,9 @@ function mapRow(row: Row): CouponAdminRow {
     allowWithSalePrice: row.allow_with_sale_price === true,
     allowedCustomerGroups: stringArray(row.allowed_customer_groups),
     restrictedToEmails: stringArray(row.restricted_to_emails),
+    showToAllUsers: row.show_to_all_users === true,
+    assignedToEmails: stringArray(row.assigned_to_emails) ?? [],
+    assignedCustomerGroups: stringArray(row.assigned_customer_groups) ?? [],
     createdAt: iso(row.created_at) ?? '',
     updatedAt: iso(row.updated_at) ?? '',
     archivedAt: iso(row.archived_at),
@@ -207,11 +240,13 @@ function likeTerm(value: string): string {
  */
 export async function listCoupons(
   filters: CouponListFilters = {},
+  options: CouponServiceOptions = {},
 ): Promise<CatalogWrite<CouponListPage>> {
-  const sql = getSql();
+  const sql = options.sql ?? getSql();
   if (!sql) return fail('unavailable', 'Coupons are not available.');
 
   const search = (filters.search ?? '').trim();
+  const visibility = parseCouponVisibilityFilter(filters.visibility);
   const status = (filters.status ?? 'all').trim().toLowerCase();
   const pageSize = Math.min(2000, Math.max(1, filters.pageSize ?? PAGE_SIZE));
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
@@ -258,6 +293,9 @@ export async function listCoupons(
               when 'archived' then c.status = 'archived'
               else true
             end
+        and (${visibility} = 'all'
+             or (${visibility} = 'public' and c.show_to_all_users)
+             or (${visibility} = 'hidden' and not c.show_to_all_users))
         and (
           ${search} = ''
           or upper(c.code) like ${likeTerm(search.toUpperCase())}
@@ -304,6 +342,9 @@ export async function listCoupons(
               when 'archived' then c.status = 'archived'
               else true
             end
+        and (${visibility} = 'all'
+             or (${visibility} = 'public' and c.show_to_all_users)
+             or (${visibility} = 'hidden' and not c.show_to_all_users))
         and (
           ${search} = ''
           or upper(c.code) like ${likeTerm(search.toUpperCase())}
@@ -407,8 +448,8 @@ async function readUsageLog(tx: Queryable, couponId: string): Promise<CouponUsag
 }
 
 /** One coupon with its targets, usage log and computed totals. */
-export async function getCoupon(id: string): Promise<CatalogWrite<CouponDetail>> {
-  const sql = getSql();
+export async function getCoupon(id: string, options: CouponServiceOptions = {}): Promise<CatalogWrite<CouponDetail>> {
+  const sql = options.sql ?? getSql();
   if (!sql) return fail('unavailable', 'Coupons are not available.');
   if (!id) return fail('not-found', 'That coupon does not exist.');
 
@@ -517,6 +558,9 @@ interface CouponColumns {
   allowWithSalePrice: boolean;
   allowedCustomerGroups: string[] | null;
   restrictedToEmails: string[] | null;
+  showToAllUsers: boolean;
+  assignedToEmails: string[];
+  assignedCustomerGroups: string[];
 }
 
 function columnsFrom(values: CouponValues): CouponColumns {
@@ -537,6 +581,9 @@ function columnsFrom(values: CouponValues): CouponColumns {
     allowWithSalePrice: values.allowWithSalePrice,
     allowedCustomerGroups: values.allowedCustomerGroups,
     restrictedToEmails: values.restrictedToEmails,
+    showToAllUsers: values.showToAllUsers ?? false,
+    assignedToEmails: values.assignedToEmails ?? [],
+    assignedCustomerGroups: values.assignedCustomerGroups ?? [],
   };
 }
 
@@ -553,6 +600,7 @@ async function insertCoupon(
       starts_at, ends_at, total_redemption_limit, per_customer_limit,
       min_order_paise, max_discount_paise, only_new_customers,
       allow_with_sale_price, allowed_customer_groups, restricted_to_emails,
+      show_to_all_users, assigned_to_emails, assigned_customer_groups,
       created_by, created_at, updated_at
     ) values (
       ${id}, ${columns.code}, ${columns.name}, ${columns.description},
@@ -561,7 +609,9 @@ async function insertCoupon(
       ${columns.perCustomerLimit}, ${columns.minOrderPaise},
       ${columns.maxDiscountPaise}, ${columns.onlyNewCustomers},
       ${columns.allowWithSalePrice}, ${columns.allowedCustomerGroups},
-      ${columns.restrictedToEmails}, ${createdBy}, now(), now()
+      ${columns.restrictedToEmails}, ${columns.showToAllUsers},
+      ${columns.assignedToEmails}, ${columns.assignedCustomerGroups},
+      ${createdBy}, now(), now()
     )
   `;
 }
@@ -589,19 +639,24 @@ async function replaceTargets(
 /** Create a coupon. Codes are unique case-insensitively at the database. */
 export async function createCoupon(
   values: CouponValues,
-  actorId: string | null,
+  actor: CouponActorContext,
+  options: CouponServiceOptions = {},
 ): Promise<CatalogWrite<CouponAdminRow>> {
-  const sql = getSql();
+  const sql = options.sql ?? getSql();
   if (!sql) return fail('unavailable', 'Coupons are not available.');
 
   try {
     const id = newCouponId();
     await sql.begin(async (tx) => {
-      await insertCoupon(tx, id, columnsFrom(values), 'active', actorId);
+      await insertCoupon(tx, id, columnsFrom(values), 'active', actor.actorId);
       await replaceTargets(tx, id, values.targets);
+      await auditCoupon(tx, actor, {
+        action: 'coupon.create', entity: 'coupon', entityId: id,
+        after: couponAuditSnapshot({ ...values, status: 'active' }), reason: 'staff_created',
+      }, options);
     });
 
-    const created = await getCoupon(id);
+    const created = await getCoupon(id, options);
     if (!created.ok) return fail('unavailable', 'Coupons are not available.');
     return { ok: true, data: created.data.coupon };
   } catch (error: unknown) {
@@ -626,9 +681,10 @@ export interface CouponUpdateSnapshot {
 export async function updateCoupon(
   id: string,
   values: CouponValues,
-  actorId: string | null,
+  actor: CouponActorContext,
+  options: CouponServiceOptions = {},
 ): Promise<CatalogWrite<CouponUpdateSnapshot>> {
-  const sql = getSql();
+  const sql = options.sql ?? getSql();
   if (!sql) return fail('unavailable', 'Coupons are not available.');
 
   try {
@@ -641,9 +697,15 @@ export async function updateCoupon(
         return fail('conflict', 'An archived coupon cannot be edited.');
       }
 
-      const before = mapRow({ ...existing[0], used: 0, target_count: 0 });
+      const targetCounts = await tx`select count(*)::int as total from coupon_targets where coupon_id = ${id}`;
+      const before = mapRow({ ...existing[0], used: 0, target_count: targetCounts[0]?.total ?? 0 });
 
-      const columns = columnsFrom(values);
+      const columns = columnsFrom({
+        ...values,
+        showToAllUsers: values.showToAllUsers ?? before.showToAllUsers,
+        assignedToEmails: values.assignedToEmails ?? before.assignedToEmails,
+        assignedCustomerGroups: values.assignedCustomerGroups ?? before.assignedCustomerGroups,
+      });
       await tx`
         update coupons set
           code = ${columns.code},
@@ -662,6 +724,9 @@ export async function updateCoupon(
           allow_with_sale_price = ${columns.allowWithSalePrice},
           allowed_customer_groups = ${columns.allowedCustomerGroups},
           restricted_to_emails = ${columns.restrictedToEmails},
+          show_to_all_users = ${columns.showToAllUsers},
+          assigned_to_emails = ${columns.assignedToEmails},
+          assigned_customer_groups = ${columns.assignedCustomerGroups},
           updated_at = now()
         where id = ${id}
       `;
@@ -686,12 +751,19 @@ export async function updateCoupon(
           allow_with_sale_price: columns.allowWithSalePrice,
           allowed_customer_groups: columns.allowedCustomerGroups,
           restricted_to_emails: columns.restrictedToEmails,
+          show_to_all_users: columns.showToAllUsers,
+          assigned_to_emails: columns.assignedToEmails,
+          assigned_customer_groups: columns.assignedCustomerGroups,
           target_count: values.targets.length,
           updated_at: new Date(),
         },
         used: 0,
       });
 
+      await auditCoupon(tx, actor, {
+        action: 'coupon.update', entity: 'coupon', entityId: id,
+        before: couponAuditFromRow(before), after: couponAuditFromRow(after), reason: 'staff_edited',
+      }, options);
       return { ok: true, data: { before, after } };
     });
   } catch (error: unknown) {
@@ -853,20 +925,20 @@ export async function archiveCouponOnDelete(
  */
 export async function duplicateCoupon(
   id: string,
-  actorId: string | null,
+  actor: CouponActorContext,
+  options: CouponServiceOptions = {},
 ): Promise<CatalogWrite<CouponAdminRow>> {
-  const existing = await getCoupon(id);
-  if (!existing.ok) return existing;
-
-  const sql = getSql();
+  const sql = options.sql ?? getSql();
   if (!sql) return fail('unavailable', 'Coupons are not available.');
-
-  const source = existing.data.coupon;
   const code = generateCouponCode('GZ', 8);
 
   try {
     const newId = newCouponId();
-    await sql.begin(async (tx) => {
+    const copied = await sql.begin(async (tx) => {
+      const rows = await tx`select * from coupons where id = ${id} for update`;
+      if (!rows.length) return fail('not-found', 'That coupon does not exist.');
+      const source = mapRow(rows[0]);
+      const targets = await readTargets(tx, id);
       await insertCoupon(
         tx,
         newId,
@@ -887,22 +959,36 @@ export async function duplicateCoupon(
           allowWithSalePrice: source.allowWithSalePrice,
           allowedCustomerGroups: source.allowedCustomerGroups,
           restrictedToEmails: source.restrictedToEmails,
+          showToAllUsers: false,
+          assignedToEmails: [],
+          assignedCustomerGroups: [],
         },
         'paused',
-        actorId,
+        actor.actorId,
       );
       await replaceTargets(
         tx,
         newId,
-        existing.data.targets.map((target) => ({
+        targets.map((target) => ({
           productId: target.productId,
           categoryId: target.categoryId,
           brandId: target.brandId,
         })),
       );
+      await auditCoupon(tx, actor, {
+        action: 'coupon.duplicate', entity: 'coupon', entityId: newId,
+        before: { sourceCouponId: id },
+        after: couponAuditFromRow({
+          ...source, code, name: `${source.name || source.code} (copy)`.slice(0, 120),
+          status: 'paused', showToAllUsers: false, assignedToEmails: [], assignedCustomerGroups: [],
+          targetCount: targets.length,
+        }), reason: 'duplicated',
+      }, options);
+      return { ok: true as const };
     });
+    if (!copied.ok) return copied;
 
-    const created = await getCoupon(newId);
+    const created = await getCoupon(newId, options);
     if (!created.ok) return fail('unavailable', 'Coupons are not available.');
     return { ok: true, data: created.data.coupon };
   } catch {
@@ -932,14 +1018,15 @@ export interface BulkGenerateResult {
  */
 export async function bulkGenerateCoupons(
   input: BulkGenerateInput,
-  actorId: string | null,
+  actor: CouponActorContext,
+  options: CouponServiceOptions = {},
 ): Promise<CatalogWrite<BulkGenerateResult>> {
   const count = Math.trunc(input.count);
   if (!Number.isFinite(count) || count < 1 || count > MAX_BULK) {
     return fail('invalid-input', `Generate between 1 and ${MAX_BULK} codes.`);
   }
 
-  const sql = getSql();
+  const sql = options.sql ?? getSql();
   if (!sql) return fail('unavailable', 'Coupons are not available.');
 
   const prefix = (input.prefix || 'GZ').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'GZ';
@@ -992,18 +1079,71 @@ export async function bulkGenerateCoupons(
             allowWithSalePrice: input.values.allowWithSalePrice,
             allowedCustomerGroups: input.values.allowedCustomerGroups,
             restrictedToEmails: input.values.restrictedToEmails,
+            showToAllUsers: input.values.showToAllUsers ?? false,
+            assignedToEmails: input.values.assignedToEmails ?? [],
+            assignedCustomerGroups: input.values.assignedCustomerGroups ?? [],
           },
           'active',
-          actorId,
+          actor.actorId,
         );
         await replaceTargets(tx, id, input.values.targets);
       }
 
+      await auditCoupon(tx, actor, {
+        action: 'coupon.bulk_generate', entity: 'coupon', entityId: 'bulk',
+        after: {
+          ...couponAuditSnapshot({ ...input.values, code: '', totalRedemptionLimit: 1, perCustomerLimit: 1, status: 'active' }),
+          count: usable.length, prefix,
+        }, reason: 'staff_bulk_generation',
+      }, options);
       return { ok: true, data: { codes: usable, ids } };
     });
   } catch {
     console.warn('[store-admin/coupons] could not bulk generate coupons');
     return fail('unavailable', 'The coupons could not be generated.');
+  }
+}
+
+/** Selected-row visibility only; does not alter assignments or redemption rules.
+ * One count-only audit row per invocation (including no-op selections).
+ * Reject missing/archived rows before any writes and lock IDs in stable order.
+ */
+export async function setCouponsVisibility(
+  input: { ids?: unknown; showToAllUsers?: unknown },
+  actor: CouponActorContext,
+  options: CouponServiceOptions = {},
+): Promise<CatalogWrite<{ ids: string[]; count: number; showToAllUsers: boolean }>> {
+  const parsed = parseCouponVisibilityInput(input);
+  if (!parsed.ok) return fail('invalid-input', parsed.error);
+  const sql = options.sql ?? getSql();
+  if (!sql) return fail('unavailable', 'Coupons are not available.');
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = await tx`
+        select id, status, archived_at, show_to_all_users from coupons
+        where id in ${tx(parsed.ids)} order by id for update
+      `;
+      if (rows.length !== parsed.ids.length) {
+        return fail('not-found', 'One or more selected coupons do not exist.');
+      }
+      if (rows.some((row) => row.status === 'archived' || row.archived_at != null)) {
+        return fail('conflict', 'Archived coupons cannot change visibility.');
+      }
+      await tx`
+        update coupons set show_to_all_users = ${parsed.showToAllUsers}, updated_at = now()
+        where id in ${tx(parsed.ids)}
+      `;
+      await auditCoupon(tx, actor, {
+        action: 'coupon.bulk_visibility', entity: 'coupon', entityId: 'bulk',
+        before: { count: rows.length, publicCount: rows.filter((row) => row.show_to_all_users === true).length },
+        after: { count: rows.length, showToAllUsers: parsed.showToAllUsers },
+        reason: parsed.showToAllUsers ? 'staff_bulk_show' : 'staff_bulk_hide',
+      }, options);
+      return { ok: true, data: { ids: parsed.ids, count: parsed.ids.length, showToAllUsers: parsed.showToAllUsers } };
+    });
+  } catch {
+    console.warn('[store-admin/coupons] could not change coupon visibility');
+    return fail('unavailable', 'Coupon visibility could not be saved.');
   }
 }
 

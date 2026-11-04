@@ -6,13 +6,17 @@ import { OrderRequestButtons } from '@/components/account/OrderRequestButtons';
 import { OrderStatusChip } from '@/components/account/OrderStatusChip';
 import { requireAccountPageSession } from '@/lib/account/auth';
 import { getCustomerOrderDetail } from '@/lib/account/orders';
+import { getCustomerDocumentState } from '@/lib/orders/document-data';
+import { OrderDocumentStatus } from '@/components/orders/OrderDocument';
 import {
-  accountDeliveryStatusLabel,
-  accountPaymentStatusLabel,
+  accountOrderHistoryLabel,
   accountRequestStatusLabel,
   accountRequestTypeLabel,
   isInFlightAccountOrderStatus,
 } from '@/lib/account/order-live';
+
+import { FULFILMENT_STEPS, fulfilmentLabel, hasShipmentStarted } from '@/lib/orders/fulfilment';
+import { validateHttpsTrackingUrl } from '@/lib/store-admin/delivery';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,8 +25,15 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
   const session = await requireAccountPageSession(`/account/orders/${encodeURIComponent(txnid)}`);
   const order = await getCustomerOrderDetail(session.userId, txnid);
   if (!order) notFound();
+  const documentState = await getCustomerDocumentState(order.id);
 
   const inFlight = isInFlightAccountOrderStatus(order.status);
+  const shipmentStarted = hasShipmentStarted(order.fulfilmentStatus, order.history);
+  const trackingUrl = shipmentStarted ? validateHttpsTrackingUrl(order.trackingUrl) : null;
+  const timeline = order.history.flatMap((entry) => {
+    const label = accountOrderHistoryLabel(entry.domain, entry.toStatus, shipmentStarted ? order.deliveryMethod : null);
+    return label ? [{ ...entry, label }] : [];
+  });
   return (
     <AccountFrame session={session} active="/account/orders">
       <div className="space-y-5">
@@ -34,7 +45,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
             <p className="mt-1 text-sm text-[#6e6e73]">Placed {order.createdAt.toLocaleString('en-IN')}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <OrderStatusChip status={order.status} />
-              <span className="text-sm text-[#6e6e73]">{accountPaymentStatusLabel(order.paymentStatus)}</span>
+              <span className="text-sm text-[#6e6e73]">{documentState.label}</span>
             </div>
             {inFlight && (
               <p className="mt-2 text-xs text-[#6e6e73]" role="status">
@@ -42,10 +53,19 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
               </p>
             )}
           </div>
-          <Link href={`/account/orders/${encodeURIComponent(order.txnid)}/receipt`} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
-            View receipt
-          </Link>
+          {(documentState.canViewInvoice || documentState.canViewReceipt) && <Link prefetch={false} href={`/account/orders/${encodeURIComponent(order.txnid)}/receipt${documentState.canViewInvoice ? '?document=invoice' : ''}`} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+            {documentState.canViewInvoice ? 'View / Print invoice' : 'View Payment receipt'}
+          </Link>}
         </div>
+
+        <OrderDocumentStatus state={documentState} currency={order.currency} customer />
+
+        <section aria-label="Fulfilment progress" className="rounded-3xl border border-[#e5e5ea] bg-white p-5">
+          <h3 className="font-semibold">{fulfilmentLabel(order.fulfilmentStatus, shipmentStarted ? order.deliveryMethod : null)}</h3>
+          <p className="mt-2 text-sm text-[#6e6e73]">
+            {FULFILMENT_STEPS.map((step) => fulfilmentLabel(step, shipmentStarted ? order.deliveryMethod : null)).join(' → ')}
+          </p>
+        </section>
 
         <OrderRequestButtons
           txnid={order.txnid}
@@ -57,13 +77,15 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
           <section className="rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm">
             <h3 className="text-lg font-semibold">Items</h3>
             <div className="mt-4 divide-y divide-[#e5e5ea]">
-              {order.items.map((item) => (
-                <div key={item.id} className="flex gap-4 py-4">
+              {order.items.map((item, index) => (
+                <div key={`${item.id}:${item.variantId ?? 'legacy'}:${index}`} className="flex gap-4 py-4">
                   <div className="h-20 w-20 shrink-0 rounded-2xl bg-[#f5f5f7] p-2">
                     {item.image && <img src={item.image} alt="" className="h-full w-full object-contain" />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <h4 className="font-semibold">{item.name}</h4>
+                    {item.variantLabel && <p className="text-sm text-[#6e6e73]">{item.variantLabel}</p>}
+                    {item.variantSku && <p className="text-xs text-[#6e6e73]">SKU: {item.variantSku}</p>}
                     <p className="mt-1 text-sm text-[#6e6e73]">Qty {item.quantity} · ₹{item.unitPrice.toLocaleString('en-IN')} each</p>
                   </div>
                   <p className="font-semibold">₹{item.totalPrice.toLocaleString('en-IN')}</p>
@@ -82,10 +104,10 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
                 <span className="text-[#6e6e73]">Shipping</span>
                 <span>{order.shippingPaise === 0 ? 'Free' : `₹${(order.shippingPaise / 100).toLocaleString('en-IN')}`}</span>
               </div>
-              {order.refundedPaise > 0 && (
+              {documentState.refundedPaise > 0 && (
                 <div className="flex justify-between text-emerald-700">
                   <span>Refunded</span>
-                  <span>−₹{(order.refundedPaise / 100).toLocaleString('en-IN')}</span>
+                  <span>−₹{(documentState.refundedPaise / 100).toLocaleString('en-IN')}</span>
                 </div>
               )}
               <div className="flex justify-between text-lg font-semibold"><span>Total</span><span>₹{order.amount.toLocaleString('en-IN')}</span></div>
@@ -95,16 +117,25 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
           <aside className="space-y-5">
             <section className="rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm">
               <h3 className="font-semibold">Delivery</h3>
-              <p className="mt-3 text-sm text-[#6e6e73]">
-                {accountDeliveryStatusLabel(order.deliveryStatus)}
-                {order.deliveryMethod ? ` · ${order.deliveryMethod}` : ''}
-                {order.courier ? ` · ${order.courier}` : ''}
-              </p>
-              {order.trackingNumber && <p className="mt-2 text-sm">Tracking {order.trackingNumber}</p>}
-              {order.trackingUrl && (
-                <a className="mt-3 inline-block text-sm font-semibold text-[#0071e3]" href={order.trackingUrl} target="_blank" rel="noreferrer">
-                  Track delivery →
-                </a>
+              {shipmentStarted ? (
+                <>
+                  <p className="mt-3 text-sm text-[#6e6e73]">
+                    {fulfilmentLabel(order.fulfilmentStatus, order.deliveryMethod)}
+                    {order.deliveryMethod ? ` · ${order.deliveryMethod === 'self' ? 'Store delivery' : 'Courier'}` : ''}
+                    {order.courier ? ` · ${order.courier}` : ''}
+                  </p>
+                  {order.trackingNumber && <p className="mt-2 text-sm">Tracking {order.trackingNumber}</p>}
+                  {trackingUrl && (
+                    <a className="mt-3 inline-block text-sm font-semibold text-[#0071e3]" href={trackingUrl} target="_blank" rel="noreferrer">
+                      Track delivery →
+                    </a>
+                  )}
+                  {order.scheduledFor && <p className="mt-2 text-sm">Scheduled {new Date(order.scheduledFor).toLocaleString('en-IN')}</p>}
+                  {order.deliverySlot && <p className="mt-2 text-sm">Delivery slot {order.deliverySlot}</p>}
+                  {order.deliveredAt && <p className="mt-2 text-sm">Delivered {order.deliveredAt.toLocaleString('en-IN')}</p>}
+                </>
+              ) : (
+                <p className="mt-3 text-sm text-[#6e6e73]">Shipment details will appear after pickup.</p>
               )}
               {order.address && (
                 <p className="mt-4 text-sm leading-6">
@@ -148,10 +179,10 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
             <section className="rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm">
               <h3 className="font-semibold">Status timeline</h3>
               <ol className="mt-4 space-y-4">
-                {order.history.map((entry, index) => (
+                {timeline.map((entry, index) => (
                   <li key={`${entry.createdAt.toISOString()}-${index}`} className="relative pl-6 text-sm">
                     <span className="absolute left-0 top-1 h-3 w-3 rounded-full bg-[#0071e3]" />
-                    <p className="font-semibold">{entry.toStatus.replaceAll('_', ' ')}</p>
+                    <p className="font-semibold">{entry.label}</p>
                     <p className="text-xs text-[#6e6e73]">{entry.createdAt.toLocaleString('en-IN')} · {entry.domain}</p>
                   </li>
                 ))}

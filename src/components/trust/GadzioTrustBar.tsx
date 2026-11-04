@@ -2,40 +2,16 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { TRUST_BADGES_ITEMS, type TrustBadgeItem } from '@/lib/website/section-defaults';
 
-export interface TrustBadgeItem {
-  title: string;
-  subtitle?: string;
-  icon?: string;
-  href?: string;
-}
+export type { TrustBadgeItem };
 
 export interface GadzioTrustBarProps {
   items?: TrustBadgeItem[];
   enabled?: boolean;
 }
 
-/** Default 3 trust badges matching the screenshot with Gadzio detailing. */
-export const DEFAULT_TRUST_BADGES: TrustBadgeItem[] = [
-  {
-    title: 'FREE SHIP $75+',
-    subtitle: 'Free delivery on orders over ₹999',
-    icon: 'shipping',
-    href: '',
-  },
-  {
-    title: '30-DAY RETURNS',
-    subtitle: 'Hassle-free replacement guarantee',
-    icon: 'returns',
-    href: '',
-  },
-  {
-    title: '1% DONATED',
-    subtitle: 'Giving back with every single order',
-    icon: 'heart',
-    href: '',
-  },
-];
+export const DEFAULT_TRUST_BADGES = TRUST_BADGES_ITEMS;
 
 /**
  * Clean SVG icons matching the screenshot.

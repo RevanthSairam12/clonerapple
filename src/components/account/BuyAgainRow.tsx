@@ -5,6 +5,8 @@ import Link from 'next/link';
 
 import { useCart } from '@/lib/cart/CartContext';
 import { stockBlocked } from '@/lib/storefront/availability-rules';
+import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
+import { priceNeedsReview } from '@/lib/storefront/selection';
 import type { BuyAgainItem } from '@/lib/account/orders';
 
 type RowProps = {
@@ -45,49 +47,53 @@ export function BuyAgainRow({ items, saleLive }: RowProps) {
 
 function BuyAgainCard({ item, saleLive }: { item: BuyAgainItem; saleLive: boolean }) {
   const { addItem } = useCart();
-  const [busy, setBusy] = useState(false);
-  const [added, setAdded] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [needsOptions, setNeedsOptions] = useState(false);
+  const purchase = usePurchaseAction(JSON.stringify([item.id, item.inventoryMode, item.pricePaise, item.regularPricePaise]));
+  const { pending: busy, added, notice } = purchase;
+  const offered = purchase.priceOverride ?? {
+    price: item.pricePaise / 100, priceDisplay: item.priceDisplay,
+    regularPrice: item.onSale ? item.regularPricePaise / 100 : undefined,
+    wasPriceDisplay: item.wasPriceDisplay ?? undefined,
+  };
   const blocked = stockBlocked(item.inStock, saleLive);
 
   async function add() {
     if (blocked || busy) return;
-    setBusy(true);
-    setNotice(null);
-    try {
+    if (item.inventoryMode === 'variant' || needsOptions) return;
+    await purchase.run(async (signal) => {
       const response = await fetch(
         `/api/account/buy-again/${encodeURIComponent(item.id)}`,
-        { cache: 'no-store' },
+        { cache: 'no-store', signal },
       );
       const body = await response.json().catch(() => null);
+      if (signal.aborted) return { status: 'stale', message: 'Selection changed. Please try again.' };
       if (!response.ok || !body?.product) {
-        setNotice(body?.error || 'That item is no longer available to reorder.');
-        return;
+        return { status: 'unavailable', message: body?.error || 'That item is no longer available to reorder.' };
       }
       const current = body.product as BuyAgainItem;
-      if (stockBlocked(current.inStock, saleLive)) {
-        setNotice('Stock not available right now.');
-        return;
+      if (current.inventoryMode === 'variant') {
+        setNeedsOptions(true);
+        return { status: 'unavailable', message: 'Choose the current model / specification on the product page.' };
       }
-      addItem({
+      if (current.inventoryMode !== 'product') return { status: 'verification_failed', message: 'Could not verify this item. Please try again.' };
+      const currentPrice = {
+        price: current.pricePaise / 100, priceDisplay: current.priceDisplay,
+        regularPrice: current.onSale ? current.regularPricePaise / 100 : undefined,
+        wasPriceDisplay: current.wasPriceDisplay ?? undefined,
+      };
+      if (priceNeedsReview(offered, currentPrice)) {
+        return { status: 'price_changed', price: currentPrice, message: 'The price has changed.' };
+      }
+      return await addItem({
         productId: current.id,
         name: current.name,
         subtitle: current.subtitle,
-        price: current.pricePaise / 100,
-        priceDisplay: current.priceDisplay,
-        regularPrice: current.onSale ? current.regularPricePaise / 100 : undefined,
-        wasPriceDisplay: current.wasPriceDisplay ?? undefined,
+        ...offered,
         image: current.image,
         quantity: 1,
         href: current.href,
-      });
-      setAdded(true);
-      window.setTimeout(() => setAdded(false), 2500);
-    } catch {
-      setNotice('Could not add this item. Please try again.');
-    } finally {
-      setBusy(false);
-    }
+      }, { signal });
+    });
   }
 
   return (
@@ -105,11 +111,13 @@ function BuyAgainCard({ item, saleLive }: { item: BuyAgainItem; saleLive: boolea
           Last ordered {item.lastOrderedAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
         </p>
         <p className="mt-1 text-sm font-semibold">
-          {item.wasPriceDisplay && <s className="mr-1.5 text-xs font-normal text-[#86868b]">{item.wasPriceDisplay}</s>}
-          {item.priceDisplay}
+          {offered.wasPriceDisplay && <s className="mr-1.5 text-xs font-normal text-[#86868b]">{offered.wasPriceDisplay}</s>}
+          {offered.priceDisplay}
         </p>
         <div className="mt-2">
-          {blocked ? (
+          {item.inventoryMode === 'variant' || needsOptions ? (
+            <Link href={item.href} className="text-xs font-semibold text-[#0071e3] hover:underline">Choose options</Link>
+          ) : blocked ? (
             <span className="text-xs font-semibold text-[#6e6e73]">Sold out</span>
           ) : (
             <button

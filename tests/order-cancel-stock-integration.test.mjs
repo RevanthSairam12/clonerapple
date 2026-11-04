@@ -23,10 +23,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(here, '..', '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -46,16 +47,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -154,11 +159,7 @@ test('cancelling a paid order restores its claimed stock exactly once', { skip }
   const a = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, TABLES);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -297,8 +298,7 @@ test('cancelling a paid order restores its claimed stock exactly once', { skip }
     assert.equal(moves.length, 0, 'no movement is written for a legacy cancel');
   } finally {
     try {
-      await a.unsafe('set search_path to public');
-      await a.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(a, schema);
     } catch (error) {
       console.warn('[order-cancel-stock-integration] cleanup did not finish:', error?.message ?? error);
     }

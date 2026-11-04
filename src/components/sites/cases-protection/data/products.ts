@@ -22,6 +22,9 @@ export interface ProductHighlight {
 }
 
 export interface Product {
+  inventoryMode?: 'product' | 'variant';
+  purchasableVariants?: import('@/lib/catalog/storefront').StorefrontPurchasableVariant[];
+
   id: string;
   name: string;
   subtitle: string;
@@ -38,6 +41,8 @@ export interface Product {
   brand: 'Gadzio Signature' | 'Gadzio Pro' | 'Spigen' | 'OtterBox' | 'Nomad' | 'Belkin';
   features: string[];
   description: string;
+  shortDescription?: string | null;
+  descriptionSections?: import('@/lib/catalog/product-description').ProductDescriptionSection[] | null;
   highlights: ProductHighlight[];
   specs: ProductSpecs;
   inTheBox: string[];

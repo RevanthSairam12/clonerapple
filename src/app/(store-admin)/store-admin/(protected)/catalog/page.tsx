@@ -1,77 +1,46 @@
 import Link from 'next/link';
-
 import { AttributeManager } from '@/components/store-admin/AttributeManager';
 import { BrandManager } from '@/components/store-admin/BrandManager';
 import { ConditionManager } from '@/components/store-admin/ConditionManager';
 import { UnitManager } from '@/components/store-admin/UnitManager';
+import { CatalogueDataWorkspace } from '@/components/store-admin/CatalogueDataWorkspace';
+import { CatalogStarterSetup } from '@/components/store-admin/CatalogStarterSetup';
+import { MetadataReferenceManager } from '@/components/store-admin/MetadataReferenceManager';
 import { getStoreSession } from '@/lib/store-admin/auth';
-import { listAttributes, listBrands, listUnits } from '@/lib/store-admin/catalog';
+import { listAttributes, listBrands, listCategoryOptions, listUnits } from '@/lib/store-admin/catalog';
+import { loadMetadataManagement } from '@/lib/store-admin/product-metadata';
 import { listConditions } from '@/lib/store-admin/catalog-crud';
 
 export const dynamic = 'force-dynamic';
-
-/**
- * Reference data that products point at: brands, units and attributes.
- *
- * Editing is owner-only — these rows re-shape every product that uses them —
- * so a viewer or admin sees the same page with the forms hidden.
- */
-export default async function StoreAdminCatalogPage() {
+function Unavailable({ label, missingSchema = false }: { label: string; missingSchema?: boolean }) {
+  return <p className="sa-notice" role="status">{label} could not be loaded. {missingSchema ? 'The required metadata tables are missing. An owner must arrange migration 0051 before setup.' : 'Retry the page. If this continues, ask the owner to check the catalogue service.'} <Link href="/store-admin/catalog">Retry catalogue data</Link></p>;
+}
+function missingTable(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'code' in error && error.code === '42P01';
+}
+/** Owner-managed shared references. Each section can fail independently. */
+export default async function StoreAdminCatalogPage({ searchParams }: { searchParams?: Promise<{ category?: string }> }) {
   const session = await getStoreSession();
-  const canEdit = session !== null && session.role === 'store_owner';
-
-  const [brandsResult, unitsResult, attributesResult, conditionsResult] =
-    await Promise.all([listBrands(), listUnits(), listAttributes(), listConditions()]);
-
-  if (!brandsResult.ok || !unitsResult.ok || !attributesResult.ok) {
-    return (
-      <div>
-        <h1 className="sa-page-title">Catalogue data</h1>
-        <p className="sa-notice">
-          The catalogue tables are not available yet. Apply migrations 0011 and
-          0012, then run <code>node scripts/seed-store-catalog.mjs</code>.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <div className="sa-detail-head">
-        <div>
-          <h1 className="sa-page-title">Catalogue data</h1>
-          <p className="sa-page-sub">
-            Brands, conditions, units and attributes that products point at.
-            Product copy, price and images are edited on the product page.
-          </p>
-        </div>
-        <div className="sa-inline-actions">
-          <Link className="sa-btn sa-btn-quiet" href="/store-admin/collections">
-            Collections
-          </Link>
-          <Link className="sa-btn sa-btn-quiet" href="/store-admin/categories">
-            Category tree
-          </Link>
-        </div>
-      </div>
-
-      <div className="sa-detail-grid">
-        <BrandManager initialBrands={brandsResult.data} canEdit={canEdit} />
-        <ConditionManager
-          initialConditions={conditionsResult.ok ? conditionsResult.data : []}
-          canEdit={canEdit}
-        />
-      </div>
-
-      <div className="sa-detail-grid">
-        <UnitManager initialUnits={unitsResult.data} canEdit={canEdit} />
-      </div>
-
-      <AttributeManager
-        initialAttributes={attributesResult.data}
-        units={unitsResult.data}
-        canEdit={canEdit}
-      />
-    </div>
-  );
+  if (!session) return <p className="sa-lock-note">Sign in to view catalogue data.</p>;
+  const canEdit = session.role === 'store_owner';
+  const query = await searchParams;
+  const [metadataResult, categories, brands, units, attributes, conditions] = await Promise.all([
+    loadMetadataManagement().then(data => ({ data, missing: false })).catch((error: unknown) => ({ data: null, missing: missingTable(error) })),
+    listCategoryOptions(), listBrands(), listUnits(), listAttributes(), listConditions(),
+  ]);
+  const metadata = metadataResult.data;
+  const refsReady = !!metadata && categories.ok && attributes.ok;
+  const reference = (group: 'types' | 'attributes' | 'brands' | 'models') => metadata && (group !== 'types' || categories.ok) && (group !== 'attributes' || (categories.ok && attributes.ok))
+    ? <MetadataReferenceManager group={group} references={metadata.references} management={metadata} categories={categories.ok ? categories.data : []} attributes={attributes.ok ? attributes.data : []} canEdit={canEdit} initialCategory={query?.category} />
+    : <Unavailable label="Product type and device references" missingSchema={metadataResult.missing} />;
+  return <div>
+    <div className="sa-detail-head"><div><h1 className="sa-page-title">Catalogue data</h1><p className="sa-page-sub">Manage reusable choices for your products. Edit individual product values, copy and photos on the product page.</p></div><div className="sa-inline-actions"><Link className="sa-btn sa-btn-quiet" href="/store-admin/collections">Collections</Link><Link className="sa-btn sa-btn-quiet" href="/store-admin/categories">Category tree</Link></div></div>
+    <CatalogueDataWorkspace canEdit={canEdit}
+      starter={canEdit ? <CatalogStarterSetup categories={categories.ok ? categories.data : []} available={refsReady && units.ok} /> : null}
+      types={reference('types')}
+      details={<><div className="sa-catalog-section-head"><h2 className="sa-section-title">Field definitions</h2><p className="sa-hint">Create reusable fields first. Then assign them to a type below; a product only shows its type’s assigned fields.</p></div>{attributes.ok && units.ok ? <AttributeManager initialAttributes={attributes.data} units={units.data} canEdit={canEdit} /> : <Unavailable label="Detail field definitions and units" />}{reference('attributes')}</>}
+      devices={<>{reference('brands')}{reference('models')}</>}
+      other={<><h2 className="sa-section-title">Product brands</h2><p className="sa-hint">Who makes the product — not the brand of a compatible device.</p>{brands.ok ? <BrandManager initialBrands={brands.data} canEdit={canEdit} /> : <Unavailable label="Product brands" />}{conditions.ok ? <ConditionManager initialConditions={conditions.data} canEdit={canEdit} /> : <Unavailable label="Conditions" />}{units.ok ? <UnitManager initialUnits={units.data} canEdit={canEdit} /> : <Unavailable label="Units" />}</>}
+    />
+  </div>;
 }

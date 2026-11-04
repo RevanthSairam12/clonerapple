@@ -1,16 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { ProductDescriptionSections } from '@/components/shop/ProductDescriptionSections';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart } from '@/lib/cart/CartContext';
 import {
   STOCK_NOT_AVAILABLE,
-  stockBlocked,
 } from '@/lib/storefront/availability-rules';
 import { useAvailability } from '@/lib/storefront/use-availability';
+import { verifySelections, priceNeedsReview } from '@/lib/storefront/selection';
+import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
+import { CommerceVariantSelector } from '@/components/shop/CommerceVariantSelector';
 import type { AccessoryProduct, ColorSwatch } from './data/types';
 
 interface Props {
@@ -21,19 +25,29 @@ interface Props {
   inStock?: boolean;
 }
 
-export function AccessoryDetailPage({ product, saleLive = false, inStock = true }: Props) {
-  const { addItem } = useCart();
-  const availability = useAvailability(product.id, { saleLive, inStock });
-  const unavailable = availability.blocked;
-  const [availabilityNotice, setAvailabilityNotice] = useState<string | null>(null);
+export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, inStock = true }: Props) {
+  const { addItem, items: bagItems } = useCart();
+  const router = useRouter();
+  const [selectedVariantId, setSelectedVariantId] = useState('');
+  const variantMode = sourceProduct.inventoryMode === 'variant';
+  const selectedVariant = sourceProduct.purchasableVariants?.find((variant) => variant.id === selectedVariantId);
+  const selectionProduct = selectedVariant ? { ...sourceProduct, price: selectedVariant.pricePaise / 100,
+    priceDisplay: `₹${(selectedVariant.pricePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    regularPrice: selectedVariant.onSale ? selectedVariant.regularPricePaise / 100 : undefined,
+    wasPriceDisplay: selectedVariant.onSale ? `₹${(selectedVariant.regularPricePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : undefined } : variantMode ? { ...sourceProduct, priceDisplay: 'Choose model / specification for price',
+      regularPrice: undefined, wasPriceDisplay: undefined } : sourceProduct;
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
+  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedVariantId, selectedColorIndex, sourceProduct.inventoryMode, selectionProduct.price, selectionProduct.regularPrice, selectedVariant?.label]));
+  const product = { ...selectionProduct, ...purchase.priceOverride };
+  const availability = useAvailability(product.id, { saleLive, inStock: selectedVariant?.inStock ?? inStock },
+    { variantId: selectedVariant?.id, required: variantMode });
+  const unavailable = availability.blocked;
+  const { notice: availabilityNotice, setNotice: setAvailabilityNotice, pending: isAddingToBag, added: isAdded } = purchase;
   const [activeImage, setActiveImage] = useState(0);
   const [showStickyBar, setShowStickyBar] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [pincode, setPincode] = useState('400001');
-  const [isAddingToBag, setIsAddingToBag] = useState(false);
-  const [isAdded, setIsAdded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [isProductInfoOpen, setIsProductInfoOpen] = useState(true);
   const [isCompatibilityOpen, setIsCompatibilityOpen] = useState(true);
@@ -55,46 +69,61 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  const handleBuyNow = async () => {
+    if (variantMode && !selectedVariant) { setAvailabilityNotice('Choose your model / specification before buying.'); return; }
+    await purchase.run(async (signal) => {
+      const checked = await verifySelections([{ productId: product.id, variantId: selectedVariant?.id, quantity: 1 }], signal);
+      if (checked.status !== 'ready') return checked;
+      if (priceNeedsReview(product, checked.prices[0])) return {
+        status: 'price_changed', price: checked.prices[0], message: 'The price has changed.',
+      };
+      return { status: 'added' };
+    }, () => {
+      const params = new URLSearchParams({ productId: product.id, qty: '1' });
+      if (selectedVariant) params.set('variantId', selectedVariant.id);
+      router.push(`/checkout?${params.toString()}`);
+    }, false);
+  };
+  const handleBagCheckout = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    await purchase.run(async (signal) => {
+      const checked = await verifySelections(bagItems.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity })), signal);
+      if (checked.status !== 'ready') return checked;
+      if (bagItems.some((item, index) => priceNeedsReview(item, checked.prices[index]))) {
+        return { status: 'unavailable', message: 'Bag prices have changed. Review your bag before checkout.' };
+      }
+      return { status: 'added' };
+    }, () => router.push('/checkout'), false);
+  };
+
   const handleAddToBag = async () => {
+    if (variantMode && !selectedVariant) {
+      setAvailabilityNotice('Choose your model / specification before adding to your bag.');
+      return;
+    }
     if (unavailable) {
       setAvailabilityNotice(STOCK_NOT_AVAILABLE);
       return;
     }
-    // Click-time re-check: stock may have gone, or a sale may have started,
-    // since this page was rendered.
-    const latest = await availability.refresh();
-    if (latest && stockBlocked(latest.inStock, latest.saleLive)) {
-      setAvailabilityNotice(STOCK_NOT_AVAILABLE);
-      return;
-    }
-    setAvailabilityNotice(null);
-    setIsAddingToBag(true);
-
-    addItem({
+    await purchase.run((signal) => addItem({
       productId: product.id,
+      variantId: selectedVariant?.id, variantSku: selectedVariant?.sku, variantLabel: selectedVariant?.label,
       name: product.name,
-      subtitle: hasColors ? currentColor.name : product.subtitle,
+      subtitle: selectedVariant?.label ?? (hasColors ? currentColor.name : product.subtitle),
       price: product.price,
       priceDisplay: product.priceDisplay,
       wasPriceDisplay: product.wasPriceDisplay,
       regularPrice: product.regularPrice,
       image: mainImage,
-      color: hasColors ? currentColor.name : undefined,
-      model: product.compatibility[0],
+      color: selectedVariant ? selectedVariant.optionValue : hasColors ? currentColor.name : undefined,
+      model: selectedVariant?.deviceModelName ?? '',
       quantity: 1,
       href: `/shop/product/${encodeURIComponent(product.id)}`,
-    });
+    }, { signal }));
 
-    setTimeout(() => {
-      setIsAddingToBag(false);
-      setIsAdded(true);
-      setTimeout(() => {
-        setIsAdded(false);
-      }, 3000);
-    }, 200);
   };
 
-  const stickyMeta = hasColors ? currentColor.name : product.subtitle;
+  const stickyMeta = selectedVariant?.label ?? (variantMode ? 'Choose options' : hasColors ? currentColor.name : product.subtitle);
 
   return (
     <div className="gz-storefront-page min-h-screen bg-[#fff] text-[#1d1d1f] antialiased selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
@@ -173,7 +202,7 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
               ) : (
                 <img
                   src={mainImage}
-                  alt={`${product.name}${hasColors ? ` in ${currentColor.name}` : ''}`}
+                  alt={`${product.name} — ${stickyMeta}`}
                   className="max-h-full max-w-full object-contain filter drop-shadow-lg select-none transition-all duration-500"
                   onError={() => setImgError(true)}
                 />
@@ -238,8 +267,13 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
               <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#1d1d1f] leading-tight mb-2">
                 {product.name}
               </h1>
+            {product.shortDescription != null && <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap">{product.shortDescription}</p>}
               <p className="text-sm text-[#86868b]">{product.category}</p>
             </div>
+
+            {variantMode ? <CommerceVariantSelector variants={product.purchasableVariants ?? []}
+              value={selectedVariantId} onChange={(id) => { setSelectedVariantId(id); setAvailabilityNotice(null); }}
+              saleLive={availability.saleLive} liveStock={availability.variants} /> : null}
 
             {/* Price Row */}
             <div className="pb-6 border-b border-[#e5e5ea] mb-6">
@@ -255,7 +289,7 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
             </div>
 
             {/* Finish / Color Picker */}
-            {hasColors && (
+            {!variantMode && hasColors && (
               <div className="mb-6">
                 <div className="flex justify-between items-baseline mb-3">
                   <label className="text-xs font-semibold uppercase tracking-wider text-[#1d1d1f]">
@@ -293,7 +327,7 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
             {product.compatibility.length > 0 && (
               <div className="mb-6">
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#1d1d1f] block mb-3">
-                  Compatible With
+                  Compatible devices
                 </span>
                 <div className="flex flex-wrap gap-2">
                   {product.compatibility.map((c) => (
@@ -377,6 +411,11 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
               )}
             </button>
 
+            <button type="button" onClick={handleBuyNow} disabled={isAddingToBag || unavailable}
+              className="w-full py-3 rounded-xl border border-[#d2d2d7] text-sm font-semibold mb-4 disabled:opacity-50">
+              {isAddingToBag ? 'Checking…' : 'Buy Now'}
+            </button>
+
             {availabilityNotice ? (
               <p className="mb-4 text-sm font-semibold text-[#b42318]" role="alert">
                 {availabilityNotice}
@@ -398,7 +437,7 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
                   </Link>
                   <span className="text-[#86868b] text-[10px]">•</span>
                   <Link
-                    href="/checkout"
+                    href="/checkout" onClick={handleBagCheckout}
                     className="text-xs font-semibold text-[#0071e3] hover:underline flex items-center gap-0.5"
                   >
                     <span>Check Out</span>
@@ -436,6 +475,7 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
 
         {/* Collapsible Sections: Product Information & Compatibility */}
         <section className="mt-20 pt-8 border-t border-[#d2d2d7]">
+          {product.descriptionSections != null ? <ProductDescriptionSections sections={product.descriptionSections} className="!mt-0 !border-t-0" /> : <>
           {/* Section 1: Product Information */}
           <div className="pb-8">
             <button
@@ -543,7 +583,10 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
           {/* Full-width Divider */}
           <div className="border-t border-[#d2d2d7]" />
 
+          </>}
+
           {/* Section 2: Compatibility */}
+          {product.compatibility.length > 0 && (
           <div className="py-8">
             <button
               type="button"
@@ -573,7 +616,7 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
                   <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
                   <div className="md:col-span-9 lg:col-span-9">
                     <h3 className="text-[14px] sm:text-[15px] font-semibold text-[#1d1d1f] mb-1.5">
-                      Works With
+                      Compatible devices
                     </h3>
                     <div className="text-[13.5px] sm:text-[14px] text-[#1d1d1f] space-y-1">
                       {product.compatibility.map((c) => (
@@ -585,6 +628,8 @@ export function AccessoryDetailPage({ product, saleLive = false, inStock = true 
               </div>
             )}
           </div>
+
+          )}
 
           {/* Full-width Bottom Divider */}
           <div className="border-t border-[#d2d2d7]" />

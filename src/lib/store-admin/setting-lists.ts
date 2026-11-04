@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { getSql } from '@/lib/platform/db';
+import { writeAudit, type AuditInput } from './audit';
 
 import { buildTrackingUrl } from './delivery';
 
@@ -352,6 +353,20 @@ export const LIST_KINDS: Record<string, ListKind> = {
       { column: 'robots_follow', label: 'Robots: follow', kind: 'toggle', required: true },
     ],
   },
+  'bill-request-reasons': {
+    key: 'bill-request-reasons',
+    label: 'Bill request reasons',
+    description: 'Customer reasons for requesting a provisional bill before shipment. Other is always available.',
+    table: 'bill_request_reasons',
+    idColumn: 'id',
+    idPrefix: 'blr',
+    orderBy: 'sort_order asc, label asc',
+    fields: [
+      { column: 'label', label: 'Reason', kind: 'text', max: 160, required: true, help: 'Shown to customers after successful payment. Hide unused reasons; submitted requests retain their original label. Other is supplied automatically.' },
+      ACTIVE_FIELD,
+      SORT_FIELD,
+    ],
+  },
   'refund-reasons': {
     key: 'refund-reasons',
     label: 'Refund reasons',
@@ -620,6 +635,7 @@ function validateRow(kind: ListKind, input: ListWriteInput): { ok: true; value: 
 export async function saveSettingRow(
   kindKey: string,
   input: ListWriteInput,
+  mandatoryAudit?: AuditInput,
 ): Promise<ListLoad<{ id: string; created: boolean }>> {
   const kind = LIST_KINDS[kindKey];
   if (!kind) return { ok: false, reason: 'not-found', error: 'Unknown list.' };
@@ -632,6 +648,22 @@ export async function saveSettingRow(
   if (!sql) return { ok: false, reason: 'unavailable', error: 'This list is not available.' };
 
   try {
+    if (kindKey === 'bill-request-reasons') {
+      if (!mandatoryAudit) return { ok: false, reason: 'invalid-input', error: 'An audited staff action is required.' };
+      return await sql.begin(async tx => {
+        const id = value.id ?? `${kind.idPrefix}_${randomBytes(6).toString('hex')}`;
+        const params = [id, ...value.params];
+        const query = value.id
+          ? `update ${kind.table} set ${value.columns.map((c,i)=>`${c} = $${i+2}`).join(', ')}, updated_at=now() where id=$1 returning id`
+          : `insert into ${kind.table} (id,${value.columns.join(',')}) values (${params.map((_,i)=>`$${i+1}`).join(',')}) returning id`;
+        const rows = await tx.unsafe(query, params as never[]);
+        if (!rows[0]) return { ok: false as const, reason: 'not-found' as const, error: 'That row does not exist.' };
+        const audited = await writeAudit({ ...mandatoryAudit, entityId: id, before: undefined,
+          after: { created: !value.id, active: value.isActive }, reason: value.id ? 'updated' : 'created' }, tx);
+        if (!audited) throw new Error('Bill reason audit unavailable');
+        return { ok: true as const, data: { id, created: !value.id } };
+      });
+    }
     if (value.id) {
       const assignments = value.columns.map((column, index) => `${column} = $${index + 2}`);
       const params = [value.id, ...value.params];

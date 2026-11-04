@@ -1,322 +1,40 @@
 import Link from 'next/link';
+import { ProductGuide, ProductHelp } from '@/components/store-admin/ProductHelp';
 import { notFound } from 'next/navigation';
 
-import { ProductAttributes } from '@/components/store-admin/ProductAttributes';
-import { ProductEditor } from '@/components/store-admin/ProductEditor';
-import { ProductGallery } from '@/components/store-admin/ProductGallery';
-import { ProductInventoryCard } from '@/components/store-admin/ProductInventoryCard';
-import { ProductPriceEditor } from '@/components/store-admin/ProductPriceEditor';
-import { VariantEditor } from '@/components/store-admin/VariantEditor';
+import { ProductWorkflow } from '@/components/store-admin/ProductWorkflow';
+import { loadMetadataEditor } from '@/lib/store-admin/product-metadata';
 import { getStoreSession } from '@/lib/store-admin/auth';
-import {
-  formatDate,
-  formatINR,
-  getCatalogProduct,
-  listAttributes,
-  listBrands,
-  listCategoryOptions,
-} from '@/lib/store-admin/catalog';
+import { formatDate, formatINR, getCatalogProduct, listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
 import { listConditions } from '@/lib/store-admin/catalog-crud';
-import { readSaleState } from '@/lib/storefront/sale-state';
 
 export const dynamic = 'force-dynamic';
 
-export default async function StoreAdminProductDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function StoreAdminProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const session = await getStoreSession();
+  if (!session) return <p className="sa-lock-note">Sign in to view products.</p>;
   const result = await getCatalogProduct(id);
-
   if (!result.ok) {
     if (result.reason === 'not-found') notFound();
-
-    return (
-      <div>
-        <Link className="sa-back" href="/store-admin/products">
-          ← Products
-        </Link>
-        <h1 className="sa-page-title">Product</h1>
-        <p className="sa-notice">
-          The catalogue tables are not available yet. Apply migrations 0011 and
-          0012, then run <code>node scripts/seed-store-catalog.mjs</code>.
-        </p>
-      </div>
-    );
+    return <div><Link className="sa-back" href="/store-admin/products">← Products</Link><h1 className="sa-page-title">Product</h1><p className="sa-notice">The catalogue is not available. Check the catalogue migrations and reload.</p></div>;
   }
-
   const product = result.data;
-  const session = await getStoreSession();
+  const [metadata, categoriesResult, brandsResult, conditionsResult] = await Promise.all([
+    loadMetadataEditor(id).catch(() => null), listCategoryOptions(), listBrands(), listConditions(),
+  ]);
+  const ready = !!metadata?.state && categoriesResult.ok && brandsResult.ok && conditionsResult.ok;
+  const categories = categoriesResult.ok ? categoriesResult.data.filter(category => category.isActive || category.id === product.categoryId).map(category => ({ id: category.id, name: category.name })) : [];
+  const brands = brandsResult.ok ? brandsResult.data.filter(brand => !brand.deletedAt || brand.id === product.brandId).map(brand => ({ id: brand.id, name: brand.name })) : [];
+  const conditions = conditionsResult.ok ? conditionsResult.data.filter(condition => condition.isActive || condition.id === product.conditionId).map(condition => ({ id: condition.id, name: condition.label })) : [];
 
-  // Editing copy is an admin-level action; reference data is owner-only.
-  const canEdit = session !== null && session.role !== 'store_viewer';
-
-  const [categoriesResult, brandsResult, attributesResult, conditionsResult, saleState] =
-    await Promise.all([
-      listCategoryOptions(),
-      listBrands(),
-      listAttributes(),
-      listConditions(),
-      readSaleState(),
-    ]);
-
-  const categories = categoriesResult.ok ? categoriesResult.data : [];
-  const brands = brandsResult.ok ? brandsResult.data : [];
-  const attributes = attributesResult.ok ? attributesResult.data : [];
-  const conditions = (conditionsResult.ok ? conditionsResult.data : [])
-    .filter((condition) => condition.isActive || condition.id === product.conditionId)
-    .map((condition) => ({ id: condition.id, label: condition.label }));
-
-  const facetGroups = new Map<string, string[]>();
-  for (const facet of product.facets) {
-    const values = facetGroups.get(facet.key) ?? [];
-    values.push(facet.value);
-    facetGroups.set(facet.key, values);
-  }
-
-  return (
-    <div>
-      <Link className="sa-back" href="/store-admin/products">
-        ← Products
-      </Link>
-
-      <div className="sa-detail-head">
-        <div>
-          <h1 className="sa-page-title">{product.name}</h1>
-          <p className="sa-page-sub">
-            {product.subtitle || 'No subtitle'} · {product.categoryName}
-          </p>
-        </div>
-        <span
-          className={
-            product.isActive
-              ? 'sa-status sa-status-on sa-status-large'
-              : 'sa-status sa-status-large'
-          }
-        >
-          {product.isActive ? 'Active' : 'Inactive'}
-        </span>
-      </div>
-
-      <div className="sa-detail-grid">
-        <ProductPriceEditor
-          productId={product.id}
-          pricePaise={product.pricePaise}
-          salePricePaise={product.salePricePaise}
-          compareAtPaise={product.compareAtPaise}
-          saleLive={saleState.live}
-          canEdit={canEdit}
-        />
-
-        <section className="sa-detail-card">
-          <h2 className="sa-card-title">Record</h2>
-          <dl className="sa-meta">
-            <div>
-              <dt>Product id</dt>
-              <dd className="sa-mono">{product.id}</dd>
-            </div>
-            <div>
-              <dt>Slug</dt>
-              <dd className="sa-mono">{product.slug}</dd>
-            </div>
-            <div>
-              <dt>Brand</dt>
-              <dd>{product.brand || '—'}</dd>
-            </div>
-            <div>
-              <dt>Condition</dt>
-              <dd>{product.conditionLabel || '—'}</dd>
-            </div>
-            <div>
-              <dt>Material</dt>
-              <dd>{product.material || '—'}</dd>
-            </div>
-            <div>
-              <dt>Currency</dt>
-              <dd>{product.currency}</dd>
-            </div>
-            <div>
-              <dt>Availability</dt>
-              <dd>{product.inStock ? 'In stock' : 'Out of stock'}</dd>
-            </div>
-            <div>
-              <dt>Created</dt>
-              <dd>{formatDate(product.createdAt)}</dd>
-            </div>
-            <div>
-              <dt>Updated</dt>
-              <dd>{formatDate(product.updatedAt)}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
-
-      <ProductEditor
-        product={product}
-        categories={categories}
-        brands={brands}
-        conditions={conditions}
-        canEdit={canEdit}
-      />
-
-      {product.highlights.length > 0 ? (
-        <section className="sa-detail-section">
-          <h2 className="sa-section-title">Highlights</h2>
-          <ul className="sa-highlights">
-            {product.highlights.map((highlight) => (
-              <li key={highlight.title}>
-                <strong>{highlight.title}</strong>
-                <span>{highlight.desc}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <section className="sa-detail-section">
-        <h2 className="sa-section-title">Facets</h2>
-        {facetGroups.size === 0 ? (
-          <p className="sa-empty">No facets recorded.</p>
-        ) : (
-          <dl className="sa-meta">
-            {[...facetGroups.entries()].map(([key, values]) => (
-              <div key={key}>
-                <dt className="sa-mono">{key}</dt>
-                <dd>{values.join(', ')}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      </section>
-
-      <section className="sa-detail-section">
-        <h2 className="sa-section-title">Specifications</h2>
-        {product.specs.length === 0 ? (
-          <p className="sa-empty">No specifications recorded.</p>
-        ) : (
-          <div className="sa-table-wrap">
-            <table className="sa-table">
-              <thead>
-                <tr>
-                  <th>Label</th>
-                  <th>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {product.specs.map((spec) => (
-                  <tr key={spec.label}>
-                    <td>{spec.label}</td>
-                    <td>{spec.value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <ProductGallery
-        productId={product.id}
-        productName={product.name}
-        initialImages={product.images}
-        canEdit={canEdit}
-      />
-
-      <ProductAttributes
-        productId={product.id}
-        attributes={attributes}
-        values={product.attributeValues}
-        canEdit={canEdit}
-      />
-
-      <VariantEditor
-        productId={product.id}
-        basePricePaise={product.pricePaise}
-        initialVariants={product.variants}
-        canEdit={canEdit}
-      />
-
-      <div className="sa-detail-grid">
-        <ProductInventoryCard
-          productId={product.id}
-          stock={product.stock}
-          canEdit={canEdit}
-        />
-
-        <section className="sa-detail-card">
-          <h2 className="sa-card-title">In the box</h2>
-          {product.inTheBox.length === 0 ? (
-            <p className="sa-empty">Nothing recorded.</p>
-          ) : (
-            <ul className="sa-plain-list">
-              {product.inTheBox.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-
-      <section className="sa-detail-section">
-        <h2 className="sa-section-title">Price history</h2>
-        {product.priceHistory.length === 0 ? (
-          <p className="sa-empty">No price history.</p>
-        ) : (
-          <div className="sa-table-wrap">
-            <table className="sa-table">
-              <thead>
-                <tr>
-                  <th>Changed</th>
-                  <th>Kind</th>
-                  <th className="sa-num">Old</th>
-                  <th className="sa-num">New</th>
-                  <th>Source</th>
-                  <th>Reason</th>
-                  <th>Changed by</th>
-                </tr>
-              </thead>
-              <tbody>
-                {product.priceHistory.map((row) => (
-                  <tr key={row.id}>
-                    <td className="sa-date">{formatDate(row.changedAt)}</td>
-                    <td>
-                      <span className="sa-chip">
-                        {row.priceKind === 'sale'
-                          ? 'Sale price'
-                          : row.priceKind === 'sale_cleared'
-                            ? 'Sale cleared'
-                            : 'Regular'}
-                      </span>
-                    </td>
-                    <td className="sa-num">
-                      {row.oldPricePaise === null
-                        ? '—'
-                        : formatINR(row.oldPricePaise)}
-                    </td>
-                    <td className="sa-num">
-                      {row.priceKind === 'sale_cleared' && row.newPricePaise === 0
-                        ? '—'
-                        : formatINR(row.newPricePaise)}
-                    </td>
-                    <td>
-                      <span className="sa-chip">{row.source}</span>
-                    </td>
-                    <td>{row.reason || '—'}</td>
-                    <td>{row.changedBy ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <p className="sa-readonly-foot">
-        Copy, images, attributes, variants and price can be edited here. Every
-        price change is appended to the history above; every stock change writes
-        a movement, so no quantity moves without a record.
-      </p>
-    </div>
-  );
+  return <div className="sa-products-page">
+    <Link className="sa-back" href="/store-admin/products">← Products</Link><ProductHelp label="Back to products">Return to the product list. Unsaved edits prompt you before leaving.</ProductHelp>
+    <div className="sa-detail-head"><div><h1 className="sa-page-title">{product.name}</h1><p className="sa-page-sub">{product.subtitle || 'No subtitle'} · {product.categoryName}</p></div><span className={product.isActive ? 'sa-status sa-status-on sa-status-large' : 'sa-status sa-status-large'}>{product.isActive ? 'Active' : 'Draft'}</span></div>
+    {ready && metadata ? <ProductWorkflow key={`${product.id}:${product.catalogRevision}`} product={product} categories={categories} brands={brands} conditions={conditions} metadataReferences={metadata.references} metadataState={metadata.state} canEdit={session.role !== 'store_viewer'} canManageDevices={session.role === 'store_owner'} /> : <p className="sa-notice">Product references or metadata are unavailable. Apply the catalogue metadata and description migrations, then reload. Editing is paused to preserve the complete product.</p>}
+    <ProductGuide><details className="sa-detail-section"><summary>Product record and price history</summary><ProductHelp label="Product record and price history">Read-only reference information and past price changes. Editing the form does not rewrite these records.</ProductHelp>
+      <dl className="sa-meta"><div><dt>Product ID</dt><dd className="sa-mono">{product.id}</dd></div><div><dt>Created</dt><dd>{formatDate(product.createdAt)}</dd></div><div><dt>Updated</dt><dd>{formatDate(product.updatedAt)}</dd></div><div><dt>Currency</dt><dd>{product.currency}</dd></div></dl>
+      {product.priceHistory.length === 0 ? <p className="sa-empty">No price history.</p> : <div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Changed</th><th>Kind</th><th>Old</th><th>New</th><th>Source</th><th>Reason</th><th>Changed by</th></tr></thead><tbody>{product.priceHistory.map(row => <tr key={row.id}><td>{formatDate(row.changedAt)}</td><td>{row.priceKind === 'sale' ? 'Sale price' : row.priceKind === 'sale_cleared' ? 'Sale cleared' : 'Regular'}</td><td>{row.oldPricePaise === null ? '—' : formatINR(row.oldPricePaise)}</td><td>{row.priceKind === 'sale_cleared' && row.newPricePaise === 0 ? '—' : formatINR(row.newPricePaise)}</td><td>{row.source}</td><td>{row.reason || '—'}</td><td>{row.changedBy ?? '—'}</td></tr>)}</tbody></table></div>}
+    </details></ProductGuide>
+  </div>;
 }

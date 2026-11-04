@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/platform/api-guard';
-import { writeAudit } from '@/lib/store-admin/audit';
-import { couponAuditFromRow, parseCouponInput } from '@/lib/store-admin/coupon-rules';
+import { parseCouponInput } from '@/lib/store-admin/coupon-rules';
 import { createCoupon, listCoupons } from '@/lib/store-admin/coupons';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 
@@ -27,6 +26,7 @@ export async function GET(request: Request) {
   const result = await listCoupons({
     search: url.searchParams.get('search') ?? '',
     status: url.searchParams.get('status') ?? 'all',
+    visibility: url.searchParams.get('visibility') ?? 'all',
     page: Number.isFinite(page) ? page : 1,
     pageSize: Number.isFinite(pageSize) ? pageSize : 25,
   });
@@ -57,7 +57,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  const result = await createCoupon(parsed.values, guard.session.adminId);
+  const result = await createCoupon(parsed.values, {
+    actorId: guard.session.adminId, actorEmail: guard.session.email, request,
+  });
   if (!result.ok) {
     if (result.reason === 'conflict' || result.reason === 'invalid-input') {
       return NextResponse.json({ error: result.error }, { status: 409 });
@@ -65,16 +67,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'The coupon could not be saved.' }, { status: 503 });
   }
 
-  await writeAudit({
-    actorId: guard.session.adminId,
-    actorEmail: guard.session.email,
-    action: 'coupon.create',
-    entity: 'coupon',
-    entityId: result.data.id,
-    after: couponAuditFromRow(result.data),
-    reason: 'staff_created',
-    request,
-  });
-
-  return NextResponse.json({ coupon: result.data }, { status: 201 });
+  return NextResponse.json({ coupon: result.data }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
 }

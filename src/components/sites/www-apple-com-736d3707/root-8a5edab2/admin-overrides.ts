@@ -268,6 +268,8 @@ export interface CategoryGridOverride {
 }
 
 export interface CrowdFavoriteItemOverride {
+  unavailable?: boolean;
+  priceDisplay?: string;
   title?: string;
   price?: string;
   image?: string;
@@ -311,6 +313,7 @@ export interface BrandBarOverride {
 }
 
 export interface FestiveProductItemOverride {
+  unavailable?: boolean;
   title?: string;
   tagPrimary?: string;
   tagSecondary?: string;

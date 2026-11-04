@@ -3,6 +3,74 @@
  * these are the decisions the read layer makes, kept importable by tests.
  */
 
+type ProjectionRow = Record<string, unknown>;
+
+/** Typed PAV display: false and zero are real values, never empty defaults. */
+export function attributeDisplayValue(row: ProjectionRow): string {
+  const value = row.data_type === 'number' ? row.value_number
+    : row.data_type === 'boolean' ? row.value_bool
+      : row.data_type === 'enum' ? row.option_value : row.value_text;
+  if (value === null || value === undefined) return '';
+  if (row.data_type === 'boolean') return value === true ? 'Yes' : value === false ? 'No' : '';
+  return String(value).trim();
+}
+
+/** Inputs have already passed the active type/mapping/definition SQL joins. */
+export function projectManagedCatalog(attributes: ProjectionRow[], models: ProjectionRow[]) {
+  const facets: Record<string, string> = {};
+  const facetValues: Record<string, string[]> = {};
+  const facetLabels: Record<string, string> = {};
+  const specs: LabelledValue[] = [];
+  const searchValues: string[] = [];
+  const compatibility = [...new Set(models.map((row) => String(row.name ?? '').trim()).filter(Boolean))];
+  if (compatibility.length) {
+    facets.model = compatibility[0];
+    facetValues.model = compatibility;
+    facetLabels.model = 'Compatible With';
+    searchValues.push(...compatibility);
+  }
+  for (const row of attributes) {
+    const key = String(row.key ?? '').trim();
+    const label = String(row.label ?? '').trim();
+    const value = attributeDisplayValue(row);
+    // Compatibility never comes from a legacy model attribute or its PAV.
+    if (!key || normaliseKey(key) === 'model' || !label || !value) continue;
+    if (row.show_in_specs === true) specs.push({ label, value });
+    if (row.show_in_filters === true) {
+      facets[key] = value;
+      facetValues[key] = [value];
+      facetLabels[key] = label;
+    }
+    if (row.show_in_search === true) searchValues.push(`${label} ${value}`);
+  }
+  return { facets, facetValues, facetLabels, specs, searchValues, compatibility };
+}
+
+/** Outage fallback retains marketing, not unverified managed catalogue data. */
+export function suppressManagedCatalog<T extends {
+  compatibility: string[];
+  material: string;
+  specs?: unknown;
+  facets?: Record<string, string>;
+}>(product: T): T {
+  return {
+    ...product,
+    compatibility: [],
+    material: '',
+    facets: {},
+    specs: Array.isArray(product.specs) ? []
+      : Object.fromEntries(Object.keys(product.specs ?? {}).map((key) => [key, ''])),
+  };
+}
+
+/** Missing Phase 3 relations/columns are a deployment error, not an outage. */
+export function isCatalogSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const row = error as { code?: string; cause?: unknown };
+  return row.code === '42P01' || row.code === '42703'
+    || (row.cause !== error && isCatalogSchemaError(row.cause));
+}
+
 export type CatalogStockState = 'in_stock' | 'low_stock' | 'out_of_stock';
 
 export interface StockRowLike {

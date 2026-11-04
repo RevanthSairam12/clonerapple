@@ -3,10 +3,11 @@ import { notFound } from 'next/navigation';
 
 import { PrintButton } from '@/components/store-admin/PrintButton';
 import { DocumentHeader } from '@/components/store-admin/DocumentHeader';
+import { getDocumentState } from '@/lib/orders/document-data';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { formatDate } from '@/lib/store-admin/catalog';
-import { getOrderDocument, type DocumentAddress } from '@/lib/store-admin/order-documents';
+import { formatRupees, getOrderDocument, type DocumentAddress } from '@/lib/store-admin/order-documents';
 import { getStoreSettings } from '@/lib/store-admin/settings';
 
 export const dynamic = 'force-dynamic';
@@ -70,6 +71,7 @@ export default async function OrderPackingSlipPage({ params }: Props) {
   }
 
   const order = result.data;
+  const documentState = await getDocumentState(order.id);
   const settings = settingsResult.ok ? settingsResult.settings : null;
   const shipTo = order.shipTo ?? order.billTo;
   const footer = settings?.receipt_footer?.trim() || '';
@@ -105,7 +107,7 @@ export default async function OrderPackingSlipPage({ params }: Props) {
             prefetch={false}
             href={`/store-admin/orders/${encodeURIComponent(order.txnid)}/invoice`}
           >
-            Invoice
+            Bill / invoice / status
           </Link>
           <PrintButton label="Print packing slip" />
         </div>
@@ -116,8 +118,15 @@ export default async function OrderPackingSlipPage({ params }: Props) {
           settings={settings}
           badge="Shipment"
           title="Packing slip"
-          kicker="Prices are intentionally omitted. Hand this page to the courier."
+          kicker="Item prices are intentionally omitted. Hand this page to the courier."
         />
+
+        <div className="sa-doc-callout" role="status">
+          <strong>{documentState.label}</strong>
+          <p>Order: {documentState.orderStatus.replaceAll('_', ' ')} · Shipment: {documentState.shipmentStatus.replaceAll('_', ' ')}.</p>
+          {(documentState.orderStatus === 'CANCELED' || documentState.orderStatus === 'CANCELLED') && <p>Cancelled order — do not dispatch this parcel.</p>}
+          <p>Fulfilment document only. This packing slip is not proof of payment.</p>
+        </div>
 
         <div className="sa-doc-parties sa-doc-parties-slip">
           <section className="sa-doc-block">
@@ -130,6 +139,7 @@ export default async function OrderPackingSlipPage({ params }: Props) {
               <div><dt>Order ref</dt><dd className="sa-mono">{order.txnid}</dd></div>
               <div><dt>Placed</dt><dd>{formatDate(order.createdAt)}</dd></div>
               <div><dt>Method</dt><dd>{methodLabel}</dd></div>
+              <div><dt>Shipping</dt><dd>{order.shippingPaise === 0 ? 'Free' : formatRupees(order.shippingPaise, order.currency)}</dd></div>
               {delivery?.courierName ? (
                 <div><dt>Courier</dt><dd>{delivery.courierName}</dd></div>
               ) : null}
@@ -155,8 +165,8 @@ export default async function OrderPackingSlipPage({ params }: Props) {
             {order.items.map((item) => (
               <tr key={item.lineNumber}>
                 <td className="sa-doc-col-num">{item.lineNumber}</td>
-                <td>{item.productName}</td>
-                <td className="sa-mono">{item.productId || '—'}</td>
+                <td>{item.productName}{item.variantLabel && <span className="sa-row-sub">{item.variantLabel}</span>}</td>
+                <td className="sa-mono">{item.variantSku || item.productId || '—'}</td>
                 <td className="sa-num sa-doc-qty">{item.quantity}</td>
                 <td className="sa-doc-col-check"><span className="sa-doc-check" aria-hidden="true" /></td>
               </tr>
@@ -171,7 +181,7 @@ export default async function OrderPackingSlipPage({ params }: Props) {
 
         <p className="sa-doc-callout">
           Check every line against the order before sealing the parcel. This slip
-          carries no prices, so it can travel inside the parcel with the goods.
+          shows the shipping charge only; item prices are omitted.
         </p>
 
         <div className="sa-doc-sign">

@@ -15,11 +15,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -39,16 +40,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -202,7 +207,7 @@ test('the POS page says the catalogue price is a reference only', async () => {
   assert.match(page, /reference only/);
 });
 
-test('the server uses the entered price, never the sale resolver', async () => {
+test('the server uses the entered charge independently of reference sale resolution', async () => {
   const pos = await source('src/lib/store-admin/pos.ts');
   assert.match(pos, /export async function createPosSaleUsing/);
   assert.match(pos, /canEnterPosPrice\(input\.role\)/);
@@ -210,9 +215,10 @@ test('the server uses the entered price, never the sale resolver', async () => {
   assert.match(pos, /unit_price_paise, reference_price_paise/);
   assert.match(pos, /pos_confirm_unusual_price/);
   assert.match(pos, /unusualPriceWarning/);
-  assert.doesNotMatch(pos, /resolveEffectivePrice/);
-  assert.doesNotMatch(pos, /readSaleStateUsing/);
-  assert.doesNotMatch(pos, /readSaleState\(/);
+  assert.match(pos, /referencePricePaise: referencePriceOf\(/);
+  assert.match(pos, /unitPricePaise: cartLine\.unitPricePaise/);
+  assert.match(pos, /lineTotalPaise: cartLine\.unitPricePaise \* cartLine\.quantity/);
+  assert.doesNotMatch(pos, /unitPricePaise:\s*(?:referencePriceOf|resolveEffectivePrice|regularPricePaise|saleLive)/);
 });
 
 test('the sale route is staff-only, same-origin, and audits the entered prices', async () => {
@@ -240,8 +246,13 @@ test('receipt, invoice and order detail show the charged price', async () => {
   const invoice = await source(
     'src/app/(store-admin)/store-admin/(protected)/orders/[txnid]/invoice/page.tsx',
   );
-  assert.match(invoice, /item\.unitPricePaise/);
-  assert.match(invoice, /item\.referencePricePaise/);
+  assert.match(invoice, /<OrderDocument/);
+  assert.match(invoice, /\.\.\.order/);
+  const sharedDocument = await source('src/components/orders/OrderDocument.tsx');
+  assert.match(sharedDocument, /money\(item\.unitPricePaise, item\.currency\)/);
+  assert.match(sharedDocument, /money\(item\.lineTotalPaise, item\.currency\)/);
+  assert.match(sharedDocument, /item\.referencePricePaise/);
+  assert.match(sharedDocument, /List price at sale/);
 
   const detail = await source(
     'src/app/(store-admin)/store-admin/(protected)/orders/[txnid]/page.tsx',
@@ -281,6 +292,7 @@ const TABLES = [
   'order_status_history',
   'pos_shifts',
   'receipt_counters',
+  'store_admin_audit',
   'store_settings',
   'sale_settings',
 ];
@@ -293,41 +305,54 @@ async function setupSchema(sql, options = {}) {
   const regularPaise = options.regularPaise ?? 79900;
   const onHand = options.onHand ?? 10;
 
-  await sql.unsafe(`create schema "${schema}"`);
-  for (const table of TABLES) {
-    await sql.unsafe(
-      `create table "${schema}".${table} (like public.${table} including all)`,
-    );
+  try {
+    await createFixtureSchema(sql, schema, TABLES);
+    // Phase 2 may not be installed on the source deployment. These are only
+    // the local invoice contracts that the real POS transaction now requires.
+    await sql.unsafe(`alter table "${schema}".orders
+      add column if not exists invoice_sequence bigint,
+      add column if not exists invoice_number text,
+      add column if not exists invoice_issued_at timestamptz`);
+    await sql.unsafe(`create table "${schema}".invoice_number_counters (
+      name text primary key check (name = 'invoice'),
+      last_number bigint not null default 0 check (last_number >= 0)
+    )`);
+    await sql.unsafe(`alter table "${schema}".invoice_number_counters enable row level security`);
+    await sql`
+      insert into receipt_counters (name, next_number) values ('pos_receipt', 1)
+    `;
+    await sql`
+      insert into invoice_number_counters (name, last_number) values ('invoice', 0)
+    `;
+    await sql`
+      insert into sale_settings (id, enabled) values ('default', true)
+    `;
+    await sql`
+      insert into products (
+        id, category_id, slug, name, price_paise, sale_price_paise, cost_paise
+      ) values (
+        ${productId}, 'itestcat', ${productId}, 'POS test product',
+        ${regularPaise}, 49900, ${costPaise}
+      )
+    `;
+    await sql`
+      insert into stock (id, product_id, variant_id, on_hand, track_inventory)
+      values (${`stk_${suffix}`}, ${productId}, null, ${onHand}, true)
+    `;
+    await sql`
+      insert into pos_shifts (staff_id, status) values ('staff_test', 'OPEN')
+    `;
+    return { schema, productId, onHand };
+  } catch (error) {
+    // The caller has not received the schema name when setup fails.
+    await dropFixtureSchema(sql, schema);
+    throw error;
   }
-  await sql.unsafe(`set search_path to "${schema}"`);
-  await sql`
-    insert into receipt_counters (name, next_number) values ('pos_receipt', 1)
-  `;
-  await sql`
-    insert into sale_settings (id, enabled) values ('default', true)
-  `;
-  await sql`
-    insert into products (
-      id, category_id, slug, name, price_paise, sale_price_paise, cost_paise
-    ) values (
-      ${productId}, 'itestcat', ${productId}, 'POS test product',
-      ${regularPaise}, 49900, ${costPaise}
-    )
-  `;
-  await sql`
-    insert into stock (id, product_id, variant_id, on_hand, track_inventory)
-    values (${`stk_${suffix}`}, ${productId}, null, ${onHand}, true)
-  `;
-  await sql`
-    insert into pos_shifts (staff_id, status) values ('staff_test', 'OPEN')
-  `;
-  return { schema, productId, onHand };
 }
 
 async function cleanup(sql, schema) {
   try {
-    await sql.unsafe('set search_path to public');
-    await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+    await dropFixtureSchema(sql, schema);
   } catch (error) {
     console.warn('[pos-entered-prices] cleanup did not finish:', error?.message ?? error);
   }

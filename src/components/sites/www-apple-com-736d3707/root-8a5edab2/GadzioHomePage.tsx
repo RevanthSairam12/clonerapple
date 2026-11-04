@@ -143,7 +143,7 @@ export function GadzioHomePage({
               />
             ) : null}
 
-            {/* 4. BRAND LOGOS BAR (FEASTABLES, BEAST GAMES, BEAST ATHLETICS EQUIVALENT) */}
+            {/* 4. GADZIO BRAND LOGOS BAR */}
             {overrides?.brandBarEnabled !== false && overrides?.brandBar?.enabled !== false ? (
               <GadzioBrandBar
                 items={overrides?.brandBar?.items as any}

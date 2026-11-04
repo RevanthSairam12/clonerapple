@@ -77,8 +77,10 @@ test('order automation settings expose only legal fulfilled statuses and the ret
   assert.ok(field);
   assert.deepEqual(
     field.options.map((option) => option.value),
-    ['PENDING', 'ACCEPTED', 'PROCESSING', 'ON_THE_WAY'],
+    ['PENDING', 'ACCEPTED', 'PROCESSING'],
   );
+  assert.equal(validateSettingValue('default_fulfilment_status', 'ON_THE_WAY').ok, false);
+  assert.equal(validateSettingValue('default_fulfilment_status', 'DELIVERED').ok, false);
   assert.equal(DEFAULT_SETTINGS.return_window_days, '7');
   assert.equal(validateSettingValue('return_window_days', '30').ok, true);
   assert.equal(validateSettingValue('return_window_days', '-1').ok, false);

@@ -15,10 +15,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(here, '..', '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -33,23 +34,25 @@ if (!process.env.DATABASE_URL) {
 function connectionDetails() {
   const url = new URL(process.env.DATABASE_URL);
   return {
-    isPooler: url.hostname.includes('pooler') && url.port === '6543',
     transactionPooler: url.port === '6543',
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
-  const { isPooler } = connectionDetails();
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
-    prepare: !isPooler,
+    prepare: false,
+    connection: { search_path: 'pg_catalog' },
     onnotice: () => {},
   });
 }
@@ -124,9 +127,7 @@ test('the outbox worker claims exclusively, retries with backoff, and stops', { 
   const b = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    await a.unsafe(`create table "${schema}".notification_outbox (like public.notification_outbox including all)`);
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, ['notification_outbox']);
     await b.unsafe(`set search_path to "${schema}"`);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection A is pinned to the test schema');
@@ -312,13 +313,10 @@ test('the outbox worker claims exclusively, retries with backoff, and stops', { 
     assert.equal(cannotRetrySent.ok, false);
   } finally {
     try {
-      await a.unsafe('set search_path to public');
-      await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    } catch (error) {
-      console.warn('[notifications-outbox-integration] cleanup did not finish:', error?.message ?? error);
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await Promise.all([a.end({ timeout: 5 }), b.end({ timeout: 5 })]);
     }
-    await a.end({ timeout: 5 });
-    await b.end({ timeout: 5 });
   }
 });
 
@@ -328,9 +326,7 @@ test('retention clears old finished bodies but keeps the audit trail', { skip },
   const a = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    await a.unsafe(`create table "${schema}".notification_outbox (like public.notification_outbox including all)`);
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, ['notification_outbox']);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -386,8 +382,10 @@ test('retention clears old finished bodies but keeps the audit trail', { skip },
     });
     assert.equal(again.scrubbed, 0);
   } finally {
-    await a.unsafe('set search_path to public');
-    await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    await a.end();
+    try {
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await a.end({ timeout: 5 });
+    }
   }
 });

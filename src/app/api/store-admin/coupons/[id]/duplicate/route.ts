@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
-import { writeAudit } from '@/lib/store-admin/audit';
-import { couponAuditFromRow } from '@/lib/store-admin/coupon-rules';
 import { duplicateCoupon } from '@/lib/store-admin/coupons';
 
 /**
@@ -23,7 +21,9 @@ export async function POST(request: Request, { params }: Props) {
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
-  const result = await duplicateCoupon(id, guard.session.adminId);
+  const result = await duplicateCoupon(id, {
+    actorId: guard.session.adminId, actorEmail: guard.session.email, request,
+  });
   if (!result.ok) {
     if (result.reason === 'not-found') {
       return NextResponse.json({ error: result.error }, { status: 404 });
@@ -34,17 +34,5 @@ export async function POST(request: Request, { params }: Props) {
     return NextResponse.json({ error: 'The coupon could not be duplicated.' }, { status: 503 });
   }
 
-  await writeAudit({
-    actorId: guard.session.adminId,
-    actorEmail: guard.session.email,
-    action: 'coupon.duplicate',
-    entity: 'coupon',
-    entityId: result.data.id,
-    before: { sourceCouponId: id },
-    after: couponAuditFromRow(result.data),
-    reason: 'duplicated',
-    request,
-  });
-
-  return NextResponse.json({ coupon: result.data }, { status: 201 });
+  return NextResponse.json({ coupon: result.data }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
 }

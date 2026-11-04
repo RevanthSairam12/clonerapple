@@ -11,9 +11,19 @@
  * already been released. That makes duplicate callbacks harmless.
  */
 
+export interface StockIdentity {
+  productId: string;
+  variantId?: string | null;
+}
+
+/** Collision-safe identity; labels and SKUs are never stock keys. */
+export function stockKey(line: StockIdentity): string {
+  return JSON.stringify([line.productId, line.variantId || null]);
+}
+
 export interface StockRowSnapshot {
-  /** `stock.product_id` (variant rows must not be passed in). */
   product_id: string;
+  variant_id?: string | null;
   on_hand: number;
   reserved: number;
   track_inventory: boolean;
@@ -21,12 +31,16 @@ export interface StockRowSnapshot {
 
 export interface StockRequestLine {
   productId: string;
+  variantId?: string | null;
+  /** Explicit commerce variants require a configured row even if untracked. */
+  requiresStockRow?: boolean;
   quantity: number;
   productName?: string;
 }
 
 export interface StockClaimPlan {
   productId: string;
+  variantId?: string | null;
   quantity: number;
   productName?: string;
 }
@@ -75,22 +89,26 @@ export function planStockClaim(
     if (!productId) return { ok: false, error: 'Your bag contains an item that is no longer available.' };
     const quantity = wholeQuantity(line.quantity);
     if (quantity === null) return { ok: false, error: 'Your bag contains an invalid quantity. Please review it.' };
-    const existing = byProduct.get(productId);
+    const key = stockKey(line);
+    const existing = byProduct.get(key);
     if (existing) {
       existing.quantity += quantity;
     } else {
-      byProduct.set(productId, { productId, quantity, productName: line.productName });
+      byProduct.set(key, { productId, ...(line.variantId ? { variantId: line.variantId } : {}), quantity, productName: line.productName });
     }
   }
 
   const stockByProduct = new Map<string, StockRowSnapshot>();
-  for (const row of rows) stockByProduct.set(String(row.product_id), row);
+  for (const row of rows) stockByProduct.set(stockKey({ productId: String(row.product_id), variantId: row.variant_id }), row);
 
   const claims: StockClaimPlan[] = [];
   const untracked: string[] = [];
 
   for (const plan of byProduct.values()) {
-    const row = stockByProduct.get(plan.productId);
+    const row = stockByProduct.get(stockKey(plan));
+    if (!row && (plan.variantId || lines.some(line => stockKey(line) === stockKey(plan) && line.requiresStockRow))) {
+      return { ok: false, error: 'Variant stock setup is incomplete. Please choose another option.' };
+    }
     if (!row || !row.track_inventory) {
       untracked.push(plan.productId);
       continue;

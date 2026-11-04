@@ -21,7 +21,7 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
 
   const { id, variantId } = await context.params;
-  const result = await archiveVariant(id, variantId);
+  const result = await archiveVariant(id, variantId, guard.session.adminId);
 
   if (!result.ok) {
     await writeAudit({

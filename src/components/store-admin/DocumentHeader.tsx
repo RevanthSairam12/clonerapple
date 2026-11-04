@@ -5,14 +5,30 @@ interface Props {
   title: string;
   badge?: string;
   kicker?: string;
+  customer?: boolean;
 }
 
 /** Brand block shared by the printable invoice and packing slip. */
-export function DocumentHeader({ settings, title, badge, kicker }: Props) {
+export function DocumentHeader({ settings, title, badge, kicker, customer = false }: Props) {
   const tradeName = settings?.trade_name?.trim() || 'Gadzio';
   const address = settings?.address?.trim() || '';
   const phone = settings?.phone?.trim() || '';
   const email = settings?.email?.trim() || '';
+
+  if (customer) return (
+    <header className="flex flex-col justify-between gap-5 border-b border-[#e5e5ea] pb-6 sm:flex-row">
+      <div className="text-sm text-[#6e6e73]">
+        <strong className="block text-base text-[#1d1d1f]">{tradeName}</strong>
+        {address && <p className="mt-1 whitespace-pre-line">{address}</p>}
+        {(phone || email) && <p className="mt-1">{[phone, email].filter(Boolean).join(' · ')}</p>}
+      </div>
+      <div className="sm:text-right">
+        {badge && <p className="text-xs font-semibold uppercase tracking-wide text-[#6e6e73]">{badge}</p>}
+        <h1 className="mt-1 text-3xl font-semibold">{title}</h1>
+        {kicker && <p className="mt-2 text-sm text-[#6e6e73]">{kicker}</p>}
+      </div>
+    </header>
+  );
 
   return (
     <header className="sa-doc-top">

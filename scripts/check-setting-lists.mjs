@@ -50,6 +50,7 @@ const TABLES = [
   ['automated_messages', 'id, message_key, label, channel, subject, body, delay_minutes, is_active, updated_at'],
   ['refund_reasons', 'id, label, is_active, sort_order, updated_at'],
   ['return_reasons', 'id, label, is_active, sort_order, updated_at'],
+  ['bill_request_reasons', 'id, label, is_active, sort_order, updated_at'],
 ];
 
 let failed = false;

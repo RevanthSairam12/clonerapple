@@ -126,8 +126,8 @@ export function PosTill({ products, canSell, shiftOpen }: Props) {
    * the exact prompt; zero needs one explicit free-item confirmation; a
    * negative or non-numeric value is refused by the shared rupee parser.
    */
-  function prepareBasket(): { id: string; quantity: number; unitPricePaise: number }[] | null {
-    const prepared: { id: string; quantity: number; unitPricePaise: number }[] = [];
+  function prepareBasket(): { id: string; variantId:string|null;lineId:string; quantity: number; unitPricePaise: number }[] | null {
+    const prepared: { id: string;variantId:string|null;lineId:string; quantity: number; unitPricePaise: number }[] = [];
     const confirmedFree: string[] = [];
 
     for (const line of lines) {
@@ -156,7 +156,9 @@ export function PosTill({ products, canSell, shiftOpen }: Props) {
         confirmedFree.push(line.product.id);
       }
       prepared.push({
-        id: line.product.id,
+        id: line.product.productId,
+        variantId:line.product.variantId,
+        lineId:line.product.id,
         quantity: line.quantity,
         unitPricePaise: parsed.paise,
       });
@@ -191,7 +193,7 @@ export function PosTill({ products, canSell, shiftOpen }: Props) {
             confirmUnusualPrices,
             confirmedFreeItemIds: prepared
               .filter((line) => line.unitPricePaise === 0)
-              .map((line) => line.id),
+              .map((line) => line.variantId?line.lineId:line.id),
           }),
         });
         const body = await response.json().catch(() => ({}));
@@ -282,9 +284,12 @@ export function PosTill({ products, canSell, shiftOpen }: Props) {
                   <span className="sa-pos-name">{product.name}</span>
                   <span className="sa-pos-price">{formatPaise(product.listPricePaise)}</span>
                 </button>
-                {product.id ? <span className="sa-row-sub sa-mono">{product.id}</span> : null}
+                <span className="sa-row-sub sa-mono">{product.variantSku??product.productId}</span>
+                {product.variantId?<span className="sa-hint">Exact variant · {product.variantLabel}</span>:null}
                 {product.trackInventory && product.onHand !== null && product.onHand <= 0 ? (
                   <span className="sa-no">Out of stock</span>
+                ) : !product.trackInventory ? (
+                  <span className="sa-hint">Not limited</span>
                 ) : null}
               </li>
             ))}

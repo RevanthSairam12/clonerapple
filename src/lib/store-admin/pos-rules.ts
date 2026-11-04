@@ -14,6 +14,7 @@ export function isPosMethod(value: unknown): value is PosPaymentMethod {
 export interface PosCartLine {
   id: string;
   quantity: number;
+  variantId?: string | null;
 }
 
 /** Quantity rule for a POS cart line: a whole number between 1 and 50. */
@@ -75,14 +76,18 @@ export function validatePosCart(lines: unknown): { ok: true; lines: PosCartLine[
     const record = (line ?? {}) as Record<string, unknown>;
     const id = typeof record.id === 'string' ? record.id.trim() : '';
     if (!id) return { ok: false, error: 'Every line needs a product id.' };
-    if (seen.has(id)) {
+    if(record.variantId !== undefined && record.variantId !== null && (typeof record.variantId !== 'string'|| !/^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/.test(record.variantId))) return {ok:false,error:'Invalid variant identity.'};
+    // POS accepts exact product ids, never decorated storefront display ids.
+    if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/.test(id)) return {ok:false,error:'Invalid product identity.'};
+    const identity=JSON.stringify([id,record.variantId??null]);
+    if (seen.has(identity)) {
       return { ok: false, error: `Duplicate line for ${id}. Merge the quantities instead.` };
     }
     if (!isValidPosQuantity(record.quantity)) {
       return { ok: false, error: `Invalid quantity for ${id}.` };
     }
-    seen.add(id);
-    clean.push({ id, quantity: Math.floor(Number(record.quantity)) });
+    seen.add(identity);
+    clean.push({ id, quantity: Math.floor(Number(record.quantity)), ...(record.variantId==null?{}:{variantId:record.variantId as string}) });
   }
   return { ok: true, lines: clean };
 }

@@ -142,6 +142,18 @@ export function CatalogTransfer({ categories, canEdit }: Props) {
             separated by <code>|</code>.
           </p>
 
+          <p className="sa-hint">
+            Variant stocktake: start with a fresh catalogue export and edit only the stock settings
+            inside <code>inventory_variants</code>. IDs, SKU, model mappings, options, status and prices
+            are read-only; omitted or blank variant columns preserve existing configuration.
+            CSV cannot activate variant inventory or create stock rows for variants.
+            Set <code>confirm_tracking</code> to <code>true</code> only when explicitly enabling “Limit my stock”.
+            Units held in checkouts are never imported. Validation records an import job; it is not a no-write census.
+          </p>
+
+          <p className="sa-hint">
+            Descriptions: <code>short_description</code> is plain text; <code>description_sections</code> is a JSON array in saved display order. Omit a column or leave its cell blank to keep existing content. Use <code>null</code> to clear a summary or restore the legacy description; use <code>[]</code> to show no description sections. Each section needs a stable <code>id</code>, <code>title</code>, <code>hidden</code> flag and <code>type</code> (text, bullets, specs or faq). Export an edited product as a formatting example.
+          </p>
           <div className="sa-control-grid">
             <label className="sa-field sa-field-wide">
               <span className="sa-label">CSV file</span>

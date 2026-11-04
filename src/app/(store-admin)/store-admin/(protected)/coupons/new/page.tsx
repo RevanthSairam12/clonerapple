@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { CouponForm } from '@/components/store-admin/CouponForm';
+import { getStoreSession } from '@/lib/store-admin/auth';
 import { listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
 import { listCouponProductOptions } from '@/lib/store-admin/coupons';
 
@@ -11,6 +12,17 @@ export const dynamic = 'force-dynamic';
  * the same shape for both; only the submit endpoint and the code fields differ.
  */
 export default async function StoreAdminNewCouponPage() {
+  const session = await getStoreSession();
+  if (session?.role !== 'store_admin' && session?.role !== 'store_owner') {
+    return (
+      <div>
+        <Link className="sa-back" href="/store-admin/coupons">← Coupons</Link>
+        <h1 className="sa-page-title">New coupon</h1>
+        <p className="sa-lock-note">A viewer cannot create or generate coupons.</p>
+      </div>
+    );
+  }
+
   const [products, categories, brands] = await Promise.all([
     listCouponProductOptions(),
     listCategoryOptions(),

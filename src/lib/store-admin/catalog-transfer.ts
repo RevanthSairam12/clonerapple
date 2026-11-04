@@ -6,14 +6,22 @@ import { getSql } from '@/lib/platform/db';
 
 import {
   EXPORT_COLUMNS,
+  metadataCsvCells,
   parseCsv,
   toCsv,
   validateImportRows,
   type ImportContext,
   type ImportError,
   type ImportRow,
+  type CsvInventoryVariant,
 } from './catalog-csv';
+import { adjustVariantInventoryUsing } from './variant-inventory';
+import { inventoryKey, type InventoryChange } from './variant-inventory-rules';
+import { INVENTORY_REPORT_CTE, inventoryReportLabel } from './inventory-report';
 import type { CatalogWrite } from './catalog-writes';
+import { MetadataError, type AttributePrimitive } from '@/lib/catalog/product-metadata-rules';
+import { metadataGate, saveProductMetadataUsing, strictMetadataAudit } from './product-metadata';
+import { writeProductContentUsing } from './product-content';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Catalogue transfer runs on the server only.');
@@ -23,6 +31,39 @@ type Row = Record<string, unknown>;
 type Tx = postgres.TransactionSql;
 
 const CHUNK = 400;
+
+class MetadataImportError extends MetadataError {
+  constructor(readonly importError: ImportError) {
+    super(importError.message);
+  }
+}
+
+async function applyMetadata(tx: Tx, row: ImportRow, staffId: string, before?: Row): Promise<void> {
+  try {
+    if (row.shortDescription !== undefined || row.descriptionSections !== undefined) {
+      await metadataGate(tx);
+      await writeProductContentUsing(tx,row.productId,{shortDescription:row.shortDescription,descriptionSections:row.descriptionSections},staffId,{source:'csv_import'});
+    }
+    // Even legacy CSVs without metadata columns must pass the publication gate.
+    await saveProductMetadataUsing(tx, row.productId, row.metadata, staffId, { enforcePublication: true });
+    const isActive = row.isActive ?? Boolean(before?.is_active);
+    if (!before || before.category_id !== row.categoryId || Boolean(before.is_active) !== isActive) {
+      await strictMetadataAudit(tx, {
+        actorId: staffId,
+        action: before ? 'catalog.product.classification' : 'catalog.product.create',
+        entity: 'product',
+        entityId: row.productId,
+        ...(before ? { before: { categoryId: before.category_id, isActive: before.is_active } } : {}),
+        after: { categoryId: row.categoryId, isActive, source: 'csv_import' },
+      });
+    }
+  } catch (error) {
+    if (error instanceof MetadataError) {
+      throw new MetadataImportError({ rowNumber: row.rowNumber, column: 'metadata', message: error.message });
+    }
+    throw error;
+  }
+}
 
 function fail(
   reason: 'unavailable' | 'invalid-input' | 'not-found' | 'conflict',
@@ -100,13 +141,45 @@ export async function exportCatalogue(
     const rows = (await sql.unsafe(
       `select p.id, p.name, p.slug, p.brand, c.name as category_name,
               cond.label as condition_label, p.description, p.price_paise,
-              p.compare_at_paise, p.sale_price_paise, s.on_hand, s.low_stock_threshold,
+              p.compare_at_paise, p.sale_price_paise, s.on_hand, s.low_stock_threshold, s.track_inventory,
               coalesce((
                 select string_agg(i.url, '|' order by (i.role = 'primary') desc, i.sort_order, i.id)
                 from product_images i
                 where i.product_id = p.id and i.is_active and i.deleted_at is null
               ), '') as image_urls,
-              p.is_active, p.seo_title, p.seo_description, p.created_at, p.updated_at
+              p.is_active, p.seo_title, p.seo_description, p.created_at, p.updated_at,
+              to_jsonb(p)->>'short_description' as short_description,
+              to_jsonb(p)->'description_sections' as description_sections,
+              p.product_type_id,
+              coalesce((select jsonb_agg(jsonb_build_object(
+                'id', v.id, 'sku', v.sku, 'deviceModelId', v.device_model_id,
+                'combinationKey', v.combination_key, 'optionName', v.option_name,
+                'optionValue', v.option_value, 'isPurchasable', v.is_purchasable,
+                'isActive', v.is_active, 'pricePaise', v.price_paise_override,
+                'salePricePaise', v.sale_price_paise,
+                'stock', case when vs.id is null then null else jsonb_build_object(
+                  'onHand', vs.on_hand, 'trackInventory', vs.track_inventory,
+                  'lowStockThreshold', vs.low_stock_threshold) end
+              ) order by v.id) from product_variants v
+              left join stock vs on vs.product_id=v.product_id and vs.variant_id=v.id
+              where v.product_id=p.id and v.is_purchasable), '[]'::jsonb) as inventory_variants,
+              coalesce((
+                select jsonb_agg(d.device_model_id order by d.sort_order, d.device_model_id)
+                from product_device_models d
+                where d.product_id = p.id and d.archived_at is null
+              ), '[]'::jsonb) as device_model_ids,
+              coalesce((
+                select jsonb_object_agg(v.attribute_id, coalesce(
+                  to_jsonb(v.value_bool), to_jsonb(v.value_number),
+                  to_jsonb(v.option_value), to_jsonb(v.value_text), 'null'::jsonb
+                ))
+                from product_attribute_values v
+                join product_type_attributes m on m.attribute_id = v.attribute_id
+                  and m.product_type_id = p.product_type_id and m.is_active
+                join attributes a on a.id = v.attribute_id
+                  and a.is_active and a.deleted_at is null and a.key <> 'model'
+                where v.product_id = p.id and v.archived_at is null
+              ), '{}'::jsonb) as attribute_values
        from products p
        join categories c on c.id = p.category_id
        left join conditions cond on cond.id = p.condition_id
@@ -128,7 +201,7 @@ export async function exportCatalogue(
       money(row.price_paise),
       money(row.compare_at_paise),
       money(row.sale_price_paise),
-      row.on_hand === null || row.on_hand === undefined ? '' : String(number(row.on_hand)),
+      row.track_inventory !== true || row.on_hand == null ? '' : String(number(row.on_hand)),
       row.low_stock_threshold === null || row.low_stock_threshold === undefined
         ? ''
         : String(number(row.low_stock_threshold)),
@@ -136,6 +209,15 @@ export async function exportCatalogue(
       row.is_active ? 'true' : 'false',
       text(row.seo_title),
       text(row.seo_description),
+      JSON.stringify(row.inventory_variants),
+      'false',
+      ...metadataCsvCells({
+        productTypeId: row.product_type_id == null ? null : text(row.product_type_id),
+        deviceModelIds: row.device_model_ids as string[],
+        attributeValues: row.attribute_values as Record<string, AttributePrimitive>,
+      }),
+      row.short_description == null ? 'null' : text(row.short_description),
+      row.description_sections == null ? 'null' : JSON.stringify(row.description_sections),
       stamp(row.created_at),
       stamp(row.updated_at),
     ]);
@@ -151,6 +233,9 @@ export const STOCK_EXPORT_COLUMNS = [
   'product_id',
   'slug',
   'name',
+  'variant_id',
+  'variant_sku',
+  'inventory_bucket',
   'on_hand',
   'reserved',
   'available',
@@ -163,8 +248,8 @@ export const STOCK_EXPORT_COLUMNS = [
 /**
  * Stock levels as a CSV. `low` mirrors the low-stock report (tracked rows at or
  * below their threshold); `all` lists every live product so the file doubles as
- * a stocktake sheet. Untracked products show an empty quantity, because
- * checkout ignores their number.
+ * a stocktake sheet. Recorded product balances remain visible with tracking off;
+ * untracked variant quantities are blank, matching the stock report.
  */
 export async function exportStockReport(
   scope: 'low' | 'all',
@@ -173,35 +258,36 @@ export async function exportStockReport(
   if (!sql) return fail('unavailable', 'The catalogue is not available.');
 
   const lowOnly = scope === 'low'
-    ? 'and s.track_inventory and (s.on_hand - s.reserved) <= s.low_stock_threshold'
+    ? "and i.inventory_bucket <> 'retained_legacy' and i.track_inventory and (i.on_hand - i.reserved) <= i.low_stock_threshold"
     : '';
 
   try {
     const rows = (await sql.unsafe(
-      `select p.id, p.slug, p.name,
-              s.on_hand, s.reserved, s.low_stock_threshold, s.track_inventory,
-              s.updated_at
-       from products p
-       left join stock s on s.product_id = p.id and s.variant_id is null
-       where p.deleted_at is null ${lowOnly}
-       order by (s.on_hand - s.reserved) nulls last, p.name asc
+      `with ${INVENTORY_REPORT_CTE}
+       select i.* from inventory i
+       where true ${lowOnly}
+       order by (i.on_hand - i.reserved) nulls last, i.name, i.product_id, i.variant_id nulls first
        limit 10000`,
     )) as Row[];
 
     const csvRows = rows.map((row) => {
       const tracked = row.track_inventory === true;
+      const showBalance = tracked || row.inventory_bucket === 'product' || row.inventory_bucket === 'retained_legacy';
       const onHand = number(row.on_hand);
       const reserved = number(row.reserved);
       const available = onHand - reserved;
       const threshold = number(row.low_stock_threshold);
-      const status = !tracked ? 'untracked' : available <= threshold ? 'low' : 'ok';
+      const status = row.variant_id && !row.stock_id ? 'missing_stock_configuration' : !tracked ? 'untracked' : available <= threshold ? 'low' : 'ok';
       return [
-        text(row.id),
+        text(row.product_id),
         text(row.slug),
-        text(row.name),
-        tracked ? String(onHand) : '',
-        tracked ? String(reserved) : '',
-        tracked ? String(available) : '',
+        inventoryReportLabel(row),
+        text(row.variant_id),
+        text(row.variant_sku),
+        text(row.inventory_bucket),
+        showBalance ? String(onHand) : '',
+        showBalance ? String(reserved) : '',
+        showBalance ? String(available) : '',
         tracked ? String(threshold) : '',
         tracked ? 'true' : 'false',
         status,
@@ -214,6 +300,34 @@ export async function exportStockReport(
     console.warn('[store-admin/transfer] could not export stock levels');
     return fail('unavailable', 'The catalogue is not available.');
   }
+}
+
+async function variantInventoryChanges(tx: Tx, row: ImportRow): Promise<InventoryChange[]> {
+  if (row.inventoryVariants === undefined) return [];
+  const current = await tx`select v.*, s.id as stock_id, s.on_hand, s.track_inventory, s.low_stock_threshold
+    from product_variants v left join stock s on s.product_id=v.product_id and s.variant_id=v.id
+    where v.product_id=${row.productId} and v.is_purchasable order by v.id`;
+  const identity = (v: CsvInventoryVariant) => [v.id,v.sku,v.deviceModelId,v.combinationKey,v.optionName,v.optionValue,v.isPurchasable,v.isActive,v.pricePaise,v.salePricePaise];
+  if (row.inventoryVariants.length !== current.length) throw new MetadataImportError({rowNumber:row.rowNumber,column:'inventory_variants',message:'Variant identity set changed. Export a fresh file; CSV cannot create, archive or activate variants.'});
+  const changes: InventoryChange[] = [];
+  for (const value of row.inventoryVariants) {
+    const v = current.find(v=>v.id===value.id);
+    const saved: CsvInventoryVariant | undefined = v ? {
+      id:text(v.id),sku:v.sku==null?null:text(v.sku),deviceModelId:v.device_model_id==null?null:text(v.device_model_id),
+      combinationKey:v.combination_key==null?null:text(v.combination_key),optionName:text(v.option_name),optionValue:text(v.option_value),
+      isPurchasable:v.is_purchasable===true,isActive:v.is_active===true,
+      pricePaise:v.price_paise_override==null?null:number(v.price_paise_override),salePricePaise:v.sale_price_paise==null?null:number(v.sale_price_paise),stock:null,
+    } : undefined;
+    if (!v || !saved || JSON.stringify(identity(saved))!==JSON.stringify(identity(value))) throw new MetadataImportError({rowNumber:row.rowNumber,column:'inventory_variants',message:'Variant identity, mapping, status and prices are read-only in CSV. Export again after editor changes.'});
+    if ((value.stock===null)!==!v.stock_id) throw new MetadataImportError({rowNumber:row.rowNumber,column:'inventory_variants',message:'CSV cannot create or delete variant stock rows. Configure explicit inventory in the editor first.'});
+    if (!value.stock) continue;
+    const stock=value.stock;
+    if (stock.onHand===number(v.on_hand) && stock.trackInventory===v.track_inventory && stock.lowStockThreshold===number(v.low_stock_threshold)) continue;
+    if (!value.isActive) throw new MetadataImportError({rowNumber:row.rowNumber,column:'inventory_variants',message:'Inventory changes on inactive variants require editor review.'});
+    if (stock.trackInventory && !v.track_inventory && !row.confirmTracking) throw new MetadataImportError({rowNumber:row.rowNumber,column:'confirm_tracking',message:'Explicitly confirm enabling tracking with confirm_tracking=true.'});
+    changes.push({productId:row.productId,variantId:value.id,...stock,confirmTracking:row.confirmTracking,reason:'adjustment',note:'CSV variant stocktake'});
+  }
+  return changes;
 }
 
 /* ----------------------------------------------------------------- import */
@@ -331,6 +445,22 @@ export async function runCatalogueImport(input: {
   }
 
   const validation = validateImportRows(parsed.header, parsed.rows, context);
+  if (!validation.errors.length) {
+    try {
+      await sql.begin(async tx => {
+        for (const row of validation.rows) {
+          if (row.stock !== null && !row.confirmTracking) {
+            const [stock] = await tx`select track_inventory from stock where product_id=${row.productId} and variant_id is null`;
+            if (!stock?.track_inventory) throw new MetadataImportError({rowNumber:row.rowNumber,column:'confirm_tracking',message:'Explicitly confirm enabling tracking with confirm_tracking=true.'});
+          }
+          await variantInventoryChanges(tx,row);
+        }
+      });
+    } catch (error) {
+      if (error instanceof MetadataImportError) validation.errors.push(error.importError);
+      else return fail('unavailable','Could not validate variant inventory.');
+    }
+  }
   const importId = newId('imp');
   const failedRows = new Set(validation.errors.map((error) => error.rowNumber));
   const creates = validation.rows.filter((row) => row.mode === 'create');
@@ -411,8 +541,11 @@ export async function runCatalogueImport(input: {
 
   try {
     await sql.begin(async (tx) => {
+      // Acquire the shared configuration gate before any product lock/write.
+      await metadataGate(tx);
       await applyCreates(tx, creates, input.staffId);
       await applyUpdates(tx, updates, input.staffId);
+      await strictMetadataAudit(tx,{actorId:input.staffId,action:'catalog.import.apply',entity:'catalog_import',entityId:importId,after:{created:creates.length,updated:updates.length},reason:'csv_import'});
       await tx`
         update catalog_imports
         set status = 'imported',
@@ -424,6 +557,9 @@ export async function runCatalogueImport(input: {
     });
   } catch (error) {
     console.warn('[store-admin/transfer] import rolled back');
+    const importError: ImportError = error instanceof MetadataImportError
+      ? error.importError
+      : { rowNumber: 1, column: 'import', message: 'The import failed and nothing was written. Check the file and try again.' };
     try {
       await sql.begin(async (tx) => {
         await tx`
@@ -437,17 +573,24 @@ export async function runCatalogueImport(input: {
         await tx`
           insert into catalog_import_errors (import_id, row_number, column_name, message)
           values (
-            ${importId}, 1, 'import',
-            ${
-              error instanceof Error
-                ? `The import failed and nothing was written: ${error.message.slice(0, 300)}`
-                : 'The import failed and nothing was written.'
-            }
+            ${importId}, ${importError.rowNumber}, ${importError.column},
+            ${importError.message.slice(0, 500)}
           )
         `;
       });
     } catch {
       console.warn('[store-admin/transfer] could not record the failed import');
+    }
+    if (error instanceof MetadataImportError) {
+      return { ok: true, data: {
+        ...base,
+        status: 'rejected',
+        created: 0,
+        updated: 0,
+        failed: parsed.rows.length,
+        errors: [importError],
+        errorCount: 1,
+      } };
     }
     return fail('unavailable', 'The import failed and nothing was written.');
   }
@@ -482,7 +625,7 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
           compare_at_paise: row.compareAtPaise,
           sale_price_paise: row.salePricePaise,
           in_stock: row.stock === null ? true : row.stock > 0,
-          is_active: row.isActive,
+          is_active: row.isActive ?? false,
           seo_title: row.seoTitle,
           seo_description: row.seoDescription,
           updated_by: staffId,
@@ -505,6 +648,11 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
         'updated_by',
       )}
     `;
+  }
+
+  for (const row of rows) {
+    if (row.stock !== null && !row.confirmTracking) throw new MetadataImportError({rowNumber:row.rowNumber,column:'confirm_tracking',message:'Explicitly confirm tracking activation.'});
+    await applyMetadata(tx, row, staffId);
   }
 
   for (const batch of chunks(rows)) {
@@ -636,23 +784,49 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
   if (rows.length === 0) return;
 
   const ids = rows.map((row) => row.productId);
+  await tx`select id from products where id in ${tx(ids)} order by id for update`;
+  const stockKeys = rows.flatMap(row => [
+    ...(row.stock !== null || row.lowStockThreshold !== null ? [{productId:row.productId,variantId:null as string | null}] : []),
+    ...(row.inventoryVariants ?? []).filter(v=>v.stock!==null).map(v=>({productId:row.productId,variantId:v.id as string | null})),
+  ]).sort((a,b)=>inventoryKey(a.productId,a.variantId).localeCompare(inventoryKey(b.productId,b.variantId)));
+  // Lock every affected exact key before reading any balance or deriving deltas.
+  for (const key of stockKeys) await tx`select id from stock where product_id=${key.productId} and variant_id is not distinct from ${key.variantId}::text for update`;
   const currentRows = (await tx`
-    select p.id, p.price_paise, p.sale_price_paise,
+    select p.id, p.price_paise, p.sale_price_paise, p.category_id, p.product_type_id, p.is_active, p.inventory_mode,
+           to_jsonb(p)->>'short_description' as short_description,
+           to_jsonb(p)->'description_sections' as description_sections,
            s.id as stock_id, s.on_hand, s.reserved,
            s.track_inventory, s.low_stock_threshold
     from products p
     left join stock s on s.product_id = p.id and s.variant_id is null
-    where p.id in ${tx(ids)}
+    where p.id in ${tx(ids)} and p.deleted_at is null
+    order by p.id
+    for update of p
   `) as Row[];
   const current = new Map(currentRows.map((row) => [text(row.id), row]));
 
   const priceHistory: Row[] = [];
-  const movements: Row[] = [];
+  const inventoryChanges: InventoryChange[] = [];
 
-  for (const row of rows) {
+  for (const row of [...rows].sort((a,b)=>a.productId.localeCompare(b.productId))) {
+    inventoryChanges.push(...await variantInventoryChanges(tx,row));
     const before = current.get(row.productId);
     if (!before) {
       throw new Error(`Product ${row.productId} disappeared during the import.`);
+    }
+    const nextTypeId = row.metadata.productTypeId === undefined
+      ? before.product_type_id == null ? null : text(before.product_type_id)
+      : row.metadata.productTypeId;
+    if (nextTypeId) {
+      const matching = await tx`
+        select id from product_types
+        where id = ${nextTypeId} and category_id = ${row.categoryId}
+      `;
+      if (!matching.length) throw new MetadataImportError({
+        rowNumber: row.rowNumber,
+        column: 'product_type_id',
+        message: 'Select an active product type belonging to the new category, or use null and save as a draft.',
+      });
     }
     const beforePrice = number(before.price_paise);
     const beforeSale =
@@ -662,13 +836,15 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
     const onHand = before.stock_id ? number(before.on_hand) : 0;
     const reserved = before.stock_id ? number(before.reserved) : 0;
     const nextOnHand = row.stock === null ? onHand : row.stock;
-    const inStock = row.stock === null ? null : nextOnHand - reserved > 0;
+    const inStock = before.inventory_mode === 'variant' || row.stock === null ? null : nextOnHand - reserved > 0;
 
+    if(row.shortDescription!==undefined||row.descriptionSections!==undefined)await writeProductContentUsing(tx,row.productId,{shortDescription:row.shortDescription,descriptionSections:row.descriptionSections},staffId,{source:'csv_import'});
     await tx`
       update products
       set name = ${row.name},
           slug = ${row.slug},
           category_id = ${row.categoryId},
+          product_type_id = ${nextTypeId},
           brand = ${row.brand},
           brand_id = ${row.brandId},
           condition_id = ${row.conditionId},
@@ -676,13 +852,15 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
           price_paise = ${row.pricePaise},
           compare_at_paise = ${row.compareAtPaise},
           sale_price_paise = ${row.salePricePaise},
-          is_active = ${row.isActive},
+          is_active = ${row.isActive ?? Boolean(before.is_active)},
           seo_title = ${row.seoTitle},
           seo_description = ${row.seoDescription},
           updated_at = now(),
           updated_by = ${staffId}
       where id = ${row.productId}
     `;
+
+    await applyMetadata(tx, {...row,shortDescription:undefined,descriptionSections:undefined}, staffId, before);
 
     if (inStock !== null) {
       await tx`
@@ -720,38 +898,12 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
       });
     }
 
-    const threshold = row.lowStockThreshold ?? (before.stock_id ? number(before.low_stock_threshold) : 0);
-    if (before.stock_id) {
-      await tx`
-        update stock
-        set on_hand = ${nextOnHand},
-            low_stock_threshold = ${threshold},
-            track_inventory = ${row.stock === null ? Boolean(before.track_inventory) : true},
-            updated_at = now(),
-            updated_by = ${staffId}
-        where id = ${text(before.stock_id)}
-      `;
-    } else {
-      await tx`
-        insert into stock (
-          id, product_id, variant_id, on_hand, reserved, low_stock_threshold,
-          track_inventory, updated_by
-        ) values (
-          ${newId('stk')}, ${row.productId}, null, ${nextOnHand}, 0, ${threshold},
-          ${row.stock !== null}, ${staffId}
-        )
-      `;
-    }
-
-    if (row.stock !== null && row.stock !== onHand) {
-      movements.push({
-        product_id: row.productId,
-        variant_id: null,
-        delta: row.stock - onHand,
-        reason: 'adjustment',
-        note: 'CSV import',
-        created_by: staffId,
-      });
+    if (row.stock !== null || row.lowStockThreshold !== null) {
+      inventoryChanges.push({productId:row.productId,variantId:null,
+        ...(row.stock===null?{}:{onHand:row.stock}),
+        ...(row.lowStockThreshold===null?{}:{lowStockThreshold:row.lowStockThreshold}),
+        ...(!before.stock_id?{onHand:row.stock??0,trackInventory:row.stock!==null}:row.stock===null?{}:{trackInventory:true}),
+        confirmTracking:row.confirmTracking,reason:'adjustment',note:'CSV parent stocktake'});
     }
   }
 
@@ -772,11 +924,8 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
       )}
     `;
   }
-  for (const batch of chunks(movements)) {
-    await tx`
-      insert into stock_movements
-      ${tx(batch, 'product_id', 'variant_id', 'delta', 'reason', 'note', 'created_by')}
-    `;
+  for (const change of inventoryChanges.sort((a,b)=>inventoryKey(a.productId,a.variantId).localeCompare(inventoryKey(b.productId,b.variantId)))) {
+    await adjustVariantInventoryUsing(tx,change,staffId);
   }
 }
 

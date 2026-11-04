@@ -13,6 +13,8 @@
  * exercise it directly.
  */
 
+import { homepageSlotCount, validateHomepageSlots } from './homepage-products';
+
 /** Education Store keys are deferred by project rule; do not police them. */
 const EXEMPT_PREFIXES = ['edu.'] as const;
 
@@ -135,10 +137,14 @@ export type LegacyContentValidation =
 export function validateLegacyContentWrite(
   key: string,
   value: unknown,
+  allowHomepageReferences = false,
 ): LegacyContentValidation {
   if (isExemptCollectionKey(key)) return { ok: true };
 
-  const fields = findCommerceFields(value);
+  const allowReferences = allowHomepageReferences && homepageSlotCount(key) > 0 && validateHomepageSlots(key, value) === null;
+  const fields = findCommerceFields(value).filter(hit =>
+    !(allowReferences && /^items\[\d+\]\.productId$/.test(hit.path)),
+  );
   if (fields.length === 0) return { ok: true };
 
   const list = fields

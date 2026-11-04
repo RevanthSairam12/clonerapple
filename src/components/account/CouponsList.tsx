@@ -22,19 +22,19 @@ export function CouponsList({ coupons }: { coupons: CustomerCouponView[] }) {
       <div>
         <h2 className="text-2xl font-semibold">Your Coupons</h2>
         <p className="mt-1 text-sm text-[#6e6e73]">
-          Special discounts available exclusively to your account.
+          Public offers and coupons selected for your account.
         </p>
       </div>
 
       <div className="rounded-2xl bg-[#f5f5f7] p-4 text-xs sm:text-sm text-[#6e6e73]">
         <p>
-          💡 <strong>How to use:</strong> Copy a coupon code below and paste it in the promo code box in your bag or during checkout.
+          <strong>How to use:</strong> Copy a coupon code below and paste it in the promo code box in your bag or during checkout. Cart conditions still apply, including minimum spend, eligible items and shipping savings.
         </p>
       </div>
 
       {coupons.length === 0 ? (
         <div className="rounded-3xl border border-[#e5e5ea] bg-white p-8 text-center shadow-sm">
-          <p className="text-sm text-[#6e6e73]">You have no private coupons right now.</p>
+          <p className="text-sm text-[#6e6e73]">You have no available coupons right now.</p>
           <Link
             href="/shop/iphone/accessories/cases-protection"
             className="mt-4 inline-flex rounded-full bg-[#0071e3] px-5 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#0071e3]"

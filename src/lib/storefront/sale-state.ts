@@ -55,6 +55,7 @@ function iso(value: unknown): string | null {
 
 export async function readSaleStateUsing(
   sql: postgres.Sql | postgres.TransactionSql,
+  options: { authoritative?: boolean } = {},
 ): Promise<SaleState> {
   const rows = (await sql`
     select enabled, starts_at, ends_at, updated_at, updated_by, now() as db_now
@@ -64,7 +65,15 @@ export async function readSaleStateUsing(
   `) as Row[];
 
   const row = rows[0] ?? {};
-  const databaseNow = iso(row.db_now) ?? new Date().toISOString();
+  // Checkout evaluates the sale after acquiring stock locks, not at the start
+  // of a transaction that may have waited across a sale boundary.
+  const clock = options.authoritative || !row.db_now
+    ? await sql`select clock_timestamp() as db_now`
+    : null;
+  const databaseNow = iso(clock?.[0]?.db_now ?? row.db_now);
+  if (!databaseNow || (options.authoritative && rows.length === 0)) {
+    throw new Error('Checkout sale settings are temporarily unavailable.');
+  }
   const window: SaleWindow = {
     enabled: Boolean(row.enabled),
     startsAt: iso(row.starts_at),

@@ -35,6 +35,7 @@ function order(overrides = {}) {
       { id: 'p1', name: 'Phone', quantity: 2, unitPrice: 499.5, totalPrice: 999 },
     ],
     amount: 1099,
+    shippingPaise: 10_000,
     status: 'PAID',
     customerName: 'Asha Rao',
     customerEmail: 'asha@example.test',
@@ -52,7 +53,7 @@ test('an order context carries money, count and audience-specific links', () => 
   assert.equal(context.customerEmail, 'asha@example.test');
   assert.equal(context.customerPhone, '9876543210');
   assert.equal(context.orderTotalPaise, 109_900);
-  assert.equal(context.shippingPaise, 10_000, 'shipping is the remainder after the items');
+  assert.equal(context.shippingPaise, 10_000, 'shipping is the stored snapshot');
   assert.equal(context.itemCount, 2);
   assert.equal(context.orderStatus, 'PAID');
   assert.equal(context.customerLink, '/order/status?txnid=GDZ1001');
@@ -62,6 +63,28 @@ test('an order context carries money, count and audience-specific links', () => 
   for (const forbidden of ['address', 'notes', 'payuRawResponse', 'cost', 'audit']) {
     assert.equal(forbidden in context, false, `${forbidden} cannot reach a template`);
   }
+});
+
+test('discounts never reduce the stored shipping in notifications', () => {
+  const context = orderNotificationContext(order({
+    amount: 949,
+    discountPaise: 15_000,
+    couponCode: 'SAVE150',
+  }));
+  assert.equal(context.orderTotalPaise, 94_900);
+  assert.equal(context.shippingPaise, 10_000);
+  assert.equal(context.discountPaise, 15_000);
+});
+
+test('free and legacy shipping never get inferred from a total remainder', async () => {
+  const { templateValues } = await jiti.import('../src/lib/notifications/templates.ts');
+  for (const shippingPaise of [0, undefined]) {
+    const context = orderNotificationContext(order({ shippingPaise }));
+    assert.equal(context.shippingPaise, 0);
+    assert.equal(templateValues({ ...context, audience: 'customer' }).shipping_amount, 'Free');
+  }
+  const context = orderNotificationContext(order({ shippingPaise: 5_001 }));
+  assert.equal(templateValues({ ...context, audience: 'customer' }).shipping_amount, '₹50.01');
 });
 
 test('the txnid stands in when an order has no display number', () => {

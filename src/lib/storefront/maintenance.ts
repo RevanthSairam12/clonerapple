@@ -60,8 +60,8 @@ const BLOCKED_PREFIXES = [
 const ALWAYS_ALLOWED_PREFIXES = [
   '/store-admin',
   '/api/store-admin',
-  '/admin',
-  '/api/admin',
+  // Public compatibility media still has to render during maintenance.
+  '/api/admin/media',
   '/order/success',
   '/order/failed',
   '/order/cancelled',

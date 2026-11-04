@@ -9,7 +9,11 @@ import {
   type ReservationPolicy,
   type ReservationState,
 } from '@/lib/checkout/reservation-rules';
-import { planStockClaim, type StockRowSnapshot } from '@/lib/checkout/stock-rules';
+import { planStockClaim, type StockIdentity } from '@/lib/checkout/stock-rules';
+import { readCheckoutConfigurationUsing } from '@/lib/checkout/settings';
+import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
+import { resolveCartItemsFromDbUsing } from './db-catalog';
+import type { CartPricingInput, PricedCart } from './db-pricing';
 import {
   formatOrderNumber,
   ORDER_NUMBER_COUNTER,
@@ -40,8 +44,10 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { createRefundObligationInTx } from './refund-obligations';
+import { safePaymentSummary } from './verify';
 import {
   claimPlannedStock,
+  lockStockIdentities,
   InsufficientStockError,
   reclaimReleasedStock,
   releasedClaimLines,
@@ -69,8 +75,59 @@ export type OrderStatus =
 
 export type { ReservationState };
 
+/**
+ * Raised when a gateway payment id (`mihpayid`) is already attached to a
+ * different order. The partial unique index `idx_orders_mihpayid_unique`
+ * enforces this at the database level; this error turns the violation into a
+ * safe, catchable outcome so a replayed capture can never mark a second order
+ * paid.
+ */
+export class DuplicateGatewayPaymentError extends Error {
+  readonly mihpayid: string;
+
+  constructor(mihpayid: string) {
+    super('This gateway payment is already attached to another order.');
+    this.name = 'DuplicateGatewayPaymentError';
+    this.mihpayid = mihpayid;
+  }
+}
+
+/** A concurrent verification must not replace this order's gateway identity. */
+export class GatewayIdentityConflictError extends Error {
+  constructor() {
+    super('Gateway payment identity conflicts with the order.');
+    this.name = 'GatewayIdentityConflictError';
+  }
+}
+
+/** Postgres unique-violation code (`23505`). */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object'
+    && error !== null
+    && (error as { code?: unknown }).code === '23505'
+  );
+}
+
+/** True when a unique violation came from the gateway-payment index. */
+function isMihpayidConflict(error: unknown): boolean {
+  if (!isUniqueViolation(error)) return false;
+  const detail = [
+    (error as { constraint_name?: unknown }).constraint_name,
+    (error as { constraint?: unknown }).constraint,
+    (error as { message?: unknown }).message,
+  ]
+    .filter((part) => typeof part === 'string')
+    .join(' ')
+    .toLowerCase();
+  return detail.includes('mihpayid');
+}
+
 export interface OrderItemSnapshot {
   id: string;
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantLabel?: string | null;
   name: string;
   quantity: number;
   unitPrice: number;
@@ -85,6 +142,9 @@ export interface OrderItemSnapshot {
 export interface OrderItemLine {
   lineNumber: number;
   productId: string;
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantLabel?: string | null;
   productName: string;
   quantity: number;
   unitPricePaise: number;
@@ -102,7 +162,7 @@ export interface OrderItemLine {
  * conversion is rounding-free integer math. Exported for unit tests.
  */
 export function buildOrderItemLines(
-  items: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }>,
+  items: Array<OrderItemSnapshot>,
   knownBaseIds: readonly string[] = [],
   currency = 'INR',
 ): OrderItemLine[] {
@@ -111,6 +171,7 @@ export function buildOrderItemLines(
     return {
       lineNumber: index + 1,
       productId: baseId,
+      ...(item.variantId ? { variantId: item.variantId, variantSku: item.variantSku, variantLabel: item.variantLabel } : {}),
       productName: item.name,
       quantity: item.quantity,
       unitPricePaise: Math.round(item.unitPrice * 100),
@@ -325,6 +386,15 @@ export interface CreateOrderParams {
   };
 }
 
+/** Web checkout accepts identities and display expectations, never charge amounts. */
+export type WebCreateOrderParams = Omit<
+  CreateOrderParams,
+  'items' | 'subtotalPaise' | 'shippingPaise' | 'totalPaise' | 'pricingSnapshot'
+> & {
+  cartItems: CartPricingInput[];
+  expectedTotalPaise?: number | null;
+};
+
 export interface LazilyExpiredReservation {
   txnid: string;
   previousStatus: OrderStatus;
@@ -393,7 +463,7 @@ async function allocateOrderNumber(
  * `InsufficientStockError` and leaves no order behind. Amounts are the
  * server-computed paise breakdown; no client-sent price or total is accepted.
  */
-export async function createOrder(params: CreateOrderParams): Promise<CreateOrderResult> {
+export async function createOrder(params: WebCreateOrderParams): Promise<CreateOrderResult> {
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
   return createOrderUsing(sql, params);
@@ -420,8 +490,10 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
 export async function releaseExpiredReservationsForProducts(
   tx: Tx,
   productIds: readonly string[],
+  identities?: readonly StockIdentity[],
 ): Promise<LazilyExpiredReservation[]> {
   const ids = [...new Set(productIds.filter(Boolean))];
+  const requested = (identities || ids.map(productId => ({productId,variantId:null}))).map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
   if (ids.length === 0) return [];
 
   const rows = await tx<Array<{ id: string; txnid: string; status: string }>>`
@@ -434,9 +506,10 @@ export async function releaseExpiredReservationsForProducts(
       and exists (
         select 1 from order_items oi
         where oi.order_id = o.id
-          and oi.product_id = any(${ids}::text[])
+          and exists (select 1 from jsonb_to_recordset(${tx.json(requested)}::jsonb) as wanted(product_id text,variant_id text)
+            where wanted.product_id=oi.product_id and wanted.variant_id is not distinct from oi.variant_id)
       )
-    order by o.reservation_expires_at asc, o.id asc
+    order by o.id asc
     for update of o
   `;
 
@@ -468,7 +541,7 @@ export async function releaseExpiredReservationsForProducts(
           -- A closed processing window keeps its deadline so the worker can
           -- see that the safe recovery window ended and flag the payment.
           processing_deadline = case when ${processing} then processing_deadline else null end,
-          next_reconcile_at = ${processing ? new Date() : null},
+          next_reconcile_at = case when ${processing} then now() else null end,
           status = ${status},
           cancelled_at = case when ${status} = 'CANCELLED' then coalesce(cancelled_at, now()) else cancelled_at end,
           cancel_reason = case when ${status} = 'CANCELLED' then ${reason} else cancel_reason end,
@@ -496,24 +569,56 @@ export async function releaseExpiredReservationsForProducts(
  */
 export async function createOrderUsing(
   sql: postgres.Sql,
-  params: CreateOrderParams,
+  params: CreateOrderParams | WebCreateOrderParams,
 ): Promise<CreateOrderResult> {
   const id = `ord_${randomBytes(12).toString('hex')}`;
   const currency = params.currency || 'INR';
-  const itemLines = buildOrderItemLines(params.items);
-
-  const subtotalPaise = Math.max(0, Math.trunc(params.subtotalPaise));
-  let shippingPaise = Math.max(0, Math.trunc(params.shippingPaise));
-  let totalPaise = Math.max(0, Math.trunc(params.totalPaise));
-  let discountPaise = 0;
-  if (!params.coupon?.code && totalPaise !== subtotalPaise + shippingPaise) {
-    throw new Error('Order total does not match its money breakdown.');
+  const web = 'cartItems' in params ? params : null;
+  const legacy = 'items' in params ? params : null;
+  if (web && (!Array.isArray(web.cartItems) || web.cartItems.length === 0)) {
+    throw new Error('Cart must contain at least one item.');
   }
-
+  const lockIds = web
+    ? web.cartItems.map((item) => {
+        const baseId = normalizeCartLineId(item?.id).baseId;
+        if (!baseId || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 50) {
+          throw new Error('Invalid cart item or quantity.');
+        }
+        return baseId;
+      })
+    : buildOrderItemLines(legacy!.items).map((line) => line.productId);
   const reservationSeconds = Math.max(0, Math.trunc(params.reservationSeconds ?? 0));
 
   return await sql.begin(async (tx) => {
-    const productIds = [...new Set(itemLines.map((line) => line.productId))];
+    // Shared configuration fence: activation cannot race a parent-only checkout.
+    await tx`select pg_advisory_xact_lock_shared(513031,3)`;
+    let items = legacy?.items ?? [];
+    let itemLines = buildOrderItemLines(items);
+    let subtotalPaise = Math.max(0, Math.trunc(legacy?.subtotalPaise ?? 0));
+    let shippingPaise = Math.max(0, Math.trunc(legacy?.shippingPaise ?? 0));
+    let totalPaise = Math.max(0, Math.trunc(legacy?.totalPaise ?? 0));
+    let discountPaise = 0;
+    let cart: PricedCart | null = null;
+    let shippingPolicy: ShippingPolicy | undefined;
+    let pricingSnapshot = legacy?.pricingSnapshot ?? {};
+    if (legacy && !params.coupon?.code && totalPaise !== subtotalPaise + shippingPaise) {
+      throw new Error('Order total does not match its money breakdown.');
+    }
+    const productIds = [...new Set(lockIds)].sort();
+    const requestedIdentities = (web ? web.cartItems.map(item => ({productId: normalizeCartLineId(item.id).baseId || item.id,variantId:item.variantId || null})) : itemLines);
+    const requestedRecords = requestedIdentities.map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
+
+    // Lock affected existing orders before any inventory row. Include every line
+    // of those orders in the sorted stock lock set, because expiry releases whole
+    // orders atomically. Sibling-only reservations do not match this request.
+    const affectedOrders = await tx<Array<{id:string}>>`
+      select o.id from orders o where o.reservation_state='ACTIVE' and exists(
+        select 1 from order_items oi,jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
+        where oi.order_id=o.id and oi.product_id=wanted.product_id and oi.variant_id is not distinct from wanted.variant_id)
+      order by o.id for update of o`;
+    const affectedLines = affectedOrders.length ? await tx<Array<{product_id:string;variant_id:string|null}>>`
+      select distinct product_id,variant_id from order_items where order_id=any(${affectedOrders.map(row=>row.id)}::text[])` : [];
+    await lockStockIdentities(tx,[...requestedIdentities,...affectedLines.map(row=>({productId:row.product_id,variantId:row.variant_id}))]);
 
     // A customer retrying after a failed payment may still have the grace hold
     // from that order. A fresh checkout claims the same stock, so give the old
@@ -530,8 +635,10 @@ export async function createOrderUsing(
           and exists (
             select 1 from order_items oi
             where oi.order_id = orders.id
-              and oi.product_id = any(${productIds}::text[])
+              and exists(select 1 from jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
+                where wanted.product_id=oi.product_id and wanted.variant_id is not distinct from oi.variant_id)
           )
+        order by id
         for update
       `;
       for (const row of superseded) {
@@ -549,34 +656,32 @@ export async function createOrderUsing(
       }
     }
 
-    // 1. Lock stock and decide the claim before creating the order row.
-    const stockRows = productIds.length === 0
-      ? []
-      : await tx<StockRowSnapshot[]>`
-          select product_id, on_hand, reserved, track_inventory
-          from stock
-          where variant_id is null and product_id = any(${productIds}::text[])
-          for update
-        `;
-
-    let plan = planStockClaim(itemLines, stockRows);
-    let expiredReservations: LazilyExpiredReservation[] = [];
-    if (!plan.ok && productIds.length > 0) {
-      // The checkout must not depend on the cron having run: an expired
-      // reservation is free stock even if the worker is behind. Rows are
-      // locked and released inside this transaction, then the claim is
-      // re-planned against the refreshed counters.
-      expiredReservations = await releaseExpiredReservationsForProducts(tx, productIds);
-      if (expiredReservations.length > 0) {
-        const refreshed = await tx<StockRowSnapshot[]>`
-          select product_id, on_hand, reserved, track_inventory
-          from stock
-          where variant_id is null and product_id = any(${productIds}::text[])
-          for update
-        `;
-        plan = planStockClaim(itemLines, refreshed);
+    if (web) {
+      const configuration = await readCheckoutConfigurationUsing(tx);
+      if (!configuration.ok) throw new Error('Checkout settings are temporarily unavailable.');
+      if (configuration.settings.payu_enabled !== 'on') {
+        throw new Error('Online payment is currently unavailable.');
       }
+      if (params.coupon?.code && configuration.settings.coupons_enabled === 'off') {
+        throw new CouponRejectedError('inactive', couponRejectionMessage('inactive'));
+      }
+      cart = await resolveCartItemsFromDbUsing(tx, web.cartItems);
+      items = cart.items;
+      itemLines = buildOrderItemLines(items);
+      subtotalPaise = cart.totalPaise;
+      shippingPolicy = configuration.policy;
+      const quote = quoteShipping(subtotalPaise, shippingPolicy);
+      shippingPaise = quote.shippingPaise;
+      totalPaise = subtotalPaise + shippingPaise;
+      pricingSnapshot = { shipping: { ...quote, ...shippingPolicy } };
+      // Use the database's canonical ids for subsequent claim/release queries.
+      productIds.splice(0, productIds.length, ...new Set(itemLines.map((line) => line.productId)));
     }
+
+    // Expire matching holds before obtaining stock locks (never stock -> order).
+    const expiredReservations = await releaseExpiredReservationsForProducts(tx, productIds, itemLines);
+    const stockRows = await lockStockIdentities(tx, itemLines);
+    const plan = planStockClaim(itemLines, stockRows);
     if (!plan.ok) throw new InsufficientStockError(plan.error);
 
     // 2. Number the order inside the same transaction.
@@ -607,12 +712,12 @@ export async function createOrderUsing(
 
       const lines: CouponLine[] = itemLines.map((line, index) => ({
         productId: line.productId,
-        categoryId: params.items[index]?.categoryId ?? null,
-        brandId: params.items[index]?.brandId ?? null,
+        categoryId: items[index]?.categoryId ?? null,
+        brandId: items[index]?.brandId ?? null,
         quantity: line.quantity,
         unitPaise: line.unitPricePaise,
         linePaise: line.lineTotalPaise,
-        onSale: params.items[index]?.onSale === true,
+        onSale: items[index]?.onSale === true,
       }));
 
       const evaluation = await evaluateCouponFromDatabase(tx, locked, {
@@ -637,19 +742,26 @@ export async function createOrderUsing(
       totalPaise = evaluation.totalPaise;
       couponLineDiscounts = evaluation.allocations;
 
-      const expected = params.coupon.expectedTotalPaise;
-      if (
-        typeof expected === 'number'
-        && Number.isSafeInteger(expected)
-        && expected !== totalPaise
-      ) {
-        throw new TotalChangedError({
-          subtotalPaise,
-          discountPaise,
-          shippingPaise,
-          totalPaise,
-        });
-      }
+    }
+
+    if (shippingPolicy) {
+      const finalQuote = quoteShipping(subtotalPaise, shippingPolicy, couponDefinition?.type === 'FREE_SHIPPING');
+      shippingPaise = finalQuote.shippingPaise;
+      totalPaise = subtotalPaise - discountPaise + shippingPaise;
+      pricingSnapshot = { shipping: { ...finalQuote, ...shippingPolicy } };
+    }
+    const expected = web?.expectedTotalPaise ?? params.coupon?.expectedTotalPaise;
+    if (
+      (typeof expected === 'number' && Number.isSafeInteger(expected) && expected !== totalPaise)
+      || (cart && cart.priceChanges.length > 0)
+    ) {
+      // Unit-price changes are represented by the same complete recovery payload;
+      // totals are still checked independently for shipping/coupon changes.
+      throw new TotalChangedError(
+        { subtotalPaise, discountPaise, shippingPaise, totalPaise },
+        cart?.items ?? [],
+        shippingPolicy,
+      );
     }
 
     // 3. Persist the order and its snapshot.
@@ -687,7 +799,7 @@ export async function createOrderUsing(
         ${txnid},
         ${orderNumber},
         ${params.userId ?? null},
-        ${tx.json(params.items as any)},
+        ${tx.json(items as any)},
         ${(totalPaise / 100).toFixed(2)},
         ${currency},
         'CREATED',
@@ -703,7 +815,7 @@ export async function createOrderUsing(
         ${couponDefinition && couponEvaluation
           ? tx.json(couponSnapshot(couponDefinition, discountPaise) as any)
           : null},
-        ${tx.json((params.pricingSnapshot ?? {}) as any)},
+        ${tx.json(pricingSnapshot as any)},
         ${params.customerName},
         ${params.customerEmail},
         ${params.customerPhone},
@@ -748,11 +860,11 @@ export async function createOrderUsing(
       await tx`
         INSERT INTO order_items (
           order_id, line_number, product_id, product_name, quantity,
-          unit_price_paise, line_total_paise, discount_paise, currency
+          unit_price_paise, line_total_paise, discount_paise, currency,variant_id,variant_sku,variant_label
         ) VALUES (
           ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
           ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
-          ${couponLineDiscounts[index] ?? 0}, ${line.currency}
+          ${couponLineDiscounts[index] ?? 0}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null}
         )
       `;
     }
@@ -781,9 +893,15 @@ export async function createOrderUsing(
 
 /**
  * Retrieves an order by unique txnid.
+ *
+ * `sqlOverride` is the connection of an integration test pinned to a throwaway
+ * schema; production always uses the application pool.
  */
-export async function getOrderByTxnid(txnid: string): Promise<Order | null> {
-  const sql = getSql();
+export async function getOrderByTxnid(
+  txnid: string,
+  sqlOverride?: postgres.Sql,
+): Promise<Order | null> {
+  const sql = sqlOverride ?? getSql();
   if (!sql) throw new Error('Database is not configured.');
 
   const rows = await sql<RawOrderRow[]>`
@@ -809,6 +927,26 @@ export async function getOrderById(id: string): Promise<Order | null> {
   return mapRowToOrder(rows[0]);
 }
 
+/**
+ * Find the order that already owns a gateway payment id, if any. Used to refuse
+ * a replayed capture before any write instead of relying on the unique index.
+ */
+export async function findOrderByMihpayid(
+  mihpayid: string,
+  sqlOverride?: postgres.Sql,
+): Promise<Order | null> {
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return null;
+  const key = mihpayid.trim();
+  if (!key) return null;
+
+  const rows = await sql<RawOrderRow[]>`
+    SELECT * FROM orders WHERE payu_mihpayid = ${key} LIMIT 1
+  `;
+  if (!rows || rows.length === 0) return null;
+  return mapRowToOrder(rows[0]);
+}
+
 export interface TransitionStatusParams {
   txnid: string;
   targetStatus: OrderStatus;
@@ -819,6 +957,8 @@ export interface TransitionStatusParams {
   cancelReason?: string | null;
   /** Reservation/grace policy. The coded defaults apply when omitted. */
   policy?: ReservationPolicy;
+  /** An owner status check must not give an existing active hold more time. */
+  preserveReservationWindow?: boolean;
 }
 
 export interface TransitionResult {
@@ -923,15 +1063,43 @@ async function applyPaidOrderAutomation(
  * transaction; the ledger makes a duplicate callback a no-op. A late PAID
  * callback for such an order tries to take the released units back atomically;
  * when it cannot, the payment is still recorded but the order is flagged for
- * manual review and an audit row is written after the commit.
+ * manual review and an audit row is written after the commit. Isolated tests
+ * may disable these process-global audit writes with `sideEffects: false`;
+ * transactional stock, coupon, refund and history writes always run.
  */
-export async function transitionOrderStatus(params: TransitionStatusParams): Promise<TransitionResult> {
-  const sql = getSql();
+export async function transitionOrderStatus(
+  params: TransitionStatusParams,
+  sqlOverride?: postgres.Sql,
+  options: { sideEffects?: boolean } = {},
+): Promise<TransitionResult> {
+  const sql = sqlOverride ?? getSql();
   if (!sql) throw new Error('Database is not configured.');
 
-  const result = await transitionOrderStatusUsing(sql, params);
+  let result: TransitionResult;
+  try {
+    result = await transitionOrderStatusUsing(sql, params);
+  } catch (error: unknown) {
+    // Two orders racing with the same capture: the database refuses the second
+    // write. The caller answers as a duplicate instead of a 500, and the
+    // payment is flagged so a human checks the gateway.
+    if (params.mihpayid && isMihpayidConflict(error)) {
+      console.warn(
+        `[payu] gateway payment id already attached to another order; ${params.txnid} not marked paid`,
+      );
+      await flagPaymentForReview(
+        {
+          txnid: params.txnid,
+          reason:
+            'PayU reported a payment id that is already attached to another order. The order was not marked paid. Check the gateway before fulfilling or refunding.',
+        },
+        sqlOverride,
+      ).catch(() => undefined);
+      throw new DuplicateGatewayPaymentError(params.mihpayid);
+    }
+    throw error;
+  }
 
-  if (result.paymentReviewRequired) {
+  if (result.paymentReviewRequired && options.sideEffects !== false) {
     await writeAudit({
       action: 'payment.late_capture_review',
       entity: 'order',
@@ -950,7 +1118,7 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
     );
   }
 
-  if (result.couponReviewRequired) {
+  if (result.couponReviewRequired && options.sideEffects !== false) {
     await writeAudit({
       action: 'coupon.late_restore_review',
       entity: 'order',
@@ -992,6 +1160,9 @@ export async function transitionOrderStatusUsing(
     const current = mapRowToOrder(lockedRows[0]);
     const previousStatus = current.status;
     const currentFulfilment = String(lockedRows[0].fulfilment_status ?? 'PENDING');
+    if (params.mihpayid && current.payuMihpayid && params.mihpayid !== current.payuMihpayid) {
+      throw new GatewayIdentityConflictError();
+    }
 
     // If order is already PAID, do not overwrite or trigger duplicate fulfillment
     if (previousStatus === 'PAID') return noopTransition(previousStatus, current);
@@ -1012,7 +1183,8 @@ export async function transitionOrderStatusUsing(
       return noopTransition(previousStatus, current);
     }
 
-    const now = new Date();
+    const [clock] = await tx<{ now: Date }[]>`select now() as now`;
+    const now = new Date(clock.now);
     const isBecomingPaid = params.targetStatus === 'PAID';
     const isDefinitiveFailure =
       params.targetStatus === 'FAILED' || params.targetStatus === 'CANCELLED';
@@ -1063,6 +1235,13 @@ export async function transitionOrderStatusUsing(
       if (reservation === 'ACTIVE') nextExpires = nextDeadline;
     }
 
+    if (params.preserveReservationWindow && nextReservation === 'ACTIVE') {
+      nextExpires = current.reservationExpiresAt;
+      nextDeadline = params.targetStatus === 'PROCESSING'
+        ? current.processingDeadline ?? current.reservationExpiresAt
+        : nextDeadline;
+    }
+
     let nextReconcile: Date | null = current.nextReconcileAt;
     if (isBecomingPaid || releaseNow) {
       nextReconcile = null;
@@ -1081,7 +1260,7 @@ export async function transitionOrderStatusUsing(
         status = ${params.targetStatus},
         payu_mihpayid = COALESCE(${params.mihpayid ?? null}, payu_mihpayid),
         payu_mode = COALESCE(${params.mode ?? null}, payu_mode),
-        payu_raw_response = COALESCE(${params.rawResponse ? tx.json(params.rawResponse as any) : null}, payu_raw_response),
+        payu_raw_response = COALESCE(${params.rawResponse ? tx.json(safePaymentSummary(params.rawResponse)) : null}, payu_raw_response),
         paid_at = ${paidAt},
         cancelled_at = COALESCE(${cancelledAt}, cancelled_at),
         cancel_reason = COALESCE(${params.cancelReason ?? null}, cancel_reason),
@@ -1313,7 +1492,7 @@ export async function recordReconcileResult(
       update orders
       set next_reconcile_at = ${input.nextAt},
           consecutive_reconcile_failures = ${Math.max(0, Math.trunc(input.consecutiveFailures))},
-          last_reconcile_error = ${String(input.error ?? '').slice(0, 500)},
+          last_reconcile_error = ${input.error ? 'Gateway verification or reconciliation unavailable.' : ''},
           last_reconcile_at = now()
       where txnid = ${input.txnid}
     `;
@@ -1393,9 +1572,10 @@ export async function releaseOrderReservation(
         statusChanged: false,
       };
     }
+    const [clock] = await tx<{ now: Date }[]>`select now() as now`;
     if (
       current.reservationExpiresAt
-      && current.reservationExpiresAt.getTime() > Date.now()
+      && current.reservationExpiresAt.getTime() > new Date(clock.now).getTime()
     ) {
       return { outcome: 'not-due' as const, order: current, stockReleased: false, statusChanged: false };
     }

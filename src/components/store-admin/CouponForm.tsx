@@ -48,6 +48,9 @@ export interface CouponFormValues {
   allowWithSalePrice: boolean;
   allowedCustomerGroups: string[] | null;
   restrictedToEmails: string[] | null;
+  showToAllUsers: boolean;
+  assignedToEmails: string[];
+  assignedCustomerGroups: string[];
   targets: CouponTargetValue[];
 }
 
@@ -67,6 +70,7 @@ interface Props {
   categories: NamedOption[];
   brands: NamedOption[];
   coupon?: CouponFormValues;
+  readOnly?: boolean;
 }
 
 type Mode = 'single' | 'bulk';
@@ -105,7 +109,7 @@ function targetIds(coupon: CouponFormValues | undefined, key: keyof CouponTarget
     .filter((value): value is string => typeof value === 'string' && value.length > 0);
 }
 
-export function CouponForm({ products, categories, brands, coupon }: Props) {
+export function CouponForm({ products, categories, brands, coupon, readOnly = false }: Props) {
   const router = useRouter();
   const editing = Boolean(coupon);
 
@@ -136,6 +140,11 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
   );
   const [groups, setGroups] = useState<string[]>(coupon?.allowedCustomerGroups ?? []);
   const [emails, setEmails] = useState((coupon?.restrictedToEmails ?? []).join('\n'));
+  const [showToAllUsers, setShowToAllUsers] = useState(coupon?.showToAllUsers ?? false);
+  const [assignedToEmails, setAssignedToEmails] = useState((coupon?.assignedToEmails ?? []).join('\n'));
+  const [assignedCustomerGroups, setAssignedCustomerGroups] = useState<string[]>(
+    coupon?.assignedCustomerGroups ?? [],
+  );
 
   const [productIds, setProductIds] = useState<string[]>(targetIds(coupon, 'productId'));
   const [categoryIds, setCategoryIds] = useState<string[]>(targetIds(coupon, 'categoryId'));
@@ -180,6 +189,12 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
       maxDiscountRupees: maxDiscount,
       onlyNewCustomers,
       allowWithSalePrice,
+      showToAllUsers,
+      assignedToEmails: assignedToEmails
+        .split(/[\s,;]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+      assignedCustomerGroups,
       allowedCustomerGroups: groups,
       restrictedToEmails: emails
         .split(/[\s,;]+/)
@@ -193,7 +208,7 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || readOnly) return;
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -297,8 +312,14 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
   return (
     <form className="sa-control-card" onSubmit={submit}>
       <h2 className="sa-control-title">
-        {editing ? 'Edit coupon' : mode === 'bulk' ? 'Generate a batch' : 'New coupon'}
+        {readOnly ? 'Coupon rules (read-only)' : editing ? 'Edit coupon' : mode === 'bulk' ? 'Generate a batch' : 'New coupon'}
       </h2>
+      {readOnly ? <p className="sa-lock-note">A viewer cannot change coupons.</p> : null}
+      <fieldset
+        disabled={readOnly || busy}
+        aria-label={readOnly ? 'Saved coupon settings' : 'Coupon settings'}
+        style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+      >
 
       {!editing ? (
         <div className="sa-field">
@@ -528,6 +549,69 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
         </div>
       </div>
 
+      <fieldset className="sa-field sa-edit-fieldset" aria-describedby="coupon-visibility-help">
+        <legend className="sa-label">Customer discovery</legend>
+        <label className="sa-hint" htmlFor="coupon-show-to-all">
+          <input
+            id="coupon-show-to-all"
+            type="checkbox"
+            aria-describedby="coupon-visibility-help"
+            checked={showToAllUsers}
+            onChange={(event) => setShowToAllUsers(event.target.checked)}
+          />{' '}
+          Show to all users
+        </label>
+        <p className="sa-hint" id="coupon-visibility-help">
+          Visibility controls discovery, not redemption. A hidden coupon can still be redeemed
+          by anyone with its code unless customer restrictions apply. Assignments make the
+          coupon discoverable; they do not override redemption restrictions. Hidden means not
+          public: assigned eligible customers may still see it.
+        </p>
+        <p className="sa-hint">
+          Off by default for new coupons and generated codes. When enabled, all eligible
+          signed-in customers can discover the coupon, subject to its status, dates and limits.
+        </p>
+        <div className="sa-control-grid">
+          <div className="sa-field">
+            <label className="sa-label" htmlFor="coupon-assigned-emails">
+              Assign discovery to email addresses
+            </label>
+            <textarea
+              id="coupon-assigned-emails"
+              className="sa-input"
+              rows={3}
+              value={assignedToEmails}
+              onChange={(event) => setAssignedToEmails(event.target.value)}
+              aria-describedby="coupon-assigned-emails-help"
+              placeholder="customer@example.com"
+            />
+            <p className="sa-hint" id="coupon-assigned-emails-help">
+              One per line, or separated by commas. Eligible customers with these account
+              emails can discover the coupon even when it is hidden. Leave blank for no email
+              assignments.
+            </p>
+          </div>
+          <fieldset className="sa-field" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <legend className="sa-label">Assign discovery to customer groups</legend>
+            {CUSTOMER_GROUPS.map((group) => (
+              <label className="sa-hint" key={group}>
+                <input
+                  type="checkbox"
+                  checked={assignedCustomerGroups.includes(group)}
+                  onChange={() => setAssignedCustomerGroups((current) => toggle(current, group))}
+                  aria-label={`Assign discovery to ${CUSTOMER_GROUP_LABELS[group]}`}
+                />{' '}
+                {CUSTOMER_GROUP_LABELS[group]}
+              </label>
+            ))}
+            <p className="sa-hint">
+              Eligible members of any selected group can discover the coupon. No group selected
+              means no group assignments, not public visibility.
+            </p>
+          </fieldset>
+        </div>
+      </fieldset>
+
       <div className="sa-control-grid">
         <div className="sa-field sa-field-wide">
           <label className="sa-label" htmlFor="coupon-description">Description</label>
@@ -563,7 +647,7 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
         </div>
 
         <div className="sa-field sa-field-wide">
-          <label className="sa-label">Customer groups</label>
+          <span className="sa-label">Redemption restrictions — customer groups</span>
           {CUSTOMER_GROUPS.map((group) => (
             <label className="sa-hint" key={group}>
               <input
@@ -574,7 +658,10 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
               {CUSTOMER_GROUP_LABELS[group]}
             </label>
           ))}
-          <p className="sa-hint">No group ticked means every customer is eligible.</p>
+          <p className="sa-hint">
+            No group ticked means no group restriction. If email restrictions are also set,
+            customers must satisfy both. Discovery assignments do not change these rules.
+          </p>
         </div>
 
         {mode === 'single' || editing ? (
@@ -667,11 +754,12 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
         </div>
       ) : null}
 
+      </fieldset>
       {error ? <p className="sa-error" role="alert">{error}</p> : null}
       {message ? <p className="sa-hint" role="status">{message}</p> : null}
 
       <div className="sa-inline-actions">
-        <button className="sa-btn sa-btn-primary" type="submit" disabled={busy}>
+        {!readOnly ? <button className="sa-btn sa-btn-primary" type="submit" disabled={busy}>
           {busy
             ? 'Saving…'
             : editing
@@ -679,9 +767,9 @@ export function CouponForm({ products, categories, brands, coupon }: Props) {
               : mode === 'bulk'
                 ? 'Generate codes'
                 : 'Create coupon'}
-        </button>
+        </button> : null}
         <a className="sa-btn sa-btn-quiet" href="/store-admin/coupons">
-          Cancel
+          {readOnly ? 'Back to coupons' : 'Cancel'}
         </a>
       </div>
     </form>

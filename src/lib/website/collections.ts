@@ -105,31 +105,12 @@ const LINK_ITEM_FIELDS: FieldSchema[] = [
   url('href', 'Link'),
 ];
 
-/* -------------------------------------------------------------- OPPO site */
-
-const OPPO_SLIDE_ITEM_FIELDS: FieldSchema[] = [
-  text('title', 'Title'),
-  text('subtitle', 'Subtitle'),
-  image('image', 'Image'),
-  url('learnMoreHref', 'Learn More link'),
-  url('buyNowHref', 'Buy Now link'),
-];
-
-const OPPO_PRODUCT_ITEM_FIELDS: FieldSchema[] = [
-  text('title', 'Title'),
-  text('titleSup', 'Superscript'),
-  image('image', 'Image', 'Leave blank to keep the stylised placeholder.'),
-  area('descriptions', 'Descriptions (one per line)'),
-  url('learnHref', 'Learn more link'),
-  url('buyHref', 'Buy now link'),
-];
-
-const CARD_ITEM_FIELDS: FieldSchema[] = [
-  text('title', 'Title'),
-  area('description', 'Description'),
-  image('image', 'Image'),
-  url('href', 'Link'),
-];
+/** Retired keys are reserved for compatibility, not editable collections. */
+export const LEGACY_COLLECTION_KEYS = [
+  'oppo.announce', 'oppo.nav', 'oppo.hero_slides', 'oppo.hot_sale',
+  'oppo.products', 'oppo.offers', 'oppo.explore', 'oppo.support',
+  'oppo.community', 'oppo.footer', 'oppo.seo',
+] as const;
 
 /* ------------------------------------------------------------- Edu store */
 
@@ -177,15 +158,11 @@ function eduShelfSchema(
 /* ------------------------------------------------------------------ build */
 
 const CROWD_FAVORITES_ITEM_FIELDS: FieldSchema[] = [
-  text('title', 'Product Title', 'e.g. Gadzio CrystalArmor Clear Case with MagSafe'),
-  text('priceDisplay', 'Price Display', 'e.g. ₹3,499 or ₹1,499'),
-  image('image', 'Product Photo', 'High-res transparent or clean product cut-out'),
-  url('href', 'Product Link'),
+  text('productId', 'Catalog product'),
   text('badge', 'Primary Badge (e.g. LIMITED RELEASE, ⚡ NEW, TRENDING)'),
   text('badgeColor', 'Badge Style', 'lavender, yellow, green, or default'),
   text('secondaryBadge', 'Secondary Badge (optional)', 'e.g. TOP ITEM, BESTSELLER'),
   text('secondaryBadgeColor', 'Secondary Badge Style', 'pink, yellow, green, or default'),
-  text('colorDots', 'Color Swatches (optional)', 'Comma-separated hex colors (e.g. #1d1d1f, #8e8e93)'),
 ];
 
 export const COLLECTIONS: CollectionSchema[] = [
@@ -209,7 +186,6 @@ export const COLLECTIONS: CollectionSchema[] = [
         maxItems: 9,
         itemFields: [
           text('headline', 'Review Title', 'e.g. CrystalArmor Case is unbelievable!'),
-          text('rating', 'Star Rating', 'e.g. 5'),
           area('content', 'Review Content', 'Customer quote or testimonial feedback.'),
           text('author', 'Author Name', 'e.g. Aarav M.'),
           text('badgeText', 'Badge Text', 'e.g. Verified Buyer'),
@@ -248,7 +224,7 @@ export const COLLECTIONS: CollectionSchema[] = [
     key: 'gadzio.brand_bar',
     label: 'Homepage — Brand Logos Bar',
     sitePaths: ['/'],
-    description: 'The horizontal brand wordmarks/logos strip.',
+    description: 'The horizontal Gadzio brand wordmarks/logos strip. Wordmarks are fixed in code; brand links are editable.',
     fields: [
       booleanField('enabled', 'Show brand bar', 'Untick to hide the brand logos strip.'),
     ],
@@ -259,8 +235,6 @@ export const COLLECTIONS: CollectionSchema[] = [
         minItems: 1,
         maxItems: 12,
         itemFields: [
-          text('name', 'Brand Name', 'e.g. GADZIO PRO, GADZIO LAB'),
-          text('subhead', 'Sub-label (optional)', 'Small helper text'),
           url('href', 'Brand link (optional)'),
         ],
       },
@@ -284,17 +258,12 @@ export const COLLECTIONS: CollectionSchema[] = [
       {
         path: 'items',
         itemLabel: 'Festive Product',
-        minItems: 1,
-        maxItems: 12,
+        minItems: 4,
+        maxItems: 4,
         itemFields: [
-          text('title', 'Product Title', 'e.g. Gadzio Diwali Festive Tech Hamper 2026'),
+          text('productId', 'Catalog product'),
           text('tagPrimary', 'Primary Tag (optional)', 'e.g. LIMITED RELEASE'),
           text('tagSecondary', 'Secondary Tag (optional)', 'e.g. ⚡ NEW'),
-          text('amountText', 'Deal Price', 'e.g. ₹2,999'),
-          text('originalAmountText', 'Original Price (optional)', 'e.g. ₹4,499'),
-          text('savingsText', 'Savings Badge (optional)', 'e.g. SAVE 33%'),
-          image('image', 'Product Image'),
-          url('href', 'Product Link'),
         ],
       },
     ],
@@ -366,8 +335,8 @@ export const COLLECTIONS: CollectionSchema[] = [
       {
         path: 'items',
         itemLabel: 'Product Card',
-        minItems: 1,
-        maxItems: 12,
+        minItems: 6,
+        maxItems: 6,
         itemFields: CROWD_FAVORITES_ITEM_FIELDS,
       },
     ],
@@ -391,9 +360,9 @@ export const COLLECTIONS: CollectionSchema[] = [
   /* — Gadzio homepage (route: /) — */
   {
     key: 'apple.hero_tiles',
-    label: 'Homepage — Hero Tiles',
+    label: 'Homepage — Hero Tiles (Old UI only)',
     sitePaths: ['/'],
-    description: 'The full-width tiles at the top of the homepage.',
+    description: 'Old UI only: the full-width tiles at the top of the classic homepage.',
     fields: [],
     lists: [
       { path: 'heroTiles', itemLabel: 'Hero tile', minItems: 1, maxItems: 6, itemFields: TILE_ITEM_FIELDS },
@@ -401,9 +370,9 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.hero_video',
-    label: 'Homepage — Hero Video Stage',
+    label: 'Homepage — Hero Video Stage (Old UI only)',
     sitePaths: ['/'],
-    description: 'The motion inside the first hero tile (Back to School): poster image + up to three autoplaying video clips.',
+    description: 'Old UI only: the motion inside the first hero tile (Back to School). Hidden by default; enable to show the video stage.',
     fields: RESPONSIVE_IMAGE_FIELDS(),
     lists: [
       {
@@ -412,7 +381,6 @@ export const COLLECTIONS: CollectionSchema[] = [
         minItems: 0,
         maxItems: 3,
         itemFields: [
-          text('label', 'Clip name', 'For reference only.'),
           video('src', 'Video (WebM or MP4)'),
           text('left', 'Left position (px)', 'Distance from the stage edge. Blank keeps the original.'),
           text('width', 'Width (px)', 'Render width. Blank keeps the original.'),
@@ -445,9 +413,9 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.locale_banner',
-    label: 'Homepage — Locale Banner',
+    label: 'Homepage — Locale Banner (not shown)',
     sitePaths: ['/'],
-    description: 'The "Choose another country or region" banner.',
+    description: 'Not currently shown: bannerVisible starts false and is never enabled in the storefront UI.',
     fields: [
       area('copy', 'Banner copy'),
       text('selectedLabel', 'Selected region label'),
@@ -458,21 +426,23 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.nav',
-    label: 'Global Nav (all storefront pages)',
-    sitePaths: ['/', '/in-edu/store', '/in/shop/iphone/accessories/cases-protection'],
-    description: 'Labels of the top navigation items (shared by every storefront page).',
+    label: 'Homepage — Navigation',
+    sitePaths: ['/'],
+    description: 'Homepage overrides only. Education and Cases do not receive these overrides. Built-in menu items use fixed links; their text is label only.',
     fields: [text('searchPlaceholder', 'Search placeholder')],
     lists: [
-      { path: 'items', itemLabel: 'Nav item', minItems: 1, maxItems: 14, itemFields: LINK_ITEM_FIELDS },
+      { path: 'items', itemLabel: 'Nav item', minItems: 1, maxItems: 14, itemFields: [
+        text('label', 'Label'),
+        { ...url('href', 'Link (fixed for built-in menus)'), hint: 'Label only — link fixed for built-in items. Custom items use this link.' },
+      ] },
     ],
   },
   {
     key: 'apple.footer',
-    label: 'Global Footer (all storefront pages)',
-    sitePaths: ['/', '/in-edu/store', '/in/shop/iphone/accessories/cases-protection'],
-    description: 'Footer directory headings/links and the bottom legal row.',
+    label: 'Homepage — Footer',
+    sitePaths: ['/'],
+    description: 'Homepage footer copyright and locale link only. Theme copyright, when set, overrides this copyright on the homepage. Other pages do not receive these overrides.',
     fields: [
-      area('footnotesHtml', 'Footnotes (HTML)'),
       text('copyright', 'Copyright line'),
       text('localeLabel', 'Locale link label'),
       url('localeHref', 'Locale link'),
@@ -482,9 +452,8 @@ export const COLLECTIONS: CollectionSchema[] = [
     key: 'apple.gallery',
     label: 'Homepage — Services Gallery',
     sitePaths: ['/'],
-    description: 'The services gallery carousel copy and layout.',
+    description: 'The services gallery carousel copy and layout. Hidden by default when no override is saved.',
     fields: [
-      text('heading', 'Section heading', 'Not currently displayed by the site; kept for future use.'),
       booleanField('secondRowEnabled', 'Second row (smaller cards)', 'Enable or disable the second row of smaller media cards.'),
     ],
     lists: [
@@ -512,143 +481,12 @@ export const COLLECTIONS: CollectionSchema[] = [
     ],
   },
 
-  /* — OPPO India (route: /android) — */
-  {
-    key: 'oppo.announce',
-    label: 'OPPO — Announcement Bar',
-    sitePaths: ['/android'],
-    fields: [
-      text('text', 'Announcement text'),
-      text('linkLabel', 'Link label'),
-      url('linkHref', 'Link'),
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.nav',
-    label: 'OPPO — Navigation',
-    sitePaths: ['/android'],
-    fields: [text('logoText', 'Logo text')],
-    lists: [
-      { path: 'leftLinks', itemLabel: 'Left nav link', minItems: 0, maxItems: 10, itemFields: LINK_ITEM_FIELDS },
-      { path: 'rightLinks', itemLabel: 'Right nav link', minItems: 0, maxItems: 10, itemFields: LINK_ITEM_FIELDS },
-    ],
-  },
-  {
-    key: 'oppo.hero_slides',
-    label: 'OPPO — Hero Carousel',
-    sitePaths: ['/android'],
-    fields: [],
-    lists: [
-      { path: 'slides', itemLabel: 'Slide', minItems: 1, maxItems: 8, itemFields: OPPO_SLIDE_ITEM_FIELDS },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.hot_sale',
-    label: 'OPPO — Hot Sale Card',
-    sitePaths: ['/android'],
-    fields: [
-      text('badge', 'Badge'),
-      text('title', 'Product title'),
-      area('tagline', 'Tagline'),
-      image('image', 'Product image'),
-      text('learnLabel', 'Learn more label'),
-      text('buyLabel', 'Buy now label'),
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.products',
-    label: 'OPPO — Product Grid',
-    sitePaths: ['/android'],
-    fields: [],
-    lists: [
-      { path: 'items', itemLabel: 'Product', minItems: 1, maxItems: 16, itemFields: OPPO_PRODUCT_ITEM_FIELDS },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.offers',
-    label: 'OPPO — Offers Section',
-    sitePaths: ['/android'],
-    fields: [text('heading', 'Section heading')],
-    lists: [
-      { path: 'items', itemLabel: 'Offer', minItems: 1, maxItems: 8, itemFields: CARD_ITEM_FIELDS },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.explore',
-    label: 'OPPO — Explore Carousel',
-    sitePaths: ['/android'],
-    fields: [text('heading', 'Section heading')],
-    lists: [
-      { path: 'items', itemLabel: 'Card', minItems: 1, maxItems: 12, itemFields: CARD_ITEM_FIELDS },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.support',
-    label: 'OPPO — Support Links',
-    sitePaths: ['/android'],
-    fields: [text('heading', 'Section heading')],
-    lists: [
-      { path: 'items', itemLabel: 'Link', minItems: 0, maxItems: 12, itemFields: [text('', 'Label')] },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.community',
-    label: 'OPPO — Community Section',
-    sitePaths: ['/android'],
-    fields: [
-      text('heading', 'Section heading'),
-      text('viewAllLabel', '"View all" label'),
-      area('tagline', 'Tagline'),
-    ],
-    lists: [
-      {
-        path: 'cards',
-        itemLabel: 'Card',
-        minItems: 1,
-        maxItems: 6,
-        itemFields: [
-          text('title', 'Title'),
-          area('subtitle', 'Subtitle'),
-          image('image', 'Card image', 'Replaces the gradient placeholder. Leave blank to keep it.'),
-        ],
-      },
-    ],
-    disablable: true,
-  },
-  {
-    key: 'oppo.footer',
-    label: 'OPPO — Footer',
-    sitePaths: ['/android'],
-    fields: [
-      area('disclaimer1', 'Disclaimer line 1'),
-      area('disclaimer2', 'Disclaimer line 2'),
-      area('disclaimer3', 'Disclaimer line 3'),
-      text('tagline', 'Footer tagline'),
-    ],
-  },
-  {
-    key: 'oppo.seo',
-    label: 'OPPO — SEO',
-    sitePaths: ['/android'],
-    fields: [
-      text('title', 'Page title'),
-      area('description', 'Meta description'),
-    ],
-  },
-
   /* — Education store (route: /in-edu/store) — */
   {
     key: 'edu.hero',
     label: 'Edu Store — Hero',
     sitePaths: ['/in-edu/store'],
-    description: 'The headline over the animated header artwork.',
+    description: 'Not currently rendered: EduHero is commented out in EduStorePage. Fields and saved data are retained unchanged.',
     fields: [
       text('headline', 'Headline', 'Rendered on the highlight pill.'),
       text('subhead', 'Subhead', 'Always reads "College, …" — only the part after the comma is editable.'),
@@ -743,7 +581,7 @@ export const COLLECTIONS: CollectionSchema[] = [
   {
     key: 'cases.category_links',
     label: 'Cases — Category Links',
-    sitePaths: ['/in/shop/iphone/accessories/cases-protection'],
+    sitePaths: ['/in/shop/iphone/accessories/cases-protection', '/shop/iphone/accessories/cases-protection'],
     fields: [],
     lists: [
       { path: 'items', itemLabel: 'Link', minItems: 1, maxItems: 14, itemFields: LINK_ITEM_FIELDS },
@@ -752,16 +590,16 @@ export const COLLECTIONS: CollectionSchema[] = [
   {
     key: 'cases.page_header',
     label: 'Cases — Page Header',
-    sitePaths: ['/in/shop/iphone/accessories/cases-protection'],
+    sitePaths: ['/in/shop/iphone/accessories/cases-protection', '/shop/iphone/accessories/cases-protection'],
     fields: [
       text('title', 'Page title'),
-      text('sortLabel', 'Sort label'),
     ],
   },
   {
     key: 'cases.seo',
     label: 'Cases — SEO',
     sitePaths: ['/in/shop/iphone/accessories/cases-protection'],
+    description: 'Metadata for /in/shop/iphone/accessories/cases-protection only. The /shop/iphone/accessories/cases-protection route uses static metadata and does not read this collection.',
     fields: [
       text('title', 'Page title'),
       area('description', 'Meta description'),
@@ -787,18 +625,14 @@ export const THEME_FIELDS: FieldSchema[] = [
     // has nothing to resolve to. The editor is a dropdown rather than a text
     // box so a value that cannot be loaded can't be entered.
     options: SITE_FONT_NAMES,
-    hint: 'Site-wide typeface. Self-hosted — no external font requests are made, and any other value falls back to the default.',
+    hint: 'Affects global text; some homepage sections set their own face (including transducer). Self-hosted — no external font requests are made, and any other value falls back to the default.',
   },
-  { path: 'logoText', label: 'Logo text (OPPO nav)', type: 'text', hint: 'Text shown as the OPPO nav logo.' },
   {
     path: 'appleCopyright',
     label: 'Homepage footer copyright (override)',
     type: 'text',
     hint: 'Leave empty to use the copyright from the Footer content section. When set, replaces it on the homepage only.',
   },
-  { path: 'oppoPrimaryColor', label: 'OPPO primary color', type: 'color' },
-  { path: 'oppoGreenDark', label: 'OPPO dark green', type: 'color' },
-  { path: 'oppoGreenLight', label: 'OPPO light green', type: 'color' },
 ];
 
 export function getCollection(key: string): CollectionSchema | undefined {

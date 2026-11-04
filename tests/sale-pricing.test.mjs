@@ -18,11 +18,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -42,16 +43,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -201,7 +206,8 @@ test('the price patch accepts a sale price and a clear, but not zero', () => {
 /* ---------------------------------------------------------------- the CSV */
 
 function csvRow(values) {
-  return IMPORT_COLUMNS.map((column) => (values[column] === undefined ? '' : String(values[column])));
+  const cells = {product_type_id:'null',device_model_ids:'[]',attribute_values:'{}',...values};
+  return IMPORT_COLUMNS.map((column) => (cells[column] === undefined ? '' : String(cells[column])));
 }
 
 const CSV_CONTEXT = {
@@ -276,21 +282,31 @@ test('every online charged price goes through the one resolver', async () => {
     assert.match(source, /resolveEffectivePrice/, `${file} must use the resolver`);
   }
 
-  // POS is deliberately outside the resolver: the cashier types the charged
-  // price, and the server must never resolve or read a sale price for POS.
+  // POS resolves reference amounts only. Charges and totals must remain the
+  // validated cashier inputs, never a catalogue/sale-derived amount.
   const pos = await readFile(path.join(root, 'src/lib/store-admin/pos.ts'), 'utf8');
-  assert.doesNotMatch(pos, /resolveEffectivePrice|readSaleState|sale_price_paise/);
+  assert.match(pos, /listPricePaise: referencePriceOf\(/);
+  assert.match(pos, /referencePricePaise: referencePriceOf\(/);
+  assert.match(pos, /unitPricePaise: cartLine\.unitPricePaise/);
+  assert.match(pos, /lineTotalPaise: cartLine\.unitPricePaise \* cartLine\.quantity/);
+  assert.doesNotMatch(pos, /cartLine\.unitPricePaise\s*=|unitPricePaise:\s*(?:resolveEffectivePrice|referencePriceOf|regularPricePaise|saleLive)/);
 
   // Any file that reads the sale column must be on this list. The two
   // customer-facing readers resolve it; the admin readers only display it.
   const allowed = new Set([
     'src/lib/catalog/storefront.ts',
     'src/lib/payu/db-catalog.ts',
+    // POS reads sale amounts for reference snapshots, never for cashier charges.
+    'src/lib/store-admin/pos.ts',
     'src/lib/store-admin/catalog.ts',
     'src/lib/store-admin/catalog-crud.ts',
     'src/lib/store-admin/catalog-transfer.ts',
+    // Draft duplication copies stored prices; it never resolves a charged amount.
+    'src/lib/store-admin/product-duplicate.ts',
     // The sale screen lists and edits the stored column; it never charges it.
     'src/lib/store-admin/sale.ts',
+    // Coordinated draft writes and validates stored option sale prices.
+    'src/lib/store-admin/product-draft.ts',
   ]);
   const files = await findFiles(path.join(root, 'src'));
   const readers = files.filter((file) => {
@@ -367,11 +383,7 @@ test('sale price writes append marked history rows and require a lower price', {
   const sql = client();
 
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
     const pinned = await sql`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is not pinned');
 
@@ -495,8 +507,7 @@ test('sale price writes append marked history rows and require a lower price', {
     assert.equal(legacy[0].price_kind, 'regular');
   } finally {
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(sql, schema);
     } catch (error) {
       console.warn('[sale-pricing] cleanup did not finish:', error?.message ?? error);
     }

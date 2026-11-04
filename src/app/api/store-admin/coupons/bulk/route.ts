@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
-import { writeAudit } from '@/lib/store-admin/audit';
 import { parseCouponInput } from '@/lib/store-admin/coupon-rules';
 import { bulkGenerateCoupons } from '@/lib/store-admin/coupons';
 
@@ -61,7 +60,7 @@ export async function POST(request: Request) {
       length: Number.isFinite(length) ? length : 8,
       values: parsed.values,
     },
-    guard.session.adminId,
+    { actorId: guard.session.adminId, actorEmail: guard.session.email, request },
   );
 
   if (!result.ok) {
@@ -71,27 +70,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'The coupons could not be generated.' }, { status: 503 });
   }
 
-  await writeAudit({
-    actorId: guard.session.adminId,
-    actorEmail: guard.session.email,
-    action: 'coupon.bulk_generate',
-    entity: 'coupon',
-    entityId: 'bulk',
-    after: {
-      count: result.data.codes.length,
-      prefix,
-      type: parsed.values.type,
-      value: parsed.values.value,
-      scope: parsed.values.scope,
-      perCustomerLimit: 1,
-      totalRedemptionLimit: 1,
-    },
-    reason: 'staff_bulk_generation',
-    request,
-  });
-
   return NextResponse.json(
     { codes: result.data.codes, ids: result.data.ids },
-    { status: 201 },
+    { status: 201, headers: { 'Cache-Control': 'no-store' } },
   );
 }

@@ -4,6 +4,9 @@
  * contains no database code and no internal order fields.
  */
 
+import { fulfilmentLabel } from '@/lib/orders/fulfilment';
+import { validateHttpsTrackingUrl } from '@/lib/store-admin/delivery';
+
 export const ACCOUNT_ORDER_STATUSES = [
   'PENDING',
   'ACCEPTED',
@@ -96,6 +99,13 @@ export function accountPaymentStatusLabel(status: string): string {
   }
 }
 
+/** History labels are domain-aware: payment PROCESSING is never Preparing. */
+export function accountOrderHistoryLabel(domain: string, status: string, method?: unknown): string | null {
+  if (domain === 'fulfilment') return fulfilmentLabel(status, method);
+  if (domain === 'payment') return accountPaymentStatusLabel(status);
+  return null;
+}
+
 export function accountDeliveryStatusLabel(status: string | null): string {
   switch (status?.trim().toUpperCase()) {
     case 'SCHEDULED':
@@ -134,6 +144,9 @@ export interface AccountOrderDeliverySnapshot {
   carrier: string | null;
   trackingNumber: string | null;
   trackingUrl: string | null;
+  scheduledFor: string | null;
+  deliverySlot: string | null;
+  deliveredAt: string | null;
 }
 
 export interface AccountOrderRequestSnapshot {
@@ -198,16 +211,26 @@ function array(value: unknown): unknown[] {
 const REQUEST_TYPES: readonly AccountOrderRequestType[] = ['cancel', 'return', 'help'];
 const REQUEST_STATUSES: readonly AccountOrderRequestStatus[] = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
 
-export function toDeliverySnapshot(value: unknown): AccountOrderDeliverySnapshot | null {
+/** A prepared delivery row is private until fulfilment proves pickup. */
+export function toDeliverySnapshot(value: unknown, shipmentStarted = false): AccountOrderDeliverySnapshot | null {
+  if (!shipmentStarted) return null;
   const row = record(value);
   const status = row ? text(row.status) : null;
   if (!row || !status) return null;
+  const nullableIso = (value: unknown): string | null => {
+    if (value == null) return null;
+    const time = value instanceof Date ? value.getTime() : Date.parse(String(value));
+    return Number.isFinite(time) ? new Date(time).toISOString() : null;
+  };
   return {
     status,
     method: text(row.method) ?? text(row.delivery_method),
-    carrier: text(row.carrier),
+    carrier: text(row.courier_name) ?? text(row.carrier),
     trackingNumber: text(row.trackingNumber) ?? text(row.tracking_number),
-    trackingUrl: text(row.trackingUrl) ?? text(row.tracking_url),
+    trackingUrl: validateHttpsTrackingUrl(row.trackingUrl ?? row.tracking_url),
+    scheduledFor: nullableIso(row.scheduledFor ?? row.scheduled_for),
+    deliverySlot: text(row.deliverySlot) ?? text(row.delivery_slot),
+    deliveredAt: nullableIso(row.deliveredAt ?? row.delivered_at),
   };
 }
 
@@ -262,7 +285,11 @@ export function liveSignature(live: AccountOrderLiveStatus | null): string {
     live.fulfilmentStatus,
     live.updatedAt,
     live.delivery
-      ? `${live.delivery.status}:${live.delivery.trackingNumber ?? ''}:${live.delivery.trackingUrl ?? ''}`
+      ? JSON.stringify([
+          live.delivery.status, live.delivery.method, live.delivery.carrier,
+          live.delivery.trackingNumber, live.delivery.trackingUrl,
+          live.delivery.scheduledFor, live.delivery.deliverySlot, live.delivery.deliveredAt,
+        ])
       : 'no-delivery',
     ...live.requests.map((request) => `${request.id}:${request.status}`),
     ...live.refunds.map((refund) => `${refund.id}:${refund.status}:${refund.amountPaise}`),

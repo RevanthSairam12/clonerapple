@@ -1,14 +1,13 @@
 /**
- * Prove the admin boundary: the legacy CMS may edit design/marketing content,
- * but it may not accept product, price, stock, order, customer or shipping
- * data. Exit code 1 on any violation.
+ * Prove the Website content boundary: design/marketing only, never product,
+ * price, stock, order, customer or shipping data. Education stays exempt.
+ * Exit code 1 on any violation.
  *
  * Checks:
- *   1. Every non-Education field in the legacy collection registry is a
- *      design/marketing field (no commerce-shaped names).
- *   2. Legacy /api/admin routes never write a commerce table.
- *   3. The content save route calls the shared boundary validator.
- *   4. The legacy media uploader writes the shared `store_media` source.
+ *   1. Every non-Education editable field is design/marketing shaped.
+ *   2. Website and compatibility routes never write a commerce table.
+ *   3. Content saves call the boundary validator and resets never delete rows.
+ *   4. Theme keys are whitelisted; the shared uploader writes `store_media`.
  *   5. The collection migration and its RLS/archive columns exist.
  *
  * Usage: node scripts/check-admin-boundary.mjs
@@ -68,7 +67,12 @@ for (const collection of COLLECTIONS) {
   for (const fieldPath of paths) {
     fieldCount += 1;
     const token = lastPathToken(fieldPath);
-    if (isCommerceFieldName(token)) {
+    const homepageReference = fieldPath === 'productId' &&
+      ['gadzio.diwali_campaign', 'gadzio.crowd_favorites'].includes(collection.key) &&
+      collection.lists?.some(list => list.path === 'items' &&
+        list.minItems === (collection.key === 'gadzio.diwali_campaign' ? 4 : 6) &&
+        list.maxItems === list.minItems);
+    if (isCommerceFieldName(token) && !homepageReference) {
       fail(
         `${collection.key} exposes commerce field "${fieldPath}" in the legacy editor. ` +
           'Move it to Store Admin.',
@@ -132,7 +136,11 @@ for (const file of routeFiles) {
     fail(`${relative} writes commerce table "${write[1]}".`);
   }
 
-  if (relative.endsWith('api/admin/content/route.ts')) {
+  // A retired endpoint delegates only to the shared 410 response; it no
+  // longer has a content validator, upload write or theme whitelist to check.
+  const retired = /from\s+['"]@\/lib\/website\/legacy-gone['"]/.test(code);
+
+  if (!retired && relative.endsWith('api/admin/content/route.ts')) {
     if (!/validateLegacyContentWrite\s*\(/.test(code)) {
       fail(`${relative} does not call validateLegacyContentWrite().`);
     }
@@ -141,13 +149,13 @@ for (const file of routeFiles) {
     }
   }
 
-  if (relative.endsWith('api/admin/media/route.ts')) {
+  if (!retired && relative.endsWith('api/admin/media/route.ts')) {
     if (!/insert\s+into\s+store_media/i.test(code)) {
       fail(`${relative} must write the shared store_media source.`);
     }
   }
 
-  if (relative.endsWith('api/admin/settings/route.ts')) {
+  if (!retired && relative.endsWith('api/admin/settings/route.ts')) {
     if (!/THEME_SETTING_KEYS/.test(code)) {
       fail(`${relative} must whitelist theme keys.`);
     }
@@ -189,7 +197,19 @@ if (websiteRouteFiles.length > 0) {
       fail(`${relative} writes the product catalogue.`);
     }
   }
-  ok(`${websiteRouteFiles.length} Website API route(s) checked for commerce writes.`);
+  const theme = await readFile(path.join(WEBSITE_API, 'theme', 'route.ts'), 'utf8').catch(() => '');
+  if (!/THEME_SETTING_KEYS\.has\s*\(/.test(theme)) {
+    fail('the Website theme route must whitelist theme keys.');
+  }
+  if (/delete\s+from\s+site_settings/i.test(theme)) {
+    fail('the Website theme route must archive site_settings, not delete them.');
+  }
+  const mediaUpload = await readFile(path.join(ROOT, 'src/app/api/store-admin/media/route.ts'), 'utf8').catch(() => '');
+  const mediaStore = await readFile(path.join(ROOT, 'src/lib/store-admin/media.ts'), 'utf8').catch(() => '');
+  if (!/createMedia\s*\(/.test(mediaUpload) || !/insert\s+into\s+store_media/i.test(mediaStore)) {
+    fail('the Store Admin media uploader must write the shared store_media source.');
+  }
+  ok(`${websiteRouteFiles.length} Website API route(s), theme whitelist and shared media source checked.`);
 }
 
 /* ------------------------------------------- 3. migration / archive shape */

@@ -1,6 +1,7 @@
 /** Pure validation for catalogue writes. No database, no framework. */
 
 import { slugify } from './catalog-rules';
+import { parseMetadataInput, type MetadataInput } from '@/lib/catalog/product-metadata-rules';
 import {
   MAX_PRICE_PAISE,
   belowCostWarning,
@@ -206,7 +207,7 @@ export function validateConditionInput(input: unknown): FieldResult<ConditionInp
 
 /* -------------------------------------------------------------- products */
 
-export interface NewProductInput {
+export interface NewProductInput extends MetadataInput {
   id: string;
   slug: string;
   name: string;
@@ -278,6 +279,10 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
 
   const initialOnHand = boundedInt(body.initialOnHand ?? 0, 0, 100_000, 'The opening stock');
   if (!initialOnHand.ok) return initialOnHand;
+  let metadata: MetadataInput;
+  try { metadata = parseMetadataInput(body); }
+  catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Invalid product metadata.' }; }
+  if (body.isActive !== undefined && typeof body.isActive !== 'boolean') return {ok:false,error:'Visibility must be true or false.'};
 
   return {
     ok: true,
@@ -297,7 +302,8 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
       badge: badge.value,
       seoTitle: seoTitle.value,
       seoDescription: seoDescription.value,
-      isActive: body.isActive === undefined ? true : Boolean(body.isActive),
+      isActive: body.isActive === undefined ? false : body.isActive,
+      ...metadata,
       trackInventory: body.trackInventory === true,
       initialOnHand: initialOnHand.value,
     },
@@ -394,6 +400,13 @@ export interface VariantInput {
   optionValue: string;
   optionHex: string | null;
   priceOverridePaise: number | null;
+  isPurchasable?: boolean;
+  deviceModelId?: string | null;
+  combinationKey?: string | null;
+  /** Explicit normalized option value, never inferred from a model display label. */
+  optionIdentity?: string | null;
+  /** Owned saved variant to retire; only valid when creating a new identity. */
+  replacesVariantId?: string;
   isActive: boolean;
   sortOrder: number;
 }
@@ -421,6 +434,16 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
     sku = rawSku.toUpperCase();
   }
 
+  if (body.isActive !== undefined && typeof body.isActive !== 'boolean') return {ok:false,error:'Active must be true or false.'};
+  if (body.isPurchasable !== undefined && typeof body.isPurchasable !== 'boolean') return {ok:false,error:'Purchasable must be true or false.'};
+  const deviceModelId = trimmed(body.deviceModelId) || null;
+  const combinationKey = trimmed(body.combinationKey) || null;
+  if (deviceModelId && !ID_RE.test(deviceModelId)) return {ok:false,error:'Invalid device model identity.'};
+  if (combinationKey && combinationKey.length > 160) return {ok:false,error:'Combination key must be 160 characters or fewer.'};
+  if (body.isPurchasable === true && (!sku || (!combinationKey && body.replacesVariantId === undefined))) return {ok:false,error:'Purchasable combinations require a SKU and stable combination key.'};
+  if (body.optionIdentity !== undefined && body.optionIdentity !== null && (typeof body.optionIdentity !== 'string' || !body.optionIdentity.trim() || body.optionIdentity.trim().length > 100)) return {ok:false,error:'Option identity must contain 1–100 characters.'};
+  const optionIdentity = body.optionIdentity == null ? null : (body.optionIdentity as string).trim().replace(/\s+/g, ' ').toLowerCase();
+  if (body.replacesVariantId !== undefined && (typeof body.replacesVariantId !== 'string' || !ID_RE.test(body.replacesVariantId) || body.id !== undefined)) return {ok:false,error:'Replacement must name a saved variant and create a new identity.'};
   const rawHex = trimmed(body.optionHex);
   if (rawHex && !HEX_RE.test(rawHex)) {
     return { ok: false, error: 'The colour must be a hex value such as #1f2937.' };
@@ -449,6 +472,11 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
       optionName,
       optionValue,
       optionHex: rawHex ? rawHex.toLowerCase() : null,
+      ...(body.isPurchasable === undefined ? {} : {isPurchasable:body.isPurchasable as boolean}),
+      ...(body.deviceModelId === undefined ? {} : {deviceModelId}),
+      ...(body.combinationKey === undefined ? {} : {combinationKey}),
+      ...(body.optionIdentity === undefined ? {} : {optionIdentity}),
+      ...(body.replacesVariantId === undefined ? {} : {replacesVariantId:body.replacesVariantId as string}),
       priceOverridePaise,
       isActive: body.isActive === undefined ? true : Boolean(body.isActive),
       sortOrder: sortOrder.value,

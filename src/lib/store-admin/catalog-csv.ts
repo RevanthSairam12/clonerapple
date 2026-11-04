@@ -6,6 +6,8 @@
 import { slugify } from './catalog-rules';
 import { PRICE_MAX_PAISE } from './catalog-crud-rules';
 import { formatRupees, parseRupeesToPaise } from './money';
+import { parseMetadataInput, type MetadataInput } from '@/lib/catalog/product-metadata-rules';
+import { DESCRIPTION_LIMITS, parseDescriptionSections, type ProductDescriptionSection } from '@/lib/catalog/product-description';
 
 export const MAX_IMPORT_ROWS = 5000;
 
@@ -26,6 +28,13 @@ export const IMPORT_COLUMNS = [
   'is_active',
   'seo_title',
   'seo_description',
+  'inventory_variants',
+  'confirm_tracking',
+  'product_type_id',
+  'device_model_ids',
+  'attribute_values',
+  'short_description',
+  'description_sections',
 ] as const;
 
 export const EXPORT_COLUMNS = [...IMPORT_COLUMNS, 'created_at', 'updated_at'] as const;
@@ -103,6 +112,9 @@ export function parseCsv(text: string): CsvParse {
   if (!rawHeader) return { ok: false, error: 'The file has no header row.' };
 
   const header = rawHeader.map(normalizeHeader);
+  if (new Set(header).size !== header.length) {
+    return { ok: false, error: 'The header contains duplicate columns.' };
+  }
   for (const required of ['name', 'category', 'price']) {
     if (!header.includes(required)) {
       return { ok: false, error: `The header is missing the "${required}" column.` };
@@ -224,9 +236,60 @@ export interface ImportRow {
   stock: number | null;
   lowStockThreshold: number | null;
   imageUrls: string[];
-  isActive: boolean;
+  /** Missing/blank on update preserves publication; creates default to draft. */
+  isActive: boolean | undefined;
   seoTitle: string;
   seoDescription: string;
+  /** Omitted columns preserve saved metadata; explicit values use patch semantics. */
+  metadata: MetadataInput;
+  /** Omitted columns preserve content; literal null restores legacy fallback. */
+  shortDescription?: string | null;
+  descriptionSections?: ProductDescriptionSection[] | null;
+  /** Omitted column preserves variants. CSV never activates or creates identities. */
+  inventoryVariants?: CsvInventoryVariant[];
+  confirmTracking: boolean;
+}
+
+export interface CsvInventoryVariant {
+  id: string;
+  sku: string | null;
+  deviceModelId: string | null;
+  combinationKey: string | null;
+  optionName: string;
+  optionValue: string;
+  isPurchasable: boolean;
+  isActive: boolean;
+  pricePaise: number | null;
+  salePricePaise: number | null;
+  stock: null | { onHand: number; trackInventory: boolean; lowStockThreshold: number };
+}
+
+/** Strict identity roundtrip: inventory is editable, identity and prices are read-only. */
+export function parseInventoryVariants(value: string): CsvInventoryVariant[] {
+  const rows: unknown = JSON.parse(value);
+  if (!Array.isArray(rows) || rows.length > 500) throw new Error('Use a JSON array of at most 500 existing variants; omit the column to preserve variants.');
+  const seen = new Set<string>();
+  return rows.map((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid variant object.');
+    const row = raw as Record<string, unknown>;
+    const keys = ['id','sku','deviceModelId','combinationKey','optionName','optionValue','isPurchasable','isActive','pricePaise','salePricePaise','stock'];
+    if (Object.keys(row).some(k => !keys.includes(k)) || keys.some(k => !(k in row))) throw new Error('Use the complete exported variant identity; unknown fields are not accepted.');
+    if (typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(row.id) || seen.has(row.id)) throw new Error('Each variant needs a unique existing ID.');
+    seen.add(row.id);
+    for (const key of ['sku','deviceModelId','combinationKey'] as const) if (row[key] !== null && (typeof row[key] !== 'string' || row[key].length > 200)) throw new Error(`Invalid variant ${key}.`);
+    for (const key of ['optionName','optionValue'] as const) if (typeof row[key] !== 'string' || row[key].length > 500) throw new Error(`Invalid variant ${key}.`);
+    for (const key of ['isPurchasable','isActive'] as const) if (typeof row[key] !== 'boolean') throw new Error(`Invalid variant ${key}.`);
+    for (const key of ['pricePaise','salePricePaise'] as const) if (row[key] !== null && (!Number.isSafeInteger(row[key]) || Number(row[key]) < 0)) throw new Error(`Invalid variant ${key}.`);
+    if (row.stock !== null) {
+      if (!row.stock || typeof row.stock !== 'object' || Array.isArray(row.stock)) throw new Error('Invalid stock settings.');
+      const stock = row.stock as Record<string, unknown>;
+      if (Object.keys(stock).some(k => !['onHand','trackInventory','lowStockThreshold'].includes(k)) ||
+          !Number.isSafeInteger(stock.onHand) || Number(stock.onHand) < 0 || Number(stock.onHand) > 100000 ||
+          !Number.isSafeInteger(stock.lowStockThreshold) || Number(stock.lowStockThreshold) < 0 || Number(stock.lowStockThreshold) > 1000000 ||
+          typeof stock.trackInventory !== 'boolean') throw new Error('Stock requires an absolute onHand, explicit trackInventory and lowStockThreshold. Reserved is never imported.');
+    }
+    return row as unknown as CsvInventoryVariant;
+  });
 }
 
 export interface ImportError {
@@ -256,6 +319,10 @@ export function validateImportRows(
   context: ImportContext,
 ): ImportValidation {
   const result: ImportValidation = { rows: [], errors: [] };
+  for (const column of ['inventory_mode','variant_id','variant_sku','is_purchasable','track_inventory','reserved']) {
+    if (header.includes(column)) result.errors.push({rowNumber:1,column,message:'Use inventory_variants from a fresh catalogue export. Activation and standalone identity columns are not imported.'});
+  }
+  if (result.errors.length) return result;
   const seenIds = new Set<string>();
   const seenSlugs = new Set<string>();
 
@@ -383,8 +450,64 @@ export function validateImportRows(
     const images = parseImageUrls(cell(header, row, 'image_urls'));
     if (images.error) fail('image_urls', images.error);
 
-    const isActive = parseBoolean(cell(header, row, 'is_active'));
-    if (isActive === undefined) fail('is_active', 'Use true/false (or leave it blank).');
+    const activeText = cell(header, row, 'is_active');
+    const isActive = activeText ? parseBoolean(activeText) : mode === 'create' ? false : undefined;
+    if (activeText && isActive === undefined) fail('is_active', 'Use true/false (blank preserves updates; new products default to draft).');
+
+    const trackingText = cell(header, row, 'confirm_tracking');
+    const confirmTracking = trackingText ? parseBoolean(trackingText) : false;
+    if (confirmTracking === undefined) fail('confirm_tracking', 'Use true/false; true explicitly confirms enabling inventory tracking.');
+    let inventoryVariants: CsvInventoryVariant[] | undefined;
+    if (header.includes('inventory_variants') && cell(header, row, 'inventory_variants')) {
+      try {
+        inventoryVariants = parseInventoryVariants(cell(header, row, 'inventory_variants'));
+        if (mode === 'create' && inventoryVariants.length) fail('inventory_variants', 'Create draft variant identities in the editor first; CSV cannot create or activate them.');
+      } catch (error) {
+        fail('inventory_variants', error instanceof Error ? error.message : 'Invalid variant JSON.');
+      }
+    }
+
+    const metadata: MetadataInput = {};
+    for (const [column, key] of [
+      ['product_type_id', 'productTypeId'],
+      ['device_model_ids', 'deviceModelIds'],
+      ['attribute_values', 'attributeValues'],
+    ] as const) {
+      if (!header.includes(column)) continue;
+      const value = cell(header, row, column);
+      if (!value) {
+        fail(column, column === 'product_type_id'
+          ? 'Use a product type ID or literal null to clear it; omit the column to preserve it.'
+          : `Use ${column === 'device_model_ids' ? 'a JSON array of IDs ([] clears all models)' : 'a JSON object ({} leaves values unchanged; null values archive individual attributes)'}; omit the column to preserve it.`);
+        continue;
+      }
+      try {
+        const parsed = column === 'product_type_id'
+          ? value === 'null' ? null : value
+          : JSON.parse(value);
+        Object.assign(metadata, parseMetadataInput({ [key]: parsed }));
+      } catch (error) {
+        fail(column, error instanceof SyntaxError
+          ? 'Enter valid JSON using double quotes around IDs and keys.'
+          : error instanceof Error ? error.message : 'Invalid metadata value.');
+      }
+    }
+
+    let shortDescription: string | null | undefined;
+    let descriptionSections: ProductDescriptionSection[] | null | undefined;
+    if (header.includes('short_description')) {
+      const value = cell(header, row, 'short_description');
+      shortDescription = value === '' ? undefined : value === 'null' ? null : value;
+      if (value.length > DESCRIPTION_LIMITS.shortDescription) fail('short_description', `Use ${DESCRIPTION_LIMITS.shortDescription} characters or fewer.`);
+    }
+    if (header.includes('description_sections')) {
+      try {
+        const value = cell(header, row, 'description_sections');
+        descriptionSections = value === '' ? undefined : value === 'null' ? null : parseDescriptionSections(JSON.parse(value));
+      } catch (error) {
+        fail('description_sections', error instanceof Error ? error.message : 'Enter valid description section JSON.');
+      }
+    }
 
     const description = cell(header, row, 'description');
     if (description.length > 5000) fail('description', 'The description must be 5,000 characters or fewer.');
@@ -417,9 +540,14 @@ export function validateImportRows(
       stock,
       lowStockThreshold,
       imageUrls: images.urls,
-      isActive: isActive as boolean,
+      isActive,
       seoTitle,
       seoDescription,
+      metadata,
+      shortDescription,
+      descriptionSections,
+      inventoryVariants,
+      confirmTracking: confirmTracking === true,
     });
   });
 
@@ -435,6 +563,15 @@ function escapeCell(value: string): string {
 
 export function toCsv(header: readonly string[], rows: readonly (readonly string[])[]): string {
   return [header.join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\r\n');
+}
+
+/** Export only selected, nonarchived metadata; callers filter stored history first. */
+export function metadataCsvCells(metadata: Required<MetadataInput>): string[] {
+  return [
+    metadata.productTypeId ?? 'null',
+    JSON.stringify(metadata.deviceModelIds),
+    JSON.stringify(metadata.attributeValues),
+  ];
 }
 
 export function templateCsv(): string {
@@ -453,9 +590,16 @@ export function templateCsv(): string {
       '25',
       '5',
       'https://example.com/charger-front.jpg|https://example.com/charger-side.jpg',
-      'true',
+      'false',
       'GaN Charger 65W — Gadzio',
       'A compact 65W GaN charger for laptops and phones.',
+      '[]',
+      'true',
+      'null',
+      '[]',
+      '{}',
+      'Compact power for everyday devices.',
+      'null',
     ],
   ]);
 }

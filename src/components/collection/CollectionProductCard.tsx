@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import type { CollectionProduct } from './types';
+import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
 import { useCart } from '@/lib/cart/CartContext';
 import { formatINR } from '@/lib/utils';
 
@@ -12,10 +13,12 @@ export interface CollectionProductCardProps {
   saleLive?: boolean;
 }
 
-export function CollectionProductCard({ product, saleLive = false }: CollectionProductCardProps) {
+export function CollectionProductCard({ product: sourceProduct, saleLive = false }: CollectionProductCardProps) {
   const [selectedColorIdx, setSelectedColorIdx] = useState(0);
   const [imgError, setImgError] = useState(false);
-  const [isAdded, setIsAdded] = useState(false);
+  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedColorIdx, sourceProduct.inventoryMode, sourceProduct.price, sourceProduct.regularPrice]));
+  const { added: isAdded, pending, notice } = purchase;
+  const product = { ...sourceProduct, ...purchase.priceOverride };
   const { addItem } = useCart();
 
   const colors = product.colors || [];
@@ -29,13 +32,13 @@ export function CollectionProductCard({ product, saleLive = false }: CollectionP
   const isUnavailable = isOutOfStock || isPriceUnavailable;
   const isNew = Boolean(product.isNew || product.badge === 'New');
 
-  const handleQuickAdd = (e: React.MouseEvent) => {
+  const handleQuickAdd = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    if (isPriceUnavailable) return;
+    if (isPriceUnavailable || product.inventoryMode === 'variant') return;
 
-    addItem({
+    await purchase.run((signal) => addItem({
       productId: product.id,
       name: product.name,
       subtitle: currentColor ? currentColor.name : product.subtitle,
@@ -46,12 +49,8 @@ export function CollectionProductCard({ product, saleLive = false }: CollectionP
       image: product.image,
       color: currentColor ? currentColor.name : undefined,
       href: product.href,
-    });
+    }, { signal }));
 
-    setIsAdded(true);
-    setTimeout(() => {
-      setIsAdded(false);
-    }, 1500);
   };
 
   return (
@@ -147,16 +146,20 @@ export function CollectionProductCard({ product, saleLive = false }: CollectionP
                     {product.wasPriceDisplay}
                   </s>
                 ) : null}
-                {formatINR(product.price)}
+                {product.priceDisplay || formatINR(product.price)}
               </>
             )}
           </span>
 
-          <button
+          {product.inventoryMode === 'variant' ? (
+            <Link href={product.href} className="gz-collection-quick-add-btn" aria-label={`Choose options for ${product.name}`}>
+              Choose options
+            </Link>
+          ) : <button
             type="button"
             className={`gz-collection-quick-add-btn ${isAdded ? 'added' : ''}`}
             onClick={handleQuickAdd}
-            disabled={isUnavailable}
+            disabled={pending || isUnavailable}
             aria-label={
               isPriceUnavailable
                 ? `${product.name} is unavailable`
@@ -169,9 +172,10 @@ export function CollectionProductCard({ product, saleLive = false }: CollectionP
               ? 'Unavailable'
               : isAdded
               ? 'Added ✓'
-              : 'Add to bag'}
-          </button>
+              : pending ? 'Checking…' : 'Add to bag'}
+          </button>}
         </div>
+      {notice && <p role="alert" className="relative z-20 mt-2 text-xs text-[#b42318]">{notice}</p>}
       </div>
     </article>
   );

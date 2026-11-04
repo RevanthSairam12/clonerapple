@@ -1,7 +1,8 @@
 import { getSql } from '@/lib/platform/db';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { resolveEffectivePrice } from '@/lib/storefront/pricing';
-import { readSaleState } from '@/lib/storefront/sale-state';
+import { readSaleState, readSaleStateUsing } from '@/lib/storefront/sale-state';
+import type postgres from 'postgres';
 
 import {
   getProductFromCatalog,
@@ -49,12 +50,20 @@ interface PricingRead {
   unavailable: string[];
 }
 
-async function loadPricingRows(ids: string[], saleLive: boolean): Promise<PricingRead> {
-  const sql = getSql();
+async function loadPricingRows(
+  ids: string[],
+  saleLive: boolean,
+  sql: postgres.Sql | postgres.TransactionSql | null = getSql(),
+): Promise<PricingRead> {
   if (!sql || ids.length === 0) return { rows: [], unavailable: [] };
 
   const rows = await sql`
-    select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
+    select p.id, p.name, p.subtitle, p.inventory_mode,
+           p.price_paise, p.sale_price_paise,
+           v.price_paise_override as option_price_paise,
+           v.sale_price_paise as option_sale_price_paise,
+           v.id as variant_id,v.sku as variant_sku,
+           concat_ws(' / ',dm.name,v.option_value) as variant_label,
            p.category_id, p.brand_id,
            p.in_stock, s.track_inventory,
            (
@@ -70,8 +79,19 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Pricin
              limit 1
            ) as image_url
     from products p
-    left join stock s on s.product_id = p.id and s.variant_id is null
+    join categories c on c.id = p.category_id and c.is_active and c.deleted_at is null
+    left join product_variants v on v.product_id=p.id and p.inventory_mode='variant'
+      and v.is_active and v.is_purchasable
+      and nullif(trim(v.sku), '') is not null and nullif(trim(v.combination_key), '') is not null
+    left join device_models dm on dm.id=v.device_model_id
+    left join device_brands db on db.id=dm.brand_id
+    left join product_types pt on pt.id=p.product_type_id
+    left join stock s on s.product_id=p.id and s.variant_id is not distinct from v.id
     where p.deleted_at is null
+      and (p.inventory_mode='product' or (v.id is not null and s.id is not null
+        and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null)
+        and (v.device_model_id is null or (dm.is_active and db.is_active and exists(
+          select 1 from product_device_models pdm where pdm.product_id=p.id and pdm.device_model_id=v.device_model_id and pdm.archived_at is null)))))
       and p.is_active
       and lower(p.id) = any(${ids}::text[])
     order by p.id
@@ -87,6 +107,10 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Pricin
           : Number(row.sale_price_paise),
       },
       saleLive,
+      row.variant_id ? {
+        pricePaise: row.option_price_paise == null ? null : Number(row.option_price_paise),
+        salePricePaise: row.option_sale_price_paise == null ? null : Number(row.option_sale_price_paise),
+      } : null,
     );
     const name = String(row.name ?? '');
 
@@ -95,13 +119,16 @@ async function loadPricingRows(ids: string[], saleLive: boolean): Promise<Pricin
     // request that bypasses the page cannot buy a product the shop has marked
     // unavailable. Tracked rows defer to the locked claim in `createOrder`,
     // which also lazily frees expired holds.
-    const hasStockRow = row.track_inventory !== null && row.track_inventory !== undefined;
-    if (!saleLive && !hasStockRow && row.in_stock === false) {
+    if (!saleLive && row.inventory_mode !== 'variant' && row.track_inventory !== true && row.in_stock === false) {
       unavailable.push(name);
     }
 
     return {
       id: String(row.id),
+      inventory_mode: String(row.inventory_mode || 'product'),
+      variant_id: row.variant_id ? String(row.variant_id) : null,
+      variant_sku: row.variant_sku ? String(row.variant_sku) : null,
+      variant_label: row.variant_label ? String(row.variant_label) : null,
       name,
       subtitle: row.subtitle === null || row.subtitle === undefined
         ? null
@@ -175,6 +202,22 @@ export async function resolveCartItemsFromDb(
   return cart;
 }
 
+/** Resolve payment prices on the order's connection, after its stock locks. */
+export async function resolveCartItemsFromDbUsing(
+  sql: postgres.Sql | postgres.TransactionSql,
+  cartItems: ReadonlyArray<CartPricingInput>,
+): Promise<PricedCart> {
+  const sale = await readSaleStateUsing(sql, { authoritative: true });
+  const read = await loadPricingRows(knownBaseIds(cartItems), sale.live, sql);
+  const cart = priceCartLines(cartItems, read.rows);
+  if (read.unavailable.length > 0) {
+    throw new InsufficientStockError(
+      `Out of stock: ${read.unavailable[0]}. Remove it from your bag to continue.`,
+    );
+  }
+  return cart;
+}
+
 /**
  * Resolve the product named by `?productId=` for the checkout page.
  * Returns null for an unknown or inactive row; the page renders its
@@ -204,6 +247,7 @@ export async function getProductFromDatabase(id: string): Promise<CatalogItem | 
                limit 1
              ) as image_url
       from products p
+      join categories c on c.id = p.category_id and c.is_active and c.deleted_at is null
       where p.deleted_at is null
         and p.is_active
         and lower(p.id) = ${normalized.baseId}

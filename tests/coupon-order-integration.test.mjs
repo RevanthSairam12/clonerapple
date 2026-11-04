@@ -18,11 +18,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -42,16 +43,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -179,12 +184,9 @@ async function redemptionRows(orderId) {
 before(async () => {
   if (skip) return;
   sql = client();
-  await sql.unsafe(`create schema "${SCHEMA}"`);
-  await sql.unsafe(`set search_path to "${SCHEMA}"`);
-  for (const table of COPIED_TABLES) {
-    await sql.unsafe(`create table ${table} (like public.${table} including all)`);
-  }
-  await sql.unsafe(`create table users (id text primary key, customer_group text)`);
+  await createFixtureSchema(sql, SCHEMA, COPIED_TABLES);
+  await sql.unsafe(`create table "${SCHEMA}".users (id text primary key, customer_group text)`);
+  await sql.unsafe(`alter table "${SCHEMA}".users enable row level security`);
 
   const pinned = await sql`show search_path`;
   assert.ok(
@@ -212,12 +214,11 @@ beforeEach(async () => {
 after(async () => {
   if (skip) return;
   try {
-    await sql.unsafe('set search_path to public');
-    await sql.unsafe(`drop schema if exists "${SCHEMA}" cascade`);
+    if (sql) await dropFixtureSchema(sql, SCHEMA);
   } catch (error) {
     console.warn('[coupon-order] cleanup did not finish:', error?.message ?? error);
   }
-  await sql.end({ timeout: 5 });
+  if (sql) await sql.end({ timeout: 5 });
 });
 
 /* -------------------------------------------------- free shipping, end to end */

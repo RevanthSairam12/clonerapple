@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 
 import type { CollectionSchema, FieldSchema, ListSchema } from '@/lib/website/collections';
 import { getByPath, setByPath } from '@/lib/website/json-path';
+import { homepageSlotCount, normalizeHomepageSlots } from '@/lib/website/homepage-products';
 
+import { HomepageProductSlots } from './HomepageProductSlots';
 import { BooleanField, ImageField, SelectField, VideoField } from './WebsiteFields';
 
 /* Path of one field of one list item. Empty itemField path = the item itself. */
@@ -49,16 +51,27 @@ export function WebsiteContentEditor({
   canEdit,
 }: Props) {
   const router = useRouter();
-  const [value, setValue] = useState<Record<string, unknown>>(() => initialValue ?? defaults ?? {});
-  const [savedSnapshot, setSavedSnapshot] = useState<string>(
-    JSON.stringify(initialValue ?? defaults ?? {}),
+  const slotCount = homepageSlotCount(collection.key);
+  const effectiveDefaults = useMemo(
+    () => slotCount > 0 ? normalizeHomepageSlots(collection.key, defaults ?? {}) : defaults ?? {},
+    [collection.key, defaults, slotCount],
   );
+  const [value, setValue] = useState<Record<string, unknown>>(() =>
+    slotCount > 0
+      ? normalizeHomepageSlots(collection.key, initialValue ?? defaults ?? {})
+      : initialValue ?? defaults ?? {},
+  );
+  const [savedSnapshot, setSavedSnapshot] = useState<string>(() => JSON.stringify(
+    slotCount > 0
+      ? normalizeHomepageSlots(collection.key, initialValue ?? defaults ?? {})
+      : initialValue ?? defaults ?? {},
+  ));
+  const [slotsValid, setSlotsValid] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const artMap = currentArt ?? {};
 
-  const effectiveDefaults = defaults ?? {};
   const dirty = useMemo(() => JSON.stringify(value) !== savedSnapshot, [value, savedSnapshot]);
 
   const fieldChanged = useCallback(
@@ -398,7 +411,7 @@ export function WebsiteContentEditor({
         </section>
       ) : null}
 
-      <div style={enabled ? undefined : { opacity: 0.55, pointerEvents: canEdit ? 'none' : undefined }}>
+      <div style={enabled || slotCount > 0 ? undefined : { opacity: 0.55, pointerEvents: canEdit ? 'none' : undefined }}>
         {groups.map(([root, fields]) => (
           <section className="sa-detail-card" key={root} style={{ marginBottom: 14 }}>
             <h2 className="sa-card-title">
@@ -417,6 +430,26 @@ export function WebsiteContentEditor({
 
         {(collection.lists ?? []).map((list) => {
           const { items, defItems } = listState(list);
+          if (slotCount > 0) {
+            return (
+              <HomepageProductSlots
+                key={list.path}
+                count={slotCount}
+                list={list}
+                items={items}
+                disabled={!canEdit || busy !== null}
+                onValidityChange={setSlotsValid}
+                onSelect={(index, productId) => {
+                  setValue((prev) => setByPath(prev, itemFieldPath(list, index, 'productId'), productId));
+                }}
+                renderDecoration={(field, index) => renderField(
+                  field,
+                  itemFieldPath(list, index, field.path),
+                  `${list.path}[${index}].${field.path}`,
+                )}
+              />
+            );
+          }
           return (
             <section className="sa-detail-card" key={list.path} style={{ marginBottom: 14 }}>
               <div className="sa-edit-head">
@@ -524,7 +557,7 @@ export function WebsiteContentEditor({
           <button
             className="sa-btn sa-btn-primary"
             type="button"
-            disabled={busy !== null}
+            disabled={busy !== null || (slotCount > 0 && !slotsValid)}
             onClick={save}
           >
             {busy === 'save' ? 'Saving…' : 'Save changes'}

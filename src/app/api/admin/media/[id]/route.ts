@@ -1,5 +1,16 @@
 import { getSql } from '@/lib/platform/db';
 import { publicObjectUrl } from '@/lib/platform/storage';
+import { legacyAdminGone } from '@/lib/website/legacy-gone';
+
+function gone() {
+  return legacyAdminGone('/api/admin/media/[id]');
+}
+
+export const POST = gone;
+export const PUT = gone;
+export const PATCH = gone;
+export const DELETE = gone;
+export const OPTIONS = gone;
 
 /**
  * GET /api/admin/media/[id] — serves an uploaded image.

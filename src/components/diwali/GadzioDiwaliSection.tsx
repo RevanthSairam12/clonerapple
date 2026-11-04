@@ -2,17 +2,10 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
+import { ProductCardLink } from '@/components/ProductCardLink';
+import { DIWALI_ITEMS, DIWALI_COPY, type FestiveProductCard } from '@/lib/website/section-defaults';
 
-export interface FestiveProductCard {
-  title: string;
-  tagPrimary?: string;
-  tagSecondary?: string;
-  amountText: string;
-  originalAmountText?: string;
-  savingsText?: string;
-  image: string;
-  href?: string;
-}
+export type { FestiveProductCard };
 
 export interface GadzioDiwaliSectionProps {
   enabled?: boolean;
@@ -24,54 +17,14 @@ export interface GadzioDiwaliSectionProps {
   items?: FestiveProductCard[];
 }
 
-export const DEFAULT_FESTIVE_PRODUCTS: FestiveProductCard[] = [
-  {
-    title: 'Gadzio Diwali Festive Tech Hamper 2026 (Limited Box)',
-    tagPrimary: 'LIMITED RELEASE',
-    tagSecondary: '⚡ NEW',
-    amountText: '₹2,999',
-    originalAmountText: '₹4,499',
-    savingsText: 'SAVE 33%',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (3).jpg',
-    href: '/in/shop/iphone/accessories/cases-protection',
-  },
-  {
-    title: 'Diwali Gold Edition 3-in-1 Fast Wireless Charging Station',
-    tagSecondary: '⚡ NEW',
-    amountText: '₹1,899',
-    originalAmountText: '₹2,699',
-    savingsText: 'SAVE 30%',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
-    href: '/in/shop/iphone/accessories/power-adapter-cable',
-  },
-  {
-    title: 'Gadzio Pulse ANC Wireless Earphones - Festive Edition',
-    tagPrimary: 'SAVE',
-    tagSecondary: '⚡ NEW',
-    amountText: '₹1,499',
-    originalAmountText: '₹2,199',
-    savingsText: 'SAVE 32%',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
-    href: '/in/shop/iphone/accessories/wired-earphones',
-  },
-  {
-    title: 'Diwali Elite MagSafe Protection Combo (Case + Screen Glass)',
-    tagPrimary: 'BESTSELLER',
-    tagSecondary: '⚡ FESTIVE',
-    amountText: '₹1,299',
-    originalAmountText: '₹1,899',
-    savingsText: 'SAVE 31%',
-    image: '/sites/cases-protection/images/iphone16pro-clear-magsafe.jpg',
-    href: '/in/shop/iphone/accessories/cases-protection',
-  },
-];
+export const DEFAULT_FESTIVE_PRODUCTS = DIWALI_ITEMS;
 
 export function GadzioDiwaliSection({
   enabled = true,
-  bannerKicker = 'DIWALI 2026',
-  bannerTitle = 'ARE YOU READY?',
-  bannerButtonLabel = 'SHOP DIWALI',
-  bannerButtonHref = '/in/shop/iphone/accessories/cases-protection',
+  bannerKicker = DIWALI_COPY.bannerKicker,
+  bannerTitle = DIWALI_COPY.bannerTitle,
+  bannerButtonLabel = DIWALI_COPY.bannerButtonLabel,
+  bannerButtonHref = DIWALI_COPY.bannerButtonHref,
   bannerImage,
   items,
 }: GadzioDiwaliSectionProps) {
@@ -229,9 +182,10 @@ export function GadzioDiwaliSection({
               }}
             >
               {products.map((item, idx) => (
-                <Link
+                <ProductCardLink
                   key={idx}
-                  href={item.href || '#'}
+                  href={item.href}
+                  unavailable={item.unavailable}
                   className="w-[230px] sm:w-[260px] md:w-[280px] shrink-0 bg-white rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-200 group border border-neutral-200/70"
                 >
                   {/* Top Badges Row */}
@@ -259,7 +213,7 @@ export function GadzioDiwaliSection({
                   {/* Product Image Stage */}
                   <div className="relative aspect-square w-full flex items-center justify-center overflow-hidden my-auto p-2">
                     <img
-                      src={item.image}
+                      src={item.image || '/gadzio_logo.png'}
                       alt={item.title}
                       className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105"
                       loading="lazy"
@@ -288,7 +242,7 @@ export function GadzioDiwaliSection({
                       ) : null}
                     </div>
                   </div>
-                </Link>
+                </ProductCardLink>
               ))}
             </div>
 

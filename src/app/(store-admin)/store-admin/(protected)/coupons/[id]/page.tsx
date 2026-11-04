@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { CouponActions } from '@/components/store-admin/CouponActions';
 import { CouponForm, type CouponFormValues } from '@/components/store-admin/CouponForm';
 import { formatPaise } from '@/lib/store-admin/amount';
+import { getStoreSession } from '@/lib/store-admin/auth';
 import { listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
 import {
   couponScopeLabel,
@@ -45,6 +46,8 @@ function stateLabel(state: string): string {
  */
 export default async function StoreAdminCouponPage({ params }: Props) {
   const { id } = await params;
+  const session = await getStoreSession();
+  const canEdit = session?.role === 'store_admin' || session?.role === 'store_owner';
   const [result, products, categories, brands] = await Promise.all([
     getCoupon(id),
     listCouponProductOptions(),
@@ -86,6 +89,9 @@ export default async function StoreAdminCouponPage({ params }: Props) {
     allowWithSalePrice: coupon.allowWithSalePrice,
     allowedCustomerGroups: coupon.allowedCustomerGroups,
     restrictedToEmails: coupon.restrictedToEmails,
+    showToAllUsers: coupon.showToAllUsers,
+    assignedToEmails: coupon.assignedToEmails,
+    assignedCustomerGroups: coupon.assignedCustomerGroups,
     targets,
   };
 
@@ -102,12 +108,15 @@ export default async function StoreAdminCouponPage({ params }: Props) {
             {couponScopeLabel(coupon.scope)}
           </p>
         </div>
-        <CouponActions couponId={coupon.id} status={coupon.status} />
+        {canEdit ? <CouponActions couponId={coupon.id} status={coupon.status} /> : null}
       </div>
 
       <div className="sa-inline-actions">
         <span className="sa-status-chip" data-tone={TONE[coupon.badge.tone]}>
           {coupon.badge.label}
+        </span>
+        <span className="sa-status-chip" data-tone={coupon.showToAllUsers ? undefined : 'warn'}>
+          {coupon.showToAllUsers ? 'Public' : 'Hidden (not public)'}
         </span>
         <span className="sa-hint">
           Starts {formatDate(coupon.startsAt)} · Ends {formatDate(coupon.endsAt)}
@@ -145,6 +154,7 @@ export default async function StoreAdminCouponPage({ params }: Props) {
       {coupon.status !== 'archived' ? (
         <CouponForm
           coupon={formValues}
+          readOnly={!canEdit}
           products={products.ok ? products.data : []}
           categories={
             categories.ok

@@ -13,6 +13,8 @@ import {
   type SaleState,
 } from '@/lib/store-admin/orders';
 import { orderTotals } from '@/lib/store-admin/order-documents';
+import { getDocumentState } from '@/lib/orders/document-data';
+import { OrderDocumentStatus } from '@/components/orders/OrderDocument';
 import { canonicalViewQuery, getSavedViews } from '@/lib/store-admin/preferences';
 import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { QuickView } from '@/components/store-admin/QuickView';
@@ -182,6 +184,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
     viewTxnid && session ? await getOrderDetail(viewTxnid, session.role) : null;
   const quickOrder = quickView?.ok ? quickView.data : null;
   const quickTotals = quickOrder ? orderTotals(quickOrder) : null;
+  const quickDocumentState = quickOrder ? await getDocumentState(quickOrder.id) : null;
 
   const savedViewsResult = session ? await getSavedViews(session.adminId) : null;
   const savedViews = savedViewsResult?.ok ? savedViewsResult.views : [];
@@ -428,13 +431,15 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
               </div>
               <div className="sa-quickview-stat">
                 <span>Payment</span>
-                <strong>{quickOrder.paymentStatus}</strong>
+                <strong>{quickDocumentState?.label ?? quickOrder.paymentStatus}</strong>
               </div>
               <div className="sa-quickview-stat">
                 <span>Units</span>
                 <strong>{quickOrder.items.reduce((sum, item) => sum + item.quantity, 0)}</strong>
               </div>
             </div>
+
+            {quickDocumentState && <OrderDocumentStatus state={quickDocumentState} currency={quickOrder.currency} />}
 
             <section className="sa-quickview-block">
               <h3>Customer</h3>

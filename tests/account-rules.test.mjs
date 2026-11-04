@@ -1,13 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  isOwnedBySession,
-  isWithinReturnWindow,
-  maskAccountEmail,
-  maskAccountPhone,
-  validateAddressInput,
-} from '../src/lib/account/rules.ts';
+import { createJiti } from 'jiti';
+import path from 'node:path';
+const jiti = createJiti(import.meta.url, { alias: { '@': path.resolve('src') } });
+const { isOwnedBySession, isWithinReturnWindow, maskAccountEmail, maskAccountPhone, validateAddressInput } = jiti('../src/lib/account/rules.ts');
 
 test('address validation requires the customer shipping fields', () => {
   assert.equal(validateAddressInput({ name: 'Ravi Kumar', phone: '9876543210', line1: '1 Main Road', city: 'Pune', state: 'Maharashtra', pincode: '411001' }).ok, true);

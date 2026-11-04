@@ -14,10 +14,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(here, '..', '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -32,23 +33,25 @@ if (!process.env.DATABASE_URL) {
 function connectionDetails() {
   const url = new URL(process.env.DATABASE_URL);
   return {
-    isPooler: url.hostname.includes('pooler') && url.port === '6543',
     transactionPooler: url.port === '6543',
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
-  const { isPooler } = connectionDetails();
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
-    prepare: !isPooler,
+    prepare: false,
+    connection: { search_path: 'pg_catalog' },
     onnotice: () => {},
   });
 }
@@ -97,11 +100,7 @@ test('enqueue follows the matrix, remembers why nothing was sent, and never dupl
   const a = client();
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, TABLES);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -403,12 +402,10 @@ test('enqueue follows the matrix, remembers why nothing was sent, and never dupl
     );
   } finally {
     try {
-      await a.unsafe('set search_path to public');
-      await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    } catch (error) {
-      console.warn('[notifications-enqueue-integration] cleanup did not finish:', error?.message ?? error);
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await a.end({ timeout: 5 });
     }
-    await a.end({ timeout: 5 });
   }
 });
 
@@ -425,11 +422,7 @@ test('no outbox row for staff or password messages carries a credential', { skip
   const [password, temporaryPassword, token, resetToken] = secrets;
 
   try {
-    await a.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await a.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await a.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(a, schema, TABLES);
     const pinned = await a`show search_path`;
     assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
 
@@ -499,8 +492,10 @@ test('no outbox row for staff or password messages carries a credential', { skip
       assert.equal(output.includes('reset?token='), false);
     }
   } finally {
-    await a.unsafe('set search_path to public');
-    await a.unsafe(`drop schema if exists "${schema}" cascade`);
-    await a.end();
+    try {
+      await dropFixtureSchema(a, schema);
+    } finally {
+      await a.end({ timeout: 5 });
+    }
   }
 });

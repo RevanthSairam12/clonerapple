@@ -108,6 +108,14 @@ test('no non-Education legacy collection exposes a commerce field', () => {
       ]),
     ];
     for (const fieldPath of paths) {
+      if (fieldPath === 'productId' && ['gadzio.diwali_campaign', 'gadzio.crowd_favorites'].includes(collection.key)) {
+        const list = collection.lists.find(list => list.path === 'items');
+        const count = collection.key === 'gadzio.diwali_campaign' ? 4 : 6;
+        assert.equal(list.minItems, count);
+        assert.equal(list.maxItems, count);
+        assert.equal(collection.fields.some(field => field.path === 'productId'), false);
+        continue;
+      }
       assert.equal(
         isCommerceFieldName(lastToken(fieldPath)),
         false,
@@ -125,9 +133,9 @@ test('theme settings stay design-only', () => {
 
 /* ------------------------------------------------------------- save route */
 
-test('the legacy content route calls the shared boundary validator', async () => {
+test('the Website content route calls the shared boundary validator', async () => {
   const source = await readFile(
-    path.join(root, 'src', 'app', 'api', 'admin', 'content', 'route.ts'),
+    path.join(root, 'src', 'app', 'api', 'store-admin', 'website', 'content', '[key]', 'route.ts'),
     'utf8',
   );
   assert.match(source, /validateLegacyContentWrite\s*\(/);

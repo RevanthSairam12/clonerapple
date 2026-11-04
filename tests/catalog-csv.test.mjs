@@ -124,7 +124,8 @@ const CONTEXT = {
 };
 
 function row(values) {
-  return IMPORT_COLUMNS.map((column) => (values[column] === undefined ? '' : String(values[column])));
+  const defaults = { product_type_id: 'null', device_model_ids: '[]', attribute_values: '{}' };
+  return IMPORT_COLUMNS.map((column) => String(values[column] ?? defaults[column] ?? ''));
 }
 
 function validate(rows, context = CONTEXT) {

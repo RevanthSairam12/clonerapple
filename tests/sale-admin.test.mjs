@@ -14,11 +14,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -38,16 +39,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -217,8 +222,11 @@ test('the sale page is a top-level screen with the required controls', async () 
   assert.match(page, /SaleBulkActions/);
   assert.match(page, /Has sale price/);
   assert.match(page, /No sale price/);
-  assert.match(page, /Tracking off/);
+  assert.match(page, /Not limited/);
   assert.match(page, /Low or zero stock/);
+  assert.match(page, /Option price edits remain disabled pending checkout verification/);
+  assert.match(page, /productCount=\{new Set\(products\.map\(\(row\) => row\.id\)\)\.size\}/);
+  assert.match(page, /canEdit=\{canEdit && product\.variantId === null\}/);
   // Read access is viewer-or-better; writes are hidden from viewers.
   assert.match(page, /store_viewer/);
 
@@ -301,11 +309,7 @@ test('sale settings convert store-local times with the store timezone', { skip }
   const sql = client();
 
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
     await sql`insert into sale_settings (id) values ('default')`;
 
     const saved = await updateSaleSettingsUsing(
@@ -367,8 +371,7 @@ test('sale settings convert store-local times with the store timezone', { skip }
     assert.equal(closed.data.changed, true);
   } finally {
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(sql, schema);
     } catch (error) {
       console.warn('[sale-admin] cleanup did not finish:', error?.message ?? error);
     }
@@ -388,11 +391,7 @@ test('bulk sale prices write history and clearing marks every row', { skip }, as
   const sql = client();
 
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
 
     await sql`
       insert into categories (id, slug, name)
@@ -457,8 +456,7 @@ test('bulk sale prices write history and clearing marks every row', { skip }, as
     assert.equal(clearedAgain.data.beforeWithSalePrice, 0);
   } finally {
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+      await dropFixtureSchema(sql, schema);
     } catch (error) {
       console.warn('[sale-admin] cleanup did not finish:', error?.message ?? error);
     }

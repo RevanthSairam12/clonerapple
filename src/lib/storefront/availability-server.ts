@@ -1,81 +1,81 @@
 import type postgres from 'postgres';
-
 import { stockStateFrom } from './catalog-rules';
-import type { AvailabilityRead, ProductAvailability } from './availability-rules';
+import { aggregateVariantAvailability, availabilityKey, supportsQuantity, type AvailabilityLine, type AvailabilityRead, type ProductAvailability } from './availability-rules';
 import { readSaleStateUsing } from './sale-state';
 
-/**
- * The click-time availability read. One query for every requested product,
- * joined to the product-level stock row, plus the sale switch on the same
- * connection (so both decisions come from the same database clock).
- *
- * Online holds decrement `on_hand`, so the count already excludes units other
- * customers are holding. The legacy `reserved` counter is subtracted too.
- */
-
-if (typeof window !== 'undefined') {
-  throw new Error('SECURITY ALERT: Availability is read on the server only.');
-}
-
+if (typeof window !== 'undefined') throw new Error('Availability is read on the server only.');
 type Row = Record<string, unknown>;
 
-function numberOrNull(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function unavailable(id: string, variantId?: string): ProductAvailability {
+  return { id, ...(variantId ? { variantId } : {}), inStock: false, tracked: false, available: null, lowStockThreshold: null };
 }
 
+function fromStock(id: string, row: Row, fallback: boolean, variantId?: string): ProductAvailability {
+  const hasStock = row.track_inventory !== null && row.track_inventory !== undefined;
+  // Activated commerce identities require an explicit row, including untracked variants.
+  if (variantId && !hasStock) return unavailable(id, variantId);
+  const snapshot = stockStateFrom(hasStock ? row : null, fallback);
+  return { id, ...(variantId ? { variantId } : {}), inStock: snapshot.state !== 'out_of_stock',
+    tracked: snapshot.tracked, available: snapshot.tracked ? snapshot.available : null, lowStockThreshold: snapshot.threshold };
+}
+
+/** Advisory only; the final guarded claim remains authoritative. Never reads sibling parent balances as variant stock. */
 export async function readAvailabilityUsing(
   sql: postgres.Sql | postgres.TransactionSql,
   ids: readonly string[],
+  lines: readonly AvailabilityLine[] = [],
 ): Promise<AvailabilityRead> {
-  const wanted = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  const wanted = [...new Set([...ids, ...lines.map((line) => line.productId)].map((id) => id.trim()).filter(Boolean))];
   const state = await readSaleStateUsing(sql);
-
-  if (wanted.length === 0) {
-    return { saleLive: state.live, databaseNow: state.databaseNow, products: [] };
-  }
-
-  const rows = (await sql`
-    select p.id, p.is_active, p.deleted_at, p.in_stock,
+  if (!wanted.length) return { saleLive: state.live, databaseNow: state.databaseNow, products: [], variants: [] };
+  const rows = await sql`
+    select p.id, p.is_active, p.deleted_at, p.in_stock, p.inventory_mode,
            s.on_hand, s.reserved, s.low_stock_threshold, s.track_inventory
-    from products p
-    left join stock s on s.product_id = p.id and s.variant_id is null
+    from products p left join stock s on s.product_id = p.id and s.variant_id is null
     where p.id = any(${wanted}::text[])
-  `) as Row[];
-
-  const byId = new Map<string, Row>();
-  for (const row of rows) byId.set(String(row.id), row);
-
-  const products: ProductAvailability[] = wanted.map((id) => {
+  ` as Row[];
+  const variantRows = await sql`
+    select v.id as variant_id, v.product_id, v.sku, v.combination_key,
+           s.on_hand, s.reserved, s.low_stock_threshold, s.track_inventory
+    from product_variants v
+    join products p on p.id = v.product_id and p.inventory_mode = 'variant'
+    left join product_types pt on pt.id = p.product_type_id
+    left join stock s on s.product_id = v.product_id and s.variant_id = v.id
+    where v.product_id = any(${wanted}::text[]) and v.is_active and v.is_purchasable
+      and nullif(trim(v.sku), '') is not null and nullif(trim(v.combination_key), '') is not null
+      and (not coalesce(pt.requires_compatibility, false) or v.device_model_id is not null)
+      and (v.device_model_id is null or exists (
+        select 1 from product_device_models j join device_models d on d.id = j.device_model_id and d.is_active
+        join device_brands b on b.id = d.brand_id and b.is_active
+        where j.product_id = v.product_id and j.device_model_id = v.device_model_id and j.archived_at is null))
+  ` as Row[];
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  const eligible = (id: string) => { const row = byId.get(id); return Boolean(row && row.deleted_at === null && row.is_active !== false); };
+  const variants = variantRows.map((row) => eligible(String(row.product_id))
+    ? fromStock(String(row.product_id), row, true, String(row.variant_id))
+    : unavailable(String(row.product_id), String(row.variant_id)));
+  const products = wanted.map((id) => {
     const row = byId.get(id);
-    // A missing, inactive or deleted row cannot be sold. It is reported as
-    // unavailable rather than thrown away, so the caller can name it.
-    if (!row || row.deleted_at !== null || row.is_active === false) {
-      return { id, inStock: false, tracked: false, available: null, lowStockThreshold: null };
-    }
-
-    const hasStockRow = row.track_inventory !== null && row.track_inventory !== undefined;
-    const snapshot = stockStateFrom(
-      hasStockRow
-        ? {
-            on_hand: numberOrNull(row.on_hand) ?? 0,
-            reserved: numberOrNull(row.reserved) ?? 0,
-            track_inventory: Boolean(row.track_inventory),
-            low_stock_threshold: numberOrNull(row.low_stock_threshold) ?? 0,
-          }
-        : null,
-      Boolean(row.in_stock),
-    );
-
-    return {
-      id,
-      inStock: snapshot.state !== 'out_of_stock',
-      tracked: snapshot.tracked,
-      available: snapshot.available,
-      lowStockThreshold: snapshot.threshold,
-    };
+    if (!row || !eligible(id)) return unavailable(id);
+    return row.inventory_mode === 'variant'
+      ? aggregateVariantAvailability(id, variants.filter((variant) => variant.id === id))
+      : fromStock(id, row, Boolean(row.in_stock));
   });
-
-  return { saleLive: state.live, databaseNow: state.databaseNow, products };
+  // Multiple legacy display lines sharing one stock key must be checked together.
+  const requested = new Map<string, number>();
+  for (const line of lines) {
+    const key = availabilityKey(line.productId, line.variantId);
+    requested.set(key, (requested.get(key) ?? 0) + line.quantity);
+  }
+  for (const line of lines) {
+    const row = byId.get(line.productId);
+    const selected = line.variantId
+      ? variants.find((variant) => variant.id === line.productId && variant.variantId === line.variantId)
+      : products.find((product) => product.id === line.productId);
+    const validScope = row?.inventory_mode === 'variant' ? Boolean(line.variantId) : !line.variantId;
+    const quantityAvailable = Boolean(validScope && selected && supportsQuantity(selected, requested.get(availabilityKey(line.productId, line.variantId)) ?? 0));
+    if (selected) selected.quantityAvailable = quantityAvailable;
+    else if (line.variantId) variants.push({ ...unavailable(line.productId, line.variantId), quantityAvailable: false });
+  }
+  return { saleLive: state.live, databaseNow: state.databaseNow, products, variants };
 }

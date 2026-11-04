@@ -19,14 +19,15 @@ import type { CollectionProduct } from '@/components/collection/types';
 import type { StorefrontProductRef } from '@/lib/catalog/storefront';
 
 import {
-  mergeFacets,
-  mergeSpecRows,
   normaliseKey,
   type LabelledValue,
 } from './catalog-rules';
 
 /** The subset of `StorefrontProduct` these rules read. */
 export interface CatalogProductSource {
+  inventoryMode?: 'product' | 'variant';
+  purchasableVariants?: import('@/lib/catalog/storefront').StorefrontPurchasableVariant[];
+
   id: string;
   name?: string | null;
   subtitle?: string | null;
@@ -53,6 +54,7 @@ export interface CatalogProductSource {
   categoryName?: string | null;
   categorySlug?: string | null;
   facets?: Record<string, string> | null;
+  searchValues?: string[] | null;
   href?: string | null;
 }
 
@@ -109,7 +111,6 @@ function specsFromDatabase(product: CatalogProductSource): SpecRow[] {
 }
 
 function caseSpecsFromDatabase(
-  staticSpecs: ProductSpecs | null,
   databaseSpecs: SpecRow[],
 ): ProductSpecs {
   const values = new Map<string, string>();
@@ -127,10 +128,12 @@ function caseSpecsFromDatabase(
     'dropProtection',
     'warranty',
   ];
-  const specs = {} as ProductSpecs;
+  const specs = Object.fromEntries(databaseSpecs
+    .filter((spec) => !keys.some((key) => normaliseKey(key) === normaliseKey(spec.label)))
+    .map((spec) => [spec.label, spec.value])) as unknown as ProductSpecs;
   for (const key of keys) {
     specs[key] =
-      values.get(normaliseKey(key)) ?? staticSpecs?.[key] ?? '';
+      values.get(normaliseKey(key)) ?? '';
   }
   return specs;
 }
@@ -150,15 +153,13 @@ export function mergeAccessoryProduct(
 ): AccessoryProduct {
   const paise = pricePaiseOf(databaseProduct);
   const databaseSpecs = specsFromDatabase(databaseProduct);
-  const staticSpecs: SpecRow[] = (staticProduct.specs ?? []).map((spec) => ({
-    label: String(spec.label ?? ''),
-    value: String(spec.value ?? ''),
-  }));
   const databaseImages = list((databaseProduct.gallery ?? []).filter(Boolean));
   const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
 
   return {
     id: staticProduct.id,
+    inventoryMode: databaseProduct.inventoryMode ?? 'product',
+    purchasableVariants: databaseProduct.purchasableVariants ?? [],
     name: text(databaseProduct.name) ?? staticProduct.name,
     subtitle: text(databaseProduct.subtitle) ?? staticProduct.subtitle,
     price: paise / 100,
@@ -172,22 +173,19 @@ export function mergeAccessoryProduct(
     image: text(databaseProduct.image) ?? staticProduct.image,
     images: databaseImages ?? staticProduct.images,
     colors: list(databaseProduct.colors) ?? staticProduct.colors,
-    compatibility: list(databaseProduct.compatibility) ?? staticProduct.compatibility,
-    material: text(databaseProduct.material) ?? staticProduct.material,
+    compatibility: databaseProduct.compatibility ?? [],
+    material: text(databaseProduct.material) ?? '',
     brand: text(databaseProduct.brand) ?? staticProduct.brand,
     category: text(databaseProduct.categoryName) ?? staticProduct.category,
     categorySlug: text(databaseProduct.categorySlug) ?? staticProduct.categorySlug,
-    facets: mergeFacets(staticProduct.facets, databaseProduct.facets),
+    facets: { ...(databaseProduct.facets ?? {}) },
     features:
       list(databaseProduct.features) ??
       list(databaseProduct.highlights)?.map((highlight) => highlight.title) ??
       staticProduct.features,
     description: text(databaseProduct.description) ?? staticProduct.description,
     highlights: list(databaseProduct.highlights) ?? staticProduct.highlights,
-    specs:
-      databaseSpecs.length > 0
-        ? mergeSpecRows(staticSpecs, databaseSpecs)
-        : staticSpecs,
+    specs: databaseSpecs,
     inTheBox: list(databaseProduct.inTheBox) ?? staticProduct.inTheBox,
     href: hrefOf(databaseProduct, staticProduct.href),
     inStock: databaseProduct.inStock !== false,
@@ -206,6 +204,8 @@ export function accessoryProductFromDatabase(
 
   return {
     id: databaseProduct.id,
+    inventoryMode: databaseProduct.inventoryMode ?? 'product',
+    purchasableVariants: databaseProduct.purchasableVariants ?? [],
     name: text(databaseProduct.name) ?? databaseProduct.id,
     subtitle: text(databaseProduct.subtitle) ?? '',
     price: paise / 100,
@@ -224,7 +224,7 @@ export function accessoryProductFromDatabase(
     brand: text(databaseProduct.brand) ?? '',
     category: text(databaseProduct.categoryName) ?? '',
     categorySlug: text(databaseProduct.categorySlug) ?? '',
-    facets: mergeFacets(null, databaseProduct.facets),
+    facets: { ...(databaseProduct.facets ?? {}) },
     features: featuresOf(databaseProduct.features, highlights),
     description: text(databaseProduct.description) ?? '',
     highlights,
@@ -248,6 +248,8 @@ export function mergeCaseProduct(
 
   const product: CaseProduct = {
     id: staticProduct.id,
+    inventoryMode: databaseProduct.inventoryMode ?? 'product',
+    purchasableVariants: databaseProduct.purchasableVariants ?? [],
     name: text(databaseProduct.name) ?? staticProduct.name,
     subtitle: text(databaseProduct.subtitle) ?? staticProduct.subtitle,
     price: paise / 100,
@@ -260,8 +262,8 @@ export function mergeCaseProduct(
       : {}),
     image: text(databaseProduct.image) ?? staticProduct.image,
     colors: list(databaseProduct.colors) ?? staticProduct.colors,
-    compatibility: list(databaseProduct.compatibility) ?? staticProduct.compatibility,
-    material: (text(databaseProduct.material) ?? staticProduct.material) as CaseProduct['material'],
+    compatibility: databaseProduct.compatibility ?? [],
+    material: (text(databaseProduct.material) ?? '') as CaseProduct['material'],
     brand: (text(databaseProduct.brand) ?? staticProduct.brand) as CaseProduct['brand'],
     features:
       list(databaseProduct.features) ??
@@ -269,9 +271,7 @@ export function mergeCaseProduct(
       staticProduct.features,
     description: text(databaseProduct.description) ?? staticProduct.description,
     highlights: list(databaseProduct.highlights) ?? staticProduct.highlights,
-    specs: databaseSpecs.length > 0
-      ? caseSpecsFromDatabase(staticProduct.specs, databaseSpecs)
-      : staticProduct.specs,
+    specs: caseSpecsFromDatabase(databaseSpecs),
     inTheBox: list(databaseProduct.inTheBox) ?? staticProduct.inTheBox,
     href: hrefOf(databaseProduct, staticProduct.href),
   };
@@ -292,6 +292,8 @@ export function caseProductFromDatabase(
 
   const product: CaseProduct = {
     id: databaseProduct.id,
+    inventoryMode: databaseProduct.inventoryMode ?? 'product',
+    purchasableVariants: databaseProduct.purchasableVariants ?? [],
     name: text(databaseProduct.name) ?? databaseProduct.id,
     subtitle: text(databaseProduct.subtitle) ?? '',
     price: paise / 100,
@@ -310,7 +312,7 @@ export function caseProductFromDatabase(
     features: featuresOf(databaseProduct.features, highlights),
     description: text(databaseProduct.description) ?? '',
     highlights,
-    specs: caseSpecsFromDatabase(null, specsFromDatabase(databaseProduct)),
+    specs: caseSpecsFromDatabase(specsFromDatabase(databaseProduct)),
     inTheBox: databaseProduct.inTheBox ?? [],
     href: hrefOf(databaseProduct),
   };
@@ -337,6 +339,8 @@ export function collectionProductFromDatabase(
 
   const product: CollectionProduct = {
     id: databaseProduct.id,
+    inventoryMode: databaseProduct.inventoryMode ?? 'product',
+    purchasableVariants: databaseProduct.purchasableVariants ?? [],
     name: text(databaseProduct.name) ?? base?.name ?? databaseProduct.id,
     subtitle: text(databaseProduct.subtitle) ?? base?.subtitle ?? '',
     price: paise / 100,
@@ -350,10 +354,10 @@ export function collectionProductFromDatabase(
     image,
     images: gallery ?? base?.images ?? (image ? [image] : []),
     colors: list(databaseProduct.colors) ?? base?.colors ?? [],
-    compatibility: list(databaseProduct.compatibility) ?? base?.compatibility ?? [],
-    material: text(databaseProduct.material) ?? base?.material ?? '',
+    compatibility: databaseProduct.compatibility ?? [],
+    material: text(databaseProduct.material) ?? '',
     brand: text(databaseProduct.brand) ?? base?.brand ?? 'Gadzio',
-    facets: mergeFacets(base?.facets, databaseProduct.facets),
+    facets: { ...(databaseProduct.facets ?? {}) },
     features:
       list(databaseProduct.features) ??
       list(databaseProduct.highlights)?.map((highlight) => highlight.title) ??
@@ -381,8 +385,7 @@ export function collectionProductFromDatabase(
 
   const highlights = list(databaseProduct.highlights) ?? base?.highlights;
   if (highlights) product.highlights = highlights;
-  const specs = databaseSpecs.length > 0 ? databaseSpecs : base?.specs;
-  if (specs) product.specs = specs;
+  product.specs = databaseSpecs;
   const inTheBox = list(databaseProduct.inTheBox) ?? base?.inTheBox;
   if (inTheBox) product.inTheBox = inTheBox;
 
@@ -407,6 +410,8 @@ export function refFromDatabase(
   const wasPriceDisplay = wasPriceDisplayOf(databaseProduct);
   return {
     id: databaseProduct.id,
+    inventoryMode: databaseProduct.inventoryMode ?? 'product',
+    purchasableVariants: databaseProduct.purchasableVariants ?? [],
     name: text(databaseProduct.name) ?? databaseProduct.id,
     subtitle: text(databaseProduct.subtitle) ?? '',
     pricePaise: paise,
@@ -423,15 +428,10 @@ export function refFromDatabase(
       ...keywordsOf([
         databaseProduct.name,
         databaseProduct.subtitle,
-        databaseProduct.material,
         databaseProduct.brand,
         categoryName ?? databaseProduct.categoryName,
-        ...(databaseProduct.compatibility ?? []),
-        ...Object.values(databaseProduct.facets ?? {}),
+        ...(databaseProduct.searchValues ?? []),
       ]),
-      ...(databaseProduct.specs ?? []).map((spec) =>
-        `${spec.label} ${spec.value}`.trim().toLowerCase(),
-      ),
     ].filter(Boolean),
   };
 }
@@ -451,13 +451,9 @@ export function refFromStaticAccessory(product: AccessoryProduct): StorefrontPro
       ...keywordsOf([
         product.name,
         product.subtitle,
-        product.material,
         product.brand,
         product.category,
-        ...product.compatibility,
-        ...Object.values(product.facets),
       ]),
-      ...product.specs.map((spec) => `${spec.label} ${spec.value}`.trim().toLowerCase()),
     ].filter(Boolean),
   };
 }
@@ -477,11 +473,8 @@ export function refFromStaticCase(product: CaseProduct): StorefrontProductRef {
       ...keywordsOf([
         product.name,
         product.subtitle,
-        product.material,
         product.brand,
         'Cases & Protection',
-        ...product.compatibility,
-        ...Object.values(product.specs),
       ]),
     ].filter(Boolean),
   };

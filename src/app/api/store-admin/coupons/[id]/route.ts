@@ -49,13 +49,15 @@ export async function PATCH(request: Request, { params }: Props) {
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   }
 
-  const parsed = parseCouponInput(body);
+  const parsed = parseCouponInput(body, { preserveOmittedVisibility: true });
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
   const { id } = await params;
-  const result = await updateCoupon(id, parsed.values, guard.session.adminId);
+  const result = await updateCoupon(id, parsed.values, {
+    actorId: guard.session.adminId, actorEmail: guard.session.email, request,
+  });
   if (!result.ok) {
     if (result.reason === 'not-found') {
       return NextResponse.json({ error: result.error }, { status: 404 });
@@ -66,20 +68,7 @@ export async function PATCH(request: Request, { params }: Props) {
     return NextResponse.json({ error: 'The coupon could not be saved.' }, { status: 503 });
   }
 
-  const { before, after } = result.data;
-  await writeAudit({
-    actorId: guard.session.adminId,
-    actorEmail: guard.session.email,
-    action: 'coupon.update',
-    entity: 'coupon',
-    entityId: after.id,
-    before: couponAuditFromRow(before),
-    after: couponAuditFromRow(after),
-    reason: 'staff_edited',
-    request,
-  });
-
-  return NextResponse.json({ coupon: after });
+  return NextResponse.json({ coupon: result.data.after }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function DELETE(request: Request, { params }: Props) {

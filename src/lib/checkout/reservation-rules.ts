@@ -65,6 +65,7 @@ export function parseReservationPolicy(
 export type PaymentOutcome =
   | 'paid'
   | 'failed'
+  | 'cancelled'
   | 'abandoned'
   | 'pending'
   | 'unknown';
@@ -94,6 +95,7 @@ export function classifyVerification(result: VerificationLike | null | undefined
   const unmapped = String(result.unmappedstatus ?? '').trim().toLowerCase();
 
   if (status === 'not_found' || unmapped === 'no_record') return 'abandoned';
+  if (isExplicitCancellation(status, unmapped)) return 'cancelled';
   if (status === 'failure' || status === 'failed') return 'failed';
   if (status === 'pending' || unmapped === 'pending' || unmapped === 'pending_payment') {
     return 'pending';
@@ -102,8 +104,11 @@ export function classifyVerification(result: VerificationLike | null | undefined
   // is ambiguous, not a failed payment: the customer may still have been
   // charged and a human must look at it.
   if (status === 'success') return 'unknown';
-  if (status === 'usercancelled' || unmapped === 'usercancelled') return 'failed';
   return 'unknown';
+}
+
+function isExplicitCancellation(status: string, unmapped: string): boolean {
+  return [status, unmapped].some((value) => ['usercancelled', 'cancelled', 'canceled'].includes(value));
 }
 
 export type CallbackTarget = 'PAID' | 'FAILED' | 'CANCELLED' | 'PENDING' | 'PROCESSING';
@@ -138,6 +143,10 @@ export function decideCallbackOutcome(input: {
     return { target: 'PAID', outcome, reason: 'verified capture' };
   }
 
+  if (outcome === 'cancelled' || isExplicitCancellation(callbackStatus, unmapped)) {
+    return { target: 'CANCELLED', outcome: 'cancelled', reason: 'customer cancelled' };
+  }
+
   // PayU said success but the server could not confirm the capture. Never
   // treat that as proof; keep the claim and let verification finish.
   if (callbackStatus === 'success') {
@@ -152,10 +161,6 @@ export function decideCallbackOutcome(input: {
 
   if (outcome === 'failed') {
     return { target: 'FAILED', outcome, reason: 'verified failure' };
-  }
-
-  if (callbackStatus === 'usercancelled' || unmapped === 'usercancelled') {
-    return { target: 'CANCELLED', outcome: 'failed', reason: 'customer cancelled' };
   }
 
   if (outcome === 'pending' || callbackStatus === 'pending') {
@@ -180,7 +185,7 @@ export function decideCallbackOutcome(input: {
   return {
     target: 'PROCESSING',
     outcome: 'unknown',
-    reason: input.verificationError || 'payment outcome not yet known',
+    reason: input.verificationError ? 'gateway verification unavailable' : 'payment outcome not yet known',
   };
 }
 

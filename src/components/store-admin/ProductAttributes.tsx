@@ -1,243 +1,53 @@
 'use client';
 
-import { useState } from 'react';
-
-import type {
-  CatalogAttribute,
-  CatalogProductAttributeValue,
-} from '@/lib/store-admin/catalog';
+import type { AttributePrimitive, TypeAttribute } from '@/lib/catalog/product-metadata-rules';
+import type { SavedAttribute } from '@/lib/store-admin/product-metadata';
+import { ProductGuide } from './ProductHelp';
 
 interface Props {
-  productId: string;
-  attributes: CatalogAttribute[];
-  values: CatalogProductAttributeValue[];
-  canEdit: boolean;
+  attributes: TypeAttribute[];
+  savedValues: SavedAttribute[];
+  changes: Record<string, AttributePrimitive>;
+  disabled: boolean;
+  onChange: (id: string, value: AttributePrimitive) => void;
 }
 
-function initialDraft(values: CatalogProductAttributeValue[]): Record<string, string> {
-  const draft: Record<string, string> = {};
-  for (const value of values) {
-    if (value.valueBool !== null) draft[value.attributeId] = String(value.valueBool);
-    else if (value.valueNumber !== null) draft[value.attributeId] = String(value.valueNumber);
-    else if (value.optionValue !== null) draft[value.attributeId] = value.optionValue;
-    else draft[value.attributeId] = value.valueText ?? '';
-  }
-  return draft;
-}
-
-/**
- * Product attribute values.
- *
- * The input shape follows the attribute's declared type; the server checks the
- * same thing again before writing, because the type lives in the database.
- */
-export function ProductAttributes({ productId, attributes, values, canEdit }: Props) {
-  const [draft, setDraft] = useState<Record<string, string>>(() => initialDraft(values));
-  const [saved, setSaved] = useState<Record<string, string>>(() => initialDraft(values));
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const active = attributes.filter(
-    (attribute) => attribute.isActive && attribute.deletedAt === null,
-  );
-
-  async function save(attribute: CatalogAttribute) {
-    const raw = (draft[attribute.id] ?? '').trim();
-    if (!raw) {
-      setError(`Enter a value for ${attribute.label} first.`);
-      setNotice(null);
-      return;
-    }
-
-    const value =
-      attribute.dataType === 'boolean'
-        ? raw === 'true'
-        : attribute.dataType === 'number'
-          ? Number(raw)
-          : raw;
-
-    setBusy(attribute.id);
-    setError(null);
-    setNotice(null);
-    try {
-      const response = await fetch(
-        `/api/store-admin/catalog/products/${productId}/attributes`,
-        {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ attributeId: attribute.id, value }),
-        },
-      );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          typeof body.error === 'string' ? body.error : 'Could not save this value.',
-        );
-      }
-      setSaved((current) => ({ ...current, [attribute.id]: raw }));
-      setNotice(`${attribute.label} saved.`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not save this value.');
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function clear(attribute: CatalogAttribute) {
-    setBusy(attribute.id);
-    setError(null);
-    setNotice(null);
-    try {
-      const response = await fetch(
-        `/api/store-admin/catalog/products/${productId}/attributes?attributeId=${encodeURIComponent(attribute.id)}`,
-        { method: 'DELETE' },
-      );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          typeof body.error === 'string' ? body.error : 'Could not clear this value.',
-        );
-      }
-      setDraft((current) => ({ ...current, [attribute.id]: '' }));
-      setSaved((current) => ({ ...current, [attribute.id]: '' }));
-      setNotice(`${attribute.label} cleared.`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not clear this value.');
-    } finally {
-      setBusy(null);
-    }
-  }
-
+/** Only the selected type's mapped attributes are editable. No global fallback. */
+export function ProductAttributes({ attributes, savedValues, changes, disabled, onChange }: Props) {
+  const hidden = savedValues.filter(value => value.archived || !attributes.some(a => a.attributeId === value.attributeId));
   return (
-    <section className="sa-detail-section">
-      <h2 className="sa-section-title">Attributes</h2>
-
-      {error ? (
-        <p className="sa-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {notice ? (
-        <p className="sa-notice" role="status">
-          {notice}
-        </p>
-      ) : null}
-
-      {active.length === 0 ? (
-        <p className="sa-empty">
-          No attributes are defined yet. Add them under Catalogue data.
-        </p>
-      ) : (
-        <div className="sa-table-wrap">
-          <table className="sa-table">
-            <thead>
-              <tr>
-                <th>Attribute</th>
-                <th>Value</th>
-                <th aria-label="Actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((attribute) => {
-                const set = Boolean(saved[attribute.id]);
-                const dirty = (draft[attribute.id] ?? '') !== (saved[attribute.id] ?? '');
-                return (
-                  <tr key={attribute.id}>
-                    <td>
-                      <strong>{attribute.label}</strong>
-                      <div className="sa-row-sub sa-mono">
-                        {attribute.key}
-                        {attribute.unitLabel ? ` · ${attribute.unitLabel}` : ''}
-                        {attribute.dataType === 'enum' ? ' · list' : ` · ${attribute.dataType}`}
-                      </div>
-                    </td>
-                    <td>
-                      {attribute.dataType === 'enum' ? (
-                        <select
-                          className="sa-input"
-                          value={draft[attribute.id] ?? ''}
-                          disabled={!canEdit || busy === attribute.id}
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              [attribute.id]: event.target.value,
-                            }))
-                          }
-                        >
-                          <option value="">—</option>
-                          {attribute.options.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.value}
-                            </option>
-                          ))}
-                        </select>
-                      ) : attribute.dataType === 'boolean' ? (
-                        <select
-                          className="sa-input"
-                          value={draft[attribute.id] ?? ''}
-                          disabled={!canEdit || busy === attribute.id}
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              [attribute.id]: event.target.value,
-                            }))
-                          }
-                        >
-                          <option value="">—</option>
-                          <option value="true">Yes</option>
-                          <option value="false">No</option>
-                        </select>
-                      ) : (
-                        <input
-                          className="sa-input"
-                          type={attribute.dataType === 'number' ? 'number' : 'text'}
-                          step={attribute.dataType === 'number' ? 'any' : undefined}
-                          maxLength={attribute.dataType === 'number' ? undefined : 200}
-                          value={draft[attribute.id] ?? ''}
-                          disabled={!canEdit || busy === attribute.id}
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              [attribute.id]: event.target.value,
-                            }))
-                          }
-                        />
-                      )}
-                    </td>
-                    <td>
-                      {canEdit ? (
-                        <div className="sa-inline-actions">
-                          <button
-                            className="sa-btn sa-btn-primary sa-btn-small"
-                            type="button"
-                            disabled={busy === attribute.id || !dirty}
-                            onClick={() => save(attribute)}
-                          >
-                            {busy === attribute.id ? 'Saving…' : 'Save'}
-                          </button>
-                          {set ? (
-                            <button
-                              className="sa-btn sa-btn-quiet sa-btn-small"
-                              type="button"
-                              disabled={busy === attribute.id}
-                              onClick={() => clear(attribute)}
-                            >
-                              Clear
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <span className="sa-row-sub">read only</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
+    <ProductGuide><div>
+      <h3 className="sa-card-title">Details for this product type</h3>
+      <p className="sa-hint">Fill in the details for your chosen type. Saved details for other types are kept.</p>
+      <p className="sa-hint">Clear removes a detail from use but keeps its saved value. Use Restore saved value or enter a new value to use it again.</p>
+      {attributes.length === 0 ? <p className="sa-empty">Choose a product type with details to fill in. Only details for the selected type appear here.</p> : null}
+      <div className="sa-control-grid">
+        {attributes.map(attribute => {
+          const stored = savedValues.find(value => value.attributeId === attribute.attributeId);
+          const changed = Object.hasOwn(changes, attribute.attributeId);
+          const value = changed ? changes[attribute.attributeId] : stored && !stored.archived ? stored.value : null;
+          const raw = value === null || value === undefined ? '' : String(value);
+          const input = (text: string) => onChange(attribute.attributeId, text === '' ? null : attribute.dataType === 'boolean' ? text === 'true' : attribute.dataType === 'number' ? Number(text) : text);
+          return <div className="sa-field" key={attribute.attributeId}>
+            <label className="sa-field" data-product-help={`${attribute.label}: ${attribute.dataType === 'enum' ? `choose one of the configured choices (${attribute.options.join(', ')}).` : attribute.dataType === 'boolean' ? 'choose Yes, No or Not set.' : attribute.dataType === 'number' ? 'enter a number, or leave blank if not required.' : 'enter the product detail, or leave blank if not required.'} ${attribute.isRequired ? 'Required before publishing.' : 'Optional.'} Clearing keeps the previous saved value for later restoration.`}>
+              <span className="sa-label">{attribute.label}{attribute.isRequired ? ' (required to publish)' : ''}</span>
+              {attribute.dataType === 'enum' || attribute.dataType === 'boolean' ? <select className="sa-input" disabled={disabled} value={raw} onChange={event => input(event.target.value)}>
+                <option value="">Not set</option>
+                {attribute.dataType === 'boolean' ? <><option value="true">Yes</option><option value="false">No</option></> : attribute.options.map(option => <option key={option} value={option}>{option}</option>)}
+              </select> : <input className="sa-input" disabled={disabled} type={attribute.dataType === 'number' ? 'number' : 'text'} step={attribute.dataType === 'number' ? 'any' : undefined} maxLength={2000} value={raw} onChange={event => input(event.target.value)} />}
+            </label>
+            {!disabled ? <div className="sa-inline-actions">
+              <button className="sa-btn sa-btn-quiet sa-btn-small" type="button" onClick={() => onChange(attribute.attributeId, null)}>Clear</button>
+              {stored && stored.archived && stored.value !== null ? <button className="sa-btn sa-btn-quiet sa-btn-small" type="button" onClick={() => onChange(attribute.attributeId, stored.value)}>Restore saved value</button> : null}
+            </div> : null}
+          </div>;
+        })}
+      </div>
+      {hidden.length > 0 ? <details>
+        <summary>Saved details not in use ({hidden.length})</summary>
+        <p className="sa-hint">These details cannot be edited here. Choose their product type to restore or clear them.</p>
+        <dl className="sa-meta">{hidden.map(value => <div key={value.attributeId}><dt>{value.label}</dt><dd>{String(value.value ?? 'Not set')} · {value.archived ? 'cleared — saved value kept' : 'for another product type'}</dd></div>)}</dl>
+      </details> : null}
+    </div></ProductGuide>
   );
 }

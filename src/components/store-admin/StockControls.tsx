@@ -42,7 +42,7 @@ export function StockControls({
 
     if (hasStockRow && trackInventory && !tracking) {
       const confirmed = window.confirm(
-        'Turn off stock tracking? Checkout will stop checking stock for this '
+        'Stop limiting stock? Checkout will stop checking stock for this '
           + 'product, so it can be oversold. Continue?',
       );
       if (!confirmed) return;
@@ -53,7 +53,7 @@ export function StockControls({
     if (needsOpeningCount) {
       opening = Number(openingOnHand);
       if (!Number.isInteger(opening) || opening < 0) {
-        setError('Enter the current on-hand count as a whole number.');
+        setError('Enter the current in-stock count as a whole number.');
         return;
       }
     }
@@ -146,10 +146,10 @@ export function StockControls({
                 checked={tracking}
                 onChange={(event) => setTracking(event.target.checked)}
               />
-              Track inventory
+              Limit my stock
             </label>
             <label className="sa-field">
-              <span className="sa-label">Low-stock threshold</span>
+              <span className="sa-label">Warn me when below</span>
               <input
                 className="sa-input"
                 type="number"
@@ -161,7 +161,7 @@ export function StockControls({
             {!hasStockRow && tracking ? (
               <label className="sa-field">
                 <span className="sa-label">
-                  Current on hand <span className="sa-hint">recorded as a receipt</span>
+                  Current in stock <span className="sa-hint">recorded as a receipt</span>
                 </span>
                 <input
                   className="sa-input"
@@ -186,7 +186,7 @@ export function StockControls({
             </button>
           </div>
 
-          <h3 className="sa-control-title">Adjust count</h3>
+          <h3 className="sa-control-title">Add or remove stock</h3>
           <div className="sa-control-grid">
             <label className="sa-field">
               <span className="sa-label">
@@ -236,7 +236,7 @@ export function StockControls({
           </div>
           {!tracking ? (
             <p className="sa-lock-note">
-              Turn on stock tracking before adjusting counts; checkout ignores
+              Enable “Limit my stock” before changing counts; checkout ignores
               stock while it is off.
             </p>
           ) : null}

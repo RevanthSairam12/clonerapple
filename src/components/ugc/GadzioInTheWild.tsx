@@ -2,13 +2,9 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
+import { IN_THE_WILD_ITEMS, IN_THE_WILD_COPY, type WildPhotoItem } from '@/lib/website/section-defaults';
 
-export interface WildPhotoItem {
-  image: string;
-  alt?: string;
-  caption?: string;
-  href?: string;
-}
+export type { WildPhotoItem };
 
 export interface GadzioInTheWildProps {
   enabled?: boolean;
@@ -17,55 +13,12 @@ export interface GadzioInTheWildProps {
   items?: WildPhotoItem[];
 }
 
-export const DEFAULT_WILD_PHOTOS: WildPhotoItem[] = [
-  {
-    image: '/images/wild/gadzio-wild-1.jpg',
-    alt: 'Creator working outdoors with Gadzio phone case and accessories',
-    caption: 'Campus & creator essentials • @aarav_tech',
-    href: '/in/shop/iphone/accessories/cases-protection',
-  },
-  {
-    image: '/images/wild/gadzio-wild-2.jpg',
-    alt: 'Gadzio CrystalArmor MagSafe clear case in studio',
-    caption: 'CrystalArmor MagSafe setup • @priya_creations',
-    href: '/in/shop/iphone/accessories/cases-protection',
-  },
-  {
-    image: '/images/wild/gadzio-wild-3.jpg',
-    alt: 'Listening to music with Gadzio Studio Earphones',
-    caption: 'Commute in pure sound • @rohan_pulse',
-    href: '/in/shop/iphone/accessories/wired-earphones',
-  },
-  {
-    image: '/images/wild/gadzio-wild-4.jpg',
-    alt: 'Minimalist desk setup with Gadzio charging station',
-    caption: 'Studio desk setup • @vikram_workstation',
-    href: '/in/shop/iphone/accessories/power-adapter-cable',
-  },
-  {
-    image: '/images/wild/gadzio-wild-5.jpg',
-    alt: 'Tech creator inspecting Gadzio gear',
-    caption: 'Unboxing day with Gadzio • @neha_daily',
-    href: '/in/shop/iphone/accessories/cases-protection',
-  },
-  {
-    image: '/images/wild/gadzio-wild-6.jpg',
-    alt: 'Heavy-duty braided cables on desk',
-    caption: 'High-speed charging setup • @kabir_edits',
-    href: '/in/shop/iphone/accessories/power-adapter-cable',
-  },
-  {
-    image: '/images/wild/gadzio-wild-7.jpg',
-    alt: 'Silicone protection case and AirTag accessory',
-    caption: 'Travel ready with Gadzio • @ananya_travels',
-    href: '/in/shop/iphone/accessories/cases-protection',
-  },
-];
+export const DEFAULT_WILD_PHOTOS = IN_THE_WILD_ITEMS;
 
 export function GadzioInTheWild({
   enabled = true,
-  heading = 'Gadzio in the Wild',
-  subheading = "Want to be featured here? Tag your photos with #GadzioInTheWild and show us your tech setups and everyday carry.",
+  heading = IN_THE_WILD_COPY.heading,
+  subheading = IN_THE_WILD_COPY.subheading,
   items,
 }: GadzioInTheWildProps) {
   if (enabled === false) return null;

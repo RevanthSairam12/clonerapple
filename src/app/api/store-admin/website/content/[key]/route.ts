@@ -7,6 +7,8 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { validateLegacyContentWrite } from '@/lib/website/boundary';
 import { getCollection } from '@/lib/website/collections';
+import { getStorefrontProducts } from '@/lib/catalog/storefront';
+import { homepageSlotCount, validateHomepageSlots } from '@/lib/website/homepage-products';
 import { archiveContentBlock, saveContentBlock } from '@/lib/website/content-store';
 
 export const dynamic = 'force-dynamic';
@@ -71,7 +73,25 @@ export async function PUT(
     return noStore({ error: 'Value must be an object.' }, 400);
   }
 
-  const boundary = validateLegacyContentWrite(collection.key, value);
+  if (homepageSlotCount(collection.key)) {
+    let error = validateHomepageSlots(collection.key, value);
+    if (!error) {
+      const ids = ((value as Record<string, unknown>).items as { productId: string }[]).map(item => item.productId);
+      const products = await getStorefrontProducts(ids);
+      const activeIds = new Set(products.map(product => product.id));
+      if (ids.some(id => !activeIds.has(id))) error = 'One or more selected products are unavailable. Select active catalog products and try again.';
+    }
+    if (error) {
+      await writeAudit({
+        actorId: guard.session.adminId, actorEmail: guard.session.email,
+        action: 'website.content_save', entity: 'content_block', entityId: collection.key,
+        status: 'denied', reason: 'invalid_product_selection', request,
+      });
+      return noStore({ error }, 400);
+    }
+  }
+
+  const boundary = validateLegacyContentWrite(collection.key, value, true);
   if (!boundary.ok) {
     await writeAudit({
       actorId: guard.session.adminId,

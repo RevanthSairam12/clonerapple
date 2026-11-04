@@ -19,11 +19,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -43,16 +44,20 @@ function connectionDetails() {
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    connection: { search_path: 'pg_catalog' },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -129,11 +134,24 @@ test('a sale price is ignored when it is not a genuine discount', () => {
   assert.equal(aboveRegular.onSale, false);
 });
 
-test('an unchanged product is returned as-is, so the fast path allocates nothing', () => {
+test('normalized unchanged snapshots retain identity without discarding raw provenance', () => {
   const row = product();
-  assert.equal(applySaleDisplay(row, false), row);
-  const live = product({ price: 799, pricePaise: 79900, priceDisplay: '₹799.00', onSale: true });
+  const normalized = applySaleDisplay(row, false);
+  assert.equal(normalized.parentPricePaise, 99900);
+  assert.equal(normalized.parentSalePricePaise, 79900);
+  assert.equal(applySaleDisplay(normalized, false), normalized);
+  assert.ok(!('parentPricePaise' in row), 'normalization never mutates input');
+  const live = applySaleDisplay(normalized, true);
   assert.equal(applySaleDisplay(live, true), live);
+  const variants = snapshotFromLoad({ categories: [], images: [], attributes: [], deviceModels: [],
+    products: [{ id: 'p', inventory_mode: 'variant', price_paise: 1000, sale_price_paise: 800 }],
+    variants: [{ id: 'v', product_id: 'p', sku: 'SKU', combination_key: 'key', is_active: true, is_purchasable: true, price_paise_override: 2000 }],
+    stock: [{ product_id: 'p', variant_id: 'v', track_inventory: false }],
+  }).products[0];
+  assert.equal(variants.pricePaise, 2000);
+  assert.equal(variants.parentPricePaise, 1000);
+  assert.equal(applySaleDisplay(variants, false), variants);
+  assert.equal(applySaleDisplay(variants, true), variants, 'parent sale cannot discount an override');
 });
 
 /* -------------------------------------------------------- source wiring */
@@ -180,17 +198,21 @@ const TABLES = [
   'product_variants',
   'stock',
   'sale_settings',
+  'attributes',
+  'attribute_options',
+  'product_attribute_values',
 ];
 
+function fixtureName() {
+  return `itest_sale_boundary_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
+}
+
 /** Build a throwaway schema with one product carrying a sale price. */
-async function makeSchema(sql) {
-  const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
-  const schema = `itest_sale_boundary_${suffix}`;
-  await sql.unsafe(`create schema "${schema}"`);
-  for (const table of TABLES) {
-    await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-  }
-  await sql.unsafe(`set search_path to "${schema}"`);
+async function makeSchema(sql, schema) {
+  await createFixtureSchema(sql, schema, TABLES);
+  // The real storefront now reads type-scoped metadata. Install its actual
+  // additive migration locally instead of allowing any public-schema fallback.
+  await sql.unsafe(await readFile(path.join(root, 'migrations/0051_product_types_compatibility.sql'), 'utf8'));
 
   await sql`insert into sale_settings (id) values ('default')`;
   await sql`insert into categories (id, slug, name) values ('c1', 'c1', 'Category')`;
@@ -222,9 +244,9 @@ async function saleStateFromDatabase(sql) {
 
 test('a database read caches the regular price even while a sale is live', { skip }, async () => {
   const sql = client();
-  let schema = null;
+  const schema = fixtureName();
   try {
-    schema = await makeSchema(sql);
+    await makeSchema(sql, schema);
     await sql`
       update sale_settings
       set enabled = true,
@@ -251,9 +273,9 @@ test('a database read caches the regular price even while a sale is live', { ski
 
 test('turning the sale on and off is visible from the next request, with no wait', { skip }, async () => {
   const sql = client();
-  let schema = null;
+  const schema = fixtureName();
   try {
-    schema = await makeSchema(sql);
+    await makeSchema(sql, schema);
 
     const offSnapshot = await snapshotFromDatabase(sql);
     const offRow = offSnapshot.products.find((entry) => entry.id === 'p1');
@@ -295,9 +317,9 @@ test('turning the sale on and off is visible from the next request, with no wait
 
 test('a sale window that has not started yet is off on the first request', { skip }, async () => {
   const sql = client();
-  let schema = null;
+  const schema = fixtureName();
   try {
-    schema = await makeSchema(sql);
+    await makeSchema(sql, schema);
     await sql`
       update sale_settings
       set enabled = true,
@@ -320,8 +342,7 @@ test('a sale window that has not started yet is off on the first request', { ski
 
 async function cleanup(sql, schema) {
   try {
-    await sql.unsafe('set search_path to public');
-    if (schema) await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+    await dropFixtureSchema(sql, schema);
   } catch (error) {
     console.warn('[sale-boundary] cleanup did not finish:', error?.message ?? error);
   }

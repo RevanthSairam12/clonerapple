@@ -325,14 +325,14 @@ test('live payload parsing drops rows the customer vocabulary does not know', ()
   assert.equal(toRequestSnapshots([{ id: 'r1', type: 'cancel', status: 'OPEN', created_at: '2026-10-31T10:00:00Z' }]).length, 1);
   assert.deepEqual(toRequestSnapshots('not json'), []);
   assert.equal(toDeliverySnapshot(null), null);
-  assert.equal(toDeliverySnapshot({ method: 'STANDARD' }), null, 'a delivery row without a status is not a delivery');
+  assert.equal(toDeliverySnapshot({ method: 'STANDARD' }, true), null, 'a delivery row without a status is not a delivery');
   assert.deepEqual(toRefundSnapshots([{ id: 'f1', amount_paise: 'not-money' }]), []);
 });
 
 test('a live signature never exposes raw internal enum names to the UI', () => {
   // The signature is compared, not displayed, but it must be built from parsed
   // values so a junk row cannot smuggle an internal token into the payload.
-  const snapshot = toDeliverySnapshot({ status: 'OUT_FOR_DELIVERY', tracking_number: 'AWB1' });
+  const snapshot = toDeliverySnapshot({ status: 'OUT_FOR_DELIVERY', tracking_number: 'AWB1' }, true);
   assert.equal(snapshot.trackingNumber, 'AWB1');
   assert.equal(live.accountDeliveryStatusLabel('OUT_FOR_DELIVERY'), 'Out for delivery');
   assert.equal(live.accountPaymentStatusLabel('PAYMENT_REVIEW'), 'Payment under review');

@@ -7,16 +7,10 @@
  * steps, and a cancelled or delivered order produces none.
  */
 
-import { FULFILMENT_TRANSITIONS, type FulfilmentStatus } from '@/lib/store-admin/order-rules';
+import { FULFILMENT_STEPS, FULFILMENT_TRANSITIONS, type FulfilmentStatus } from '@/lib/store-admin/order-rules';
 
 /** Forward fulfilment chain. CANCELED is terminal and deliberately absent. */
-const FORWARD_CHAIN: readonly FulfilmentStatus[] = [
-  'PENDING',
-  'ACCEPTED',
-  'PROCESSING',
-  'ON_THE_WAY',
-  'DELIVERED',
-];
+const FORWARD_CHAIN = FULFILMENT_STEPS;
 
 export function isFulfilmentStatus(value: unknown): value is FulfilmentStatus {
   return (
@@ -46,7 +40,10 @@ export interface FulfilmentAutomationInput {
  */
 export function resolveFulfilmentTarget(input: FulfilmentAutomationInput): FulfilmentStatus {
   const configured = isFulfilmentStatus(input.defaultStatus) ? input.defaultStatus : 'PENDING';
-  let target: FulfilmentStatus = configured === 'CANCELED' ? 'PENDING' : configured;
+  // A captured payment cannot prove physical courier collection or delivery.
+  // Cap legacy advanced defaults without rewriting settings or existing orders.
+  let target: FulfilmentStatus = configured === 'CANCELED' ? 'PENDING'
+    : fulfilmentRank(configured) > fulfilmentRank('PROCESSING') ? 'PROCESSING' : configured;
   if (input.autoConfirm && fulfilmentRank(target) < fulfilmentRank('ACCEPTED')) target = 'ACCEPTED';
   return target;
 }

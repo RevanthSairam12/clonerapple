@@ -26,7 +26,7 @@ export default async function StoreAdminStockPage({
   }
 
   const rows = result.data;
-  const tracked = rows.filter((row) => row.trackInventory);
+  const tracked = rows.filter((row) => row.trackInventory&&!row.legacyBucket);
   const low = tracked.filter(
     (row) => row.available > 0 && row.available <= row.lowStockThreshold,
   );
@@ -40,8 +40,8 @@ export default async function StoreAdminStockPage({
         <div>
           <h1 className="sa-page-title">Stock</h1>
           <p className="sa-page-sub">
-            {rows.length} products · {tracked.length} tracked · {untracked}{' '}
-            untracked.
+            {rows.length} products · {tracked.length} limited · {untracked}{' '}
+            not limited.
           </p>
         </div>
         <Link className="sa-btn sa-btn-quiet" href="/store-admin/products">
@@ -51,14 +51,14 @@ export default async function StoreAdminStockPage({
 
       <div className="sa-stat-grid">
         <div className="sa-stat">
-          <span className="sa-stat-label">Tracked</span>
+          <span className="sa-stat-label">Stock limited</span>
           <strong className="sa-stat-value">{tracked.length}</strong>
           <span className="sa-stat-note">Checkout checks these counts</span>
         </div>
         <div className="sa-stat">
           <span className="sa-stat-label">Low stock</span>
           <strong className="sa-stat-value">{low.length}</strong>
-          <span className="sa-stat-note">At or under the threshold</span>
+          <span className="sa-stat-note">At or below the warning level</span>
         </div>
         <div className="sa-stat">
           <span className="sa-stat-label">Out of stock</span>
@@ -78,7 +78,7 @@ export default async function StoreAdminStockPage({
           className={trackingOffOnly ? 'sa-btn sa-btn-small sa-btn-primary' : 'sa-btn sa-btn-small'}
           href="/store-admin/stock?filter=tracking-off"
         >
-          Tracking off ({untracked})
+          Not limited ({untracked})
         </Link>
       </nav>
 
@@ -88,25 +88,25 @@ export default async function StoreAdminStockPage({
             <tr>
               <th>Product</th>
               <th>Category</th>
-              <th>Tracked</th>
-              <th className="sa-num">On hand</th>
-              <th className="sa-num">Reserved</th>
-              <th className="sa-num">Available</th>
+              <th>Limit my stock</th>
+              <th className="sa-num">In stock</th>
+              <th className="sa-num">Held in checkouts</th>
+              <th className="sa-num">Available to buy</th>
               <th>Status</th>
-              <th>Adjust</th>
+              <th>Add or remove stock</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 ? (
               <tr>
                 <td colSpan={8} className="sa-empty">
-                  {trackingOffOnly ? 'Every product is tracked.' : 'No products yet.'}
+                  {trackingOffOnly ? 'Every product has a stock limit.' : 'No products yet.'}
                 </td>
               </tr>
             ) : (
               visible.map((row) => {
                 const state = !row.trackInventory
-                  ? 'Untracked'
+                  ? 'Not limited'
                   : row.available === 0
                     ? 'Out of stock'
                     : row.available <= row.lowStockThreshold
@@ -121,15 +121,16 @@ export default async function StoreAdminStockPage({
                         ? 'sa-status sa-status-on'
                         : 'sa-status';
                 return (
-                  <tr key={row.productId}>
+                  <tr key={JSON.stringify([row.productId,row.variantId])}>
                     <td>
                       <Link
                         className="sa-product-link"
-                        href={`/store-admin/stock/${encodeURIComponent(row.productId)}`}
+                        href={row.variantId?`/store-admin/products/${encodeURIComponent(row.productId)}`:`/store-admin/stock/${encodeURIComponent(row.productId)}`}
                       >
                         {row.name}
                       </Link>
-                      <span className="sa-row-sub sa-mono">{row.productId}</span>
+                      <span className="sa-row-sub sa-mono">{row.variantSku??row.productId}</span>
+                      <span className="sa-row-sub">{row.variantLabel??(row.legacyBucket?'Retained legacy bucket — not sellable':'Product bucket')}</span>
                     </td>
                     <td>{row.categoryName || '—'}</td>
                     <td>
@@ -146,9 +147,9 @@ export default async function StoreAdminStockPage({
                     <td>
                       <Link
                         className="sa-btn sa-btn-small"
-                        href={`/store-admin/stock/${encodeURIComponent(row.productId)}`}
+                        href={row.variantId?`/store-admin/products/${encodeURIComponent(row.productId)}`:`/store-admin/stock/${encodeURIComponent(row.productId)}`}
                       >
-                        Adjust
+                        Add or remove stock
                       </Link>
                     </td>
                   </tr>

@@ -29,7 +29,7 @@ export default async function StoreAdminOrderSettingsPage() {
         fields={fieldsForSection('orders')}
         initial={settings}
         canEdit={canEdit}
-        note="Auto-confirm, auto-cancel and the free-shipping threshold apply once the storefront reads these settings. The order prefix and receipt numbering apply now. Confirm unusual POS prices asks the cashier before charging a typed price above 10× list or below cost; the confirmation never blocks a confirmed price."
+        note="Paid-order automation stops at Preparing; courier pickup and delivery must be marked by staff. Shipping controls are now in Settings → Shipping. The order prefix and receipt numbering apply now. Confirm unusual POS prices asks the cashier before charging a typed price above 10× list or below cost; the confirmation never blocks a confirmed price."
       />
     </div>
   );

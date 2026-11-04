@@ -1,14 +1,9 @@
 'use client';
 
 import React from 'react';
+import { REVIEWS_ITEMS, REVIEWS_COPY, type CustomerReviewItem } from '@/lib/website/section-defaults';
 
-export interface CustomerReviewItem {
-  headline: string;
-  rating?: string | number;
-  content: string;
-  author: string;
-  badgeText?: string;
-}
+export type { CustomerReviewItem };
 
 export interface GadzioReviewsSectionProps {
   enabled?: boolean;
@@ -18,38 +13,13 @@ export interface GadzioReviewsSectionProps {
   items?: CustomerReviewItem[];
 }
 
-export const DEFAULT_CUSTOMER_REVIEWS: CustomerReviewItem[] = [
-  {
-    headline: 'CrystalArmor Case is unbelievable!',
-    rating: '5',
-    content:
-      'The MagSafe magnets are insanely strong, and the drop protection saved my iPhone twice already. Crystal clear finish with zero yellowing even after months of daily use.',
-    author: 'Aarav M.',
-    badgeText: 'Verified Buyer',
-  },
-  {
-    headline: 'Insane charging speed & durable cable!',
-    rating: '5',
-    content:
-      'The 65W GaN adapter and braided cable charge my phone from 0 to 80% in half an hour. The metal reinforced connectors feel practically indestructible.',
-    author: 'Priya S.',
-    badgeText: 'Verified Buyer',
-  },
-  {
-    headline: 'Studio earphones blew me away!!',
-    rating: '5',
-    content:
-      'Crisp highs, deep punchy bass, and phenomenal noise isolation. Outstanding audio clarity for daily travel and long work calls. Truly 10/10!',
-    author: 'Rohan K.',
-    badgeText: 'Verified Buyer',
-  },
-];
+export const DEFAULT_CUSTOMER_REVIEWS = REVIEWS_ITEMS;
 
 export function GadzioReviewsSection({
   enabled = true,
-  kicker = 'LOVED BY CREATORS & CUSTOMERS',
-  heading = '4.9 Average Star Rating',
-  subheading = 'With over 25,000 5-star reviews, Gadzio tech and everyday essentials are trusted by creators and tech lovers across India!',
+  kicker = REVIEWS_COPY.kicker,
+  heading = REVIEWS_COPY.heading,
+  subheading = REVIEWS_COPY.subheading,
   items,
 }: GadzioReviewsSectionProps) {
   if (enabled === false) return null;

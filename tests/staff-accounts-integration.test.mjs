@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import path from 'node:path';
 import { createJiti } from 'jiti';
 import { loadEnv, skipReason } from './helpers/reports-fixture.mjs';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 await loadEnv();
 const jiti = createJiti(import.meta.url, { alias: { '@': path.resolve('src') } });
 const staff = await jiti.import('../src/lib/store-admin/staff.ts');
@@ -13,19 +14,19 @@ const { getStoreSessionForToken } = await jiti.import('../src/lib/store-admin/au
 
 test('real staff removal frees email, revokes sessions and preserves immutable history', { skip: skipReason() }, async () => {
   const schema = `itest_staff_${randomBytes(8).toString('hex')}`;
-  const sql = postgres(process.env.DATABASE_URL, { max: 1, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {} });
-  const previous = globalThis.__gadzioSql;
+  const sql = postgres(process.env.DATABASE_URL, {
+    max: 1,
+    ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
+    prepare: false,
+    connection: { search_path: 'pg_catalog' },
+    onnotice: () => {},
+  });
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of ['store_admins', 'store_admin_sessions', 'store_admin_preferences', 'store_admin_audit']) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`create sequence "${schema}".audit_seq`);
-    await sql.unsafe(`alter table "${schema}".store_admin_audit alter column id set default nextval('"${schema}".audit_seq'::regclass)`);
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, [
+      'store_admins', 'store_admin_sessions', 'store_admin_preferences', 'store_admin_audit',
+    ]);
     await sql.unsafe(`alter table store_admin_sessions add foreign key (admin_id) references store_admins(id)`);
     await sql.unsafe(`create trigger immutable before update or delete on store_admin_audit for each row execute function public.forbid_audit_mutation()`);
-    globalThis.__gadzioSql = sql;
     const hash = await bcrypt.hash('temporary-123', 4);
     await sql`insert into store_admins (id,email,name,password_hash,role) values
       ('owner','owner@example.test','Owner',${hash},'store_owner'),
@@ -65,9 +66,10 @@ test('real staff removal frees email, revokes sessions and preserves immutable h
     assert.equal(account.must_change_password, false);
     assert.equal(await bcrypt.compare('changed-456', account.password_hash), true);
   } finally {
-    globalThis.__gadzioSql = previous;
-    await sql.unsafe('set search_path to public').catch(() => {});
-    await sql.unsafe(`drop schema if exists "${schema}" cascade`);
-    await sql.end();
+    try {
+      await dropFixtureSchema(sql, schema);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
   }
 });

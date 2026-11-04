@@ -4,14 +4,17 @@ import { useState } from 'react';
 import Link from 'next/link';
 
 import type { AccessoryProduct } from './data/types';
+import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
 import { useCart } from '@/lib/cart/CartContext';
 
 const MAX_VISIBLE_SWATCHES = 6;
 
-export function AccessoryProductCard({ product }: { product: AccessoryProduct }) {
+export function AccessoryProductCard({ product: sourceProduct }: { product: AccessoryProduct }) {
   const [activeColor, setActiveColor] = useState(0);
   const [imgError, setImgError] = useState(false);
-  const [isAdded, setIsAdded] = useState(false);
+  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, activeColor, sourceProduct.inventoryMode, sourceProduct.price, sourceProduct.regularPrice]));
+  const { added: isAdded, pending, notice } = purchase;
+  const product = { ...sourceProduct, ...purchase.priceOverride };
   const { addItem } = useCart();
 
   const visibleSwatches = product.colors.slice(0, MAX_VISIBLE_SWATCHES);
@@ -99,12 +102,17 @@ export function AccessoryProductCard({ product }: { product: AccessoryProduct })
             ) : null}
             {product.priceDisplay}
           </p>
-          <button
+          {product.inventoryMode === 'variant' ? (
+            <Link href={productUrl} className="relative z-20 text-[11px] font-semibold px-3 py-1 rounded-full bg-[#f5f5f7] hover:bg-[#0071e3] text-[#1d1d1f] hover:text-white" aria-label={`Choose options for ${product.name}`}>
+              Choose options
+            </Link>
+          ) : <button
             type="button"
-            onClick={(e) => {
+            disabled={pending}
+            onClick={async (e) => {
               e.preventDefault();
               e.stopPropagation();
-              addItem({
+              await purchase.run((signal) => addItem({
                 productId: product.id,
                 name: product.name,
                 subtitle: `${currentColor?.name || product.subtitle}`,
@@ -114,12 +122,9 @@ export function AccessoryProductCard({ product }: { product: AccessoryProduct })
                 regularPrice: product.regularPrice,
                 image: product.image,
                 color: currentColor?.name,
-                model: product.compatibility[0],
                 quantity: 1,
                 href: productUrl,
-              });
-              setIsAdded(true);
-              setTimeout(() => setIsAdded(false), 2000);
+              }, { signal }));
             }}
             className={`relative z-20 text-[11px] font-semibold px-3 py-1 rounded-full transition-all cursor-pointer ${
               isAdded
@@ -128,8 +133,9 @@ export function AccessoryProductCard({ product }: { product: AccessoryProduct })
             }`}
           >
             {isAdded ? 'Added ✓' : 'Add to Bag'}
-          </button>
+          </button>}
         </div>
+        {notice && <p role="alert" className="relative z-20 mt-2 text-xs text-[#b42318]">{notice}</p>}
       </div>
     </div>
   );

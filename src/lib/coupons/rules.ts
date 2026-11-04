@@ -273,57 +273,70 @@ export function allocateDiscount(
   return allocations;
 }
 
-/**
- * The one decision. Returns either the money to charge or a safe reason.
- *
- * Order of checks matters: cheap and definitive reasons first, then customer
- * eligibility, then limits, then the cart. No branch reveals a limit, a
- * target list or another customer's use.
- */
-export function evaluateCoupon(input: {
-  coupon: CouponDefinition;
-  lines: ReadonlyArray<CouponLine>;
-  context: CouponContext;
-}): CouponEvaluation {
-  const { coupon, lines, context } = input;
-  const now = toDate(context.now);
-  if (!now) return reject('inactive');
+/** Shared by redemption and discovery; visibility is deliberately not a rule here. */
+export type CouponEligibilityDefinition = Pick<CouponDefinition,
+  | 'status' | 'startsAt' | 'endsAt' | 'restrictedToEmails' | 'allowedCustomerGroups'
+  | 'onlyNewCustomers' | 'totalRedemptionLimit' | 'perCustomerLimit'
+>;
+export type CouponEligibilityContext = Pick<CouponContext,
+  | 'now' | 'customer' | 'customerPaidOrderExists' | 'customerRedemptions' | 'totalRedemptions'
+>;
 
-  if (coupon.status !== 'active') return reject('inactive');
+/** Cart-independent checks, in the same order as checkout. Null means eligible. */
+export function couponEligibilityRejection(
+  coupon: CouponEligibilityDefinition,
+  context: CouponEligibilityContext,
+): CouponRejectReason | null {
+  const now = toDate(context.now);
+  if (!now) return 'inactive';
+
+  if (coupon.status !== 'active') return 'inactive';
 
   const startsAt = toDate(coupon.startsAt);
   const endsAt = toDate(coupon.endsAt);
-  if (startsAt && now.getTime() < startsAt.getTime()) return reject('not_started');
-  if (endsAt && now.getTime() >= endsAt.getTime()) return reject('expired');
+  if (startsAt && now.getTime() < startsAt.getTime()) return 'not_started';
+  if (endsAt && now.getTime() >= endsAt.getTime()) return 'expired';
 
   // Customer eligibility. A guest has no group; a restricted coupon needs a
   // signed-in group, so the group check fails closed for guests.
   const email = normalizeEmail(context.customer.email);
   if (coupon.restrictedToEmails && coupon.restrictedToEmails.length > 0) {
     const allowed = coupon.restrictedToEmails.map(normalizeEmail).filter(Boolean);
-    if (!email || !allowed.includes(email)) return reject('not_eligible_customer');
+    if (!email || !allowed.includes(email)) return 'not_eligible_customer';
   }
   if (coupon.allowedCustomerGroups && coupon.allowedCustomerGroups.length > 0) {
     const group = normalizeId(context.customer.group);
     const allowed = coupon.allowedCustomerGroups.map(normalizeId).filter(Boolean);
-    if (!group || !allowed.includes(group)) return reject('not_eligible_customer');
+    if (!group || !allowed.includes(group)) return 'not_eligible_customer';
   }
   if (coupon.onlyNewCustomers && context.customerPaidOrderExists) {
-    return reject('not_eligible_customer');
+    return 'not_eligible_customer';
   }
 
   if (
     coupon.totalRedemptionLimit !== null
     && context.totalRedemptions >= coupon.totalRedemptionLimit
   ) {
-    return reject('used_up');
+    return 'used_up';
   }
   if (
     coupon.perCustomerLimit !== null
     && context.customerRedemptions >= coupon.perCustomerLimit
   ) {
-    return reject('already_used');
+    return 'already_used';
   }
+  return null;
+}
+
+/** The one redemption decision: shared eligibility first, then the cart. */
+export function evaluateCoupon(input: {
+  coupon: CouponDefinition;
+  lines: ReadonlyArray<CouponLine>;
+  context: CouponContext;
+}): CouponEvaluation {
+  const { coupon, lines, context } = input;
+  const rejection = couponEligibilityRejection(coupon, context);
+  if (rejection) return reject(rejection);
 
   if (context.subtotalPaise < Math.max(0, coupon.minOrderPaise)) {
     return reject('min_order', coupon.minOrderPaise);

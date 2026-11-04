@@ -146,23 +146,19 @@ test('database values win and static fields fill the gaps', () => {
   assert.equal(merged.image, '/database/primary.jpg');
   assert.deepEqual(merged.images, ['/database/primary.jpg', '/database/second.jpg']);
   assert.deepEqual(merged.colors, staticAccessory().colors);
-  assert.deepEqual(merged.compatibility, ['iPhone 17']);
-  assert.equal(merged.material, 'Silicone');
+  assert.deepEqual(merged.compatibility, []);
+  assert.equal(merged.material, '');
   assert.equal(merged.brand, 'Gadzio');
   assert.equal(merged.description, 'Static description');
   assert.deepEqual(merged.features, ['Static feature']);
   assert.deepEqual(merged.inTheBox, ['Static box']);
 
-  // Spec labels stay as the static page printed them; the database value wins
-  // even when its label differs only by case.
-  assert.deepEqual(merged.specs, [
-    { label: 'Material', value: 'TPU' },
-    { label: 'Warranty', value: '1-Year' },
-  ]);
-  assert.deepEqual(merged.facets, { wattage: '35W', brand: 'Gadzio' });
+  // Managed data is authoritative, including empty lists; no static refill.
+  assert.deepEqual(merged.specs, [{ label: 'material', value: 'TPU' }]);
+  assert.deepEqual(merged.facets, { wattage: '35W' });
 });
 
-test('case specs merge by normalised label and keep static-only rows', () => {
+test('case specs project normalised labels without static-only rows', () => {
   const merged = mergeCaseProduct(
     staticCase(),
     databaseProduct({
@@ -182,8 +178,8 @@ test('case specs merge by normalised label and keep static-only rows', () => {
   assert.equal(merged.priceDisplay, '₹3,509.00');
   assert.equal(merged.specs.material, 'Database polycarbonate');
   assert.equal(merged.specs.dropProtection, 'MIL-STD');
-  assert.equal(merged.specs.weight, '32g');
-  assert.equal(merged.specs.warranty, '1-Year');
+  assert.equal(merged.specs.weight, '');
+  assert.equal(merged.specs.warranty, '');
 });
 
 test('a database-only product renders without a static record', () => {
@@ -351,12 +347,17 @@ test('search/bag rows carry only public display fields', () => {
     'id',
     'image',
     'inStock',
+    'inventoryMode',
     'keywords',
     'name',
     'priceDisplay',
     'pricePaise',
+    'purchasableVariants',
     'subtitle',
   ]);
+  assert.equal(ref.inventoryMode, 'product');
+  assert.deepEqual(ref.purchasableVariants, []);
+  assert.doesNotMatch(JSON.stringify(ref), /on_hand|reserved|cost_paise|internal_notes/);
   assert.equal(ref.pricePaise, 129900);
   assert.equal(ref.priceDisplay, '₹1,299.00');
   assert.match(ref.keywords.join(' '), /database adapter/);

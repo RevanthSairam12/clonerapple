@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { getSql } from '@/lib/platform/db';
+import { metadataGate, MetadataError, saveProductMetadataUsing, strictMetadataAudit } from './product-metadata';
+import { parseMetadataInput } from '@/lib/catalog/product-metadata-rules';
 
 import {
   validateAttributeValue,
@@ -109,6 +111,7 @@ export async function updateProduct(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const beforeRows = (await tx`
         select name, subtitle, description, badge, material, brand, brand_id,
                condition_id, category_id, seo_title, seo_description, is_active,
@@ -168,6 +171,8 @@ export async function updateProduct(
         where id = ${id}
       `;
 
+      await saveProductMetadataUsing(tx,id,{},staffId,{enforcePublication:patch.is_active===true || patch.category_id!==undefined});
+      await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.product.update',entity:'product',entityId:id,after:{fields:Object.keys(patch)}});
       const afterRows = (await tx`
         select name, subtitle, description, badge, material, brand, brand_id,
                condition_id, category_id, seo_title, seo_description, is_active,
@@ -178,7 +183,8 @@ export async function updateProduct(
 
       return { ok: true as const, data: { before, after: afterRows[0] ?? {} } };
     });
-  } catch {
+  } catch (error) {
+    if(error instanceof MetadataError) return fail('invalid-input',error.message);
     console.warn('[store-admin/catalog] could not update a product');
     return fail('unavailable', 'The catalogue is not available.');
   }
@@ -225,6 +231,7 @@ export async function addProductImage(
     return await sql.begin(async (tx) => {
       const productRows = (await tx`
         select 1 from products where id = ${productId} and deleted_at is null
+        for update
       `) as Row[];
       if (!productRows[0]) return fail('not-found', 'Product not found.');
 
@@ -259,6 +266,13 @@ export async function updateProductImage(
 
   try {
     return await sql.begin(async (tx) => {
+      // Match aggregate product writers: lock the parent before image rows.
+      const productRows = (await tx`
+        select 1 from products where id = ${productId} and deleted_at is null
+        for update
+      `) as Row[];
+      if (!productRows[0]) return fail('not-found', 'Product not found.');
+
       const beforeRows = (await tx`
         select * from product_images
         where id = ${imageId} and product_id = ${productId} and deleted_at is null
@@ -302,6 +316,13 @@ export async function archiveProductImage(
 
   try {
     return await sql.begin(async (tx) => {
+      // Match aggregate product writers: lock the parent before image rows.
+      const productRows = (await tx`
+        select 1 from products where id = ${productId} and deleted_at is null
+        for update
+      `) as Row[];
+      if (!productRows[0]) return fail('not-found', 'Product not found.');
+
       const beforeRows = (await tx`
         select * from product_images
         where id = ${imageId} and product_id = ${productId} and deleted_at is null
@@ -336,6 +357,13 @@ export async function restoreProductImage(
 
   try {
     return await sql.begin(async (tx) => {
+      // Match aggregate product writers: lock the parent before image rows.
+      const productRows = (await tx`
+        select 1 from products where id = ${productId} and deleted_at is null
+        for update
+      `) as Row[];
+      if (!productRows[0]) return fail('not-found', 'Product not found.');
+
       const beforeRows = (await tx`
         select * from product_images
         where id = ${imageId} and product_id = ${productId}
@@ -569,6 +597,7 @@ export async function upsertAttribute(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const beforeRows = (await tx`
         select * from attributes where id = ${attribute.id} for update
       `) as Row[];
@@ -581,6 +610,12 @@ export async function upsertAttribute(
         if (!unitRows[0]) return fail('invalid-input', 'That unit does not exist.');
       }
 
+      // A mapped definition's identity/type must remain stable, including when
+      // it has no saved values yet. Configure a new definition instead.
+      if (before && (text(before.key) !== attribute.key || text(before.data_type) !== attribute.data_type)) {
+        const mappings = await tx`select 1 from product_type_attributes where attribute_id=${attribute.id} limit 1`;
+        if (mappings.length) return fail('conflict', 'This attribute belongs to a product type. Create a new definition rather than changing its key or data type.');
+      }
       // Changing the type would leave existing values in the wrong column.
       if (before && text(before.data_type) !== attribute.data_type) {
         const valueRows = (await tx`
@@ -646,12 +681,15 @@ export async function archiveAttribute(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const beforeRows = (await tx`
         select * from attributes where id = ${attributeId} and deleted_at is null
         for update
       `) as Row[];
       const before = beforeRows[0];
       if (!before) return fail('not-found', 'Attribute not found.');
+      const mappings = await tx`select 1 from product_type_attributes where attribute_id=${attributeId} and is_active limit 1`;
+      if (mappings.length) return fail('conflict', 'Remove this attribute from active product-type mappings before archiving it.');
 
       const valueRows = (await tx`
         select count(*)::int as total from product_attribute_values
@@ -661,7 +699,7 @@ export async function archiveAttribute(
       if (total > 0) {
         return fail(
           'conflict',
-          `${total} product values still use this attribute. Clear them first.`,
+          `${total} retained product values use this attribute. Clearing archives them; it does not delete their definition.`,
         );
       }
 
@@ -695,6 +733,7 @@ export async function addAttributeOption(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const attributeRows = (await tx`
         select data_type from attributes
         where id = ${attributeId} and deleted_at is null
@@ -736,6 +775,7 @@ export async function removeAttributeOption(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const valueRows = (await tx`
         select count(*)::int as total from product_attribute_values
         where attribute_id = ${attributeId} and option_value = ${value}
@@ -775,102 +815,27 @@ export interface AttributeValueChange {
 }
 
 export async function setProductAttributeValue(
-  productId: string,
-  attributeId: string,
-  value: unknown,
+  productId: string, attributeId: string, value: unknown, staffId: string, request?: Request,
 ): Promise<CatalogWrite<AttributeValueChange>> {
-  const sql = getSql();
-  if (!sql) return fail('unavailable', 'The catalogue is not available.');
-
+  const sql=getSql(); if(!sql) return fail('unavailable','The catalogue is not available.');
   try {
-    return await sql.begin(async (tx) => {
-      const productRows = (await tx`
-        select 1 from products where id = ${productId} and deleted_at is null
-      `) as Row[];
-      if (!productRows[0]) return fail('not-found', 'Product not found.');
-
-      const attributeRows = (await tx`
-        select data_type from attributes
-        where id = ${attributeId} and deleted_at is null
-        for update
-      `) as Row[];
-      const attribute = attributeRows[0];
-      if (!attribute) return fail('not-found', 'Attribute not found.');
-
-      const dataType = text(attribute.data_type) as AttributeDataType;
-      const validated = validateAttributeValue(dataType, value);
-      if (!validated.ok) return fail('invalid-input', validated.error);
-
-      if (dataType === 'enum') {
-        const optionRows = (await tx`
-          select 1 from attribute_options
-          where attribute_id = ${attributeId}
-            and value = ${validated.value.option_value}
-        `) as Row[];
-        if (!optionRows[0]) {
-          return fail('invalid-input', 'Choose one of the listed options.');
-        }
-      }
-
-      const beforeRows = (await tx`
-        select * from product_attribute_values
-        where product_id = ${productId} and attribute_id = ${attributeId}
-        for update
-      `) as Row[];
-      const before = beforeRows[0] ?? null;
-
-      const rows = (await tx`
-        insert into product_attribute_values (
-          product_id, attribute_id, value_text, value_number, value_bool, option_value
-        ) values (
-          ${productId}, ${attributeId},
-          ${validated.value.value_text},
-          ${validated.value.value_number},
-          ${validated.value.value_bool},
-          ${validated.value.option_value}
-        )
-        on conflict (product_id, attribute_id) do update set
-          value_text = excluded.value_text,
-          value_number = excluded.value_number,
-          value_bool = excluded.value_bool,
-          option_value = excluded.option_value
-        returning *
-      `) as Row[];
-
-      return {
-        ok: true as const,
-        data: { productId, attributeId, before, after: rows[0] },
-      };
+    const input=parseMetadataInput({attributeValues:{[attributeId]:value}});
+    return await sql.begin(async tx=>{
+      await metadataGate(tx);
+      const [before]=await tx`select * from product_attribute_values where product_id=${productId} and attribute_id=${attributeId}`;
+      await saveProductMetadataUsing(tx,productId,input,staffId,{request});
+      const [after]=await tx`select * from product_attribute_values where product_id=${productId} and attribute_id=${attributeId}`;
+      return {ok:true as const,data:{productId,attributeId,before:before??null,after:after??null}};
     });
-  } catch {
-    console.warn('[store-admin/catalog] could not save a product attribute');
-    return fail('unavailable', 'The catalogue is not available.');
+  } catch(error){
+    if(error instanceof MetadataError) return fail('invalid-input',error.message);
+    return fail('unavailable','The catalogue is not available.');
   }
 }
 
+/** Clear is reversible archival, never deletion. */
 export async function clearProductAttributeValue(
-  productId: string,
-  attributeId: string,
+  productId: string, attributeId: string, staffId: string, request?: Request,
 ): Promise<CatalogWrite<AttributeValueChange>> {
-  const sql = getSql();
-  if (!sql) return fail('unavailable', 'The catalogue is not available.');
-
-  try {
-    return await sql.begin(async (tx) => {
-      const rows = (await tx`
-        delete from product_attribute_values
-        where product_id = ${productId} and attribute_id = ${attributeId}
-        returning *
-      `) as Row[];
-      if (!rows[0]) return fail('not-found', 'That value is not set.');
-
-      return {
-        ok: true as const,
-        data: { productId, attributeId, before: rows[0], after: null },
-      };
-    });
-  } catch {
-    console.warn('[store-admin/catalog] could not clear a product attribute');
-    return fail('unavailable', 'The catalogue is not available.');
-  }
+  return setProductAttributeValue(productId,attributeId,null,staffId,request);
 }

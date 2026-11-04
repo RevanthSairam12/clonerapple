@@ -44,7 +44,7 @@ export default async function StoreAdminStockDetailPage({
           <h1 className="sa-page-title">{detail.name}</h1>
           <p className="sa-page-sub">
             {detail.categoryName || 'No category'} ·{' '}
-            {detail.trackInventory ? 'Tracked' : 'Untracked'}
+            {detail.trackInventory ? 'Stock limited' : 'Not limited'}
           </p>
         </div>
         <Link
@@ -57,20 +57,20 @@ export default async function StoreAdminStockDetailPage({
 
       <div className="sa-stat-grid">
         <div className="sa-stat">
-          <span className="sa-stat-label">On hand</span>
+          <span className="sa-stat-label">In stock</span>
           <strong className="sa-stat-value">{detail.onHand}</strong>
           <span className="sa-stat-note">Physical units</span>
         </div>
         <div className="sa-stat">
-          <span className="sa-stat-label">Reserved</span>
+          <span className="sa-stat-label">Held in checkouts</span>
           <strong className="sa-stat-value">{detail.reserved}</strong>
-          <span className="sa-stat-note">Paid, not yet shipped</span>
+          <span className="sa-stat-note">Units set aside during checkout</span>
         </div>
         <div className="sa-stat">
-          <span className="sa-stat-label">Available</span>
+          <span className="sa-stat-label">Available to buy</span>
           <strong className="sa-stat-value">{detail.available}</strong>
           <span className="sa-stat-note">
-            Threshold {detail.lowStockThreshold}
+            Warn me when below {detail.lowStockThreshold}
           </span>
         </div>
       </div>
@@ -88,7 +88,7 @@ export default async function StoreAdminStockDetailPage({
         <section className="sa-detail-card">
           <h2 className="sa-card-title">How stock moves</h2>
           <p className="sa-card-note">
-            Sales reserve units when PayU confirms payment; returns restore them
+            Checkouts hold units while payment is pending; returns restore them
             on receipt. Manual adjustments are receipts, recounts and damage.
             Nothing here edits history — the log below is append-only.
           </p>

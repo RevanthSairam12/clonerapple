@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { getSql } from '@/lib/platform/db';
+import { metadataGate, MetadataError, saveProductMetadataUsing, strictMetadataAudit } from './product-metadata';
 
 import {
   checkPricePair,
@@ -18,6 +19,7 @@ import {
   type VariantInput,
 } from './catalog-crud-rules';
 import type { CatalogWrite, CatalogWriteFailure } from './catalog-writes';
+import { saveVariantIdentityUsing, VariantIdentityError } from './variant-identity';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: The catalogue must be written on the server only.');
@@ -142,6 +144,10 @@ export async function listConditions(): Promise<CatalogWrite<ConditionsLoad['con
 }
 
 export interface StockOverviewRow {
+  variantId: string|null;
+  variantSku: string|null;
+  variantLabel: string|null;
+  legacyBucket: boolean;
   productId: string;
   name: string;
   categoryName: string;
@@ -158,11 +164,13 @@ export async function listStockOverview(): Promise<CatalogWrite<StockOverviewRow
   if (!sql) return fail('unavailable', 'The catalogue is not available.');
   try {
     const rows = (await sql`
-      select p.id, p.name, c.name as category_name,
+      select p.id, p.name, p.inventory_mode, c.name as category_name,
+             v.id as variant_id,v.sku as variant_sku,v.option_value as variant_label,
              s.id as stock_id, s.on_hand, s.reserved, s.low_stock_threshold, s.track_inventory
       from products p
       left join categories c on c.id = p.category_id
-      left join stock s on s.product_id = p.id and s.variant_id is null
+      cross join lateral (select null::text as id,null::text as sku,null::text as option_value union all select pv.id,pv.sku,pv.option_value from product_variants pv where pv.product_id=p.id and pv.is_purchasable and pv.is_active) v
+      left join stock s on s.product_id = p.id and s.variant_id is not distinct from v.id
       where p.deleted_at is null
       order by p.name asc
       limit 500
@@ -174,6 +182,7 @@ export async function listStockOverview(): Promise<CatalogWrite<StockOverviewRow
         const reserved = number(row.reserved);
         return {
           productId: text(row.id),
+          variantId:nullableText(row.variant_id),variantSku:nullableText(row.variant_sku),variantLabel:nullableText(row.variant_label),legacyBucket:row.variant_id==null&&row.inventory_mode==='variant',
           name: text(row.name),
           categoryName: text(row.category_name),
           onHand,
@@ -516,6 +525,7 @@ export async function createProduct(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const categoryRows = (await tx`
         select 1 from categories where id = ${input.categoryId} and deleted_at is null
       `) as Row[];
@@ -552,6 +562,8 @@ export async function createProduct(
       `) as Row[];
       const product = rows[0];
       if (!product) return fail('unavailable', 'The product was not saved.');
+      await saveProductMetadataUsing(tx,input.id,{productTypeId:input.productTypeId,deviceModelIds:input.deviceModelIds,attributeValues:input.attributeValues},staffId,{enforcePublication:true});
+      await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.product.create',entity:'product',entityId:input.id,after:{draft:!input.isActive}});
 
       await tx`
         insert into price_history (
@@ -593,6 +605,7 @@ export async function createProduct(
       };
     });
   } catch (error) {
+    if (error instanceof MetadataError) return fail('invalid-input',error.message);
     if (isUniqueViolation(error)) {
       return fail('conflict', 'A product with that id or slug already exists.');
     }
@@ -749,8 +762,9 @@ export async function upsertVariant(
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const productRows = (await tx`
-        select price_paise from products where id = ${productId} and deleted_at is null
+        select price_paise,inventory_mode from products where id = ${productId} and deleted_at is null for update
       `) as Row[];
       const product = productRows[0];
       if (!product) return fail('not-found', 'Product not found.');
@@ -764,32 +778,11 @@ export async function upsertVariant(
         : [];
       const before = beforeRows[0] ?? null;
       if (input.id && !before) return fail('not-found', 'Variant not found.');
+      if ((before?.price_paise_override == null ? null : number(before.price_paise_override)) !== input.priceOverridePaise) return fail('invalid-input','Variant price writes remain disabled until the authoritative checkout price gate is approved.');
+      const saved=await saveVariantIdentityUsing(tx,productId,input,staffId);
+      const rows=[saved.after];
 
-      const rows = before
-        ? ((await tx`
-            update product_variants
-            set sku = ${input.sku},
-                option_name = ${input.optionName},
-                option_value = ${input.optionValue},
-                option_hex = ${input.optionHex},
-                price_paise_override = ${input.priceOverridePaise},
-                is_active = ${input.isActive},
-                sort_order = ${input.sortOrder}
-            where id = ${id}
-            returning *
-          `) as Row[])
-        : ((await tx`
-            insert into product_variants (
-              id, product_id, sku, option_name, option_value, option_hex,
-              price_paise_override, is_active, sort_order
-            ) values (
-              ${id}, ${productId}, ${input.sku}, ${input.optionName}, ${input.optionValue},
-              ${input.optionHex}, ${input.priceOverridePaise}, ${input.isActive},
-              ${input.sortOrder}
-            )
-            returning *
-          `) as Row[]);
-
+      await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.variant.save',entity:'product',entityId:productId,before,after:rows[0] ?? {}});
       const basePrice = number(product.price_paise);
       const oldOverride = before?.price_paise_override == null
         ? basePrice
@@ -801,7 +794,7 @@ export async function upsertVariant(
             product_id, variant_id, old_price_paise, new_price_paise, currency, reason,
             source, changed_by
           ) values (
-            ${productId}, ${id}, ${before ? oldOverride : null}, ${newOverride}, 'INR',
+            ${productId}, ${saved.id}, ${before ? oldOverride : null}, ${newOverride}, 'INR',
             'variant_price', 'store_admin', ${staffId}
           )
         `;
@@ -813,6 +806,7 @@ export async function upsertVariant(
     if (isUniqueViolation(error)) {
       return fail('conflict', 'That SKU or option value is already used on this product.');
     }
+    if(error instanceof VariantIdentityError)return fail(error.status===404?'not-found':error.status===400?'invalid-input':'conflict',error.message);
     console.warn('[store-admin/catalog] could not save a variant');
     return fail('unavailable', 'The catalogue is not available.');
   }
@@ -821,11 +815,15 @@ export async function upsertVariant(
 export async function archiveVariant(
   productId: string,
   variantId: string,
+  staffId?: string,
 ): Promise<CatalogWrite<{ before: Row; after: Row }>> {
   const sql = getSql();
   if (!sql) return fail('unavailable', 'The catalogue is not available.');
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
+      const [parent]=await tx`select id from products where id=${productId} and deleted_at is null for update`;
+      if(!parent)return fail('not-found','Product not found.');
       const rows = (await tx`
         select * from product_variants
         where id = ${variantId} and product_id = ${productId}
@@ -833,6 +831,8 @@ export async function archiveVariant(
       `) as Row[];
       const before = rows[0];
       if (!before) return fail('not-found', 'Variant not found.');
+      if (!staffId) throw new MetadataError('A staff identity is required.');
+      await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.variant.archive',entity:'product',entityId:productId,before:{variantId,isActive:before.is_active},after:{variantId,isActive:false}});
       const updated = (await tx`
         update product_variants set is_active = false
         where id = ${variantId}
@@ -869,6 +869,7 @@ export async function adjustStock(input: {
 
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const productRows = (await tx`
         select id, name from products where id = ${input.productId} and deleted_at is null
       `) as Row[];
@@ -915,10 +916,11 @@ export async function adjustStock(input: {
         returning id
       `) as Row[];
 
+      await strictMetadataAudit(tx,{actorId:input.staffId,action:'catalog.stock.adjust',entity:'product',entityId:input.productId,before,after:{onHand:nextOnHand,reserved:before.reserved,trackInventory:true},reason:input.adjustment.reason});
       const inStock = nextOnHand - before.reserved > 0;
       await tx`
         update products set in_stock = ${inStock}, updated_at = now(), updated_by = ${input.staffId}
-        where id = ${input.productId}
+        where id = ${input.productId} and inventory_mode='product'
       `;
 
       return {
@@ -959,6 +961,7 @@ export async function updateStockSettingsUsing(
 ): Promise<CatalogWrite<StockSnapshot>> {
   try {
     return await sql.begin(async (tx) => {
+      await metadataGate(tx);
       const productRows = (await tx`
         select id, name from products where id = ${input.productId} and deleted_at is null
       `) as Row[];
@@ -1022,12 +1025,13 @@ export async function updateStockSettingsUsing(
         }
       }
 
+      await strictMetadataAudit(tx,{actorId:input.staffId,action:'catalog.stock.settings',entity:'product',entityId:input.productId,before,after:{onHand:nextOnHand,reserved:before.reserved,trackInventory:input.settings.trackInventory,lowStockThreshold:input.settings.lowStockThreshold}});
       const inStock = input.settings.trackInventory
         ? nextOnHand - before.reserved > 0
         : true;
       await tx`
         update products set in_stock = ${inStock}, updated_at = now(), updated_by = ${input.staffId}
-        where id = ${input.productId}
+        where id = ${input.productId} and inventory_mode='product'
       `;
 
       return {

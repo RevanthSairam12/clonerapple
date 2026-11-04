@@ -4,6 +4,8 @@
  *   node scripts/check-notifications.mjs                   # inspect, fail if not ready
  *   node scripts/check-notifications.mjs --informational   # inspect, exit 0 despite findings
  *   node scripts/check-notifications.mjs --send-to me@x.com  # also send one test email
+ *   node scripts/check-notifications.mjs --offline --preview-dir tmp/fresh-run
+ *     # new directory only; preserves all existing previews
  *
  * What it does:
  *   1. loads .env.local and reports which credentials EXIST (names only);
@@ -25,6 +27,8 @@ import postgres from 'postgres';
 
 const root = process.cwd();
 const args = process.argv.slice(2);
+const offline = args.includes('--offline');
+if (offline && args.includes('--send-to')) throw new Error('--offline cannot send messages');
 const sendToIndex = args.indexOf('--send-to');
 const sendTo = sendToIndex >= 0 ? args[sendToIndex + 1] : null;
 if (sendToIndex >= 0 && (!sendTo || sendTo.startsWith('--'))) {
@@ -35,7 +39,7 @@ if (sendToIndex >= 0 && (!sendTo || sendTo.startsWith('--'))) {
 /* ------------------------------------------------------------ env */
 
 try {
-  for (const line of readFileSync(path.join(root, '.env.local'), 'utf8').split(/\r?\n/)) {
+  if (!offline) for (const line of readFileSync(path.join(root, '.env.local'), 'utf8').split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
     if (match && !(match[1] in process.env)) {
       process.env[match[1]] = match[2].replace(/^["']|["']$/g, '');
@@ -84,7 +88,7 @@ let settings = { ...rules.DEFAULT_SETTINGS };
 let matrix = null;
 let dbOk = false;
 let storedEmails = [];
-if (present('DATABASE_URL')) {
+if (!offline && present('DATABASE_URL')) {
   const sql = postgres(process.env.DATABASE_URL, {
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     max: 1,
@@ -131,9 +135,25 @@ const SAMPLE = {
 };
 const baseUrl = (process.env.APP_BASE_URL || 'https://example.test').replace(/\/+$/, '');
 
-const previewDir = path.join(root, 'tmp', 'notification-previews');
-rmSync(previewDir, { recursive: true, force: true });
-mkdirSync(previewDir, { recursive: true });
+const previewIndex = args.indexOf('--preview-dir');
+const requestedPreview = previewIndex >= 0 ? args[previewIndex + 1] : null;
+if (previewIndex >= 0 && (!requestedPreview || requestedPreview.startsWith('--'))) {
+  throw new Error('--preview-dir needs a new output directory');
+}
+const previewDir = requestedPreview
+  ? path.resolve(root, requestedPreview)
+  : path.join(root, 'tmp', 'notification-previews');
+if (requestedPreview) {
+  const relative = path.relative(path.join(root, 'tmp'), previewDir);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('--preview-dir must name a new directory under tmp');
+  }
+  // Non-recursive creation refuses an existing directory: never replace previews.
+  mkdirSync(previewDir);
+} else {
+  rmSync(previewDir, { recursive: true, force: true });
+  mkdirSync(previewDir, { recursive: true });
+}
 
 const TOKEN = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 const known = new Set(templates.TEMPLATE_VARIABLES);
@@ -220,7 +240,9 @@ record('email', 'ready to send real email', mailProblem === null, mailProblem ??
 record('sms', 'ready to send real SMS', smsProblem === null, smsProblem ?? '');
 
 const setup = diagnostics.smtpSetupProblem(settings);
-if (setup) {
+if (offline) {
+  record('email', 'SMTP connection check', false, 'skipped: offline mode; no SMTP connection attempted');
+} else if (setup) {
   record('email', 'SMTP connection check', false, `skipped: ${setup}`);
 } else {
   const outcome = await diagnostics.checkMailConnection(settings);

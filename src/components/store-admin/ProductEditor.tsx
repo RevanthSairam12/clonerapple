@@ -5,13 +5,11 @@ import { useState } from 'react';
 
 import type {
   CatalogBrand,
-  CatalogCategoryOption,
   CatalogProductDetail,
 } from '@/lib/store-admin/catalog';
 
 interface Props {
   product: CatalogProductDetail;
-  categories: CatalogCategoryOption[];
   brands: CatalogBrand[];
   conditions: Array<{ id: string; label: string }>;
   canEdit: boolean;
@@ -22,12 +20,10 @@ interface FormState {
   subtitle: string;
   badge: string;
   material: string;
-  category_id: string;
   brand_id: string;
   condition_id: string;
   sort_order: string;
   cost: string;
-  is_active: boolean;
   in_stock: boolean;
   description: string;
   seo_title: string;
@@ -44,12 +40,10 @@ function toForm(product: CatalogProductDetail): FormState {
     subtitle: product.subtitle,
     badge: product.badge ?? '',
     material: product.material,
-    category_id: product.categoryId,
     brand_id: product.brandId ?? '',
     condition_id: product.conditionId ?? '',
     sort_order: String(product.sortOrder ?? ''),
     cost: costInput(product.costPaise),
-    is_active: product.isActive,
     in_stock: product.inStock,
     description: product.description,
     seo_title: product.seoTitle,
@@ -64,12 +58,29 @@ function toForm(product: CatalogProductDetail): FormState {
  * change goes through the price endpoint and appends to `price_history`. The
  * API rejects price keys on this endpoint outright.
  */
-export function ProductEditor({ product, categories, brands, conditions, canEdit }: Props) {
+export function ProductEditor({ product, brands, conditions, canEdit }: Props) {
   const router = useRouter();
   const [form, setForm] = useState<FormState>(() => toForm(product));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [duplicateName, setDuplicateName] = useState('');
+  const [duplicateSlug, setDuplicateSlug] = useState('');
+
+  async function duplicate() {
+    setSaving(true); setError(null); setSaved(null);
+    try {
+      const response = await fetch(`/api/store-admin/catalog/products/${encodeURIComponent(product.id)}/duplicate`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: duplicateName.trim(), slug: duplicateSlug.trim() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || typeof result.id !== 'string') throw new Error(result.error || 'Could not duplicate this product.');
+      router.push(`/store-admin/products/${encodeURIComponent(result.id)}`);
+      router.refresh();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not duplicate this product.'); }
+    finally { setSaving(false); }
+  }
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -94,7 +105,6 @@ export function ProductEditor({ product, categories, brands, conditions, canEdit
     if (form.seo_description.trim() !== initial.seo_description) {
       patch.seo_description = form.seo_description.trim();
     }
-    if (form.category_id !== initial.category_id) patch.category_id = form.category_id;
     if (form.brand_id !== initial.brand_id) {
       patch.brand_id = form.brand_id || null;
     }
@@ -108,7 +118,6 @@ export function ProductEditor({ product, categories, brands, conditions, canEdit
       const raw = form.cost.trim();
       patch.cost_paise = raw === '' ? null : Math.round(Number(raw) * 100);
     }
-    if (form.is_active !== initial.is_active) patch.is_active = form.is_active;
     if (form.in_stock !== initial.in_stock) patch.in_stock = form.in_stock;
 
     return patch;
@@ -192,22 +201,7 @@ export function ProductEditor({ product, categories, brands, conditions, canEdit
           />
         </label>
 
-        <label className="sa-field">
-          <span className="sa-label">Category</span>
-          <select
-            className="sa-input"
-            value={form.category_id}
-            disabled={!canEdit || saving}
-            onChange={(event) => update('category_id', event.target.value)}
-          >
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-                {category.isActive ? '' : ' (inactive)'}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="sa-hint">Category and publication are edited together with product metadata below.</p>
 
         <label className="sa-field">
           <span className="sa-label">Brand</span>
@@ -304,15 +298,6 @@ export function ProductEditor({ product, categories, brands, conditions, canEdit
           <label className="sa-check">
             <input
               type="checkbox"
-              checked={form.is_active}
-              disabled={!canEdit || saving}
-              onChange={(event) => update('is_active', event.target.checked)}
-            />
-            Listed in the store
-          </label>
-          <label className="sa-check">
-            <input
-              type="checkbox"
               checked={form.in_stock}
               disabled={!canEdit || saving}
               onChange={(event) => update('in_stock', event.target.checked)}
@@ -382,6 +367,15 @@ export function ProductEditor({ product, categories, brands, conditions, canEdit
       ) : (
         <p className="sa-lock-note">Viewers cannot change product details.</p>
       )}
+      {canEdit ? <details>
+        <summary>Duplicate as a draft</summary>
+        <p className="sa-hint">Duplicates the saved product, not unsaved edits. Supply a new name and unique slug. The copy starts unpublished and compatibility must be reviewed before publishing.</p>
+        <div className="sa-control-grid">
+          <label className="sa-field"><span className="sa-label">New product name</span><input className="sa-input" value={duplicateName} maxLength={140} disabled={saving} onChange={event => setDuplicateName(event.target.value)} /></label>
+          <label className="sa-field"><span className="sa-label">Fresh unique slug</span><input className="sa-input" value={duplicateSlug} maxLength={80} disabled={saving} onChange={event => setDuplicateSlug(event.target.value)} /></label>
+        </div>
+        <button className="sa-btn sa-btn-quiet" type="button" disabled={saving || !duplicateName.trim() || !duplicateSlug.trim() || duplicateSlug.trim() === product.slug} onClick={duplicate}>{saving ? 'Working…' : 'Create draft duplicate'}</button>
+      </details> : null}
     </section>
   );
 }

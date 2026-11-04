@@ -3,10 +3,11 @@ import { notFound } from 'next/navigation';
 
 import { formatPaise } from '@/lib/store-admin/amount';
 import { getStoreSession } from '@/lib/store-admin/auth';
-import { getReturnDetail } from '@/lib/store-admin/returns';
+import { getReturnDetail, orderRefundPosition } from '@/lib/store-admin/returns';
+import { getRefundRequests } from '@/lib/store-admin/refund-lifecycle';
 import { isReturnOpen, type ConditionGrade, type ReturnStatus } from '@/lib/store-admin/return-rules';
 import { ReturnActions } from '@/components/store-admin/ReturnActions';
-import { RefundForm } from '@/components/store-admin/RefundForm';
+import { RefundForm, RefundRequestActions } from '@/components/store-admin/RefundForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,8 +73,14 @@ export default async function StoreAdminReturnDetailPage({ params }: Props) {
 
   const data = result.data;
   const canDecide = session?.role === 'store_admin' || session?.role === 'store_owner';
+  const [requests, position] = await Promise.all([getRefundRequests(data.txnid), orderRefundPosition(data.txnid)]);
+  const returnRequests = requests.ok ? requests.data.filter(request => request.returnId === data.id) : [];
+  const pendingPaise = returnRequests.filter(request => request.status === 'INITIATED')
+    .reduce((sum, request) => sum + request.amountPaise, 0);
   const remainingPaise = Math.max(0, data.expectedPaise - data.refundedPaise);
-  const refundable = data.status === 'RECEIVED' && remainingPaise > 0;
+  const availablePaise = position.ok && requests.ok
+    ? Math.min(position.remainingPaise, Math.max(0, remainingPaise - pendingPaise)) : 0;
+  const refundable = data.status === 'RECEIVED' && availablePaise > 0;
 
   return (
     <div>
@@ -228,13 +235,17 @@ export default async function StoreAdminReturnDetailPage({ params }: Props) {
         )}
       </section>
 
+      {requests.ok ? <RefundRequestActions txnid={data.txnid} requests={returnRequests} canManage={canDecide} />
+        : <p className="sa-notice">Refund lifecycle unavailable. Apply migration 0050 before managing refunds.</p>}
+      {pendingPaise > 0 ? <p className="sa-note">Refund initiated: {formatPaise(pendingPaise)}. This is reserved, not completed.</p> : null}
+
       {refundable && canDecide ? (
         <RefundForm
           endpoint={`/api/store-admin/returns/${encodeURIComponent(data.id)}/refund`}
-          remainingPaise={remainingPaise}
-          suggestedPaise={remainingPaise}
-          title="Refund this return"
-          hint="Pay the customer outside this app, then record the amount here. The return closes once its full value is refunded."
+          remainingPaise={availablePaise}
+          suggestedPaise={availablePaise}
+          title="Initiate refund for this return"
+          hint="Initiation reserves capacity only. After paying externally, mark complete with a reference. The return closes only when completed refunds cover its goods value."
         />
       ) : null}
 

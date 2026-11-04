@@ -27,10 +27,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const product = detail.product;
   return {
     title: `${product.name} | Gadzio Store`,
-    description: product.description,
+    description: product.shortDescription ?? product.description,
     openGraph: {
       title: `${product.name} | Gadzio Store`,
-      description: product.description,
+      description: product.shortDescription ?? product.description,
       images: [product.image],
       url: `https://gadzio.in/shop/product/${product.id}`,
       siteName: 'Gadzio',

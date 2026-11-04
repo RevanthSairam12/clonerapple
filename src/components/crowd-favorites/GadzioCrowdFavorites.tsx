@@ -2,18 +2,10 @@
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { ProductCardLink } from '@/components/ProductCardLink';
+import { CROWD_FAVORITES_ITEMS, CROWD_FAVORITES_COPY, type CrowdFavoriteItem } from '@/lib/website/section-defaults';
 
-export interface CrowdFavoriteItem {
-  title: string;
-  price: string;
-  image: string;
-  href: string;
-  badge?: string;
-  badgeColor?: 'lavender' | 'yellow' | 'green' | 'default';
-  secondaryBadge?: string;
-  secondaryBadgeColor?: 'pink' | 'yellow' | 'green' | 'default';
-  colorDots?: string;
-}
+export type { CrowdFavoriteItem };
 
 export interface GadzioCrowdFavoritesProps {
   heading?: string;
@@ -24,74 +16,7 @@ export interface GadzioCrowdFavoritesProps {
   enabled?: boolean;
 }
 
-export const DEFAULT_CROWD_FAVORITES: CrowdFavoriteItem[] = [
-  {
-    title: 'Gadzio CrystalArmor Clear Case with MagSafe',
-    price: '₹3,499',
-    image: '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
-    href: '/shop/product/iphone18pro-max-clear-magsafe',
-    badge: 'LIMITED RELEASE',
-    badgeColor: 'lavender',
-    secondaryBadge: '⚡ NEW',
-    secondaryBadgeColor: 'yellow',
-    colorDots: '#e8e8ed, #1d1d1f',
-  },
-  {
-    title: 'Gadzio MagPulse Liquid Silicone Case',
-    price: '₹3,499',
-    image: '/sites/cases-protection/images/iphone17-silicone-black.jpg',
-    href: '/shop/product/iphone17-silicone-black',
-    badge: '⚡ NEW',
-    badgeColor: 'yellow',
-    secondaryBadge: 'TOP ITEM',
-    secondaryBadgeColor: 'pink',
-    colorDots: '#1d1d1f, #8e8e93',
-  },
-  {
-    title: 'Gadzio 20W USB-C GaN Fast Power Adapter',
-    price: '₹1,499',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
-    href: '/in/shop/iphone/accessories/power-adapter-cable',
-    badge: 'TRENDING',
-    badgeColor: 'green',
-    secondaryBadge: '',
-    secondaryBadgeColor: 'default',
-    colorDots: '#f5f5f7, #1d1d1f',
-  },
-  {
-    title: 'Gadzio Pulse USB-C Studio Hi-Res Earphones',
-    price: '₹1,499',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
-    href: '/in/shop/iphone/accessories/wired-earphones',
-    badge: 'TRENDING',
-    badgeColor: 'green',
-    secondaryBadge: '',
-    secondaryBadgeColor: 'default',
-    colorDots: '#ffffff, #1d1d1f',
-  },
-  {
-    title: 'Gadzio Ultra-Durable Braided USB-C Cable',
-    price: '₹999',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg',
-    href: '/in/shop/iphone/accessories/cable-plug-case',
-    badge: 'BESTSELLER',
-    badgeColor: 'yellow',
-    secondaryBadge: '',
-    secondaryBadgeColor: 'default',
-    colorDots: '#1d1d1f',
-  },
-  {
-    title: 'Gadzio Rugged Armor Case for AirPods Pro',
-    price: '₹1,299',
-    image: '/sites/cases-protection/images/iphone17pro-max-silicone.jpg',
-    href: '/in/shop/iphone/accessories/airpods-case',
-    badge: 'NEW',
-    badgeColor: 'yellow',
-    secondaryBadge: '',
-    secondaryBadgeColor: 'default',
-    colorDots: '#1d1d1f, #4f6f8f',
-  },
-];
+export const DEFAULT_CROWD_FAVORITES = CROWD_FAVORITES_ITEMS;
 
 function renderBadgePill(text?: string, color?: string) {
   if (!text) return null;
@@ -117,10 +42,10 @@ function renderBadgePill(text?: string, color?: string) {
 }
 
 export function GadzioCrowdFavorites({
-  heading = 'The Crowd Favorites',
-  subtitle = 'See what everyone is adding to their cart right now.',
-  rightLinkLabel = 'SHOP BEST SELLERS',
-  rightLinkHref = '/in/shop/iphone/accessories/cases-protection',
+  heading = CROWD_FAVORITES_COPY.heading,
+  subtitle = CROWD_FAVORITES_COPY.subtitle,
+  rightLinkLabel = CROWD_FAVORITES_COPY.rightLinkLabel,
+  rightLinkHref = CROWD_FAVORITES_COPY.rightLinkHref,
   items,
   enabled = true,
 }: GadzioCrowdFavoritesProps) {
@@ -271,9 +196,10 @@ export function GadzioCrowdFavorites({
               : [];
 
             return (
-              <Link
+              <ProductCardLink
                 key={idx}
-                href={item.href || '#'}
+                href={item.href}
+                  unavailable={item.unavailable}
                 className="group flex-shrink-0 w-[220px] sm:w-[260px] md:w-[280px] flex flex-col cursor-pointer"
               >
                 {/* Product Card Image Box */}
@@ -288,7 +214,7 @@ export function GadzioCrowdFavorites({
 
                   {/* Product Artwork */}
                   <img
-                    src={item.image}
+                    src={item.image || '/gadzio_logo.png'}
                     alt={item.title}
                     className="max-h-[85%] max-w-[85%] object-contain drop-shadow transition-transform duration-300 ease-out group-hover:scale-105"
                     loading="lazy"
@@ -315,7 +241,7 @@ export function GadzioCrowdFavorites({
 
                   {/* Price */}
                   <div className="text-xs sm:text-sm font-extrabold text-neutral-900 mt-1">
-                    {item.price}
+                    {item.priceDisplay ?? item.price}
                   </div>
 
                   {/* Optional Color Dots */}
@@ -333,7 +259,7 @@ export function GadzioCrowdFavorites({
                     </div>
                   ) : null}
                 </div>
-              </Link>
+              </ProductCardLink>
             );
           })}
         </div>

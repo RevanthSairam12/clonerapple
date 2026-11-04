@@ -6,6 +6,10 @@ import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { archiveThemeValue, listThemeOverrides, saveThemeValue } from '@/lib/website/content-store';
+import { THEME_FIELDS } from '@/lib/website/collections';
+
+// Readers retain historical values; only fields still exposed by Website may mutate.
+const EDITABLE_THEME_KEYS = new Set(THEME_FIELDS.map(field => field.path));
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +58,7 @@ export async function PUT(request: Request) {
   const changed: string[] = [];
   const rejected: string[] = [];
   for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
-    if (!THEME_SETTING_KEYS.has(key) || typeof value !== 'string') {
+    if (!THEME_SETTING_KEYS.has(key) || !EDITABLE_THEME_KEYS.has(key) || typeof value !== 'string') {
       rejected.push(key);
       continue;
     }
@@ -111,7 +115,7 @@ export async function DELETE(request: Request) {
   if (!guard.ok) return guard.response;
 
   const key = new URL(request.url).searchParams.get('key');
-  if (!key || !THEME_SETTING_KEYS.has(key)) {
+  if (!key || !THEME_SETTING_KEYS.has(key) || !EDITABLE_THEME_KEYS.has(key)) {
     return noStore({ error: 'Unknown setting key.' }, 400);
   }
 

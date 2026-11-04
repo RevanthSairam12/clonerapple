@@ -15,11 +15,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import postgres from 'postgres';
+import { createFixtureSchema, dropFixtureSchema } from './helpers/isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 
-if (!process.env.DATABASE_URL) {
+if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   try {
     const env = await readFile(path.join(root, '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -34,23 +35,25 @@ if (!process.env.DATABASE_URL) {
 function connectionDetails() {
   const url = new URL(process.env.DATABASE_URL);
   return {
-    isPooler: url.hostname.includes('pooler') && url.port === '6543',
     transactionPooler: url.port === '6543',
   };
 }
 
-const skip = !process.env.DATABASE_URL
+const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
+  ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
+  : !process.env.DATABASE_URL
   ? 'DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client() {
-  const { isPooler } = connectionDetails();
+  if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
-    prepare: !isPooler,
+    prepare: false,
+    connection: { search_path: 'pg_catalog' },
     onnotice: () => {},
   });
 }
@@ -213,7 +216,9 @@ test('the click-time endpoint is same-origin, rate-limited and never cached', as
   assert.match(route, /checkRateLimit\(`catalog-availability:/);
   assert.match(route, /limit: 60/);
   assert.match(route, /'Cache-Control': 'no-store'/);
-  assert.match(route, /readAvailabilityUsing\(sql, ids\)/);
+  assert.match(route, /readAvailabilityUsing\(sql, ids, lines\)/);
+  assert.match(route, /Number\.isSafeInteger\(line.quantity\)/);
+  assert.match(route, /line.variantId/);
   // The raw read carries counts; the endpoint may only publish the projection.
   assert.match(route, /toPublicAvailability\(availability\)/);
   assert.doesNotMatch(route, /NextResponse\.json\(availability,/);
@@ -242,7 +247,14 @@ test('detail pages render the shared rule and re-check on click', async () => {
   assert.match(productPage, /inStock=\{detail\.stock\.inStock\}/);
 
   const hook = await source('src/lib/storefront/use-availability.ts');
-  assert.match(hook, /\/api\/catalog\/availability\?ids=/);
+  assert.match(hook, /\/api\/catalog\/availability\?lines=/);
+  assert.match(hook, /variantId, quantity/);
+  assert.match(hook, /row\?\.quantityAvailable === true/);
+  for (const file of pages) {
+    const text = await source(file);
+    assert.match(text, /handleBuyNow/);
+    assert.match(text, /valid !== true/);
+  }
   assert.match(hook, /cache: 'no-store'/);
   assert.match(hook, /return null/, 'a failed check keeps the last known state');
 });
@@ -259,13 +271,13 @@ test('bag, checkout and listings all use the shared stock rule', async () => {
   assert.match(bagPage, /saleLive=\{saleLive\}/);
 
   const checkout = await source('src/components/checkout/CheckoutForm.tsx');
-  assert.match(checkout, /stockBlocked\(inStock, saleLive\)/);
-  assert.match(checkout, /stockById/);
-  assert.match(checkout, /expectedUnitPaise: Math\.round\(i\.price \* 100\)/);
+  assert.match(checkout, /priceCartLines\(sourceItems, products, saleLive\)/);
+  assert.match(checkout, /item\.available/);
+  assert.match(checkout, /expectedUnitPaise: i\.unitPaise/);
   assert.match(checkout, /data\.code === 'price_changed'/);
   assert.match(checkout, /syncPrices\(updates\)/);
-  assert.match(checkout, /Prices have changed, please review your cart\./);
-  assert.match(checkout, /disabled=\{isSubmitting \|\| hasUnavailable\}/);
+  assert.match(checkout, /disabled=\{isSubmitting \|\| Boolean\(activeReservation\) \|\| hasUnavailable \|\| paymentUnavailable \|\| coupon\.busy\}/);
+  assert.match(checkout, /aria-disabled=\{isSubmitting \|\| Boolean\(activeReservation\) \|\| hasUnavailable \|\| paymentUnavailable \|\| coupon\.busy\}/);
 
   const checkoutPage = await source('src/app/checkout/page.tsx');
   assert.match(checkoutPage, /stockById\[product\.id\.trim\(\)\.toLowerCase\(\)\] = product\.inStock/);
@@ -286,14 +298,19 @@ test('bag, checkout and listings all use the shared stock rule', async () => {
 
 test('initiate rejects a price boundary crossing and names an out-of-stock item', async () => {
   const route = await source('src/app/api/payu/initiate/route.ts');
-  assert.match(route, /cart\.priceChanges\.length > 0/);
+  // The initiate route delegates authoritative price checks to createOrder,
+  // which rejects unit-price changes through TotalChangedError.
+  assert.match(route, /createOrder\(/);
+  assert.match(route, /error instanceof TotalChangedError/);
   assert.match(route, /code: 'price_changed'/);
-  assert.match(route, /Prices have changed, please review your cart\./);
+  const totalChanged = await source('src/lib/coupons/errors.ts');
+  assert.match(totalChanged, /Prices have changed, please review your cart\./);
   assert.match(route, /code: 'out_of_stock'/);
 
   const stock = await source('src/lib/payu/stock.ts');
-  assert.match(stock, /Only \$\{available\} left of \$\{name\}/);
-  assert.match(stock, /Out of stock: \$\{name\}/);
+  assert.match(stock, /throw new InsufficientStockError\(`Out of stock:/);
+  assert.match(stock, /claim\.productName/, 'guarded stock refusal still identifies the selected product');
+  assert.match(stock, /variant_id is not distinct from \$\{claim\.variantId \|\| null\}/, 'the final guard checks the exact selected stock identity');
 
   const context = await source('src/lib/cart/CartContext.tsx');
   assert.match(context, /syncPrices: \(updates: CartPriceUpdate\[\]\) => void/);
@@ -322,7 +339,10 @@ test('sale state is read once per request and falls back to off', async () => {
 
 /* ---------------------------------------------------- database behaviour */
 
-const TABLES = ['categories', 'products', 'stock', 'sale_settings'];
+const TABLES = [
+  'categories', 'products', 'stock', 'sale_settings', 'product_variants',
+  'product_types', 'product_device_models', 'device_models', 'device_brands',
+];
 
 test('click-time availability reads stock and the sale switch on one clock', { skip }, async () => {
   const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
@@ -330,11 +350,7 @@ test('click-time availability reads stock and the sale switch on one clock', { s
   const sql = client();
 
   try {
-    await sql.unsafe(`create schema "${schema}"`);
-    for (const table of TABLES) {
-      await sql.unsafe(`create table "${schema}".${table} (like public.${table} including all)`);
-    }
-    await sql.unsafe(`set search_path to "${schema}"`);
+    await createFixtureSchema(sql, schema, TABLES);
 
     await sql`insert into sale_settings (id) values ('default')`;
     await sql`
@@ -402,11 +418,9 @@ test('click-time availability reads stock and the sale switch on one clock', { s
     assert.equal(ended.saleLive, false);
   } finally {
     try {
-      await sql.unsafe('set search_path to public');
-      await sql.unsafe(`drop schema if exists "${schema}" cascade`);
-    } catch (error) {
-      console.warn('[stock-behaviour] cleanup did not finish:', error?.message ?? error);
+      await dropFixtureSchema(sql, schema);
+    } finally {
+      await sql.end({ timeout: 5 });
     }
-    await sql.end({ timeout: 5 });
   }
 });

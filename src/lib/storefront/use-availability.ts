@@ -1,82 +1,74 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-import { stockBlocked } from './availability-rules';
+import { availabilityKey, stockBlocked, type AvailabilityLine, type PublicAvailabilityRead } from './availability-rules';
 
 export interface AvailabilityState {
   saleLive: boolean;
   inStock: boolean;
-  /** True once the click-time endpoint has answered at least once. */
+  quantityAvailable: boolean;
   checked: boolean;
 }
-
-export interface UseAvailability {
-  saleLive: boolean;
-  inStock: boolean;
-  checked: boolean;
-  /** The single rule every surface uses to disable a purchase. */
+export interface UseAvailability extends AvailabilityState {
   blocked: boolean;
-  /** Re-read the endpoint; returns the fresh state, or null when it failed. */
+  variants: Record<string, boolean>;
   refresh: () => Promise<AvailabilityState | null>;
 }
 
-/**
- * Click-time availability for one product.
- *
- * The server-rendered props are the initial truth; the endpoint refreshes them
- * on mount and again on press, so a sale that went live after the page was
- * rendered removes the block, and a unit taken by someone else restores it.
- * A failed check keeps the last known state rather than inventing stock.
- */
+/** Stock validation, not presentation: sale mode never bypasses this check. */
+export async function verifyAvailabilityLines(lines: AvailabilityLine[]): Promise<boolean | null> {
+  if (!lines.length || lines.length > 50) return false;
+  try {
+    const response = await fetch(`/api/catalog/availability?lines=${encodeURIComponent(JSON.stringify(lines))}`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    const body = await response.json() as PublicAvailabilityRead;
+    return lines.every((line) => {
+      const row = (line.variantId ? body.variants : body.products)?.find((entry) =>
+        availabilityKey(entry.id, entry.variantId) === availabilityKey(line.productId, line.variantId));
+      return row?.quantityAvailable === true;
+    });
+  } catch { return null; }
+}
+
 export function useAvailability(
   productId: string,
   initial: { saleLive: boolean; inStock: boolean },
+  selection?: { variantId?: string; quantity?: number; required?: boolean },
 ): UseAvailability {
-  const [state, setState] = useState<AvailabilityState>({
-    saleLive: initial.saleLive,
-    inStock: initial.inStock,
-    checked: false,
+  const key = availabilityKey(productId, selection?.variantId);
+  const currentKey = useRef(key);
+  currentKey.current = key;
+  const [stored, setStored] = useState<{ key: string; state: AvailabilityState; variants: Record<string, boolean> }>({
+    key, state: { saleLive: initial.saleLive, inStock: initial.inStock, quantityAvailable: initial.inStock, checked: false }, variants: {},
   });
+  const state = stored.key === key ? stored.state
+    : { saleLive: initial.saleLive, inStock: initial.inStock, quantityAvailable: initial.inStock, checked: false };
   const mounted = useRef(true);
-
+  const variantId = selection?.variantId;
+  const quantity = selection?.quantity ?? 1;
+  const required = selection?.required ?? false;
   const refresh = useCallback(async (): Promise<AvailabilityState | null> => {
     if (!productId) return null;
     try {
-      const response = await fetch(
-        `/api/catalog/availability?ids=${encodeURIComponent(productId)}`,
-        { cache: 'no-store' },
-      );
+      const lines = [{ productId, variantId, quantity }];
+      const response = await fetch(`/api/catalog/availability?lines=${encodeURIComponent(JSON.stringify(lines))}`, { cache: 'no-store' });
       if (!response.ok) return null;
-      const body = await response.json().catch(() => null);
-      const row = Array.isArray(body?.products)
-        ? body.products.find((entry: { id?: unknown }) => String(entry?.id) === productId)
-        : null;
+      const body = await response.json() as PublicAvailabilityRead;
+      const row = (variantId ? body.variants : body.products)?.find((entry) =>
+        availabilityKey(entry.id, entry.variantId) === key);
       if (!row || typeof row.inStock !== 'boolean') return null;
-
-      const next: AvailabilityState = {
-        saleLive: Boolean(body.saleLive),
-        inStock: row.inStock,
-        checked: true,
-      };
-      if (mounted.current) setState(next);
+      const next = { saleLive: Boolean(body.saleLive), inStock: row.inStock,
+        quantityAvailable: row.quantityAvailable === true, checked: true };
+      if (mounted.current && currentKey.current === key) setStored({ key, state: next,
+        variants: Object.fromEntries((body.variants ?? []).filter((entry) => entry.id === productId && entry.variantId).map((entry) => [entry.variantId!, entry.inStock])) });
       return next;
-    } catch {
-      return null;
-    }
-  }, [productId]);
-
+    } catch { return null; }
+  }, [productId, variantId, quantity, key]);
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    return () => {
-      mounted.current = false;
-    };
+    return () => { mounted.current = false; };
   }, [refresh]);
-
-  return {
-    ...state,
-    blocked: stockBlocked(state.inStock, state.saleLive),
-    refresh,
-  };
+  return { ...state, variants: stored.variants,
+    blocked: (required && !variantId) ? false : stockBlocked(state.inStock, state.saleLive), refresh };
 }

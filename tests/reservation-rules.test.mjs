@@ -117,6 +117,12 @@ test('definitive failures fail; cancellation and pending are kept distinct', () 
   );
 });
 
+test('explicit cancellation follows capture precedence but precedes generic failure', () => {
+  assert.equal(classifyVerification({ verified: false, status: 'failure', unmappedstatus: 'userCancelled' }), 'cancelled');
+  assert.equal(decideCallbackOutcome({ status: 'failure', unmappedstatus: 'userCancelled', verification: { verified: false, status: 'failure' } }).target, 'CANCELLED');
+  assert.equal(decideCallbackOutcome({ status: 'failure', unmappedstatus: 'userCancelled', verification: { verified: true, status: 'success' } }).target, 'PAID');
+});
+
 test('reconcile retries back off to a bounded delay and reset on a real answer', () => {
   assert.equal(nextReconcileDelaySeconds(1), 60);
   assert.equal(nextReconcileDelaySeconds(2), 120);

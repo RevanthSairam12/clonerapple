@@ -1,7 +1,12 @@
 import type postgres from 'postgres';
 
 import { getSql } from '../platform/db';
+import { ensureInvoiceIssuedInTx } from '@/lib/orders/invoice';
 import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
+
+import { FULFILMENT_TRANSITIONS, mapSaleState, type FulfilmentStatus } from './order-rules';
+export { mapSaleState } from './order-rules';
+export { FULFILMENT_TRANSITIONS, type FulfilmentStatus } from './order-rules';
 
 import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
@@ -31,14 +36,6 @@ export type SaleState =
   | 'ACCEPTED'
   | 'PENDING';
 
-export type FulfilmentStatus =
-  | 'PENDING'
-  | 'ACCEPTED'
-  | 'PROCESSING'
-  | 'ON_THE_WAY'
-  | 'DELIVERED'
-  | 'CANCELED';
-
 export const SALE_STATES: readonly SaleState[] = [
   'REFUNDED',
   'PAYMENT_FAILED',
@@ -63,17 +60,6 @@ export const ORDER_SORTS: readonly OrderSort[] = [
 export function isOrderSort(value: unknown): value is OrderSort {
   return typeof value === 'string' && (ORDER_SORTS as readonly string[]).includes(value);
 }
-
-export const FULFILMENT_TRANSITIONS: Readonly<
-  Record<FulfilmentStatus, readonly FulfilmentStatus[]>
-> = {
-  PENDING: ['ACCEPTED', 'CANCELED'],
-  ACCEPTED: ['PROCESSING', 'CANCELED'],
-  PROCESSING: ['ON_THE_WAY', 'CANCELED'],
-  ON_THE_WAY: ['DELIVERED', 'CANCELED'],
-  DELIVERED: [],
-  CANCELED: [],
-};
 
 type Row = Record<string, unknown>;
 type Tx = postgres.TransactionSql;
@@ -144,6 +130,9 @@ function parseItems(value: unknown): OrderItem[] {
       lineNumber: integer(row.line_number) || index + 1,
       productId: text(row.product_id ?? row.id),
       productName: text(row.product_name ?? row.name),
+      variantId: nullableText(row.variantId ?? row.variant_id),
+      variantSku: nullableText(row.variantSku ?? row.variant_sku),
+      variantLabel: nullableText(row.variantLabel ?? row.variant_label),
       quantity,
       unitPricePaise,
       referencePricePaise:
@@ -178,35 +167,6 @@ export function maskCustomerAddress(row: Row): OrderAddress {
     postalCode: maskAddressPart(row.postal_code),
     country: text(row.country) || 'IN',
   };
-}
-
-/** The migration's precedence, kept pure for tests and non-SQL callers. */
-export function mapSaleState(input: {
-  paymentStatus?: unknown;
-  fulfilmentStatus?: unknown;
-  scheduledFor?: unknown;
-  refundCount?: unknown;
-  refunded?: boolean;
-}): SaleState {
-  const paymentStatus = text(input.paymentStatus).toUpperCase();
-  const fulfilmentStatus = text(input.fulfilmentStatus).toUpperCase();
-  if (input.refunded || number(input.refundCount) > 0) return 'REFUNDED';
-  // Matches the order_sale_state view: an unconfirmed payment is PROCESSING,
-  // never PENDING (which reads as "awaiting payment") and never revenue.
-  if (paymentStatus === 'PROCESSING') return 'PROCESSING';
-  if (paymentStatus === 'FAILED') return 'PAYMENT_FAILED';
-  if (paymentStatus === 'CANCELLED' || fulfilmentStatus === 'CANCELED') return 'CANCELED';
-  if (fulfilmentStatus === 'DELIVERED') return 'DELIVERED';
-  if (fulfilmentStatus === 'ON_THE_WAY') return 'ON_THE_WAY';
-  if (fulfilmentStatus === 'PROCESSING') return 'PROCESSING';
-  if (
-    Boolean(input.scheduledFor) &&
-    (fulfilmentStatus === 'PENDING' || fulfilmentStatus === 'ACCEPTED')
-  ) {
-    return 'SCHEDULED';
-  }
-  if (fulfilmentStatus === 'ACCEPTED') return 'ACCEPTED';
-  return 'PENDING';
 }
 
 export function isSaleState(value: unknown): value is SaleState {
@@ -262,6 +222,10 @@ export interface OrderItem {
   lineNumber: number;
   productId: string;
   productName: string;
+  /** Immutable order-time identity; null for historical parent lines. */
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantLabel?: string | null;
   quantity: number;
   /** The price actually charged. */
   unitPricePaise: number;
@@ -719,7 +683,7 @@ export async function getOrderDetail(
     const orderId = text(order.id);
     const [itemRows, historyRows, addressRows, deliveryRows, eventRows] = await Promise.all([
       sql`
-        select line_number, product_id, product_name, quantity,
+        select line_number, product_id, product_name, variant_id, variant_sku, variant_label, quantity,
                unit_price_paise, reference_price_paise,
                line_total_paise, currency
         from order_items
@@ -771,6 +735,9 @@ export async function getOrderDetail(
           lineNumber: integer(row.line_number),
           productId: text(row.product_id),
           productName: text(row.product_name),
+          variantId: nullableText(row.variant_id),
+          variantSku: nullableText(row.variant_sku),
+          variantLabel: nullableText(row.variant_label),
           quantity: integer(row.quantity) || 1,
           unitPricePaise: integer(row.unit_price_paise),
           referencePricePaise: row.reference_price_paise === null || row.reference_price_paise === undefined
@@ -988,6 +955,10 @@ async function transitionFulfilmentInTx(
     )
   `;
 
+  if (input.target === 'ON_THE_WAY') {
+    await ensureInvoiceIssuedInTx(tx, text(order.id), input.staffId);
+  }
+
   // A cancellation from this screen must give stock back exactly like the
   // dedicated cancel action: a paid order through the sale ledger, an unpaid
   // claim through the release ledger. Both paths are idempotent by design.
@@ -996,13 +967,14 @@ async function transitionFulfilmentInTx(
     const orderId = text(order.id);
     if (text(order.status) === 'PAID') {
       const itemRows = (await tx`
-        select product_id, quantity from order_items where order_id = ${orderId}
+        select product_id, variant_id, quantity from order_items where order_id = ${orderId}
       `) as Row[];
       const restored = await restoreSoldStock(
         tx,
         orderId,
         itemRows.map((item) => ({
           productId: text(item.product_id),
+          variantId: nullableText(item.variant_id),
           quantity: Number(item.quantity),
         })),
         { createdBy: input.staffId },
@@ -1010,6 +982,9 @@ async function transitionFulfilmentInTx(
       stockMoved = restored.length > 0;
     } else {
       stockMoved = await releaseClaimedStock(tx, orderId);
+      await tx`update orders set reservation_state='RELEASED',reservation_released_at=now(),
+        reservation_released_reason='fulfilment cancellation',next_reconcile_at=null,updated_at=now()
+        where id=${orderId} and reservation_state='ACTIVE'`;
     }
   }
 

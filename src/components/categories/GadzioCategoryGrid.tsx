@@ -2,14 +2,9 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { CATEGORY_GRID_ITEMS, type CategoryGridCard } from '@/lib/website/section-defaults';
 
-export interface CategoryGridCard {
-  title: string;
-  subtitle?: string;
-  image: string;
-  href: string;
-  badge?: string;
-}
+export type { CategoryGridCard };
 
 export interface GadzioCategoryGridProps {
   heading?: string;
@@ -17,36 +12,7 @@ export interface GadzioCategoryGridProps {
   enabled?: boolean;
 }
 
-export const DEFAULT_CATEGORY_CARDS: CategoryGridCard[] = [
-  {
-    title: 'CASES',
-    subtitle: 'Drop Protection & MagSafe',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
-    href: '/in/shop/iphone/accessories/cases-protection',
-    badge: '',
-  },
-  {
-    title: 'CHARGERS',
-    subtitle: 'High-speed adapters & braided cables',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_promo_adapter_large.jpg.jpg',
-    href: '/in/shop/iphone/accessories/power-adapter-cable',
-    badge: '',
-  },
-  {
-    title: 'AUDIO',
-    subtitle: 'Studio grade sound & noise isolation',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/iearphones_large_2x.jpg',
-    href: '/in/shop/iphone/accessories/wired-earphones',
-    badge: '',
-  },
-  {
-    title: 'ACCESSORIES',
-    subtitle: 'Everyday tech essentials',
-    image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (1).jpg',
-    href: '/in/shop/iphone/accessories/cable-plug-case',
-    badge: '',
-  },
-];
+export const DEFAULT_CATEGORY_CARDS = CATEGORY_GRID_ITEMS;
 
 export function GadzioCategoryGrid({ heading, items, enabled = true }: GadzioCategoryGridProps) {
   if (enabled === false) return null;

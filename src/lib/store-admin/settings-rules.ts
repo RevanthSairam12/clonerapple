@@ -10,7 +10,20 @@
  * whether a secret is present, never its value.
  */
 
+const MAX_PRICE_PAISE = 1_000_000_00;
+
+function parseRupeesToPaise(value: unknown): { ok: true; paise: number | null } | { ok: false; message: string } {
+  const raw = typeof value === 'string' ? value : '';
+  const cleaned = raw.replace(/[₹,\s]/g, '').replace(/^rs\.?/i, '');
+  if (cleaned === '') return { ok: true, paise: null };
+  if (!/^\d+(?:\.\d{1,2})?$/.test(cleaned)) return { ok: false, message: 'Enter an amount in rupees, for example 499.50.' };
+  const [rupees, fraction = ''] = cleaned.split('.');
+  const paise = Number(rupees) * 100 + Number(fraction.padEnd(2, '0'));
+  return Number.isSafeInteger(paise) ? { ok: true, paise } : { ok: false, message: 'That amount is too large.' };
+}
+
 export type SettingKind =
+  | 'money'
   | 'text'
   | 'textarea'
   | 'number'
@@ -60,6 +73,11 @@ export const SETTING_SECTIONS = [
     description: 'Numbering, fulfilment defaults and checkout text.',
   },
   {
+    key: 'shipping',
+    label: 'Shipping',
+    description: 'Checkout shipping charge and free-shipping threshold.',
+  },
+  {
     key: 'payments',
     label: 'Payments',
     description: 'Which payment methods the store accepts.',
@@ -86,7 +104,7 @@ export const SETTING_SECTIONS = [
   },
 ] as const satisfies readonly SettingSectionDescriptor[];
 
-export type SettingSectionKey = (typeof SETTING_SECTIONS)[number]['key'];
+export type SettingSectionKey = (typeof SETTING_SECTIONS)[number]['key'] | 'legacy-shipping';
 
 const TOGGLE_OPTIONS: readonly SettingOption[] = [
   { value: 'on', label: 'On' },
@@ -98,8 +116,7 @@ const TOGGLE_OPTIONS: readonly SettingOption[] = [
 const FULFILMENT_OPTIONS: readonly SettingOption[] = [
   { value: 'PENDING', label: 'Pending' },
   { value: 'ACCEPTED', label: 'Accepted' },
-  { value: 'PROCESSING', label: 'Processing' },
-  { value: 'ON_THE_WAY', label: 'On the way' },
+  { value: 'PROCESSING', label: 'Preparing (pickup is marked manually)' },
 ];
 
 const FIELD_DEFINITIONS = [
@@ -193,8 +210,9 @@ const FIELD_DEFINITIONS = [
     kind: 'toggle',
     limit: 3,
     default: 'on',
-    section: 'orders',
+    section: 'shipping',
     options: TOGGLE_OPTIONS,
+    help: 'Off means no shipping charge. Pickup remains unavailable.',
   },
   {
     key: 'pos_confirm_unusual_price',
@@ -228,7 +246,25 @@ const FIELD_DEFINITIONS = [
     limit: 10,
     default: '0',
     section: 'orders',
-    help: 'Whole rupees. Zero disables the threshold.',
+    help: 'Legacy only; unused by checkout after canonical shipping initialization.',
+  },
+  {
+    key: 'shipping_charge_paise',
+    label: 'Shipping charge (₹)',
+    kind: 'money',
+    limit: 24,
+    default: '0',
+    section: 'shipping',
+    help: 'Enter rupees, e.g. 50 or 50.50 (maximum ₹10,00,000). Zero means free shipping. This is the only checkout delivery rate.',
+  },
+  {
+    key: 'free_shipping_threshold_paise',
+    label: 'Free-shipping threshold (₹)',
+    kind: 'money',
+    limit: 24,
+    default: '',
+    section: 'shipping',
+    help: 'Compare sale-priced items before coupon discounts. Blank means no threshold; zero means every nonempty cart qualifies. A valid free-shipping coupon also waives the charge.',
   },
   {
     key: 'auto_cancel_unpaid_hours',
@@ -598,7 +634,31 @@ export function normalizeToggle(value: unknown): 'on' | 'off' {
   return text === 'on' || text === '1' || text === 'true' || text === 'yes' ? 'on' : 'off';
 }
 
-/** Validate one setting value against its field descriptor. */
+export function isShippingMoneyKey(key: unknown): key is 'shipping_charge_paise' | 'free_shipping_threshold_paise' {
+  return key === 'shipping_charge_paise' || key === 'free_shipping_threshold_paise';
+}
+
+export function isShippingSetting(key: unknown): boolean {
+  return key === 'shipping_enabled' || isShippingMoneyKey(key);
+}
+
+/** Explicit UI/API rupee boundary; persisted values are always integer paise. */
+export function validateShippingRupees(key: string, value: unknown): SettingValidation {
+  if (!isShippingMoneyKey(key)) return { ok: false, error: 'Unknown shipping amount.' };
+  if (typeof value !== 'string' || value.length > 24) {
+    return { ok: false, error: 'Enter an amount in rupees as text.' };
+  }
+  const parsed = parseRupeesToPaise(value);
+  if (!parsed.ok) return { ok: false, error: parsed.message };
+  if (parsed.paise === null) {
+    return key === 'free_shipping_threshold_paise'
+      ? { ok: true, value: '' }
+      : { ok: false, error: 'Shipping charge is required; enter 0 for free shipping.' };
+  }
+  return validateSettingValue(key, String(parsed.paise));
+}
+
+/** Validate one PERSISTED setting value; money is integer paise, never rupees. */
 export function validateSettingValue(key: string, value: unknown): SettingValidation {
   const field = FIELD_BY_KEY.get(key);
   if (!field) return { ok: false, error: 'Unknown setting.' };
@@ -627,6 +687,14 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
   }
 
   switch (field.kind) {
+    case 'money':
+      if (key === 'free_shipping_threshold_paise' && text === '' && typeof value === 'string') {
+        return { ok: true, value: '' };
+      }
+      if (typeof value !== 'string' || !/^\d+$/.test(text) || !Number.isSafeInteger(Number(text)) || Number(text) > MAX_PRICE_PAISE) {
+        return { ok: false, error: `${field.label} must be between ₹0 and ₹10,00,000, with at most two decimal places.` };
+      }
+      return { ok: true, value: String(Number(text)) };
     case 'email':
       if (text && !EMAIL_RE.test(text)) {
         return { ok: false, error: `${field.label} is not a valid email address.` };

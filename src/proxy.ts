@@ -14,18 +14,9 @@ import {
 import { maintenanceView, renderMaintenanceDocument } from '@/lib/storefront/maintenance-view';
 
 /**
- * Edge-level gate for the admin panel, and the maintenance gate for the
- * storefront.
- *
- * The admin checks are a fast pre-filter only, NOT the security boundary — the
- * real session check (against admin_sessions in Postgres) happens in the
- * (protected) layout and every /api/admin route. What this adds:
- *
- * - /admin pages without a session cookie redirect to /admin/login before any
- *   rendering work starts (the layout would redirect anyway; this is faster
- *   and hides the route's existence from unauthenticated crawlers).
- * - /api/admin mutations without a session cookie get an immediate 401,
- *   before rate limiting or DB work.
+ * Store Admin session gate and storefront maintenance gate. Legacy pages
+ * redirect in next.config.ts; retired APIs answer 410 without a cookie gate.
+ * The protected layout and requireStoreRole() remain the staff boundary.
  *
  * The maintenance check answers 503 + Retry-After for customer pages and
  * purchase APIs while the owner has the storefront closed. It reads a decision
@@ -36,7 +27,6 @@ import { maintenanceView, renderMaintenanceDocument } from '@/lib/storefront/mai
  * maintenance 503.
  */
 
-const SESSION_COOKIE = 'admin_session';
 const STORE_SESSION_COOKIE = 'store_admin_session';
 
 /**
@@ -103,33 +93,12 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  const hasSessionCookie = request.cookies.has(SESSION_COOKIE);
   const hasStoreSessionCookie = request.cookies.has(STORE_SESSION_COOKIE);
-
-  let response: NextResponse | undefined;
-
-  // Guard the admin UI. /admin/login is the entry point and stays public.
-  if (pathname.startsWith('/admin') && pathname !== '/admin/login' && !hasSessionCookie) {
-    const loginUrl = new URL('/admin/login', request.url);
-    response = NextResponse.redirect(loginUrl);
-  }
-
-  // Guard mutating admin API calls — GETs (media serving) stay public.
-  if (
-    pathname.startsWith('/api/admin') &&
-    request.method !== 'GET' &&
-    request.method !== 'OPTIONS' &&
-    !pathname.startsWith('/api/admin/auth/login') &&
-    !hasSessionCookie
-  ) {
-    response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  response ??= NextResponse.next();
+  let response = NextResponse.next();
 
   // Guard the store admin UI. Login is the only public page in this segment.
-  // Same fast-prefilter posture as /admin: the real check is in the protected
-  // layout and in requireStoreRole() on every API route.
+  // The real check is in the protected layout and in requireStoreRole() on
+  // every API route.
   if (
     pathname.startsWith('/store-admin') &&
     pathname !== '/store-admin/login' &&

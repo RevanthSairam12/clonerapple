@@ -2,6 +2,7 @@ import type postgres from 'postgres';
 
 import { getSql } from '@/lib/platform/db';
 import { readSaleStateUsing, type SaleState } from '@/lib/storefront/sale-state';
+import { resolveEffectivePrice } from '@/lib/storefront/pricing';
 
 import type { CatalogWrite } from './catalog-writes';
 import { getStoreSettings } from './settings';
@@ -64,6 +65,7 @@ export async function getStoreTimeZone(): Promise<string> {
 
 export interface SaleProductRow {
   id: string;
+  variantId: string | null;
   name: string;
   pricePaise: number;
   salePricePaise: number | null;
@@ -91,11 +93,18 @@ function mapProduct(row: Row): SaleProductRow {
   const hasStock = row.track_inventory !== null && row.track_inventory !== undefined;
   const onHand = hasStock ? number(row.on_hand) : null;
   const reserved = hasStock ? number(row.reserved) : null;
+  const variantId = row.variant_id == null ? null : text(row.variant_id);
+  const price = resolveEffectivePrice(
+    { pricePaise: number(row.price_paise), salePricePaise: nullableNumber(row.sale_price_paise) },
+    false,
+    variantId ? { pricePaise: nullableNumber(row.option_price_paise), salePricePaise: nullableNumber(row.option_sale_price_paise) } : null,
+  );
   return {
     id: text(row.id),
-    name: text(row.name),
-    pricePaise: number(row.price_paise),
-    salePricePaise: nullableNumber(row.sale_price_paise),
+    variantId,
+    name: variantId ? `${text(row.name)} — ${text(row.variant_label) || variantId}` : text(row.name),
+    pricePaise: price.regularPaise,
+    salePricePaise: price.salePaise,
     costPaise: nullableNumber(row.cost_paise),
     tracked: Boolean(row.track_inventory),
     onHand,
@@ -118,11 +127,18 @@ export async function getSaleAdminData(): Promise<SaleAdminLoad> {
       sql`
         select p.id, p.name, p.price_paise, p.sale_price_paise, p.cost_paise,
                p.is_active, s.on_hand, s.reserved, s.low_stock_threshold,
-               s.track_inventory
+               s.track_inventory, v.id as variant_id,
+               v.price_paise_override as option_price_paise,
+               v.sale_price_paise as option_sale_price_paise,
+               concat_ws(' / ', dm.name, v.option_value) as variant_label
         from products p
-        left join stock s on s.product_id = p.id and s.variant_id is null
+        left join product_variants v on v.product_id = p.id
+          and p.inventory_mode = 'variant' and v.is_purchasable and v.is_active
+        left join device_models dm on dm.id = v.device_model_id
+        left join stock s on s.product_id = p.id and s.variant_id is not distinct from v.id
         where p.deleted_at is null
-        order by p.name asc, p.id asc
+          and (p.inventory_mode = 'product' or v.id is not null)
+        order by p.name asc, p.id asc, v.id asc
       `,
     ]);
 

@@ -27,13 +27,13 @@ export const metadata: Metadata = {
 };
 
 export default async function Page() {
-  const [{ products }, sale] = await Promise.all([
+  const [{ products, filters, quickPillFacet, quickPills }, sale] = await Promise.all([
     getAccessoryProductsView(CONFIG.slug),
     readSaleState(),
   ]);
   return (
     <AccessoryCategoryPage
-      config={CONFIG}
+      config={{ ...CONFIG, filters, quickPillFacet, quickPills }}
       products={products}
       saleLive={sale.live}
     />

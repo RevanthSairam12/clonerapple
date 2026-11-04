@@ -19,7 +19,7 @@ const FILTERS = [
   { key: 'all', label: 'All products' },
   { key: 'has-sale', label: 'Has sale price' },
   { key: 'no-sale', label: 'No sale price' },
-  { key: 'tracking-off', label: 'Tracking off' },
+  { key: 'tracking-off', label: 'Not limited' },
   { key: 'low-stock', label: 'Low or zero stock' },
 ] as const;
 
@@ -31,9 +31,9 @@ function parseFilter(value: unknown): FilterKey {
 
 const WARNING_TEXT: Record<SalePreflightWarning['key'], string> = {
   'tracking-off':
-    'have a sale price but stock tracking is off — they can be oversold while the sale is live.',
+    'have a sale price but stock is not limited — they can be oversold while the sale is live.',
   'zero-stock':
-    'have a sale price but no available units — the sale cannot sell them.',
+    'have a sale price but no units available to buy — the sale cannot sell them.',
   'below-cost':
     'have a sale price below cost.',
 };
@@ -194,7 +194,11 @@ export default async function StoreAdminSalePage({
         </ol>
       </section>
 
-      {canEdit ? <SaleBulkActions productCount={products.length} /> : null}
+      <p className="sa-hint">
+        Option price edits remain disabled pending checkout verification. Bulk actions currently change
+        product defaults only; options with their own regular price override do not inherit those defaults.
+      </p>
+      {canEdit ? <SaleBulkActions productCount={new Set(products.map((row) => row.id)).size} /> : null}
 
       <nav className="sa-filter-nav" aria-label="Sale product filters">
         {FILTERS.map((entry) => (
@@ -217,15 +221,15 @@ export default async function StoreAdminSalePage({
               <th className="sa-num">Regular price</th>
               <th className="sa-num">Sale price</th>
               <th className="sa-num">Discount</th>
-              <th>Tracked</th>
-              <th className="sa-num">Available</th>
+              <th>Limit my stock</th>
+              <th className="sa-num">Available to buy</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {visible.map((product) => (
               <SaleProductRow
-                key={product.id}
+                key={`${product.id}:${product.variantId ?? 'product'}`}
                 productId={product.id}
                 name={product.name}
                 pricePaise={product.pricePaise}
@@ -238,7 +242,7 @@ export default async function StoreAdminSalePage({
                 availableLabel={product.available === null ? '—' : String(product.available)}
                 lowStock={product.tracked && isLowStock(product.available, product.lowStockThreshold)}
                 isActive={product.isActive}
-                canEdit={canEdit}
+                canEdit={canEdit && product.variantId === null}
               />
             ))}
           </tbody>

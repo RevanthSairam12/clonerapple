@@ -1,192 +1,157 @@
-import { getSql } from '@/lib/platform/db';
-import { normalizeEmail } from '@/lib/coupons/rules';
+import type postgres from 'postgres';
 
-export interface CustomerCouponView {
+import { getSql } from '@/lib/platform/db';
+import { normalizeEmail, type CouponScope, type CouponStatus, type CouponType } from '@/lib/coupons/rules';
+import { getStoreSettings } from '@/lib/store-admin/settings';
+import {
+  customerCanDiscoverCoupon,
+  customerCouponView,
+  type CustomerCouponView,
+  type DiscoverableCoupon,
+} from './coupon-rules';
+
+export type { CustomerCouponView } from './coupon-rules';
+
+if (typeof window !== 'undefined') {
+  throw new Error('SECURITY ALERT: Account coupons must be read on the server only.');
+}
+
+/** Narrow seams for owned-schema tests; production always uses the authoritative getter. */
+export type CustomerCouponSettingsLoader = () => Promise<
+  | { ok: true; settings: { coupons_enabled: string } }
+  | { ok: false; reason: string }
+>;
+
+type CouponRow = {
   id: string;
   code: string;
-  valueDisplay: string;
-  scopeDisplay: string;
-  minOrderPaise: number;
-  minOrderDisplay: string;
-  expiresAt: string | null;
-  expiryDisplay: string;
-  remainingUses: number | null;
-  remainingDisplay: string;
+  type: CouponType;
+  value: number;
+  scope: CouponScope;
+  status: CouponStatus;
+  starts_at: Date | string | null;
+  ends_at: Date | string | null;
+  total_redemption_limit: number | null;
+  per_customer_limit: number | null;
+  min_order_paise: number | null;
+  only_new_customers: boolean;
+  allowed_customer_groups: string[] | null;
+  restricted_to_emails: string[] | null;
+  show_to_all_users: boolean;
+  assigned_to_emails: string[];
+  assigned_customer_groups: string[];
+  total_used: number;
+  mine_used: number;
+  database_now: Date | string;
+};
+
+/** userId comes from the authenticated account session, never request parameters. */
+export async function listCustomerCouponsUsing(
+  sql: postgres.ISql,
+  userId: string,
+  loadSettings: CustomerCouponSettingsLoader,
+): Promise<CustomerCouponView[]> {
+  if (!userId) return [];
+  const configuration = await loadSettings();
+  // Do not depend on shipping initialization, or invent enabled settings on failure.
+  if (!configuration.ok || configuration.settings.coupons_enabled !== 'on') return [];
+
+  // Read identity from the account row, not the checkout email or client input.
+  const users = await sql<Array<{ email: string; customer_group: string | null; has_paid_order: boolean }>>`
+    select u.email, u.customer_group,
+      exists (
+        select 1 from orders o
+        where o.status = 'PAID'
+          and (o.user_id = u.id or (btrim(u.email) <> '' and lower(o.customer_email) = lower(btrim(u.email))))
+      ) as has_paid_order
+    from users u where u.id = ${userId} limit 1
+  `;
+  if (!users[0]) return [];
+  const user = users[0];
+  const email = normalizeEmail(user.email);
+  const group = user.customer_group?.trim().toLowerCase() || null;
+
+  // One batched ledger aggregate for all candidates, not one query per coupon.
+  // Global counts never leave this module. RELEASED uses do not consume a limit.
+  const rows = await sql<CouponRow[]>`
+    with candidates as (
+      select id, code, type, value, scope, status, starts_at, ends_at,
+        total_redemption_limit, per_customer_limit, min_order_paise,
+        only_new_customers, allowed_customer_groups, restricted_to_emails,
+        show_to_all_users, assigned_to_emails, assigned_customer_groups, created_at
+      from coupons
+      where status = 'active'
+        and (starts_at is null or starts_at <= now())
+        and (ends_at is null or ends_at > now())
+        and (
+          show_to_all_users
+          or exists (select 1 from unnest(assigned_to_emails) e where ${email} <> '' and lower(btrim(e)) = ${email})
+          or exists (select 1 from unnest(assigned_customer_groups) g where lower(btrim(g)) = ${group})
+        )
+    ), usage as (
+      select r.coupon_id, count(*)::int as total_used,
+        count(*) filter (
+          where r.customer_user_id = ${userId}
+            or (${email} <> '' and lower(r.customer_email) = ${email})
+        )::int as mine_used
+      from coupon_redemptions r join candidates c on c.id = r.coupon_id
+      where r.state in ('RESERVED', 'CONSUMED')
+      group by r.coupon_id
+    )
+    select c.*, coalesce(usage.total_used, 0)::int as total_used,
+      coalesce(usage.mine_used, 0)::int as mine_used, now() as database_now
+    from candidates c left join usage on usage.coupon_id = c.id
+    order by c.created_at desc, c.id
+  `;
+
+  const result: CustomerCouponView[] = [];
+  for (const row of rows) {
+    const coupon: DiscoverableCoupon = {
+      id: row.id,
+      code: row.code,
+      type: row.type,
+      value: Number(row.value),
+      scope: row.scope,
+      status: row.status,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      totalRedemptionLimit: row.total_redemption_limit,
+      perCustomerLimit: row.per_customer_limit,
+      minOrderPaise: Number(row.min_order_paise) || 0,
+      onlyNewCustomers: row.only_new_customers,
+      allowedCustomerGroups: row.allowed_customer_groups,
+      restrictedToEmails: row.restricted_to_emails,
+      showToAllUsers: row.show_to_all_users,
+      assignedToEmails: row.assigned_to_emails,
+      assignedCustomerGroups: row.assigned_customer_groups,
+    };
+    const mine = Number(row.mine_used);
+    if (!customerCanDiscoverCoupon(coupon, {
+      now: new Date(row.database_now),
+      customer: { userId, email, group },
+      customerPaidOrderExists: user.has_paid_order,
+      customerRedemptions: mine,
+      totalRedemptions: Number(row.total_used),
+    }, true)) continue;
+    result.push(customerCouponView(coupon, mine));
+  }
+  return result;
+}
+
+export async function getCustomerCouponCountUsing(
+  sql: postgres.ISql,
+  userId: string,
+  loadSettings: CustomerCouponSettingsLoader,
+): Promise<number> {
+  return (await listCustomerCouponsUsing(sql, userId, loadSettings)).length;
 }
 
 export async function listCustomerCoupons(userId: string): Promise<CustomerCouponView[]> {
   const sql = getSql();
   if (!sql) return [];
-
-  // 1. Get customer's email and group
-  const userRows = await sql<Array<{ email: string; customer_group: string }>>`
-    select email, customer_group
-    from users
-    where id = ${userId}
-    limit 1
-  `;
-  if (!userRows[0]) return [];
-
-  const userEmail = normalizeEmail(userRows[0].email);
-  const userGroup = userRows[0].customer_group || 'retail';
-
-  // Check if customer has any paid order (for only_new_customers check)
-  const paidRows = await sql<Array<{ id: string }>>`
-    select id
-    from orders
-    where status = 'PAID'
-      and (user_id = ${userId} or (${userEmail} <> '' and lower(customer_email) = ${userEmail}))
-    limit 1
-  `;
-  const hasPaidOrder = paidRows.length > 0;
-
-  // 2. Query active coupons that are PRIVATE (assigned to email or group)
-  // Public coupons (both restricted_to_emails and allowed_customer_groups empty/null) are excluded!
-  const rows = await sql<Array<{
-    id: string;
-    code: string;
-    type: string;
-    value: number;
-    scope: string;
-    starts_at: string | Date | null;
-    ends_at: string | Date | null;
-    total_redemption_limit: number | null;
-    per_customer_limit: number | null;
-    min_order_paise: number | null;
-    max_discount_paise: number | null;
-    only_new_customers: boolean;
-    allowed_customer_groups: string[] | null;
-    restricted_to_emails: string[] | null;
-  }>>`
-    select
-      id, code, type, value, scope, starts_at, ends_at,
-      total_redemption_limit, per_customer_limit, min_order_paise, max_discount_paise,
-      only_new_customers, allowed_customer_groups, restricted_to_emails
-    from coupons
-    where status = 'active'
-      and (starts_at is null or starts_at <= now())
-      and (ends_at is null or ends_at > now())
-      and (
-        (restricted_to_emails is not null and array_length(restricted_to_emails, 1) > 0)
-        or (allowed_customer_groups is not null and array_length(allowed_customer_groups, 1) > 0)
-      )
-    order by created_at desc
-  `;
-
-  if (rows.length === 0) return [];
-
-  const eligible: CustomerCouponView[] = [];
-
-  for (const row of rows) {
-    // A. If only_new_customers is set, exclude if customer already bought
-    if (row.only_new_customers && hasPaidOrder) {
-      continue;
-    }
-
-    // B. Check privacy match: email whitelist or customer group
-    const emails = (row.restricted_to_emails || []).map(normalizeEmail);
-    const groups = row.allowed_customer_groups || [];
-
-    const matchesEmail = emails.length > 0 && emails.includes(userEmail);
-    const matchesGroup = groups.length > 0 && groups.includes(userGroup);
-
-    // If email restriction is present, customer MUST match email
-    if (emails.length > 0 && !matchesEmail) {
-      continue;
-    }
-    // If only group restriction is present, customer MUST match group
-    if (emails.length === 0 && groups.length > 0 && !matchesGroup) {
-      continue;
-    }
-
-    // C. Check total redemption limit
-    if (row.total_redemption_limit !== null) {
-      const totalRows = await sql<Array<{ count: number }>>`
-        select count(*)::int as count
-        from coupon_redemptions
-        where coupon_id = ${row.id}
-          and state in ('RESERVED', 'CONSUMED')
-      `;
-      const totalUsed = totalRows[0]?.count ?? 0;
-      if (totalUsed >= row.total_redemption_limit) {
-        continue; // Exhausted
-      }
-    }
-
-    // D. Check per-customer limit
-    let remainingUses: number | null = null;
-    let remainingDisplay = 'Available';
-
-    if (row.per_customer_limit !== null) {
-      const myRows = await sql<Array<{ count: number }>>`
-        select count(*)::int as count
-        from coupon_redemptions
-        where coupon_id = ${row.id}
-          and state in ('RESERVED', 'CONSUMED')
-          and (
-            customer_user_id = ${userId}
-            or (${userEmail} <> '' and lower(customer_email) = ${userEmail})
-          )
-      `;
-      const myUsed = myRows[0]?.count ?? 0;
-      remainingUses = Math.max(0, row.per_customer_limit - myUsed);
-      if (remainingUses <= 0) {
-        continue; // Customer has used up all their uses
-      }
-      remainingDisplay = `${remainingUses} use${remainingUses === 1 ? '' : 's'} remaining`;
-    }
-
-    // E. Format scope
-    let scopeDisplay = 'Entire order';
-    if (row.scope === 'category') scopeDisplay = 'Selected categories';
-    else if (row.scope === 'brand') scopeDisplay = 'Selected brands';
-    else if (row.scope === 'product') scopeDisplay = 'Selected products';
-
-    // F. Format value
-    const valueNum = Number(row.value) || 0;
-    const valueDisplay =
-      row.type === 'percent'
-        ? `${valueNum}% off`
-        : `₹${(valueNum / 100).toLocaleString('en-IN')} off`;
-
-    // G. Format min order
-    const minOrderPaise = Number(row.min_order_paise) || 0;
-    const minOrderDisplay =
-      minOrderPaise > 0
-        ? `₹${(minOrderPaise / 100).toLocaleString('en-IN')} min. order`
-        : 'No minimum';
-
-    // H. Format expiry
-    let expiresAt: string | null = null;
-    let expiryDisplay = 'No expiry date';
-    if (row.ends_at) {
-      const end = new Date(row.ends_at);
-      expiresAt = end.toISOString();
-      expiryDisplay = `Expires ${end.toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      })}`;
-    }
-
-    eligible.push({
-      id: row.id,
-      code: row.code,
-      valueDisplay,
-      scopeDisplay,
-      minOrderPaise,
-      minOrderDisplay,
-      expiresAt,
-      expiryDisplay,
-      remainingUses,
-      remainingDisplay,
-    });
-  }
-
-  return eligible;
+  return listCustomerCouponsUsing(sql, userId, getStoreSettings);
 }
 
 export async function getCustomerCouponCount(userId: string): Promise<number> {
-  const coupons = await listCustomerCoupons(userId);
-  return coupons.length;
+  return (await listCustomerCoupons(userId)).length;
 }

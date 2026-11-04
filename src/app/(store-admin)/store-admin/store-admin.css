@@ -1,6 +1,27 @@
 /* Store admin — an intentionally plain, original operations UI.
    Scoped under .sa-shell so nothing here leaks into the storefront or /admin. */
 
+/* Catalogue workspace: references are grouped by task. */
+.sa-shell .sa-catalog-workspace { display: grid; gap: 20px; }
+.sa-shell .sa-catalog-guide,
+.sa-shell .sa-catalog-starter { border: 1px solid var(--sa-line); background: var(--sa-card); border-radius: 8px; padding: 20px; }
+.sa-shell .sa-catalog-guide { border-left: 4px solid var(--sa-accent); }
+.sa-shell .sa-catalog-guide p { margin: 8px 0 0; }
+.sa-shell .sa-catalog-tabs { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--sa-line); padding-bottom: 16px; }
+.sa-shell .sa-catalog-workspace [role='tabpanel'][hidden] { display: none; }
+.sa-shell .sa-catalog-workspace [role='tabpanel'] > .sa-detail-section,
+.sa-shell .sa-catalog-workspace [role='tabpanel'] > .sa-detail-card { margin-bottom: 24px; }
+.sa-shell .sa-catalog-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 20px 0; }
+.sa-shell .sa-catalog-template { border-top: 1px solid var(--sa-line); padding: 16px 0; }
+.sa-shell .sa-catalog-template .sa-field { max-width: 540px; }
+.sa-shell .sa-catalog-advanced { margin: 16px 0; }
+.sa-shell .sa-catalog-advanced summary { cursor: pointer; padding: 8px 0; }
+.sa-shell .sa-catalog-workspace :focus-visible { outline: 3px solid var(--sa-accent); outline-offset: 3px; }
+@media (max-width: 600px) {
+  .sa-shell .sa-catalog-guide, .sa-shell .sa-catalog-starter { padding: 14px; }
+  .sa-shell .sa-catalog-tabs .sa-btn { flex: 1 1 42%; }
+}
+
 .sa-shell {
   --sa-ink: #22262b;
   --sa-muted: #626a72;
@@ -5154,6 +5175,64 @@ button.sa-chip:hover {
   align-items: baseline;
   gap: 14px;
   flex-wrap: wrap;
+}
+
+/* Product editor clarity: scoped to these screens, not the legacy panel. */
+.sa-product-workflow, .sa-products-page { min-width: 0; color: var(--sa-ink, #172033); }
+.sa-product-workflow .sa-hint, .sa-products-page .sa-hint,
+.sa-product-workflow .sa-card-note { color: #4b5563; font-size: 13px; line-height: 1.65; }
+.sa-product-workflow .sa-label { color: #263449; font-size: 13px; font-weight: 650; }
+.sa-product-workflow .sa-section-title { font-size: 20px; text-transform: none; letter-spacing: -.02em; color: #172033; }
+.sa-product-workflow .sa-card-title { margin: 24px 0 8px; font-size: 16px; text-transform: none; letter-spacing: 0; }
+.sa-product-workflow .sa-detail-card { padding: 24px; margin-bottom: 20px; }
+.sa-product-workflow .sa-input { min-height: 44px; font-size: 14px; }
+.sa-product-workflow .sa-check { min-height: 44px; align-items: center; font-size: 14px; }
+.sa-product-workflow .sa-check input { flex-shrink: 0; }
+.sa-product-workflow .sa-input[readonly] { background: #f1f5f9; color: #475569; border-style: dashed; }
+.sa-product-workflow details:not(.sa-product-help) { margin: 16px 0; border: 1px solid var(--sa-line, #d8dee7); border-radius: 10px; padding: 12px 16px; }
+.sa-product-workflow details:not(.sa-product-help) > summary { cursor: pointer; font-weight: 650; min-height: 30px; line-height: 1.5; }
+.sa-product-workflow fieldset:disabled { opacity: 1; }
+.sa-product-workflow :disabled:not(fieldset) { opacity: .7; }
+.sa-product-workflow .sa-table-wrap { max-width: 100%; }
+.sa-product-workflow .sa-table td { min-width: 130px; vertical-align: top; }
+.sa-product-workflow .sa-table td:first-child { min-width: 240px; }
+.sa-product-workflow .sa-table caption { text-align: left; padding: 14px 16px; color: #334155; font-weight: 650; }
+.sa-product-field-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 6px; }
+.sa-product-field-heading > .sa-label { margin: 0; }
+.sa-product-help { display: inline-block; vertical-align: middle; margin: 0; max-width: 100%; text-align: left; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.sa-product-help > summary { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; color: #334155; cursor: pointer; list-style: none; user-select: none; }
+.sa-product-help > summary::-webkit-details-marker { display: none; }
+.sa-product-help > summary span { display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid #64748b; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; font-weight: 700; line-height: 1; }
+.sa-product-help > summary:hover, .sa-product-help[open] > summary { background: #e8f0fc; color: #174e9c; }
+.sa-product-help > summary:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+.sa-product-help[open] { flex-basis: 100%; width: 100%; }
+.sa-product-help-copy { min-width: 0; max-width: 40rem; margin: 4px 0 12px; padding: 12px 14px; border-left: 3px solid #477ac2; border-radius: 4px; background: #f0f5fc; color: #263449; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.sa-product-guided-field { min-width: 0; position: relative; margin-bottom: 12px; }
+.sa-product-guided-field > label { display: inline-flex; max-width: calc(100% - 40px); vertical-align: middle; }
+.sa-product-guided-field > label.sa-field { display: inline-flex; flex-direction: column; width: calc(100% - 40px); }
+.sa-product-guided-field > label.sa-check { gap: 8px; }
+.sa-product-guided-field > .sa-product-help { margin-left: 4px; }
+.sa-product-guided-action { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; max-width: 100%; vertical-align: middle; }
+.sa-product-guided-action > h2, .sa-product-guided-action > h3 { margin-right: 4px; }
+.sa-product-paragraph { margin: 8px 0 14px; }
+.sa-products-page .sa-product-intro { padding: 18px 22px; background: #f4f7fc; border: 1px solid #dce5f1; border-radius: 12px; margin: 16px 0 24px; }
+.sa-product-intro h2 { font-size: 17px; margin: 0 0 6px; color: #172033; }
+.sa-product-intro p, .sa-product-intro .sa-product-paragraph { margin: 0; color: #475569; font-size: 14px; line-height: 1.6; }
+.sa-product-category-summary { margin: 22px 0; color: #475569; font-size: 13px; }
+.sa-products-page .sa-table td { vertical-align: top; padding-top: 20px; padding-bottom: 20px; }
+.sa-products-page .sa-table td:first-child { min-width: 260px; }
+.sa-products-page .sa-product-link { font-size: 14px; }
+.sa-products-page .sa-row-sub { margin-top: 6px; color: #4b5563; }
+.sa-products-page .sa-table th { text-transform: none; font-size: 13px; letter-spacing: 0; }
+.sa-product-workflow nav .sa-btn { justify-content: flex-start; text-align: left; white-space: normal; }
+.sa-product-workflow [aria-label="Save product"] { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+@media (max-width: 767px) {
+  .sa-product-workflow .sa-detail-card { padding: 16px; }
+  .sa-product-workflow .sa-control-grid { grid-template-columns: minmax(0, 1fr); }
+  .sa-product-workflow nav ol { gap: 6px; }
+  .sa-product-workflow nav .sa-btn { font-size: 12px; padding: 8px 10px; }
+  .sa-product-help > summary { width: 36px; height: 36px; }
+  .sa-product-workflow [aria-label="Save product"] { position: sticky; bottom: 0; }
 }
 
 .sa-report-heading .sa-section-title {

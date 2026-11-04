@@ -18,8 +18,6 @@ import {
   isReturnStatus,
   restockEligible,
   RETURNING_STATUSES,
-  REFUND_REFERENCE_METHODS,
-  validateRefundReference,
   validateReturnReason,
   cancellationAllowed,
   type ConditionGrade,
@@ -583,7 +581,7 @@ export async function transitionReturn(input: {
 
       if (target === 'RECEIVED') {
         const items = (await tx`
-          select ri.quantity, ri.condition_grade, ri.restock, oi.product_id
+          select ri.quantity, ri.condition_grade, ri.restock, oi.product_id, oi.variant_id
           from return_items ri
           join order_items oi on oi.id = ri.order_item_id
           where ri.return_id = ${text(row.id)}
@@ -594,7 +592,7 @@ export async function transitionReturn(input: {
           if (!restockEligible(grade, Boolean(item.restock))) return [];
           const quantity = number(item.quantity);
           if (quantity <= 0) return [];
-          return [{ productId: text(item.product_id), quantity }];
+          return [{ productId: text(item.product_id), variantId: item.variant_id ? text(item.variant_id) : null, quantity }];
         });
 
         // Ledger-guarded: an order created before Phase 2 has no sale movement,
@@ -659,7 +657,7 @@ function refundFailure(
  * that reads the captured total from PAID payment rows and the refunded total
  * from the refunds table, so two concurrent refunds cannot overshoot.
  */
-export async function recordRefund(input: {
+export interface RecordRefundInput {
   txnid: string;
   returnId?: string | null;
   amountPaise: number;
@@ -668,23 +666,36 @@ export async function recordRefund(input: {
   reason: unknown;
   note: unknown;
   actorId: string;
-}): Promise<RefundMutation> {
+  actorEmail?: string;
+  request?: Request;
+  /** Internal reservation replaced by this completion; never supplied by API bodies. */
+  refundRequestId?: string;
+}
+
+/** Compatibility path: reserve and complete atomically, including lifecycle audits. */
+export async function recordRefund(input: RecordRefundInput): Promise<RefundMutation> {
+  const { recordCompletedRefund } = await import('./refund-lifecycle');
+  return recordCompletedRefund(input);
+}
+
+/** Caller owns the order lock, reservation validation, lifecycle event and audit. */
+export async function recordRefundInTx(tx: Tx, input: RecordRefundInput): Promise<RefundMutation> {
   if (!isRefundMethod(input.method)) {
     return refundFailure('invalid-input', 'Choose a refund method.');
   }
   const method = input.method;
-  const providerRef = validateRefundReference(method, input.providerRef);
-  if (providerRef === null && REFUND_REFERENCE_METHODS.includes(method)) {
-    return refundFailure('invalid-input', 'UPI and bank transfer refunds need a reference.');
+  const providerRef = typeof input.providerRef === 'string' ? input.providerRef.trim() : '';
+  if (!providerRef || providerRef.length > 120) {
+    return refundFailure('invalid-input', 'Every completed refund needs a reference of 1–120 characters.');
+  }
+  if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) {
+    return refundFailure('invalid-amount', 'Enter a positive whole-paise refund amount.');
   }
   const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 300) : '';
   const note = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';
 
-  const sql = getSql();
-  if (!sql) return refundFailure('unavailable', 'Refund records are not available.');
-
-  try {
-    return await sql.begin(async (tx) => {
+  // Never catch a transaction error here: the caller must roll back all effects.
+  {
       const orderRows = (await tx`
         select id, txnid, status, total_paise, amount, currency
         from orders
@@ -745,11 +756,29 @@ export async function recordRefund(input: {
       `) as Row[];
       const refundedPaise = number(refundedRows[0]?.refunded);
 
+      const pendingRows = await tx`
+        select coalesce(sum(q.amount_paise), 0)::bigint as pending
+        from refund_requests q where q.order_id = ${orderId}
+          and (${input.refundRequestId ?? null}::text is null or q.id <> ${input.refundRequestId ?? null})
+          and not exists (select 1 from refund_request_events e where e.request_id = q.id)
+      `;
+      const pendingPaise = number(pendingRows[0]?.pending);
       const check = checkRefund({
-        amountPaise: Math.trunc(input.amountPaise),
+        amountPaise: input.amountPaise,
         capturedPaise,
-        refundedPaise,
+        refundedPaise: refundedPaise + pendingPaise,
       });
+      if (returnId) {
+        const returnTotals = await tx`
+          select coalesce((select sum(amount_paise) from refunds where return_id = ${returnId}), 0)::bigint as refunded,
+                 coalesce((select sum(q.amount_paise) from refund_requests q where q.return_id = ${returnId}
+                   and (${input.refundRequestId ?? null}::text is null or q.id <> ${input.refundRequestId ?? null})
+                   and not exists (select 1 from refund_request_events e where e.request_id = q.id)), 0)::bigint as pending
+        `;
+        if (input.amountPaise + number(returnTotals[0]?.refunded) + number(returnTotals[0]?.pending) > expectedPaise) {
+          return refundFailure('invalid-amount', 'Refunds cannot exceed this return’s goods value.');
+        }
+      }
       if (!check.ok) return refundFailure(check.code, check.error);
 
       const refundId = `ref_${randomBytes(8).toString('hex')}`;
@@ -765,7 +794,7 @@ export async function recordRefund(input: {
 
       // A refund gives the coupon use back only when the store explicitly
       // asks for that, and only once the refunds cover the captured total.
-      if (check.remainingPaise === 0) {
+      if (refundedPaise + input.amountPaise >= capturedPaise) {
         const settingRows = (await tx`
           select value from store_settings where key = 'refunds_restore_coupon'
         `) as Row[];
@@ -807,10 +836,6 @@ export async function recordRefund(input: {
         returnClosed,
         refundObligationsClosed,
       };
-    });
-  } catch {
-    console.warn('[store-admin/returns] could not record a refund');
-    return refundFailure('unavailable', 'Refund records are not available.');
   }
 }
 
@@ -1014,13 +1039,14 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
   let stockRestored = false;
   if (paymentStatus === 'PAID') {
     const itemRows = (await tx`
-      select product_id, quantity from order_items where order_id = ${orderId}
+      select product_id, variant_id, quantity from order_items where order_id = ${orderId}
     `) as Row[];
     const restored = await restoreSoldStock(
       tx,
       orderId,
       itemRows.map((item) => ({
         productId: text(item.product_id),
+        variantId: item.variant_id ? text(item.variant_id) : null,
         quantity: Number(item.quantity),
       })),
       { createdBy: input.actorId },
@@ -1100,7 +1126,7 @@ export async function saveCancellationReason(input: {
 
 /** Total captured vs refunded for an order — used by the refund form header. */
 export async function orderRefundPosition(txnid: string): Promise<
-  | { ok: true; capturedPaise: number; refundedPaise: number; remainingPaise: number }
+  | { ok: true; capturedPaise: number; refundedPaise: number; pendingPaise: number; remainingPaise: number }
   | { ok: false; reason: 'unavailable' | 'not-found' }
 > {
   const sql = getSql();
@@ -1111,7 +1137,10 @@ export async function orderRefundPosition(txnid: string): Promise<
              coalesce((select sum(p.amount_paise) from order_payments p
                        where p.order_id = o.id and p.status = 'PAID'), 0)::bigint as captured,
              coalesce((select sum(f.amount_paise) from refunds f
-                       where f.order_id = o.id), 0)::bigint as refunded
+                       where f.order_id = o.id), 0)::bigint as refunded,
+             coalesce((select sum(q.amount_paise) from refund_requests q
+                       where q.order_id = o.id and not exists
+                         (select 1 from refund_request_events e where e.request_id = q.id)), 0)::bigint as pending
       from orders o
       where o.txnid = ${txnid.trim()}
       limit 1
@@ -1123,7 +1152,9 @@ export async function orderRefundPosition(txnid: string): Promise<
       captured = number(row.total_paise) || Math.round(number(row.amount) * 100);
     }
     const refunded = number(row.refunded);
-    return { ok: true, capturedPaise: captured, refundedPaise: refunded, remainingPaise: Math.max(0, captured - refunded) };
+    const pending = number(row.pending);
+    return { ok: true, capturedPaise: captured, refundedPaise: refunded, pendingPaise: pending,
+      remainingPaise: Math.max(0, captured - refunded - pending) };
   } catch {
     console.warn('[store-admin/returns] could not read the refund position');
     return { ok: false, reason: 'unavailable' };

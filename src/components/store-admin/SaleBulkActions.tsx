@@ -69,7 +69,8 @@ export function SaleBulkActions({ productCount }: { productCount: number }) {
 
   return (
     <section className="sa-detail-card">
-      <h2 className="sa-card-title">Bulk sale prices</h2>
+      <h2 className="sa-card-title">Bulk product-default sale prices</h2>
+      <p className="sa-card-note">These actions change product defaults only, not option sale prices. Options with their own regular price do not inherit the product sale price.</p>
 
       {error ? (
         <p className="sa-error" role="alert">

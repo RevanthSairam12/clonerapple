@@ -9,10 +9,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function StoreAdminReasonsPage() {
   const session = await getStoreSession();
-  const [cancellation, refunds, returns] = await Promise.all([
+  const [cancellation, refunds, returns, bills] = await Promise.all([
     listCancellationReasons(),
     listSettingRows('refund-reasons'),
     listSettingRows('return-reasons'),
+    listSettingRows('bill-request-reasons'),
   ]);
   const canEdit = session?.role === 'store_admin' || session?.role === 'store_owner';
   const refundKind = LIST_KINDS['refund-reasons'];
@@ -64,6 +65,11 @@ export default async function StoreAdminReasonsPage() {
       ) : (
         <p className="sa-notice">Return reasons could not be read. Apply migration 0032.</p>
       )}
+
+      {bills.ok ? (
+        <SettingList listKey="bill-request-reasons" label={LIST_KINDS['bill-request-reasons'].label}
+          fields={LIST_KINDS['bill-request-reasons'].fields} rows={bills.data} canEdit={canEdit} />
+      ) : <p className="sa-notice">Bill reasons could not be read. Apply migration 0049.</p>}
 
       <p className="sa-readonly-foot">
         Reasons are hidden, never deleted, so past orders, refunds and returns keep their label.

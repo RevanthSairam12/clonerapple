@@ -5,6 +5,9 @@ import { getPosReceipt } from '@/lib/store-admin/pos';
 import { getStoreSettings } from '@/lib/store-admin/settings';
 import { formatDate } from '@/lib/store-admin/catalog';
 import { PrintButton } from '@/components/store-admin/PrintButton';
+import { getStoreSession } from '@/lib/store-admin/auth';
+import { getDocumentState } from '@/lib/orders/document-data';
+import { documentTitle, OrderDocumentStatus } from '@/components/orders/OrderDocument';
 
 interface Props {
   params: Promise<{ txnid: string }>;
@@ -20,6 +23,8 @@ function formatAmount(amountPaise: number, currency: string): string {
 
 export default async function PosReceiptPage({ params }: Props) {
   const { txnid } = await params;
+  const session = await getStoreSession();
+  if (!session) notFound();
 
   const [result, settingsResult] = await Promise.all([
     getPosReceipt(txnid),
@@ -29,6 +34,8 @@ export default async function PosReceiptPage({ params }: Props) {
   if (result.receipt.txnid === '') notFound();
 
   const receipt = result.receipt;
+  const documentState = await getDocumentState(receipt.id);
+  const showBill = documentState.kind !== 'status';
   const settings = settingsResult.ok ? settingsResult.settings : null;
   const tradeName = settings?.trade_name?.trim() || 'Gadzio';
   const address = settings?.address?.trim() || '';
@@ -49,11 +56,16 @@ export default async function PosReceiptPage({ params }: Props) {
               {email ? `Email: ${email}` : ''}
             </span>
           ) : null}
-          <h1 className="sa-receipt-title">Receipt / Bill of Supply</h1>
+          <h1 className="sa-receipt-title">{documentTitle(documentState)}</h1>
           <p className="sa-receipt-kicker">No tax collected — the business is not GST-registered.</p>
         </header>
 
+        <OrderDocumentStatus state={documentState} />
+        {documentState.kind === 'legacy' && <p className="sa-receipt-note">Legacy document. No permanent invoice number or issuance date was recorded. The POS receipt number is not an invoice number.</p>}
+
         <dl className="sa-meta sa-receipt-meta-list">
+          {documentState.invoiceNumber && <div><dt>Invoice no.</dt><dd className="sa-mono">{documentState.invoiceNumber}</dd></div>}
+          {documentState.invoiceIssuedAt && <div><dt>Invoice issued</dt><dd>{formatDate(documentState.invoiceIssuedAt)}</dd></div>}
           <div><dt>Receipt no.</dt><dd className="sa-mono">{receipt.receiptNo}</dd></div>
           <div><dt>Reference</dt><dd className="sa-mono">{receipt.txnid}</dd></div>
           <div><dt>Date</dt><dd>{formatDate(receipt.createdAt)}</dd></div>
@@ -63,7 +75,7 @@ export default async function PosReceiptPage({ params }: Props) {
           ) : null}
         </dl>
 
-        <table className="sa-table sa-receipt-table">
+        {showBill && <><table className="sa-table sa-receipt-table">
           <thead>
             <tr>
               <th>Item</th>
@@ -75,7 +87,7 @@ export default async function PosReceiptPage({ params }: Props) {
           <tbody>
             {receipt.lines.map((line) => (
               <tr key={line.lineNumber}>
-                <td>{line.productName}</td>
+                <td>{line.productName}{line.variantLabel && <span className="sa-row-sub">{line.variantLabel}</span>}{line.variantSku && <span className="sa-row-sub">SKU: {line.variantSku}</span>}</td>
                 <td className="sa-num">{line.quantity}</td>
                 <td className="sa-num">{formatAmount(line.unitPricePaise, line.currency)}</td>
                 <td className="sa-num">{formatAmount(line.lineTotalPaise, line.currency)}</td>
@@ -95,15 +107,16 @@ export default async function PosReceiptPage({ params }: Props) {
         </table>
 
         <dl className="sa-meta sa-receipt-payment">
-          <div><dt>Paid by</dt><dd>{receipt.method?.replace('_', ' ') || '—'}</dd></div>
+          <div><dt>Payment method</dt><dd>{receipt.method?.replace('_', ' ') || '—'}</dd></div>
           {receipt.providerRef ? (
             <div><dt>Payment ref</dt><dd className="sa-mono">{receipt.providerRef}</dd></div>
           ) : null}
-        </dl>
+        </dl></>}
 
         {footer ? <p className="sa-receipt-footer-text">{footer}</p> : null}
         <p className="sa-receipt-note">
-          This receipt is proof of payment only. It is not an invoice under GST law.
+          {documentState.isPaymentProof ? 'This receipt records payment received. ' : 'This document does not confirm a current paid sale. '}
+          It is not an invoice under GST law.
         </p>
       </div>
 

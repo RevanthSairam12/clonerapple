@@ -29,9 +29,11 @@ export interface EffectivePrice {
 export function resolveEffectivePrice(
   product: PriceSource,
   saleLive: boolean,
+  option?: PriceSource | null,
 ): EffectivePrice {
-  const regularPaise = toPaise(product.pricePaise);
-  const rawSale = product.salePricePaise;
+  const hasOverride = option?.pricePaise !== null && option?.pricePaise !== undefined;
+  const regularPaise = toPaise(hasOverride ? option!.pricePaise : product.pricePaise);
+  const rawSale = option?.salePricePaise ?? (hasOverride ? null : product.salePricePaise);
   const salePaise =
     rawSale === null || rawSale === undefined ? null : toPaise(rawSale);
 

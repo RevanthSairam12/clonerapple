@@ -185,7 +185,7 @@ export function templateValues(input: {
     customer_name: customerName,
     order_total: money(input.orderTotalPaise),
     total: money(input.orderTotalPaise),
-    shipping_amount: money(input.shippingPaise),
+    shipping_amount: input.shippingPaise === 0 ? 'Free' : money(input.shippingPaise),
     order_status: statusLabel(input.orderStatus),
     tracking_number: text(input.trackingNumber),
     tracking_url: safeHttpsUrl(input.trackingLink),
@@ -459,7 +459,7 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
     [STAFF]: {
       subject: 'Back in stock: {{product_name}}',
       heading: 'Back in stock',
-      body: '{{product_name}} is back in stock ({{stock_available}} available).',
+      body: '{{product_name}} is back in stock ({{stock_available}} available to buy).',
       sms: '{{product_name}} back in stock.',
       buttonLabel: 'Open in Store Admin',
       buttonUrl: '{{admin_link}}',
@@ -505,7 +505,7 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
     [STAFF]: {
       subject: 'Low stock: {{product_name}}',
       heading: 'Low stock alert',
-      body: '{{product_name}} is low on stock ({{stock_available}} available).',
+      body: '{{product_name}} is low on stock ({{stock_available}} available to buy).',
       sms: '{{store_name}}: low stock for {{product_name}} ({{stock_available}} left).',
       buttonLabel: 'Open in Store Admin',
       buttonUrl: '{{admin_link}}',

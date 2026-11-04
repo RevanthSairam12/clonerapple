@@ -1,9 +1,11 @@
 import Link from 'next/link';
+import { ProductHelp } from '@/components/store-admin/ProductHelp';
 
 import { ProductCreateForm } from '@/components/store-admin/ProductCreateForm';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
 import { listConditions } from '@/lib/store-admin/catalog-crud';
+import { loadMetadataEditor } from '@/lib/store-admin/product-metadata';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,13 +23,14 @@ export default async function StoreAdminNewProductPage() {
     );
   }
 
+  const metadata = await loadMetadataEditor().catch(() => null);
   const [categoriesResult, brandsResult, conditionsResult] = await Promise.all([
     listCategoryOptions(),
     listBrands(),
     listConditions(),
   ]);
 
-  if (!categoriesResult.ok || !brandsResult.ok || !conditionsResult.ok) {
+  if (!categoriesResult.ok || !brandsResult.ok || !conditionsResult.ok || !metadata) {
     return (
       <div>
         <Link className="sa-back" href="/store-admin/products">
@@ -36,7 +39,7 @@ export default async function StoreAdminNewProductPage() {
         <h1 className="sa-page-title">New product</h1>
         <p className="sa-notice">
           The catalogue tables are not available yet. Apply migrations 0011,
-          0012 and 0024, then reload this page.
+          0012, 0024 and 0051. Product metadata must be ready before creation; no global-attribute fallback is used.
         </p>
       </div>
     );
@@ -74,17 +77,18 @@ export default async function StoreAdminNewProductPage() {
       <Link className="sa-back" href="/store-admin/products">
         ← Products
       </Link>
+      <ProductHelp label="Back to products">Return to the product list. Unsaved changes prompt you before leaving.</ProductHelp>
       <div className="sa-detail-head">
         <div>
           <h1 className="sa-page-title">New product</h1>
           <p className="sa-page-sub">
-            Saved with an opening price history row and a stock row, so the
-            product is sellable the moment it is created.
+            Follow six simple steps to add photos, options, stock and a description.
+            Save everything together as a draft, or review and publish.
           </p>
         </div>
       </div>
 
-      <ProductCreateForm categories={categories} brands={brands} conditions={conditions} />
+      <ProductCreateForm categories={categories} brands={brands} conditions={conditions} metadataReferences={metadata.references} canManageDevices={session.role === 'store_owner'} />
     </div>
   );
 }

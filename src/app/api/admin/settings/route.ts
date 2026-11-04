@@ -1,76 +1,13 @@
-import { NextResponse } from 'next/server';
+import { legacyAdminGone } from "@/lib/website/legacy-gone";
 
-import { assertSameOrigin } from '@/lib/platform/api-guard';
-import { requireEditor } from '@/lib/admin/require-editor';
-import { getSql } from '@/lib/platform/db';
-import { getThemeSettings, THEME_SETTING_KEYS } from '@/lib/content';
-
-/** GET /api/admin/settings — all theme settings. */
-export async function GET() {
-  const guard = await requireEditor();
-  if (!guard.ok) return guard.response;
-
-  return NextResponse.json({ values: await getThemeSettings() });
+function gone() {
+  return legacyAdminGone("/api/admin/settings");
 }
 
-/** PUT /api/admin/settings — upsert multiple settings rows. */
-export async function PUT(request: Request) {
-  const originViolation = assertSameOrigin(request);
-  if (originViolation) return originViolation;
-
-  const guard = await requireEditor();
-  if (!guard.ok) return guard.response;
-
-  const sql = getSql();
-  if (!sql) return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
-
-  let body: { values?: Record<string, string> };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
-  }
-
-  const values = body.values ?? {};
-  for (const [key, value] of Object.entries(values)) {
-    if (typeof value !== 'string') continue;
-    // Whitelist: only known theme keys may be written, so the editor can
-    // never stuff arbitrary rows into site_settings.
-    if (!THEME_SETTING_KEYS.has(key)) continue;
-    await sql`
-      insert into site_settings (key, value, updated_at, updated_by, archived_at)
-      values (${key}, ${value}, now(), ${guard.email}, null)
-      on conflict (key) do update
-      set value = excluded.value,
-          updated_at = now(),
-          updated_by = excluded.updated_by,
-          archived_at = null
-    `;
-  }
-
-  return NextResponse.json({ ok: true });
-}
-
-/** DELETE /api/admin/settings?key=... — revert one setting (archive, never delete). */
-export async function DELETE(request: Request) {
-  const originViolation = assertSameOrigin(request);
-  if (originViolation) return originViolation;
-
-  const guard = await requireEditor();
-  if (!guard.ok) return guard.response;
-
-  const sql = getSql();
-  if (!sql) return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
-
-  const key = new URL(request.url).searchParams.get('key');
-  if (!key || !THEME_SETTING_KEYS.has(key)) {
-    return NextResponse.json({ error: 'Unknown setting key.' }, { status: 400 });
-  }
-
-  await sql`
-    update site_settings
-    set archived_at = now(), updated_at = now(), updated_by = ${guard.email}
-    where key = ${key} and archived_at is null
-  `;
-  return NextResponse.json({ ok: true, archived: true });
-}
+export const GET = gone;
+export const POST = gone;
+export const PUT = gone;
+export const PATCH = gone;
+export const DELETE = gone;
+export const HEAD = gone;
+export const OPTIONS = gone;

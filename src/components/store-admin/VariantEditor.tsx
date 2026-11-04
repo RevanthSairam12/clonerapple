@@ -1,367 +1,39 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import {useState} from 'react';
+import {useRouter} from 'next/navigation';
+import type {CatalogVariant} from '@/lib/store-admin/catalog';
+import {formatPaise} from '@/lib/store-admin/amount';
 
-import type { CatalogVariant } from '@/lib/store-admin/catalog';
-
-interface Props {
-  productId: string;
-  basePricePaise: number;
-  initialVariants: CatalogVariant[];
-  canEdit: boolean;
-}
-
-interface VariantForm {
-  id: string;
-  sku: string;
-  optionName: string;
-  optionValue: string;
-  optionHex: string;
-  priceOverride: string;
-  sortOrder: string;
-  isActive: boolean;
-}
-
-function emptyForm(): VariantForm {
-  return {
-    id: '',
-    sku: '',
-    optionName: 'Colour',
-    optionValue: '',
-    optionHex: '',
-    priceOverride: '',
-    sortOrder: '0',
-    isActive: true,
-  };
-}
-
-function toForm(variant: CatalogVariant): VariantForm {
-  return {
-    id: variant.id,
-    sku: variant.sku ?? '',
-    optionName: variant.optionName,
-    optionValue: variant.optionValue,
-    optionHex: variant.optionHex ?? '',
-    priceOverride:
-      variant.pricePaiseOverride === null
-        ? ''
-        : (variant.pricePaiseOverride / 100).toFixed(2),
-    sortOrder: String(variant.sortOrder),
-    isActive: variant.isActive,
-  };
-}
-
-function money(paise: number): string {
-  return `₹${(paise / 100).toLocaleString('en-IN')}`;
-}
-
-/** Variants (colour, size, capacity) with an optional price override. */
-export function VariantEditor({ productId, basePricePaise, initialVariants, canEdit }: Props) {
-  const router = useRouter();
-  const [form, setForm] = useState<VariantForm>(emptyForm);
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  function beginCreate() {
-    setForm(emptyForm());
-    setEditing(true);
-    setError(null);
-    setNotice(null);
+interface Props {productId:string;basePricePaise:number;initialVariants:CatalogVariant[];canEdit:boolean;deviceModels?:Array<{id:string;name:string}>}
+const blank=()=>({id:'',sku:'',optionName:'Specification',optionValue:'',optionHex:'',sortOrder:0,isActive:true,isPurchasable:false,deviceModelId:'',combinationKey:''});
+export function VariantEditor({productId,basePricePaise,initialVariants,canEdit,deviceModels=[]}:Props){
+  const router=useRouter();const [form,setForm]=useState(blank);const [editing,setEditing]=useState(false);const [error,setError]=useState('');const [busy,setBusy]=useState(false);
+  const [counts,setCounts]=useState<Record<string,string>>({});const [thresholds,setThresholds]=useState<Record<string,string>>({});const [tracking,setTracking]=useState<Record<string,boolean>>({});const [reason,setReason]=useState('adjustment');const [note,setNote]=useState('');
+  const endpoint=`/api/store-admin/catalog/products/${encodeURIComponent(productId)}`;
+  async function mutate(url:string,body?:unknown,method='POST'){
+    setBusy(true);setError('');try{const response=await fetch(url,{method,headers:{'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json();if(!response.ok)throw new Error(data.error??'Could not save.');setEditing(false);setCounts({});setTracking({});setThresholds({});router.refresh();}catch(e){setError(e instanceof Error?e.message:'Could not save.');}finally{setBusy(false);}
   }
-
-  function beginEdit(variant: CatalogVariant) {
-    setForm(toForm(variant));
-    setEditing(true);
-    setError(null);
-    setNotice(null);
+  function save(){
+    // Price fields are deliberately absent: existing overrides are preserved, never enabled by this editor.
+    const existing=initialVariants.find(v=>v.id===form.id);
+    void mutate(`${endpoint}/variants`,{...form,id:form.id||undefined,sku:form.sku||null,deviceModelId:form.deviceModelId||null,combinationKey:form.combinationKey||null,optionHex:form.optionHex||null,priceOverridePaise:existing?.pricePaiseOverride??null});
   }
-
-  async function save() {
-    setBusy('save');
-    setError(null);
-    setNotice(null);
-    try {
-      let priceOverridePaise: number | null = null;
-      if (form.priceOverride.trim()) {
-        const value = Math.round(Number(form.priceOverride) * 100);
-        if (!Number.isFinite(value) || value <= 0) {
-          throw new Error('The price override must be a positive amount, or blank.');
-        }
-        priceOverridePaise = value;
-      }
-
-      const response = await fetch(
-        `/api/store-admin/catalog/products/${encodeURIComponent(productId)}/variants`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            id: form.id || undefined,
-            sku: form.sku || null,
-            optionName: form.optionName,
-            optionValue: form.optionValue,
-            optionHex: form.optionHex || null,
-            priceOverridePaise,
-            sortOrder: Number(form.sortOrder || 0),
-            isActive: form.isActive,
-          }),
-        },
-      );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof body.error === 'string' ? body.error : 'Could not save this variant.');
-      }
-      setNotice(body.created ? 'Variant created.' : 'Variant saved.');
-      setEditing(false);
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not save this variant.');
-    } finally {
-      setBusy(null);
-    }
+  function saveInventory(){
+    const changed=initialVariants.filter(v=>counts[v.id]!==undefined||thresholds[v.id]!==undefined||tracking[v.id]!==undefined);
+    const enable=changed.some(v=>tracking[v.id]===true&&!v.stock?.trackInventory);
+    if(enable&&!window.confirm('Limit stock for the selected combinations? Counts become checkout limits.'))return;
+    const rows=changed.map(v=>({variantId:v.id,reason,note,...(counts[v.id]===undefined?{}:{onHand:Number(counts[v.id])}),...(thresholds[v.id]===undefined?{}:{lowStockThreshold:Number(thresholds[v.id])}),...(tracking[v.id]===undefined?{}:{trackInventory:tracking[v.id]}),confirmTracking:enable}));
+    if(rows.some(r=>('onHand'in r&&!String(counts[r.variantId]).trim())||('lowStockThreshold'in r&&!String(thresholds[r.variantId]).trim()))){setError('Enter explicit whole counts; blank is not zero.');return;}
+    void mutate(`${endpoint}/variant-inventory`,{rows});
   }
-
-  async function archive(variant: CatalogVariant) {
-    setBusy(variant.id);
-    setError(null);
-    setNotice(null);
-    try {
-      const response = await fetch(
-        `/api/store-admin/catalog/products/${encodeURIComponent(productId)}/variants/${encodeURIComponent(variant.id)}`,
-        { method: 'DELETE' },
-      );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          typeof body.error === 'string' ? body.error : 'Could not archive this variant.',
-        );
-      }
-      setNotice('Variant archived. Past orders keep resolving to it.');
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not archive this variant.');
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <section className="sa-detail-section">
-      <h2 className="sa-section-title">Variants</h2>
-      <p className="sa-card-note">
-        Colour, size or capacity. A price override replaces the product price
-        for that variant, and each change is written to the price history.
-      </p>
-
-      {error ? (
-        <p className="sa-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {notice ? (
-        <p className="sa-notice" role="status">
-          {notice}
-        </p>
-      ) : null}
-
-      <div className="sa-table-wrap">
-        <table className="sa-table">
-          <thead>
-            <tr>
-              <th>Variant</th>
-              <th>SKU</th>
-              <th className="sa-num">Price</th>
-              <th>Status</th>
-              {canEdit ? <th aria-label="Actions" /> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {initialVariants.length === 0 ? (
-              <tr>
-                <td colSpan={canEdit ? 5 : 4} className="sa-empty">
-                  No variants yet.
-                </td>
-              </tr>
-            ) : (
-              initialVariants.map((variant) => (
-                <tr key={variant.id}>
-                  <td>
-                    <span className="sa-variant">
-                      <span
-                        className="sa-swatch"
-                        style={{ background: variant.optionHex ?? 'transparent' }}
-                        aria-hidden="true"
-                      />
-                      {variant.optionValue}
-                    </span>
-                    <div className="sa-row-sub">{variant.optionName}</div>
-                  </td>
-                  <td className="sa-mono">{variant.sku ?? '—'}</td>
-                  <td className="sa-num">
-                    {money(variant.pricePaiseOverride ?? basePricePaise)}
-                    {variant.pricePaiseOverride === null ? (
-                      <span className="sa-row-sub">base price</span>
-                    ) : null}
-                  </td>
-                  <td>
-                    <span
-                      className={
-                        variant.isActive ? 'sa-status sa-status-on' : 'sa-status'
-                      }
-                    >
-                      {variant.isActive ? 'Active' : 'Archived'}
-                    </span>
-                  </td>
-                  {canEdit ? (
-                    <td>
-                      <button
-                        className="sa-btn sa-btn-small"
-                        type="button"
-                        onClick={() => beginEdit(variant)}
-                      >
-                        Edit
-                      </button>{' '}
-                      {variant.isActive ? (
-                        <button
-                          className="sa-btn sa-btn-quiet sa-btn-small"
-                          type="button"
-                          disabled={busy === variant.id}
-                          onClick={() => archive(variant)}
-                        >
-                          Archive
-                        </button>
-                      ) : null}
-                    </td>
-                  ) : null}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {canEdit ? (
-        editing ? (
-          <div className="sa-control-card">
-            <h3 className="sa-control-title">
-              {form.id ? 'Edit variant' : 'New variant'}
-            </h3>
-            <div className="sa-control-grid">
-              <label className="sa-field">
-                <span className="sa-label">SKU</span>
-                <input
-                  className="sa-input sa-mono"
-                  maxLength={64}
-                  placeholder="GAD-20W-BLK"
-                  value={form.sku}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, sku: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="sa-field">
-                <span className="sa-label">Option</span>
-                <input
-                  className="sa-input"
-                  maxLength={40}
-                  value={form.optionName}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, optionName: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="sa-field">
-                <span className="sa-label">Value</span>
-                <input
-                  className="sa-input"
-                  maxLength={60}
-                  value={form.optionValue}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, optionValue: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="sa-field">
-                <span className="sa-label">Colour hex</span>
-                <input
-                  className="sa-input sa-mono"
-                  maxLength={7}
-                  placeholder="#1f2937"
-                  value={form.optionHex}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, optionHex: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="sa-field">
-                <span className="sa-label">
-                  Price override ₹ <span className="sa-hint">blank uses the base price</span>
-                </span>
-                <input
-                  className="sa-input"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.priceOverride}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, priceOverride: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="sa-field">
-                <span className="sa-label">Sort order</span>
-                <input
-                  className="sa-input"
-                  type="number"
-                  min={0}
-                  value={form.sortOrder}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, sortOrder: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="sa-check">
-                <input
-                  type="checkbox"
-                  checked={form.isActive}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, isActive: event.target.checked }))
-                  }
-                />
-                Active
-              </label>
-            </div>
-            <div className="sa-inline-actions">
-              <button
-                className="sa-btn sa-btn-primary"
-                type="button"
-                disabled={busy === 'save' || !form.optionValue.trim()}
-                onClick={save}
-              >
-                {busy === 'save' ? 'Saving…' : 'Save variant'}
-              </button>
-              <button
-                className="sa-btn sa-btn-quiet"
-                type="button"
-                onClick={() => setEditing(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="sa-inline-actions">
-            <button className="sa-btn sa-btn-primary" type="button" onClick={beginCreate}>
-              New variant
-            </button>
-          </div>
-        )
-      ) : (
-        <p className="sa-lock-note">Only an owner or admin can change variants.</p>
-      )}
-    </section>
-  );
+  return <section className="sa-detail-section"><h2 className="sa-section-title">Variants</h2>
+    <p className="sa-hint">One purchasable combination is one durable SKU. Model and specification labels do not select stock by themselves. Drafting combinations does not activate variant inventory. Regular and sale prices are read-only until the checkout pricing gate is approved.</p>
+    {error?<p className="sa-error" role="alert">{error}</p>:null}
+    <div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Combination / SKU</th><th>Price / sale</th><th>Limit my stock</th><th>In stock</th><th>Held in checkouts / Available to buy</th><th>Warn me when below</th>{canEdit?<th>Actions</th>:null}</tr></thead><tbody>
+      {initialVariants.map(v=><tr key={v.id}><td>{v.optionName}: {v.optionValue}<span className="sa-row-sub sa-mono">{v.sku??'No SKU'} · {deviceModels.find(m=>m.id===v.deviceModelId)?.name??v.deviceModelId??'No model'}</span><span className="sa-row-sub">{v.isActive?'Active':'Archived'} · {v.isPurchasable?'Commerce':'Display only'}</span></td><td>{formatPaise(v.pricePaiseOverride??basePricePaise)}<span className="sa-row-sub">{v.salePricePaise==null?'No sale override':formatPaise(v.salePricePaise)}</span></td><td>{canEdit&&v.isPurchasable&&v.isActive?<label><input type="checkbox" checked={tracking[v.id]??v.stock?.trackInventory??false} onChange={e=>setTracking({...tracking,[v.id]:e.target.checked})}/> Limit my stock</label>:v.stock?.trackInventory?'Limited':'Not limited'}</td><td>{canEdit&&v.isPurchasable&&v.isActive?<input className="sa-input" aria-label={`In stock for ${v.sku}`} type="number" min="0" step="1" placeholder={v.stock?String(v.stock.onHand):'Explicit count'} value={counts[v.id]??''} onChange={e=>setCounts({...counts,[v.id]:e.target.value})}/>:v.stock?.onHand??'Missing row'}</td><td>{v.stock?`${v.stock.reserved} / ${Math.max(0,v.stock.onHand-v.stock.reserved)}`:'—'}</td><td>{canEdit&&v.isPurchasable&&v.isActive?<input className="sa-input" aria-label={`Warn me when below for ${v.sku}`} type="number" min="0" step="1" placeholder={String(v.stock?.lowStockThreshold??0)} value={thresholds[v.id]??''} onChange={e=>setThresholds({...thresholds,[v.id]:e.target.value})}/>:v.stock?.lowStockThreshold??'—'}</td>{canEdit?<td><button className="sa-btn sa-btn-small" onClick={()=>{setForm({id:v.id,sku:v.sku??'',optionName:v.optionName,optionValue:v.optionValue,optionHex:v.optionHex??'',sortOrder:v.sortOrder,isActive:v.isActive,isPurchasable:v.isPurchasable,deviceModelId:v.deviceModelId??'',combinationKey:v.combinationKey??''});setEditing(true);}}>Edit</button>{v.isActive?<button className="sa-btn sa-btn-small" disabled={busy} onClick={()=>void mutate(`${endpoint}/variants/${encodeURIComponent(v.id)}`,undefined,'DELETE')}>Archive</button>:null}</td>:null}</tr>)}
+    </tbody></table></div>
+    {canEdit?<><div className="sa-control-grid"><label className="sa-field">Stock reason<select className="sa-input" value={reason} onChange={e=>setReason(e.target.value)}><option value="adjustment">Adjustment</option><option value="receipt">Receipt</option><option value="damage">Damage</option></select></label><label className="sa-field">Stock note<input className="sa-input" maxLength={200} value={note} onChange={e=>setNote(e.target.value)}/></label></div><p className="sa-hint">Enter absolute counts only for rows you intend to change. Missing stock rows need an explicit count and stock limit choice (toggle it to select). All edited rows save atomically; no automatic allocation from legacy stock.</p><button className="sa-btn" disabled={busy} onClick={saveInventory}>Adjust / bulk set edited counts</button> <button className="sa-btn" onClick={()=>{setForm(blank());setEditing(true);}}>New combination</button>
+    {editing?<div className="sa-control-card"><div className="sa-control-grid">{(['sku','optionName','optionValue','optionHex','combinationKey'] as const).map(key=><label className="sa-field" key={key}>{key}<input className="sa-input" value={form[key]} maxLength={key==='combinationKey'?160:60} onChange={e=>setForm({...form,[key]:e.target.value})}/></label>)}<label className="sa-field">Compatible model<select className="sa-input" value={form.deviceModelId} onChange={e=>setForm({...form,deviceModelId:e.target.value})}><option value="">No model mapping</option>{deviceModels.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label><input type="checkbox" checked={form.isPurchasable} onChange={e=>setForm({...form,isPurchasable:e.target.checked})}/> Purchasable combination</label><label><input type="checkbox" checked={form.isActive} onChange={e=>setForm({...form,isActive:e.target.checked})}/> Active</label></div><p className="sa-hint">Commerce SKU, model, combination key and specification identity cannot be rewritten after save. Archive and create a new identity instead.</p><button className="sa-btn" disabled={busy} onClick={save}>Save combination</button> <button className="sa-btn" onClick={()=>setEditing(false)}>Cancel</button></div>:null}</>:null}
+  </section>;
 }

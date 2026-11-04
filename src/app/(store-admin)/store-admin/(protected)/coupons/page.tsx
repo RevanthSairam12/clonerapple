@@ -1,6 +1,12 @@
 import Link from 'next/link';
 
+import {
+  CouponSelectAll,
+  CouponSelectionCheckbox,
+  CouponVisibilityControls,
+} from '@/components/store-admin/CouponVisibilityControls';
 import { formatPaise } from '@/lib/store-admin/amount';
+import { getStoreSession } from '@/lib/store-admin/auth';
 import { couponScopeLabel, couponValueLabel } from '@/lib/store-admin/coupon-rules';
 import { listCoupons } from '@/lib/store-admin/coupons';
 
@@ -52,17 +58,26 @@ function formatDate(iso: string | null): string {
  * so "Active" here is exactly the set checkout will accept right now.
  */
 export default async function StoreAdminCouponsPage({ searchParams }: Props) {
+  const session = await getStoreSession();
+  const canEdit = session?.role === 'store_admin' || session?.role === 'store_owner';
   const raw = await searchParams;
   const search = first(raw.search).trim();
   const status = first(raw.status) || 'all';
-  const page = Number.parseInt(first(raw.page) || '1', 10) || 1;
+  const rawVisibility = first(raw.visibility);
+  const visibility = rawVisibility === 'public' || rawVisibility === 'hidden' ? rawVisibility : 'all';
+  const page = Math.max(1, Number.parseInt(first(raw.page) || '1', 10) || 1);
 
-  const result = await listCoupons({ search, status, page, pageSize: 25 });
+  const result = await listCoupons({ search, status, visibility, page, pageSize: 25 });
   const data = result.ok ? result.data : null;
 
   const pageCount = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const filterParams = { search, status: status === 'all' ? '' : status };
+  const filterParams = {
+    search,
+    status: status === 'all' ? '' : status,
+    visibility: visibility === 'all' ? '' : visibility,
+  };
   const exportHref = `/api/store-admin/coupons/export${queryString(filterParams)}`;
+  const selectableCouponIds = data?.rows.filter((row) => row.status !== 'archived').map((row) => row.id) ?? [];
 
   return (
     <div>
@@ -78,9 +93,11 @@ export default async function StoreAdminCouponsPage({ searchParams }: Props) {
           <a className="sa-btn sa-btn-quiet sa-btn-small" href={exportHref} download>
             Export CSV
           </a>
-          <Link className="sa-btn sa-btn-small" href="/store-admin/coupons/new">
-            New coupon
-          </Link>
+          {canEdit ? (
+            <Link className="sa-btn sa-btn-small" href="/store-admin/coupons/new">
+              New coupon
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -106,26 +123,52 @@ export default async function StoreAdminCouponsPage({ searchParams }: Props) {
             ))}
           </select>
         </div>
+        <div className="sa-filter-field">
+          <label className="sa-label" htmlFor="coupon-visibility">Visibility</label>
+          <select
+            id="coupon-visibility"
+            className="sa-input"
+            name="visibility"
+            defaultValue={visibility}
+            aria-describedby="coupon-list-visibility-help"
+          >
+            <option value="all">All visibility</option>
+            <option value="public">Public</option>
+            <option value="hidden">Hidden (not public)</option>
+          </select>
+        </div>
         <div className="sa-filter-actions">
           <button className="sa-btn sa-btn-small" type="submit">Apply</button>
         </div>
       </form>
+      <p className="sa-hint" id="coupon-list-visibility-help">
+        Visibility controls discovery, not redemption. Hidden means not public; assigned
+        eligible customers may still see the coupon, and anyone with its code can redeem it
+        unless customer restrictions apply. Assignments never override those restrictions.
+      </p>
 
       {!data ? (
         <p className="sa-notice">
-          Coupons could not be read. Check the database connection and that migration 0041 is
-          applied.
+          Coupons could not be read. Check the database connection and that the coupon
+          visibility migrations are applied.
         </p>
       ) : (
         <>
+          <CouponVisibilityControls
+            key={JSON.stringify([filterParams, page, selectableCouponIds])}
+            canEdit={canEdit}
+            couponIds={selectableCouponIds}
+          >
           <div className="sa-table-wrap">
             <table className="sa-table">
               <thead>
                 <tr>
+                  {canEdit ? <th scope="col"><CouponSelectAll /></th> : null}
                   <th>Code</th>
                   <th>Discount</th>
                   <th>Scope</th>
                   <th>Status</th>
+                  <th scope="col">Visibility</th>
                   <th>Uses</th>
                   <th>Minimum order</th>
                   <th>Window</th>
@@ -135,15 +178,16 @@ export default async function StoreAdminCouponsPage({ searchParams }: Props) {
               <tbody>
                 {data.rows.length === 0 ? (
                   <tr>
-                    <td className="sa-empty" colSpan={8}>
-                      {search || status !== 'all'
-                        ? 'No coupon matches this search and status.'
+                    <td className="sa-empty" colSpan={canEdit ? 10 : 9}>
+                      {search || status !== 'all' || visibility !== 'all'
+                        ? 'No coupon matches these filters.'
                         : 'No coupons yet. Create one to offer a discount at checkout.'}
                     </td>
                   </tr>
                 ) : (
                   data.rows.map((row) => (
                     <tr key={row.id}>
+                      {canEdit ? <td><CouponSelectionCheckbox id={row.id} code={row.code} /></td> : null}
                       <td>
                         <Link
                           className="sa-product-link"
@@ -159,6 +203,14 @@ export default async function StoreAdminCouponsPage({ searchParams }: Props) {
                         <span className="sa-status-chip" data-tone={TONE[row.badge.tone]}>
                           {row.badge.label}
                         </span>
+                      </td>
+                      <td>
+                        <span className="sa-status-chip" data-tone={row.showToAllUsers ? undefined : 'warn'}>
+                          {row.showToAllUsers ? 'Public' : 'Hidden'}
+                        </span>
+                        <div className="sa-hint">
+                          {row.assignedToEmails.length} email assignments · {row.assignedCustomerGroups.length} group assignments
+                        </div>
                       </td>
                       <td>
                         {row.used}
@@ -183,6 +235,7 @@ export default async function StoreAdminCouponsPage({ searchParams }: Props) {
               </tbody>
             </table>
           </div>
+          </CouponVisibilityControls>
 
           <nav className="sa-pagination" aria-label="Coupon pages">
             {page > 1 ? (
