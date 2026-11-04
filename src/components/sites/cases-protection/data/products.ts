@@ -212,7 +212,7 @@ export const PRODUCTS: Product[] = [
     'iphone18pro-max-clear-magsafe',
     'Gadzio CrystalArmor Clear Case with MagSafe',
     'Clear',
-    3499,
+    3509,
     '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg',
     [
       { name: 'Diamond Clear', hex: '#e8e8ed' },

@@ -46,6 +46,23 @@ const { normalizeProduct } = await jiti.import(
   path.join(root, 'src', 'components', 'collection', 'types.ts'),
 );
 
+test('accepted parity prices are used on static product pages and fallback search/bag refs', () => {
+  for (const [id, pricePaise] of [
+    ['iphone18pro-max-clear-magsafe', 350900],
+    ['cpc-gadzio-silicone-organizer', 87900],
+  ]) {
+    const page = getStaticProduct(id);
+    assert.ok(page, id);
+    assert.equal(Math.round(page.product.price * 100), pricePaise, `${id}: accepted database snapshot price`);
+    const ref = STATIC_PRODUCT_REFS.find(product => product.id === id);
+    assert.equal(ref.pricePaise, pricePaise, `${id}: fallback price in paise`);
+    assert.equal(ref.priceDisplay.replace(/[^0-9.]/g, ''), `${pricePaise / 100}.00`);
+  }
+  const colours = getStaticCaseProduct('iphone17-silicone-black').colors.map(colour => colour.name);
+  assert.ok(colours.includes('Midnight Black'));
+  assert.ok(!colours.includes('Midnight NLU'));
+});
+
 /* --------------------------------------------------------------- fixtures */
 
 function staticAccessory(overrides = {}) {

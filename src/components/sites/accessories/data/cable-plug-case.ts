@@ -49,7 +49,7 @@ export const PRODUCTS: AccessoryProduct[] = [
     id: 'cpc-gadzio-silicone-organizer',
     name: 'Gadzio Silicone Cable Organizer',
     subtitle: 'Snap-wrap set of 3',
-    price: 799,
+    price: 879,
     image: IMG_A,
     images: [IMG_A, IMG_C],
     colors: [BLACK, NAVY, SAND],
