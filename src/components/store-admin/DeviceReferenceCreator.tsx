@@ -16,7 +16,7 @@ export interface DeviceReferenceCreatorProps {
   onDirtyChange?: (dirty: boolean) => void;
 }
 export interface DeviceReferenceDraft { name: string; brandId: string; sortOrder: string; isActive: boolean }
-export interface DeviceReferencePayload { name: string; sortOrder: number; isActive: boolean; brandId?: string }
+export interface DeviceReferencePayload { name: string; sortOrder: number; isActive: boolean; brandId?: string; confirmNearMatch?: boolean }
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 const cleanName = (value: unknown, max: number): value is string => typeof value === 'string' && !!value.trim() && value.trim().length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 
@@ -75,15 +75,16 @@ export function DeviceReferenceCreator({ kind, brands, canManage = false, disabl
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmNearMatch, setConfirmNearMatch] = useState(false);
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   const locked = disabled || busy || ambiguous || !canManage;
   function change<K extends keyof DeviceReferenceDraft>(key: K, value: DeviceReferenceDraft[K]) {
-    setDraft(current => ({ ...current, [key]: value })); setDirty(true);
+    setDraft(current => ({ ...current, [key]: value })); setDirty(true); setConfirmNearMatch(false); setError(null);
   }
   async function create() {
     if (locked || pending.current) return;
     let payload: DeviceReferencePayload;
-    try { payload = deviceReferencePayload(kind, draft, brands); }
+    try { payload = { ...deviceReferencePayload(kind, draft, brands), ...(confirmNearMatch ? { confirmNearMatch: true } : {}) }; }
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Check your input.'); return; }
     pending.current = true; setBusy(true); onBusyChange?.(true); setError(null); setNotice(null);
     try {
@@ -108,6 +109,7 @@ export function DeviceReferenceCreator({ kind, brands, canManage = false, disabl
       <label className="sa-check"><input type="checkbox" checked={draft.isActive} onChange={event => change('isActive', event.target.checked)} />Active</label>
     </div>
     {kind === 'models' && !brands.some(brand => brand.isActive) && <p className="sa-hint">An owner must create or activate a device brand before adding models.</p>}
+    {error?.startsWith('Did you mean ') && <label className="sa-check"><input type="checkbox" checked={confirmNearMatch} onChange={event => setConfirmNearMatch(event.target.checked)} />Create as entered after reviewing the similar names</label>}
     {error && <p className="sa-error" role="alert">{error}</p>}{notice && <p className="sa-notice" role="status">{notice}</p>}
     <div className="sa-inline-actions"><button className="sa-btn sa-btn-primary" type="button" disabled={locked || (kind === 'models' && !brands.some(brand => brand.isActive))} onClick={create}>{busy ? 'Creating…' : `Create device ${kind === 'brands' ? 'brand' : 'model'}`}</button><button className="sa-btn sa-btn-quiet" type="button" disabled={locked} onClick={() => { setDraft({ name: '', brandId: initialBrandId, sortOrder: '0', isActive: true }); setDirty(false); setError(null); setNotice(null); }}>Reset</button></div>
     {dirty && <p className="sa-hint">Unsaved device reference input.</p>}

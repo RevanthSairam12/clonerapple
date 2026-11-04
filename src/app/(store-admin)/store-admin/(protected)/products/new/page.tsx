@@ -88,7 +88,7 @@ export default async function StoreAdminNewProductPage() {
         </div>
       </div>
 
-      <ProductCreateForm categories={categories} brands={brands} conditions={conditions} metadataReferences={metadata.references} canManageDevices={session.role === 'store_owner'} />
+      <ProductCreateForm categories={categories} brands={brands} conditions={conditions} metadataReferences={metadata.references} canManageDevices={session.role === 'store_owner'} canCreateShared={session.role === 'store_owner' || session.role === 'store_admin'} />
     </div>
   );
 }

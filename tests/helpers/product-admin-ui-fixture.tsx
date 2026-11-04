@@ -2,6 +2,8 @@
 import React, { useEffect, type ReactNode } from 'react';
 import { hydrateRoot } from 'react-dom/client';
 import { ProductWorkflow } from '@/components/store-admin/ProductWorkflow';
+import { SharedListManager } from '@/components/store-admin/SharedListManager';
+import { planSharedImport, type SharedSnapshot } from '@/lib/catalog/shared-list-rules';
 import ProductsPage from '@/app/(store-admin)/store-admin/(protected)/products/page';
 import type { MetadataReferences } from '@/lib/catalog/product-metadata-rules';
 import type { CatalogProductDetail } from '@/lib/store-admin/catalog';
@@ -67,15 +69,19 @@ export async function createFixture(search: string) {
   const query = new URLSearchParams(search);
   const mode = query.get('mode') || 'edit';
   serverMode = mode;
-  const body = mode.startsWith('list')
+  const body = mode.startsWith('colours-')
+    ? <SharedListManager kind="colours" snapshot={{ brands: references.brands, models: references.models, colours: [] }} canManage={fixtureRole() === 'store_owner'} />
+    : mode.startsWith('list')
     ? await ProductsPage({ searchParams: Promise.resolve({ review: query.get('review') || undefined }) })
     : <ProductWorkflow categories={categories} brands={[{ id: 'fixture-brand', name: 'Fixture brand' }]} conditions={[{ id: 'fixture-new', name: 'New' }]} metadataReferences={references}
-        {...(mode.startsWith('add') ? {} : { product: mode === 'shared-owner' ? { ...product, inventoryMode: 'product', variants: [], stock: stock(20, 3), optionCount: 0 } : product, metadataState })} canEdit={fixtureRole() !== 'store_viewer'} canManageDevices={fixtureRole() === 'store_owner'} />;
+        {...(mode.startsWith('add') ? {} : { product: mode === 'shared-owner' ? { ...product, inventoryMode: 'product', variants: [], stock: stock(20, 3), optionCount: 0 } : product, metadataState })} canEdit={fixtureRole() !== 'store_viewer'} canManageDevices={fixtureRole() === 'store_owner'} canCreateShared={fixtureRole() !== 'store_viewer'} />;
   return <Hydrated><main className="fixture-main"><header className="fixture-banner">TEST-ONLY COMPONENT FIXTURE · synthetic data · no authenticated integration</header>{body}</main></Hydrated>;
 }
 if (typeof window !== 'undefined') {
   window.__fixture = { saves: [], requests: [], router: [], refreshes: 0, unexpectedFetch: [], conflict: false, reloadFailure: false };
   const currentReferences: MetadataReferences = JSON.parse(JSON.stringify(references));
+  const currentShared: SharedSnapshot = { brands: currentReferences.brands, models: currentReferences.models, colours: [] };
+  let confirmedInput = '';
   let nextId = 0;
   window.fetch = async (input, init) => {
     const url = String(input), method = init?.method || 'GET';
@@ -92,6 +98,29 @@ if (typeof window !== 'undefined') {
     if (/^\/api\/store-admin\/catalog\/metadata\/(types|brands|models)$/.test(url) && method === 'GET') {
       if (window.__fixture.reloadFailure) return response({ error: 'Fixture reload unavailable.' }, 503);
       return response({ references: currentReferences, state: metadataState });
+    }
+    const shared = url.match(/^\/api\/store-admin\/catalog\/shared\/(models|colours)(?:\/(inline|preview|apply|uses))?(?:\?.*)?$/);
+    if (shared) {
+      const kind = shared[1] as 'models' | 'colours', action = shared[2];
+      if (method === 'GET' && !action) return response({ snapshot: currentShared });
+      if (method === 'POST' && action === 'inline') {
+        if (fixtureRole() === 'store_viewer') return response({ error: 'Fixture admin role required.' }, 403);
+        const reference = { id: `fixture-created-${++nextId}`, name: body.name, sortOrder: 0, isActive: true, ...(kind === 'models' ? { brandId: body.brandId, brandName: currentReferences.brands.find(brand => brand.id === body.brandId)?.name } : { hex: body.hex }) };
+        currentShared[kind].push(reference); return response({ reference }, 201);
+      }
+      if (fixtureRole() !== 'store_owner') return response({ error: 'Fixture owner role required.' }, 403);
+      if (action === 'preview') { confirmedInput = JSON.stringify(body); return response({ plan: planSharedImport(body, currentShared), token: 'fixture-only-memory-token' }); }
+      if (action === 'apply') {
+        if (confirmedInput !== JSON.stringify(body.input) || body.token !== 'fixture-only-memory-token') return response({ error: 'Fixture stale preview.' }, 409);
+        const plan = planSharedImport(body.input, currentShared);
+        if (plan.rows.some(row => row.status === 'near' && !body.acknowledgedRows.includes(row.row))) return response({ error: 'Fixture near acknowledgment required.' }, 400);
+        const fresh = plan.rows.filter(row => ['new', 'near'].includes(row.status));
+        fresh.forEach(row => currentShared[kind].push({ id: `fixture-created-${++nextId}`, name: row.name, hex: row.hex, brandId: row.brandId, isActive: row.isActive, sortOrder: row.sortOrder }));
+        return response({ created: fresh.length, existing: plan.counts.existing, invalid: plan.counts.invalid, noop: fresh.length === 0 });
+      }
+      if (action === 'uses') return response({ rows: [{ productId: product.id, productName: product.name, label: 'Fixture saved option', active: true }], nextCursor: null });
+      if (method === 'PUT') { const reference = currentShared[kind].find(row => row.id === body.id); if (reference) Object.assign(reference, body); return response({ ok: true }); }
+      if (method === 'POST' && !action) { currentShared[kind].push({ ...body, id: `fixture-created-${++nextId}` }); return response({ ok: true }, 201); }
     }
     const kind = url.match(/^\/api\/store-admin\/catalog\/metadata\/(brands|models)$/)?.[1];
     if (kind && method === 'POST') {

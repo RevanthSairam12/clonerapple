@@ -289,27 +289,27 @@ test('owner model creator merges and reloads references without selecting a mode
   const updates = [], busy = [];
   const h = harness('ProductMetadataFields', { fetch: () => new Promise(resolve => { release = resolve; }) });
   const value = { productTypeId: 'charger', deviceModelIds: ['phone'], attributeValues: { watts: 0, other: false, cleared: null } };
-  const props = fieldProps({ value, canManageDevices: true, onChange() { assert.fail('creation must not edit product'); }, onReferencesChange: next => updates.push(next), onDeviceBusyChange: next => busy.push(next) });
+  const props = fieldProps({ value, canManageDevices: true, canCreateShared: true, onChange() { assert.fail('creation must not edit product'); }, onReferencesChange: next => updates.push(next), onDeviceBusyChange: next => busy.push(next) });
   let tree = h.render(props);
-  let creator = nodes(tree, node => node.type?.name === 'DeviceReferenceCreator')[0];
-  assert.equal(creator.props.kind, 'models'); assert.equal(creator.props.canManage, true);
+  let creator = nodes(tree, node => node.type?.name === 'SharedListInlineCreator' && node.props.kind === 'models')[0];
+  assert.equal(creator.props.kind, 'models'); assert.equal(creator.props.canCreate, true);
   creator.props.onBusyChange(true);
   tree = h.render(props);
   assert.equal(busy.at(-1), true);
   const created = { ...model, id: 'new-phone', name: 'New Phone' };
-  creator = nodes(tree, node => node.type?.name === 'DeviceReferenceCreator')[0];
+  creator = nodes(tree, node => node.type?.name === 'SharedListInlineCreator' && node.props.kind === 'models')[0];
   creator.props.onCreated('models', created);
   creator.props.onBusyChange(false);
   tree = h.render(props);
   assert.match(text(tree), /New Phone saved.*not selected/);
-  assert.equal(updates[0].models.at(-1), created);
+  assert.deepEqual(JSON.parse(JSON.stringify(updates[0].models.at(-1))), created);
   assert.equal(busy.at(-1), true, 'reload remains busy after creator POST settles');
   release({ ok: true, json: async () => ({ references }) }); // Even a stale read must not discard the validated creation.
   await new Promise(resolve => setImmediate(resolve));
   tree = h.render(props);
   assert.equal(busy.at(-1), false);
   assert.equal(updates.length, 2);
-  assert.equal(updates[1].models.at(-1), created);
+  assert.deepEqual(JSON.parse(JSON.stringify(updates[1].models.at(-1))), created);
   assert.deepEqual(value.deviceModelIds, ['phone']);
   assert.deepEqual(value.attributeValues, { watts: 0, other: false, cleared: null });
   assert.match(text(tree), /Catalogue choices reloaded/);
@@ -318,9 +318,9 @@ test('owner model creator merges and reloads references without selecting a mode
 
 test('successful model creation followed by reload failure keeps saved choice and is not a false creation failure', async () => {
   const h = harness('ProductMetadataFields', { fetch: async () => { throw new Error('private network error'); } });
-  const props = fieldProps({ canManageDevices: true, value: { ...draft(), deviceModelIds: ['phone'] }, onChange() { assert.fail('no auto selection'); } });
+  const props = fieldProps({ canManageDevices: true, canCreateShared: true, value: { ...draft(), deviceModelIds: ['phone'] }, onChange() { assert.fail('no auto selection'); } });
   let tree = h.render(props);
-  nodes(tree, node => node.type?.name === 'DeviceReferenceCreator')[0].props.onCreated('models', { ...model, id: 'new-phone', name: 'New Phone' });
+  nodes(tree, node => node.type?.name === 'SharedListInlineCreator' && node.props.kind === 'models')[0].props.onCreated('models', { ...model, id: 'new-phone', name: 'New Phone' });
   await new Promise(resolve => setImmediate(resolve));
   tree = h.render(props);
   assert.match(text(tree), /Device reference saved, but catalogue choices could not be reloaded/);
@@ -334,8 +334,8 @@ test('inline brand creation works from an empty catalogue and aggregates creator
   const busy = [], dirty = [];
   let refreshed;
   const h = harness('ProductMetadataFields', { fetch: async () => ({ ok: true, json: async () => ({ references: empty }) }) });
-  const props = fieldProps({ references: empty, canManageDevices: true, onReferencesChange: value => { refreshed = value; }, onDeviceBusyChange: value => busy.push(value), onDeviceDirtyChange: value => dirty.push(value), onChange() { assert.fail('must not edit product'); } });
-  const creators = tree => nodes(tree, node => node.type?.name === 'DeviceReferenceCreator');
+  const props = fieldProps({ references: empty, canManageDevices: true, canCreateShared: true, onReferencesChange: value => { refreshed = value; }, onDeviceBusyChange: value => busy.push(value), onDeviceDirtyChange: value => dirty.push(value), onChange() { assert.fail('must not edit product'); } });
+  const creators = tree => nodes(tree, node => node.type?.name === 'DeviceReferenceCreator' || node.type?.name === 'SharedListInlineCreator');
   let tree = h.render(props);
   const brandCreator = creators(tree).find(node => node.props.kind === 'brands');
   brandCreator.props.onDirtyChange(true); brandCreator.props.onBusyChange(true);

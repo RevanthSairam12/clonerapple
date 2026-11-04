@@ -49,6 +49,21 @@ function byLabel(tree, label) { return nodes(tree, node => node.props?.['aria-la
 function button(tree, text) { return nodes(tree, node => node.type === 'button' && node.props.children === text)[0]; }
 const productBase = { catalogRevision: 2, id: 'case', name: 'Case', slug: 'case', categoryId: 'power', pricePaise: 10000, isActive: false, images: [], variants: [], stock: null, description: '', highlights: [], specs: [], inTheBox: [], inventoryMode: 'product' };
 
+test('shared inline capability is separate from owner-only brand management and never selects a reference', () => {
+  for (const role of ['store_owner', 'store_admin', 'store_viewer']) {
+    const h = harness('src/components/store-admin/ProductMetadataFields.tsx');
+    let changed = 0;
+    const tree = h.render('ProductMetadataFields', { references, categoryId: 'power', value: { productTypeId: null, deviceModelIds: [], attributeValues: {} }, onChange() { changed++; }, canCreateShared: role !== 'store_viewer', canManageDevices: role === 'store_owner' });
+    const shared = nodes(tree, node => node.type?.name === 'SharedListInlineCreator');
+    assert.equal(shared.length, role === 'store_viewer' ? 0 : 2);
+    assert.deepEqual(shared.map(node => node.props.kind), role === 'store_viewer' ? [] : ['models', 'colours']);
+    const ownerCreators = nodes(tree, node => node.type?.name === 'DeviceReferenceCreator');
+    assert.equal(ownerCreators.length, role === 'store_owner' ? 1 : 0); if (ownerCreators.length) assert.equal(ownerCreators[0].props.kind, 'brands');
+    if (shared.length) shared.find(node => node.props.kind === 'colours').props.onCreated('colours', { id: 'colour', name: 'Blue', hex: '#123ABC', isActive: true, sortOrder: 0 });
+    assert.equal(changed, 0, 'shared reference creation must not select or rewrite controlled product draft');
+  }
+});
+
 test('compatible-device switch reveals dropdown, adds selected device, and clears only after confirmation', () => {
   const h = harness('src/components/store-admin/ProductMetadataFields.tsx', { window: { confirm: () => true } });
   let value = { productTypeId: null, deviceModelIds: [], attributeValues: {} };

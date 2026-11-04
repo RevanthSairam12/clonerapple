@@ -69,7 +69,22 @@ export function MetadataReferenceManager({ references, categories, attributes, c
     if (!canEdit || busy || (deviceKind && !editing)) return;
     setBusy(true); setError(null); setNotice(null);
     try {
-      const body = { ...draft, id: kind === 'attributes' ? draft.attributeId : draft.id };
+      let confirmDeactivation = false;
+      if (deviceKind && !draft.isActive) {
+        const affectedModels = kind === 'models' ? references.models.filter(model => model.id === draft.id) : references.models.filter(model => model.brandId === draft.id);
+        const labels: string[] = [];
+        for (const model of affectedModels) {
+          const uses = await fetch(`/api/store-admin/catalog/shared/models/uses?id=${encodeURIComponent(model.id)}`, { cache: 'no-store' });
+          if (!uses.ok) throw new Error('Could not check affected products. Retry before deactivating.');
+          const result = await uses.json();
+          labels.push(...result.rows.map((row: {productName:string;label?:string}) => `${row.productName}${row.label ? ` / ${row.label}` : ''}`));
+          if (result.nextCursor) labels.push('More affected options are listed in the shared-list manager.');
+        }
+        confirmDeactivation = window.confirm(`Hide this reference from new selections? Existing options, orders and stock remain unchanged.\n${labels.length ? labels.slice(0,50).join('\n') : 'No affected product uses found.'}`);
+        if (!confirmDeactivation) return;
+      }
+      const confirmNearMatch = deviceKind && error?.startsWith('Did you mean ') ? window.confirm(`${error}\nSave the name exactly as entered?`) : false;
+      const body = { ...draft, id: kind === 'attributes' ? draft.attributeId : draft.id, ...(confirmDeactivation ? { confirmDeactivation:true } : {}), ...(confirmNearMatch ? { confirmNearMatch:true } : {}) };
       const response = await fetch(`/api/store-admin/catalog/metadata/${kind}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Could not save this reference.');

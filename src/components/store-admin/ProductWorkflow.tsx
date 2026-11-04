@@ -25,6 +25,7 @@ export interface ProductWorkflowProps {
   metadataState?: ProductMetadataState | null;
   canEdit?: boolean;
   canManageDevices?: boolean;
+  canCreateShared?: boolean;
 }
 type Photo = { id?: string; key: string; url: string; alt: string; role: string; sortOrder: number };
 type OptionDraft = {
@@ -67,7 +68,7 @@ function stockPatch(original: CatalogStockRow | null, quantity: string, threshol
 }
 
 /** One in-memory draft; no child editor commits independently. */
-export function ProductWorkflow({ categories, brands, conditions, metadataReferences: initialMetadataReferences, product, metadataState, canEdit = true, canManageDevices = false }: ProductWorkflowProps) {
+export function ProductWorkflow({ categories, brands, conditions, metadataReferences: initialMetadataReferences, product, metadataState, canEdit = true, canManageDevices = false, canCreateShared = false }: ProductWorkflowProps) {
   const router = useRouter();
   const [metadataReferences, setMetadataReferences] = useState(initialMetadataReferences);
   useEffect(() => { setMetadataReferences(initialMetadataReferences); }, [initialMetadataReferences]);
@@ -255,7 +256,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     if (!canEdit || busy || deviceBusy || saveState !== 'ready') return;
     setError(''); setSaved('');
     try {
-      if (deviceDirty) throw new Error('Create or reset the unsaved device reference input in Basics before saving this product. Device records are saved separately.');
+      if (deviceDirty) throw new Error('Create or reset the unsaved shared model, brand or colour input in Basics before saving this product. Shared references are saved separately.');
       validateBasics(); validatePrices();
       if (product && (!Number.isInteger(product.catalogRevision) || product.catalogRevision < 0 || product.catalogRevision > 2_147_483_647)) throw new Error('The edit revision is unavailable. Reload the saved product before editing; this form cannot save without conflict protection.');
       if (photos.some(photo => !photo.url.trim())) throw new Error('Enter a URL for each photo, or remove the empty photo.');
@@ -337,7 +338,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
       </div>
       <ProductSpecificationsEditor value={description} onChange={setDescription} disabled={disabled} />
       {product?.descriptionSections == null && initialSections !== JSON.stringify(description.sections) && <p className="sa-notice">Saving adopts the converted older description and specifications as structured product content. Existing sections are retained and changes are recorded in content history.</p>}
-      <ProductMetadataFields references={metadataReferences} state={metadataState} categoryId={form.categoryId} value={metadata} onChange={setMetadata} onReferencesChange={setMetadataReferences} disabled={disabled} canManageDevices={canManageDevices && canEdit} onDeviceBusyChange={setDeviceBusy} onDeviceDirtyChange={setDeviceDirty} />
+      <ProductMetadataFields references={metadataReferences} state={metadataState} categoryId={form.categoryId} value={metadata} onChange={setMetadata} onReferencesChange={setMetadataReferences} disabled={disabled} canManageDevices={canManageDevices && canEdit} canCreateShared={canCreateShared && canEdit} onDeviceBusyChange={setDeviceBusy} onDeviceDirtyChange={setDeviceDirty} />
       <details><summary>More product settings</summary><div className="sa-control-grid">
         <Field label="Page address (slug)" help="Leave blank to use the name. Changing it changes the product URL.">{input('slug', 80)}</Field>
         <Field label="Brand label" help="Legacy free-text product brand label, kept for existing product copy. Choosing a Brand record fills this label; editing it does not change that record or device compatibility.">{input('brand', 80)}</Field>

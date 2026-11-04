@@ -155,12 +155,13 @@ test('all roles browse raw and effective device status; only owners get writes; 
 test('dedicated protected page reuses loader/managers, grants writes only to owner and falls back safely', async () => {
   for (const role of ['store_owner', 'store_admin', 'store_viewer']) {
     let reads = 0;
-    const { default: Page } = load(pageFile, { 'next/link': { __esModule: true, default: 'a' }, '@/components/store-admin/MetadataReferenceManager': { MetadataReferenceManager: 'manager' }, '@/lib/store-admin/auth': { getStoreSession: async () => ({ role }) }, '@/lib/store-admin/product-metadata': { loadMetadataManagement: async () => { reads++; return management; } } });
+    const { default: Page } = load(pageFile, { 'next/link': { __esModule: true, default: 'a' }, '@/components/store-admin/MetadataReferenceManager': { MetadataReferenceManager: 'manager' }, '@/components/store-admin/SharedListManager': { SharedListManager: 'shared-manager' }, '@/lib/store-admin/shared-lists': { loadSharedSnapshot: async () => ({ brands, models: [reference], colours: [] }) }, '@/lib/store-admin/auth': { getStoreSession: async () => ({ role }) }, '@/lib/store-admin/product-metadata': { loadMetadataManagement: async () => { reads++; return management; } } });
     const tree = await Page(); assert.equal(reads, 1);
     const managers = nodes(tree, node => node.type === 'manager'); assert.equal(managers.length, 2);
     assert.deepEqual(managers.map(node => node.props.group), ['brands', 'models']); assert.ok(managers.every(node => node.props.canEdit === (role === 'store_owner')));
+    const shared = nodes(tree, node => node.type === 'shared-manager'); assert.equal(shared.length, 1); assert.equal(shared[0].props.kind, 'models'); assert.equal(shared[0].props.canManage, role === 'store_owner');
   }
-  const { default: Page } = load(pageFile, { 'next/link': { __esModule: true, default: 'a' }, '@/components/store-admin/MetadataReferenceManager': { MetadataReferenceManager: 'manager' }, '@/lib/store-admin/auth': { getStoreSession: async () => ({ role: 'store_owner' }) }, '@/lib/store-admin/product-metadata': { loadMetadataManagement: async () => { throw new Error('private DB detail'); } } });
+  const { default: Page } = load(pageFile, { 'next/link': { __esModule: true, default: 'a' }, '@/components/store-admin/MetadataReferenceManager': { MetadataReferenceManager: 'manager' }, '@/components/store-admin/SharedListManager': { SharedListManager: 'shared-manager' }, '@/lib/store-admin/shared-lists': { loadSharedSnapshot: async () => ({ brands, models: [reference], colours: [] }) }, '@/lib/store-admin/auth': { getStoreSession: async () => ({ role: 'store_owner' }) }, '@/lib/store-admin/product-metadata': { loadMetadataManagement: async () => { throw new Error('private DB detail'); } } });
   const html = renderToStaticMarkup(await Page()); assert.match(html, /Device references are unavailable/); assert.doesNotMatch(html, /private DB detail|<manager/);
   const shell = readFileSync('src/components/store-admin/StoreAdminShell.tsx', 'utf8'); assert.match(shell, /href: '\/store-admin\/device-models', label: 'Device models'/);
 });
