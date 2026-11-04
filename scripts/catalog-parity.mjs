@@ -25,6 +25,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { createJiti } from 'jiti';
+import { compareSpecs } from './lib/catalog-parity-report.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, '..');
@@ -49,6 +50,7 @@ const jiti = createJiti(import.meta.url, {
   alias: { '@': path.join(ROOT, 'src') },
 });
 const registry = await jiti.import(path.join(ROOT, 'src', 'lib', 'products', 'registry.ts'));
+const { normaliseKey } = await jiti.import(path.join(ROOT, 'src', 'lib', 'storefront', 'catalog-rules.ts'));
 
 const staticProducts = [
   ...registry.CASE_PRODUCTS.map((product) => ({ ...product, kind: 'case' })),
@@ -58,6 +60,8 @@ const staticProducts = [
 const sql = postgres(process.env.DATABASE_URL, {
   ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
   max: 1,
+  prepare: false,
+  connection: { default_transaction_read_only: 'on' },
   onnotice: () => {},
 });
 
@@ -241,19 +245,7 @@ for (const product of staticProducts) {
     ? product.specs.map((spec) => ({ label: spec.label, value: spec.value }))
     : Object.entries(product.specs ?? {}).map(([label, value]) => ({ label, value }));
   const dbSpecRows = dbSpecs.get(String(db.id)) ?? [];
-  for (const spec of staticSpecs) {
-    const match = dbSpecRows.find((row) => sameText(row.label, spec.label));
-    if (!match) {
-      diffs.push({ field: `spec "${spec.label}" missing in DB`, static: spec.value, db: '(static will fill)' });
-    } else if (!sameText(match.value, spec.value)) {
-      diffs.push({ field: `spec "${spec.label}"`, static: spec.value, db: match.value });
-    }
-  }
-  for (const row of dbSpecRows) {
-    if (!staticSpecs.some((spec) => sameText(spec.label, row.label))) {
-      diffs.push({ field: `spec "${row.label}" only in DB`, static: '(none)', db: row.value });
-    }
-  }
+  diffs.push(...compareSpecs(staticSpecs, dbSpecRows, normaliseKey));
 
   const staticFacets = product.facets ?? {};
   const dbFacetRows = dbFacets.get(String(db.id)) ?? [];
@@ -262,7 +254,7 @@ for (const product of staticProducts) {
       .filter((row) => row.facet_key === facetKey)
       .map((row) => String(row.facet_value));
     if (values.length === 0) {
-      diffs.push({ field: `facet "${facetKey}" missing in DB`, static: staticValue, db: '(static will fill)' });
+      diffs.push({ field: `facet "${facetKey}" missing in DB`, static: staticValue, db: '(missing; no value assumed)' });
     } else if (!values.some((value) => sameText(value, staticValue))) {
       diffs.push({ field: `facet "${facetKey}"`, static: staticValue, db: values.join(', ') });
     }

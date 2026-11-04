@@ -6,6 +6,9 @@
  *   node scripts/check-notifications.mjs --send-to me@x.com  # also send one test email
  *   node scripts/check-notifications.mjs --offline --preview-dir tmp/fresh-run
  *     # new directory only; preserves all existing previews
+ *   node scripts/check-notifications.mjs --no-provider-probe --preview-dir tmp/fresh-run
+ *     # read saved settings/render previews, but never connect to delivery providers;
+ *     # skipped SMTP remains a failed readiness gate, not a pass
  *
  * What it does:
  *   1. loads .env.local and reports which credentials EXIST (names only);
@@ -28,7 +31,8 @@ import postgres from 'postgres';
 const root = process.cwd();
 const args = process.argv.slice(2);
 const offline = args.includes('--offline');
-if (offline && args.includes('--send-to')) throw new Error('--offline cannot send messages');
+const noProviderProbe = args.includes('--no-provider-probe');
+if ((offline || noProviderProbe) && args.includes('--send-to')) throw new Error('Diagnostic-only modes cannot send messages');
 const sendToIndex = args.indexOf('--send-to');
 const sendTo = sendToIndex >= 0 ? args[sendToIndex + 1] : null;
 if (sendToIndex >= 0 && (!sendTo || sendTo.startsWith('--'))) {
@@ -92,6 +96,8 @@ if (!offline && present('DATABASE_URL')) {
   const sql = postgres(process.env.DATABASE_URL, {
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     max: 1,
+    prepare: false,
+    connection: { default_transaction_read_only: 'on' },
     connect_timeout: 10,
   });
   try {
@@ -240,8 +246,8 @@ record('email', 'ready to send real email', mailProblem === null, mailProblem ??
 record('sms', 'ready to send real SMS', smsProblem === null, smsProblem ?? '');
 
 const setup = diagnostics.smtpSetupProblem(settings);
-if (offline) {
-  record('email', 'SMTP connection check', false, 'skipped: offline mode; no SMTP connection attempted');
+if (offline || noProviderProbe) {
+  record('email', 'SMTP connection check', false, 'skipped: diagnostic-only mode; no SMTP connection attempted');
 } else if (setup) {
   record('email', 'SMTP connection check', false, `skipped: ${setup}`);
 } else {
