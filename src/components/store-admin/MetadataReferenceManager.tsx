@@ -44,6 +44,7 @@ export function MetadataReferenceManager({ references, categories, attributes, c
   }, [unsaved, busy]);
   const suggestedId = (name: string) => `${kind}_${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`.slice(0, 80);
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => {
+    setError(null); // A previous near-match confirmation cannot approve an edited name.
     setDirty(true);
     setDraft(current => ({ ...current, [key]: value, ...(key === 'name' && !editing && (!current.id || current.id === suggestedId(current.name)) ? { id: suggestedId(String(value)) } : {}) }));
   };
@@ -95,7 +96,7 @@ export function MetadataReferenceManager({ references, categories, attributes, c
   }
   const select = (key: 'categoryId' | 'brandId' | 'productTypeId' | 'attributeId', label: string, options: Array<{ id: string; name: string }>, locked = false) => <label className="sa-field"><span className="sa-label">{label}</span><select className="sa-input" disabled={busy || locked} value={draft[key]} onChange={event => set(key, event.target.value)}><option value="">Select manually</option>{options.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>;
   const check = (key: 'isActive' | 'requiresCompatibility' | 'isRequired' | 'showInSpecs' | 'showInFilters' | 'showInSearch', label: string) => <label className="sa-check"><input type="checkbox" checked={draft[key]} disabled={busy} onChange={event => set(key, event.target.checked)} />{label}</label>;
-  return <section className="sa-detail-section">
+  return <section className="sa-detail-section sa-reference-manager">
     <h2 className="sa-section-title">{labels[kind]}</h2>
     <p className="sa-hint">{kind === 'types' ? 'Create a type inside a category, then assign its detail fields. Compatibility is always chosen deliberately on each product.' : kind === 'attributes' ? 'Choose which defined fields apply to each product type. Required fields block publication when empty.' : 'Device brands and models are separate from product brands. Add only exact device records you can verify.'}</p>
     {!group && <label className="sa-field"><span className="sa-label">Reference group</span><select className="sa-input" value={kind} disabled={busy} onChange={event => { if (!canLeave()) return; setKind(event.target.value as ReferenceKind); setDraft(empty()); setDirty(false); setCreatorDirty(false); setEditing(false); setNotice(null); setError(null); }}>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}

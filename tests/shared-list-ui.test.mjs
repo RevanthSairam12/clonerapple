@@ -78,8 +78,10 @@ test('upload uses strict UTF-8 with BOM/header/newline accounting and two size c
   const file = bytes => ({ size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
   assert.equal(await decodeSharedUpload(file(Buffer.from('﻿name,hex\r\nBlue,#123ABC\r\n'))), '﻿name,hex\r\nBlue,#123ABC\r\n');
   await assert.rejects(decodeSharedUpload(file(Uint8Array.from([0xc3, 0x28]))), /UTF-8/);
-  await assert.rejects(decodeSharedUpload({ size: 262145, arrayBuffer() { assert.fail('must not read'); } }), /256 KiB/);
-  await assert.rejects(decodeSharedUpload({ size: 0, arrayBuffer: async () => new ArrayBuffer(262145) }), /256 KiB/);
+  const boundary = new TextEncoder().encode(' '.repeat(1_000_000));
+  assert.equal((await decodeSharedUpload({ size: boundary.length, arrayBuffer: async () => boundary.buffer })).length, 1_000_000);
+  await assert.rejects(decodeSharedUpload({ size: 1_000_001, arrayBuffer() { assert.fail('must not read'); } }), /1 MB/);
+  await assert.rejects(decodeSharedUpload({ size: 0, arrayBuffer: async () => new ArrayBuffer(1_000_001) }), /1 MB/);
 });
 
 test('shared input has a stable explicit label after repeated entry and unique IDs across model/colour managers', () => {
@@ -112,7 +114,39 @@ test('shared input has a stable explicit label after repeated entry and unique I
 test('read-only shared pages display named hex swatches without management controls', () => {
   const { SharedListManager } = load(managerFile, managerMocks);
   const html = renderToStaticMarkup(React.createElement(SharedListManager, { kind: 'colours', snapshot }));
-  assert.match(html, /Blue.*#123ABC/); assert.match(html, /Browse only/); assert.doesNotMatch(html, /Download|Save shared reference|Confirm valid|<form/);
+  assert.match(html, /Blue.*#123ABC/); assert.match(html, /Browse only/); assert.doesNotMatch(html, /Download|Save shared reference|Confirm valid|View products using|<form/);
+});
+
+test('owners can paginate model product uses without starting deactivation or changing their import draft', async () => {
+  const calls = [];
+  const h = harness(managerFile, 'SharedListManager', { kind: 'models', snapshot, canManage: true }, { fetch: async (...args) => {
+    calls.push(args);
+    assert.equal(args[1].method, 'GET');
+    return Response.json(calls.length === 1
+      ? { rows: [{ productId: 'p', productName: 'Named product', label: 'Saved model / Blue', sku: 'SAVED-SKU', active: true }], nextCursor: 'next' }
+      : { rows: [{ productId: 'q', productName: 'Second product', active: false }], nextCursor: null });
+  } }, managerMocks);
+  change(nodes(h.render(), node => node.type === 'textarea')[0], 'Brand, Other model');
+  await button(h.render(), 'View products using Model').props.onClick();
+  assert.match(calls[0][0], /\/uses\?id=model$/);
+  assert.equal(button(h.render(), 'Confirm deactivation'), undefined);
+  assert.ok(nodes(h.render(), node => node.type === 'li').some(node => String(node.props.children).includes('SAVED-SKU')));
+  await button(h.render(), 'Load more affected uses').props.onClick();
+  assert.match(calls[1][0], /id=model&cursor=next/);
+  assert.ok(nodes(h.render(), node => node.type === 'li').some(node => String(node.props.children).includes('Second product')));
+  button(h.render(), 'Close product uses').props.onClick();
+  assert.equal(nodes(h.render(), node => node.type === 'textarea')[0].props.value, 'Brand, Other model');
+  assert.equal(calls.length, 2);
+});
+
+test('colour management uses the same 100-character name limit as the server', async () => {
+  let writes = 0;
+  const h = harness(managerFile, 'SharedListManager', { kind: 'colours', snapshot, canManage: true }, { fetch: async () => { writes++; assert.fail('invalid colour must not be submitted'); } }, managerMocks);
+  assert.equal(inputs(h.render())[0].props.maxLength, 100);
+  change(inputs(h.render())[0], 'A'.repeat(101)); change(inputs(h.render())[1], '#ABCDEF');
+  await button(h.render(), 'Save shared reference').props.onClick();
+  assert.equal(writes, 0);
+  assert.match(nodes(h.render(), node => node.props.role === 'alert')[0].props.children, /100 characters/);
 });
 
 test('near match requires explicit acknowledgment and exact input/server token on confirmation', async () => {

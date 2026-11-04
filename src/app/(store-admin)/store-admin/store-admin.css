@@ -2789,6 +2789,12 @@ th.sa-num {
   font-weight: 400;
 }
 
+/* Shared-reference instructions stay readable on cards and page backgrounds. */
+.sa-shared-list .sa-hint,
+.sa-reference-manager .sa-hint {
+  color: #4b5563;
+}
+
 .sa-field {
   margin-bottom: 15px;
 }

@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
-import { SharedListError } from '@/lib/catalog/shared-list-rules';
+import { SharedListError, SHARED_IMPORT_MAX_BYTES } from '@/lib/catalog/shared-list-rules';
 
-export const SHARED_BODY_LIMIT = 262_144;
+// JSON can encode one ASCII byte as six bytes (\uXXXX). Allow that worst case,
+// plus bounded room for the preview token and 2,000 row acknowledgments. The
+// decoded import text still has its independent, strict 1 MB limit.
+export const SHARED_BODY_LIMIT = 6 * SHARED_IMPORT_MAX_BYTES + 65_536;
 export const sharedPrivateHeaders = { 'Cache-Control': 'private, no-store' };
+const bodyLimitMessage = 'The import request is too large. Input may contain at most 1 MB (1,000,000 UTF-8 bytes).';
 
-/** Actual streamed bytes, including JSON envelope/BOM/header/newlines, are bounded. */
+/** Bound actual streamed bytes without charging JSON escaping against file size. */
 export async function readSharedBody(request: Request): Promise<Record<string, unknown>> {
   const length = request.headers.get('content-length');
-  if (length && (!/^\d+$/.test(length) || Number(length) > SHARED_BODY_LIMIT)) throw new SharedListError('The whole request must be 256 KB or smaller.', 413);
+  if (length && (!/^\d+$/.test(length) || Number(length) > SHARED_BODY_LIMIT)) throw new SharedListError(bodyLimitMessage, 413);
   const reader = request.body?.getReader();
   if (!reader) throw new SharedListError('Send a request body.');
   const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -18,7 +22,7 @@ export async function readSharedBody(request: Request): Promise<Record<string, u
       const part = await reader.read();
       if (part.done) break;
       bytes += part.value.byteLength;
-      if (bytes > SHARED_BODY_LIMIT) { await reader.cancel(); throw new SharedListError('The whole request must be 256 KB or smaller.', 413); }
+      if (bytes > SHARED_BODY_LIMIT) { await reader.cancel(); throw new SharedListError(bodyLimitMessage, 413); }
       text += decoder.decode(part.value, { stream: true });
     }
     text += decoder.decode();

@@ -152,6 +152,31 @@ test('all roles browse raw and effective device status; only owners get writes; 
   assert.match(html, /Product types/); assert.match(html, /Type attribute mappings/);
 });
 
+test('owner rename edits clear stale suggestions and confirm only the latest unchanged name', async () => {
+  const calls = [], confirmations = [];
+  const harness = hookHarness(managerFile, 'MetadataReferenceManager', managerProps, managerMocks, {
+    fetch: async (...args) => {
+      calls.push(args);
+      return calls.length <= 2
+        ? Response.json({ error: `Did you mean ${calls.length === 1 ? 'First suggestion' : 'Second suggestion'}?` }, { status: 409 })
+        : Response.json({ ok: true });
+    },
+    window: { confirm: text => { confirmations.push(text); return true; } },
+  });
+  button(harness.render(), 'Edit').props.onClick();
+  input(harness.render()).props.onChange({ target: { value: 'First name' } });
+  await button(harness.render(), 'Save reference').props.onClick();
+  input(harness.render()).props.onChange({ target: { value: 'Second name' } });
+  await button(harness.render(), 'Save reference').props.onClick();
+  assert.equal(confirmations.length, 0);
+  assert.equal(JSON.parse(calls[1][1].body).confirmNearMatch, undefined);
+  await button(harness.render(), 'Save reference').props.onClick();
+  assert.equal(confirmations.length, 1);
+  assert.match(confirmations[0], /Second suggestion/);
+  assert.equal(JSON.parse(calls[2][1].body).name, 'Second name');
+  assert.equal(JSON.parse(calls[2][1].body).confirmNearMatch, true);
+});
+
 test('dedicated protected page reuses loader/managers, grants writes only to owner and falls back safely', async () => {
   for (const role of ['store_owner', 'store_admin', 'store_viewer']) {
     let reads = 0;

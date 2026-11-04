@@ -15,7 +15,7 @@ vm.runInNewContext(ts.transpileModule(readFileSync(file, 'utf8'), {
   module, exports: module.exports, TextEncoder,
   require(name) { throw new Error(`Unexpected offline import: ${name}`); },
 }, { filename: file });
-const { SharedListError, normalizeSharedName, parseSharedInput, planSharedImport, safeSharedCsv, sharedTemplate } = module.exports;
+const { SharedListError, SHARED_IMPORT_MAX_BYTES, SHARED_IMPORT_MAX_ROWS, normalizeSharedName, parseSharedInput, planSharedImport, safeSharedCsv, sharedTemplate } = module.exports;
 const plain = value => JSON.parse(JSON.stringify(value));
 const brand = (id = 'brand-a', name = 'Example Brand', isActive = true) => ({ id, name, isActive, sortOrder: 0 });
 const model = (id, name, brandId = 'brand-a', isActive = true) => ({ id, name, brandId, isActive, sortOrder: 0 });
@@ -51,15 +51,16 @@ test('input validation is strict, has safe status errors, and rejects lone surro
   assert.equal(new SharedListError('safe', 409).name, 'SharedListError');
 });
 
-test('262144-byte allowance counts UTF-8 BOM, header and CRLF, not UTF-16 length', () => {
+test('1 MB allowance counts UTF-8 BOM, header and CRLF, not UTF-16 length', () => {
+  assert.equal(SHARED_IMPORT_MAX_BYTES, 1_000_000);
   const prefix = '﻿name,hex\r\n';
   const bytes = new TextEncoder().encode(prefix).length;
-  const text = prefix + 'é'.repeat(Math.floor((262144 - bytes) / 2)) + 'x'.repeat((262144 - bytes) % 2);
-  assert.equal(new TextEncoder().encode(text).length, 262144);
+  const text = prefix + 'é'.repeat(Math.floor((SHARED_IMPORT_MAX_BYTES - bytes) / 2)) + 'x'.repeat((SHARED_IMPORT_MAX_BYTES - bytes) % 2);
+  assert.equal(new TextEncoder().encode(text).length, SHARED_IMPORT_MAX_BYTES);
   assert.equal(parseSharedInput({ kind: 'colours', format: 'csv', text }).text, text);
   assert.throws(() => parseSharedInput({ kind: 'colours', format: 'csv', text: text + '\n' }),
     error => error instanceof SharedListError && error.status === 413);
-  assert.throws(() => colours('é'.repeat(131073)), error => error.status === 413);
+  assert.throws(() => colours('é'.repeat(500001)), error => error.status === 413);
 });
 
 test('CSV accepts a BOM, arbitrary documented header order, quotes and escaped quotes', () => {
@@ -90,16 +91,17 @@ test('quoted newlines parse as one CSV record and are invalid name controls, not
   assert.match(plan.rows[0].reason, /Control/);
 });
 
-test('500 data records permitted, 501 refused, headers excluded, blank paste lines ignored', () => {
-  const lines = Array.from({ length: 500 }, (_, index) => `Entry ${index}`);
-  assert.equal(models(lines.join('\n')).rows.length, 500);
-  assert.equal(models('\n\n' + lines.join('\r\n\r\n') + '\r\n').rows.length, 500);
-  bad(() => models([...lines, 'Extra'].join('\n')), /500/);
+test('2,000 data records permitted, 2,001 refused, headers excluded, blank paste lines ignored', () => {
+  assert.equal(SHARED_IMPORT_MAX_ROWS, 2_000);
+  const lines = Array.from({ length: SHARED_IMPORT_MAX_ROWS }, (_, index) => `Ref${String.fromCodePoint(0x4e00 + index)}`);
+  assert.equal(models(lines.join('\n')).rows.length, SHARED_IMPORT_MAX_ROWS);
+  assert.equal(models('\n\n' + lines.join('\r\n\r\n') + '\r\n').rows.length, SHARED_IMPORT_MAX_ROWS);
+  bad(() => models([...lines, 'Extra'].join('\n')), /2,000/);
   const csv = 'brand,model\n' + lines.map(line => `Example Brand,${line}`).join('\n') + '\n';
-  assert.equal(models(csv, { format: 'csv' }).rows.length, 500);
-  bad(() => models(csv + 'Example Brand,Extra', { format: 'csv' }), /500/);
+  assert.equal(models(csv, { format: 'csv' }).rows.length, SHARED_IMPORT_MAX_ROWS);
+  bad(() => models(csv + 'Example Brand,Extra', { format: 'csv' }), /2,000/);
   // A blank CSV record is still a data record, unlike a blank paste line.
-  bad(() => models(csv + '\n', { format: 'csv' }), /500/);
+  bad(() => models(csv + '\n', { format: 'csv' }), /2,000/);
 });
 
 test('paste uses physical line numbers, selected brands or explicit Brand,Model records', () => {
@@ -236,6 +238,12 @@ test('near-match suggestions are deterministic, bounded to five, and exclude unr
   assert.deepEqual(plain(first.suggestions), ['Model 0', 'Model 1', 'Model 2', 'Model 3', 'Model 4']);
   assert.deepEqual(plain(first.suggestions), plain(second.suggestions));
   assert.equal(models('Entirely unrelated', {}, snapshot({ models: candidates })).rows[0].status, 'new');
+  const ranked = ['Model A00', 'Model X16', 'Model X15', 'Model X14', 'Model X13', 'Model X12', 'Model X11', 'Model X11', 'MODEL X11']
+    .map((name, index) => model(`rank-${index}`, name));
+  for (const order of [ranked, [...ranked].reverse()]) {
+    assert.deepEqual(plain(models('Model X10', {}, snapshot({ models: order })).rows[0].suggestions),
+      ['MODEL X11', 'Model X11', 'Model X12', 'Model X13', 'Model X14']);
+  }
 });
 
 test('safe CSV neutralizes formulas, quotes cells, and templates contain headers only', () => {

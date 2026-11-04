@@ -24,8 +24,8 @@ export class SharedListError extends Error {
   }
 }
 
-const MAX_BYTES = 262_144;
-const MAX_ROWS = 500;
+export const SHARED_IMPORT_MAX_BYTES = 1_000_000;
+export const SHARED_IMPORT_MAX_ROWS = 2_000;
 const HEADERS = { models: ['brand', 'model'], colours: ['name', 'hex'] } as const;
 const OPTIONAL_HEADERS = ['sort_order', 'active'];
 const CONTROLS = /[\p{Cc}\p{Cf}]/u;
@@ -64,8 +64,8 @@ export function parseSharedInput(raw: unknown): SharedInput {
     throw new SharedListError('Input text must contain valid Unicode.');
   }
   // Includes BOM, CSV header, delimiters and every original line-ending byte.
-  if (new TextEncoder().encode(value.text).byteLength > MAX_BYTES) {
-    throw new SharedListError('Input exceeds 262144 UTF-8 bytes (including header and line endings).', 413);
+  if (new TextEncoder().encode(value.text).byteLength > SHARED_IMPORT_MAX_BYTES) {
+    throw new SharedListError('Input exceeds 1 MB (1,000,000 UTF-8 bytes, including BOM, header and line endings).', 413);
   }
   if (value.brandId !== undefined && (value.kind !== 'models' || typeof value.brandId !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value.brandId))) {
@@ -86,7 +86,7 @@ function csvRecords(text: string, maxRecords: number): string[][] {
   let pending = false;
   const record = () => {
     records.push([...cells, cell]);
-    if (records.length > maxRecords) throw new SharedListError('At most 500 data records are allowed.');
+    if (records.length > maxRecords) throw new SharedListError('At most 2,000 data records are allowed.');
     cells = []; cell = ''; state = 'start'; pending = false;
   };
   for (let index = 0; index < text.length; index++) {
@@ -120,7 +120,7 @@ interface SourceRow { row: number; cells: string[]; values: Record<string, strin
 function sourceRows(input: SharedInput): SourceRow[] {
   const text = input.text.replace(/^﻿/, '');
   if (input.format === 'csv') {
-    const records = csvRecords(text, MAX_ROWS + 1);
+    const records = csvRecords(text, SHARED_IMPORT_MAX_ROWS + 1);
     const header = records.shift();
     if (!header) throw new SharedListError('CSV requires a header.');
     if (header.some(formulaLike)) throw new SharedListError('Formula-looking CSV headers are not allowed.');
@@ -139,8 +139,8 @@ function sourceRows(input: SharedInput): SourceRow[] {
   }
   const rows: SourceRow[] = [];
   text.split(/\r\n|\n|\r/).forEach((line, index) => {
-    if (!line.trim()) return; // Blank paste lines do not consume the 500-record allowance.
-    if (rows.length >= MAX_ROWS) throw new SharedListError('At most 500 data records are allowed.');
+    if (!line.trim()) return; // Blank paste lines do not consume the data-record allowance.
+    if (rows.length >= SHARED_IMPORT_MAX_ROWS) throw new SharedListError('At most 2,000 data records are allowed.');
     if (input.kind === 'models' && input.brandId) {
       rows.push({ row: index + 1, cells: [line], values: { model: line } });
     } else if (input.kind === 'models') {
@@ -204,14 +204,22 @@ function nearSuggestions(key: string, candidates: NearCandidate[]): string[] {
   if (characters.length < 3) return [];
   const limit = characters.length <= 6 ? 1 : 2;
   const matches: Array<{ candidate: NearCandidate; distance: number }> = [];
+  const order = (a: typeof matches[number], b: typeof matches[number]) =>
+    a.distance - b.distance || compare(a.candidate.key, b.candidate.key)
+    || compare(a.candidate.name, b.candidate.name) || compare(a.candidate.id, b.candidate.id);
   for (const candidate of candidates) {
     if (candidate.characters.length < 3) continue;
     const distance = nearDistance(characters, candidate.characters, limit);
-    if (distance > 0 && distance <= limit) matches.push({ candidate, distance });
+    if (distance === 0 || distance > limit || matches.some(match => match.candidate.name === candidate.name)) continue;
+    // Keep only the five best distinct display names. Sorting every match for
+    // every row makes a large list of similar names needlessly expensive.
+    const match = { candidate, distance };
+    const position = matches.findIndex(existing => order(match, existing) < 0);
+    if (position >= 0) matches.splice(position, 0, match);
+    else if (matches.length < 5) matches.push(match);
+    if (matches.length > 5) matches.pop();
   }
-  matches.sort((a, b) => a.distance - b.distance || compare(a.candidate.key, b.candidate.key)
-    || compare(a.candidate.name, b.candidate.name) || compare(a.candidate.id, b.candidate.id));
-  return [...new Set(matches.map(match => match.candidate.name))].slice(0, 5);
+  return matches.map(match => match.candidate.name);
 }
 
 /**
@@ -279,9 +287,28 @@ export function planSharedImport(rawInput: SharedInput, snapshot: SharedSnapshot
   }
 
   const seen = new Map<string, number>();
-  const proposed: NearCandidate[] = [];
+  const proposed = new Map<string, NearCandidate[]>();
   const references = input.kind === 'models' ? snapshot.models : snapshot.colours;
   const referenceCandidates = references.map(nearCandidate);
+  const names = new Map<string, SharedReference[]>();
+  const hexes = new Map<string, SharedReference[]>();
+  const candidatesByBrand = new Map<string, NearCandidate[]>();
+  // Normalize each saved name once. All active/inactive rows stay in these
+  // indexes so a collision remains an error rather than choosing a winner.
+  references.forEach((reference, index) => {
+    const candidate = referenceCandidates[index];
+    const scope = input.kind === 'models' ? reference.brandId ?? '' : '';
+    const identity = JSON.stringify([scope, candidate.key]);
+    if (!names.has(identity)) names.set(identity, []);
+    names.get(identity)!.push(reference);
+    if (input.kind === 'colours' && reference.hex) {
+      const hex = reference.hex.toUpperCase();
+      if (!hexes.has(hex)) hexes.set(hex, []);
+      hexes.get(hex)!.push(reference);
+    }
+    if (!candidatesByBrand.has(scope)) candidatesByBrand.set(scope, []);
+    candidatesByBrand.get(scope)!.push(candidate);
+  });
   for (const row of rows) {
     if (row.status === 'invalid') continue;
     const key = normalizeSharedName(row.name);
@@ -289,9 +316,8 @@ export function planSharedImport(rawInput: SharedInput, snapshot: SharedSnapshot
     const repeated = seen.get(identity);
     if (repeated !== undefined) { invalid(row, `Duplicate input entry; already represented by record ${repeated}.`); continue; }
     seen.set(identity, row.row);
-    const scoped = references.filter(reference => input.kind !== 'models' || reference.brandId === row.brandId);
-    const sameName = scoped.filter(reference => normalizeSharedName(reference.name) === key);
-    const sameHex = input.kind === 'colours' ? scoped.filter(reference => reference.hex?.toUpperCase() === row.hex) : [];
+    const sameName = names.get(identity) ?? [];
+    const sameHex = input.kind === 'colours' ? hexes.get(row.hex!) ?? [] : [];
     if (sameName.length > 1 || sameHex.length > 1) {
       invalid(row, 'Catalogue has ambiguous normalized names or hex values; resolve collisions first.'); continue;
     }
@@ -307,13 +333,14 @@ export function planSharedImport(rawInput: SharedInput, snapshot: SharedSnapshot
     if (input.kind === 'models' && !snapshot.brands.find(brand => brand.id === row.brandId)?.isActive) {
       invalid(row, 'New models require an active brand.'); continue;
     }
-    const candidates = [...referenceCandidates.filter(reference => input.kind !== 'models' || reference.brandId === row.brandId),
-      ...proposed.filter(reference => reference.brandId === row.brandId)];
+    const scope = row.brandId ?? '';
+    const candidates = [...(candidatesByBrand.get(scope) ?? []), ...(proposed.get(scope) ?? [])];
     row.suggestions = nearSuggestions(key, candidates);
     if (row.suggestions.length) {
       row.status = 'near'; row.reason = 'Similar names exist; explicit acknowledgement is required before creating this entry.';
     }
-    proposed.push({ id: `input:${row.row}`, name: row.name, brandId: row.brandId,
+    if (!proposed.has(scope)) proposed.set(scope, []);
+    proposed.get(scope)!.push({ id: `input:${row.row}`, name: row.name, brandId: row.brandId,
       key, characters: Array.from(key) });
   }
   const counts: SharedPlan['counts'] = { new: 0, existing: 0, near: 0, invalid: 0 };

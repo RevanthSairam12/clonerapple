@@ -2,13 +2,12 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { cookies } from 'next/headers';
 import type { TransactionSql } from 'postgres';
 import { getSql } from '@/lib/platform/db';
-import { SharedListError, normalizeSharedName, parseSharedInput, planSharedImport, type SharedInput, type SharedKind, type SharedReference, type SharedSnapshot } from '@/lib/catalog/shared-list-rules';
+import { SharedListError, SHARED_IMPORT_MAX_ROWS, normalizeSharedName, sharedNearNames, parseSharedInput, planSharedImport, type SharedKind, type SharedReference, type SharedSnapshot } from '@/lib/catalog/shared-list-rules';
 import { assertMetadataPublicationUsing, MetadataError, metadataGate, strictMetadataAudit } from './product-metadata';
 
 type Client = TransactionSql | NonNullable<ReturnType<typeof getSql>>;
 const previewKey = randomBytes(32); // Process-local: a restart requires a fresh preview, never a weaker approval.
 const str = (v: unknown) => String(v ?? '');
-const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
 function database() { const sql = getSql(); if (!sql) throw new SharedListError('The catalogue database is unavailable.', 503); return sql; }
 export function sharedKind(raw: string): SharedKind { if (raw !== 'models' && raw !== 'colours') throw new SharedListError('Choose models or colours.'); return raw; }
 export async function sharedSessionBinding(): Promise<string> {
@@ -60,7 +59,7 @@ export async function applySharedImport(raw: unknown, token: unknown, acknowledg
 }
 export async function applySharedImportUsing(tx: Client, raw: unknown, token: unknown, acknowledgments: unknown, actor: string, session: string, request?: Request) {
   const input = parseSharedInput(raw), approval = verify(token);
-  if (!Array.isArray(acknowledgments) || acknowledgments.some(row => !Number.isSafeInteger(row) || row < 1) || acknowledgments.length > 500) throw new SharedListError('Confirm the near-match rows explicitly.');
+  if (!Array.isArray(acknowledgments) || acknowledgments.some(row => !Number.isSafeInteger(row) || row < 1) || acknowledgments.length > SHARED_IMPORT_MAX_ROWS) throw new SharedListError('Confirm the near-match rows explicitly.');
   if (approval.actor !== actor || approval.session !== session || approval.input !== digest(input) || approval.version !== 1) throw new SharedListError('The preview does not match this session or input.', 409);
     await tx`set local lock_timeout = '5s'`; await tx`set local statement_timeout = '15s'`;
     await metadataGate(tx); await ownerUsing(tx, actor);
@@ -71,9 +70,12 @@ export async function applySharedImportUsing(tx: Client, raw: unknown, token: un
     if (acknowledgments.some(row => !near.has(row)) || [...near].some(row => !acknowledgments.includes(row))) throw new SharedListError('Review and acknowledge every near match before confirming.', 409);
     const inserts = plan.rows.filter(row => row.status === 'new' || row.status === 'near');
     if (approval.selectedRows !== digest(inserts.map(row => row.row)) || approval.nearRows !== digest([...near])) throw new SharedListError('The confirmed rows changed. Preview again.', 409);
-    for (const row of inserts) {
-      if (input.kind === 'models') await tx`insert into device_models(id,brand_id,name,is_active,sort_order) values(${randomUUID()},${row.brandId!},${row.name},${row.isActive},${row.sortOrder})`;
-      else await tx`insert into colours(id,name,hex,is_active,sort_order) values(${randomUUID()},${row.name},${row.hex!},${row.isActive},${row.sortOrder})`;
+    if (inserts.length && input.kind === 'models') {
+      const records = inserts.map(row => ({ id: randomUUID(), brand_id: row.brandId!, name: row.name, is_active: row.isActive, sort_order: row.sortOrder }));
+      await tx`insert into device_models ${tx(records, 'id', 'brand_id', 'name', 'is_active', 'sort_order')}`;
+    } else if (inserts.length) {
+      const records = inserts.map(row => ({ id: randomUUID(), name: row.name, hex: row.hex!, is_active: row.isActive, sort_order: row.sortOrder }));
+      await tx`insert into colours ${tx(records, 'id', 'name', 'hex', 'is_active', 'sort_order')}`;
     }
     await strictMetadataAudit(tx, { actorId: actor, action: `catalog.shared.${input.kind}.import`, entity: input.kind, after: { created: inserts.length, existing: plan.counts.existing, invalid: plan.counts.invalid, acknowledged: near.size }, request });
     return { created: inserts.length, existing: plan.counts.existing, invalid: plan.counts.invalid, noop: inserts.length === 0 };
@@ -103,10 +105,11 @@ export async function saveSharedReferenceUsing(tx: Client, kind: SharedKind, raw
     if (kind === 'models' && old && old.brandId !== value.brandId) throw new SharedListError('A saved model cannot move brands.');
     if (kind === 'models' && !snapshot.brands.some(brand => brand.id === value.brandId && (brand.isActive || (old?.brandId === brand.id && !value.isActive)))) throw new SharedListError('Choose an active existing device brand.');
     if (refs.some(ref => ref.id !== old?.id && ((normalizeSharedName(ref.name) === normalizeSharedName(value.name) && (kind !== 'models' || ref.brandId === value.brandId)) || (kind === 'colours' && ref.hex === value.hex)))) throw new SharedListError('This normalized name or hex is already in the list.', 409);
-    const nearSnapshot = { ...snapshot, [kind]: refs.filter(ref => ref.id !== old?.id) };
-    const nearInput: SharedInput = { kind, format: 'csv', text: kind === 'models' ? `brand,model\n${csvCell(snapshot.brands.find(brand => brand.id === value.brandId)?.name ?? '')},${csvCell(value.name)}` : `name,hex\n${csvCell(value.name)},${value.hex}` };
-    const planned = planSharedImport(nearInput, nearSnapshot).rows[0];
-    if (planned?.status === 'near' && raw.confirmNearMatch !== true) throw new SharedListError(`Did you mean ${planned.suggestions.join(' or ')}? Review the suggestions and confirm Create as entered.`, 409);
+    // Renaming an inactive reference still needs duplicate review. An import
+    // planner's active-brand rule applies to creation, not to an existing name.
+    const suggestions = sharedNearNames(value.name, refs.filter(ref => ref.id !== old?.id
+      && (kind !== 'models' || ref.brandId === value.brandId)));
+    if (suggestions.length && raw.confirmNearMatch !== true) throw new SharedListError(`Did you mean ${suggestions.join(' or ')}? Review the suggestions and confirm Create as entered.`, 409);
     const id = old?.id ?? randomUUID();
     if (old?.isActive && !value.isActive && raw.confirmDeactivation !== true) throw new SharedListError('Review the products using this reference and confirm deactivation.', 409);
     if (old && old.name === value.name && old.hex === value.hex && old.brandId === value.brandId && old.sortOrder === value.sortOrder && old.isActive === value.isActive) return old;

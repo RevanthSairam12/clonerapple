@@ -3,7 +3,8 @@ import React, { useEffect, type ReactNode } from 'react';
 import { hydrateRoot } from 'react-dom/client';
 import { ProductWorkflow } from '@/components/store-admin/ProductWorkflow';
 import { SharedListManager } from '@/components/store-admin/SharedListManager';
-import { planSharedImport, type SharedSnapshot } from '@/lib/catalog/shared-list-rules';
+import { MetadataReferenceManager } from '@/components/store-admin/MetadataReferenceManager';
+import { planSharedImport, safeSharedCsv, sharedTemplate, type SharedSnapshot } from '@/lib/catalog/shared-list-rules';
 import ProductsPage from '@/app/(store-admin)/store-admin/(protected)/products/page';
 import type { MetadataReferences } from '@/lib/catalog/product-metadata-rules';
 import type { CatalogProductDetail } from '@/lib/store-admin/catalog';
@@ -69,8 +70,8 @@ export async function createFixture(search: string) {
   const query = new URLSearchParams(search);
   const mode = query.get('mode') || 'edit';
   serverMode = mode;
-  const body = mode.startsWith('colours-')
-    ? <SharedListManager kind="colours" snapshot={{ brands: references.brands, models: references.models, colours: [] }} canManage={fixtureRole() === 'store_owner'} />
+  const body = mode.startsWith('colours-') || mode.startsWith('models-')
+    ? <>{mode.startsWith('models-') ? <MetadataReferenceManager group="models" references={references} categories={categories} attributes={[]} canEdit={fixtureRole() === 'store_owner'} /> : null}<SharedListManager kind={mode.startsWith('models-') ? 'models' : 'colours'} snapshot={{ brands: references.brands, models: references.models, colours: [] }} canManage={fixtureRole() === 'store_owner'} /></>
     : mode.startsWith('list')
     ? await ProductsPage({ searchParams: Promise.resolve({ review: query.get('review') || undefined }) })
     : <ProductWorkflow categories={categories} brands={[{ id: 'fixture-brand', name: 'Fixture brand' }]} conditions={[{ id: 'fixture-new', name: 'New' }]} metadataReferences={references}
@@ -99,7 +100,7 @@ if (typeof window !== 'undefined') {
       if (window.__fixture.reloadFailure) return response({ error: 'Fixture reload unavailable.' }, 503);
       return response({ references: currentReferences, state: metadataState });
     }
-    const shared = url.match(/^\/api\/store-admin\/catalog\/shared\/(models|colours)(?:\/(inline|preview|apply|uses))?(?:\?.*)?$/);
+    const shared = url.match(/^\/api\/store-admin\/catalog\/shared\/(models|colours)(?:\/(inline|preview|apply|uses|template|export))?(?:\?.*)?$/);
     if (shared) {
       const kind = shared[1] as 'models' | 'colours', action = shared[2];
       if (method === 'GET' && !action) return response({ snapshot: currentShared });
@@ -109,6 +110,13 @@ if (typeof window !== 'undefined') {
         currentShared[kind].push(reference); return response({ reference }, 201);
       }
       if (fixtureRole() !== 'store_owner') return response({ error: 'Fixture owner role required.' }, 403);
+      if (method === 'GET' && action === 'template') return new Response(sharedTemplate(kind), { headers: { 'content-type': 'text/csv;charset=utf-8' } });
+      if (method === 'GET' && action === 'export') {
+        const rows = kind === 'models'
+          ? [['brand', 'model', 'sort_order', 'active'], ...currentShared.models.map(row => [currentShared.brands.find(brand => brand.id === row.brandId)?.name, row.name, row.sortOrder, row.isActive ? 'yes' : 'no'])]
+          : [['name', 'hex', 'sort_order', 'active'], ...currentShared.colours.map(row => [row.name, row.hex, row.sortOrder, row.isActive ? 'yes' : 'no'])];
+        return new Response(safeSharedCsv(rows), { headers: { 'content-type': 'text/csv;charset=utf-8' } });
+      }
       if (action === 'preview') { confirmedInput = JSON.stringify(body); return response({ plan: planSharedImport(body, currentShared), token: 'fixture-only-memory-token' }); }
       if (action === 'apply') {
         if (confirmedInput !== JSON.stringify(body.input) || body.token !== 'fixture-only-memory-token') return response({ error: 'Fixture stale preview.' }, 409);

@@ -102,6 +102,36 @@ def screenshot(page, name, target=None):
     results['screenshots'].append(filename)
 
 
+def hint_contrast(page, selector):
+    samples = page.locator(selector).evaluate_all(r'''elements => {
+      const rgba = value => {
+        const channels = value.match(/[\d.]+/g).map(Number);
+        return channels.length === 3 ? [...channels, 1] : channels;
+      };
+      const over = (foreground, background) => foreground.slice(0, 3).map((channel, index) =>
+        channel * foreground[3] + background[index] * (1 - foreground[3]));
+      const luminance = channels => channels.map(channel => {
+        const value = channel / 255;
+        return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+      }).reduce((value, channel, index) => value + channel * [.2126, .7152, .0722][index], 0);
+      return elements.filter(element => element.getClientRects().length &&
+        getComputedStyle(element).visibility === 'visible').map(element => {
+        const ancestors = [];
+        for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) ancestors.unshift(ancestor);
+        let background = [255, 255, 255];
+        for (const ancestor of ancestors) background = over(rgba(getComputedStyle(ancestor).backgroundColor), background);
+        const colour = getComputedStyle(element).color;
+        const foreground = over(rgba(colour), background);
+        const light = luminance(foreground), dark = luminance(background);
+        return {text: element.textContent.trim().slice(0, 120), foreground: colour,
+          background: background.map(Math.round), ratio: (Math.max(light, dark) + .05) / (Math.min(light, dark) + .05)};
+      });
+    }''')
+    check(bool(samples), f'Expected visible shared-reference instructions: {selector}')
+    check(all(sample['ratio'] >= 4.5 for sample in samples), f'Help text needs at least 4.5:1 contrast: {samples}')
+    return samples
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch()
     try:
@@ -134,7 +164,7 @@ with sync_playwright() as playwright:
                 check(not integrity['missingDescriptions'], f'Description ID references must resolve: {integrity}')
                 check(integrity['nestedHelp'] == 0, f'Help must not nest in labels/links/buttons/summaries/paragraphs: {integrity}')
 
-            run = {'width': width, 'checks': [], 'overflow': {}}
+            run = {'width': width, 'checks': [], 'overflow': {}, 'contrast': {}}
             results['runs'].append(run)
             try:
                 visit('add')
@@ -393,6 +423,42 @@ with sync_playwright() as playwright:
                 screenshot(page, f'conflict-{width}')
                 run['checks'].append('Admin create-only capability excludes brands; expectedRevision conflict retains draft and blocks repeated saves')
 
+                visit('models-owner')
+                run['contrast']['model-references'] = hint_contrast(page, '.sa-reference-manager .sa-hint')
+                page.get_by_text('Import, preview and downloads', exact=True).click()
+                expect(page.get_by_text('Maximum 2,000 data records', exact=False)).to_be_visible()
+                run['contrast']['model-import'] = hint_contrast(page, '.sa-shared-list .sa-hint')
+                with page.expect_download() as model_template_info:
+                    page.get_by_role('button', name='Download header-only template', exact=True).click()
+                model_template_path = output / f'model-template-{width}.csv'
+                model_template_info.value.save_as(model_template_path)
+                check(model_template_path.read_bytes() == b'brand,model,sort_order,active\r\n', 'Model template has headers only')
+                page.get_by_role('combobox', name='Brand for model-only lines (optional)', exact=True).select_option('fixture-device-brand')
+                page.get_by_role('textbox', name='Shared-list input', exact=True).fill('Model for browser')
+                page.get_by_role('button', name='Preview shared list', exact=True).click()
+                page.get_by_role('button', name='Confirm valid new rows', exact=True).click()
+                expect(page.get_by_role('button', name='Edit Model for browser', exact=True)).to_be_visible()
+                page.get_by_label('UTF-8 CSV file', exact=True).set_input_files({
+                    'name': 'models.csv', 'mimeType': 'text/csv',
+                    'buffer': b'brand,model,sort_order,active\r\nExample devices,CSV imported model,2,yes\r\n',
+                })
+                expect(page.get_by_role('combobox', name='Input format', exact=True)).to_have_value('csv')
+                page.get_by_role('button', name='Preview shared list', exact=True).click()
+                expect(page.get_by_text('Row 2: New', exact=True)).to_be_visible()
+                page.get_by_role('button', name='Confirm valid new rows', exact=True).click()
+                expect(page.get_by_role('button', name='Edit CSV imported model', exact=True)).to_be_visible()
+                with page.expect_download() as model_export_info:
+                    page.get_by_role('button', name='Export shared list CSV', exact=True).click()
+                model_export_path = output / f'model-export-{width}.csv'
+                model_export_info.value.save_as(model_export_path)
+                check('CSV imported model,2,yes' in model_export_path.read_text(encoding='utf-8'), 'Export includes imported display order and status')
+                run['overflow']['shared-models'] = overflow(page)
+                screenshot(page, f'shared-models-{width}')
+                run['checks'].append('Owner model paste with selected brand; real UTF-8 file upload, CSV preview/confirm, header-only template and export downloads')
+                visit('models-viewer')
+                expect(page.get_by_text('Import, preview and downloads', exact=True)).to_have_count(0)
+                expect(page.get_by_role('button', name='View products using Phone A', exact=True)).to_have_count(0)
+
                 visit('colours-owner')
                 page.get_by_text('Import, preview and downloads', exact=True).click()
                 shared_input = page.get_by_role('textbox', name='Shared-list input', exact=True)
@@ -424,7 +490,21 @@ with sync_playwright() as playwright:
                 expect(page.get_by_role('button', name='Confirm valid new rows', exact=True)).to_be_enabled()
                 screenshot(page, f'shared-colour-preview-{width}')
                 run['overflow']['shared-preview'] = overflow(page)
+                with page.expect_download() as colour_errors_info:
+                    page.get_by_role('button', name='Download invalid / near-match report', exact=True).click()
+                colour_errors_path = output / f'colour-errors-{width}.csv'
+                colour_errors_info.value.save_as(colour_errors_path)
+                check('near,Blu' in colour_errors_path.read_text(encoding='utf-8'), 'Near-match CSV report includes the reviewed row')
+                page.get_by_role('button', name='View products using Blue', exact=True).click()
+                expect(page.get_by_role('region', name='Products using Blue', exact=True)).to_contain_text('Fixture protective case')
+                expect(page.get_by_role('button', name='Confirm deactivation', exact=True)).to_have_count(0)
+                check(page.evaluate('window.__fixture.requests.filter(r=>r.method==="PUT").length') == 0, 'Viewing uses never changes a shared reference')
+                page.get_by_role('button', name='Close product uses', exact=True).click()
+                expect(shared_input).to_have_value('Blu #123ABD')
+                run['checks'].append('Colour error CSV and direct product-use review preserve import input and perform no management write')
                 page.get_by_role('button', name='Edit Blue', exact=True).click()
+                run['contrast']['colour-edit-and-import'] = hint_contrast(page, '.sa-shared-list .sa-hint')
+                run['checks'].append('Rendered model and colour instructions meet 4.5:1 contrast on actual card/page backgrounds')
                 page.get_by_role('checkbox', name='Active', exact=True).uncheck()
                 page.get_by_role('button', name='Save shared reference', exact=True).click()
                 expect(page.get_by_role('region', name='Confirm deactivation')).to_contain_text('Fixture protective case')

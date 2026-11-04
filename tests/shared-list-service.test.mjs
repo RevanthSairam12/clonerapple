@@ -44,7 +44,8 @@ function serviceHarness() {
   const controls = { now: 1_800_000_000_000, owner: true, audit: true, publication: true, failInsert: 0, inserts: 0,
     target: { database: 'offline', schema: 'memory', role: 'offline' }, cookie: 'synthetic-session' };
   const calls = [];
-  const tx = async (parts, ...values) => {
+  const tx = (parts, ...values) => {
+    if (!Object.hasOwn(parts, 'raw')) return { records: parts, columns: values };
     const query = parts.join('?').replace(/\s+/g, ' ').trim(); calls.push({ query, values });
     if (query.startsWith('select id,name,is_active,sort_order from device_brands')) return state.brands;
     if (query.startsWith('select d.id,d.name,d.brand_id')) return state.models;
@@ -52,12 +53,20 @@ function serviceHarness() {
     if (query.startsWith('select current_database()')) return [controls.target];
     if (query.startsWith('select id from store_admins')) return controls.owner ? [{ id: values[0] }] : [];
     if (query.startsWith('insert into colours')) {
-      controls.inserts++; if (controls.failInsert === controls.inserts) throw new Error('injected insert failure');
-      state.colours.push({ id: values[0], name: values[1], hex: values[2], is_active: values[3], sort_order: values[4] }); return [];
+      const records = values[0]?.records ?? [{ id: values[0], name: values[1], hex: values[2], is_active: values[3], sort_order: values[4] }];
+      for (const record of records) {
+        controls.inserts++; if (controls.failInsert === controls.inserts) throw new Error('injected insert failure');
+        state.colours.push({ ...record });
+      }
+      return [];
     }
     if (query.startsWith('insert into device_models')) {
-      controls.inserts++; if (controls.failInsert === controls.inserts) throw new Error('injected insert failure');
-      state.models.push({ id: values[0], brand_id: values[1], name: values[2], is_active: values[3], sort_order: values[4] }); return [];
+      const records = values[0]?.records ?? [{ id: values[0], brand_id: values[1], name: values[2], is_active: values[3], sort_order: values[4] }];
+      for (const record of records) {
+        controls.inserts++; if (controls.failInsert === controls.inserts) throw new Error('injected insert failure');
+        state.models.push({ ...record });
+      }
+      return [];
     }
     if (query.startsWith('update device_models set')) {
       const row = state.models.find(row => row.id === values[3]);
@@ -94,11 +103,11 @@ test('streamed body bounds actual bytes, ignores false small content length and 
   const { http } = httpHarness();
   const bytes = encode('{"name":"é"}'); const split = bytes.indexOf(0xc3) + 1;
   assert.deepEqual(plain(await http.readSharedBody(streamed([bytes.slice(0, split), bytes.slice(split)]))), { name: 'é' });
-  const boundary = '{"text":"' + 'x'.repeat(262144 - 11) + '"}';
-  assert.equal(encode(boundary).length, 262144);
-  assert.equal((await http.readSharedBody(streamed([encode(boundary)]))).text.length, 262133);
+  const boundary = '{"text":"' + 'x'.repeat(http.SHARED_BODY_LIMIT - 11) + '"}';
+  assert.equal(encode(boundary).length, http.SHARED_BODY_LIMIT);
+  assert.equal((await http.readSharedBody(streamed([encode(boundary)]))).text.length, http.SHARED_BODY_LIMIT - 11);
   await assert.rejects(http.readSharedBody(streamed([encode(boundary), encode(' ')], { 'content-length': '1' })), error => error.status === 413);
-  await assert.rejects(http.readSharedBody(streamed([encode('{}')], { 'content-length': '262145' })), error => error.status === 413);
+  await assert.rejects(http.readSharedBody(streamed([encode('{}')], { 'content-length': String(http.SHARED_BODY_LIMIT + 1) })), error => error.status === 413);
   await assert.rejects(http.readSharedBody(streamed([encode('{}')], { 'content-length': 'invalid' })), error => error.status === 413);
 });
 
@@ -208,17 +217,69 @@ test('signed approval contains exact selected-row and near-row decisions, not up
   await assert.rejects(h.service.applySharedImport(raw, forged, [1], 'owner', 'session'), conflict);
 });
 
-test('maximum 500 near-match rows have a bounded token and can all be confirmed', async () => {
+test('a full 1 MB CSV with 2,000 near-match rows survives JSON escaping, confirms and re-imports as a no-op', async () => {
   const h = serviceHarness();
+  const { http } = httpHarness();
+  h.state.colours.push({ id: 'existing', name: 'Ref', hex: '#FFFFFF', is_active: true, sort_order: 0 });
   const actor = 'a'.repeat(80), session = 's'.repeat(64);
-  const raw = { kind: 'colours', format: 'paste', text: Array.from({ length: 500 }, (_, index) => `Synthetic colour ${String(index).padStart(4, '0')} #${(index + 1).toString(16).padStart(6, '0')}`).join('\n') };
+  const csv = '\uFEFFname,hex\r\n' + Array.from({ length: 2_000 }, (_, index) => `Ref${String.fromCodePoint(0x4e00 + index)},#${(index + 1).toString(16).padStart(6, '0')}`).join('\r\n') + '\r\n';
+  const padding = ' '.repeat(1_000_000 - encode(csv).length);
+  const text = csv.replace(',#000001', `${padding},#000001`);
+  assert.equal(encode(text).length, 1_000_000);
+  // Legal whitespace inside a trimmed CSV cell, encoded in JSON's worst-case
+  // six-byte form, must not reduce the owner's documented file allowance.
+  const escaped = JSON.stringify({ kind: 'colours', format: 'csv', text }).replaceAll(' ', '\\u0020');
+  assert.ok(encode(escaped).length > 1_000_000);
+  const raw = await http.readSharedBody(streamed([encode(escaped)]));
   const preview = await h.service.previewSharedImport(raw, actor, session);
-  assert.equal(preview.plan.counts.new + preview.plan.counts.near, 500);
+  assert.equal(preview.plan.counts.near, 2_000);
   assert.ok(preview.token.length < 4096, `token bytes: ${preview.token.length}`);
   const acknowledged = preview.plan.rows.filter(row => row.status === 'near').map(row => row.row);
-  assert.ok(acknowledged.length > 400);
-  const result = await h.service.applySharedImport(raw, preview.token, acknowledged, actor, session);
-  assert.equal(result.created, 500); assert.equal(h.state.colours.length, 500);
+  assert.equal(acknowledged.length, 2_000);
+  const confirmBody = JSON.stringify({ input: raw, token: preview.token, acknowledgedRows: acknowledged }).replaceAll(' ', '\\u0020');
+  const decoded = await http.readSharedBody(streamed([encode(confirmBody)]));
+  const result = await h.service.applySharedImport(decoded.input, decoded.token, decoded.acknowledgedRows, actor, session);
+  assert.equal(result.created, 2_000); assert.equal(h.state.colours.length, 2_001);
+  assert.equal(h.calls.filter(call => call.query?.startsWith('insert into colours')).length, 1, 'one database round trip for the complete batch');
+  assert.equal(h.state.audits.length, 1);
+  const before = JSON.stringify(h.state.colours);
+  const repeat = await h.service.previewSharedImport(raw, actor, session);
+  const noop = await h.service.applySharedImport(raw, repeat.token, [], actor, session);
+  assert.equal(noop.noop, true); assert.equal(noop.existing, 2_000);
+  assert.equal(JSON.stringify(h.state.colours), before); assert.equal(h.state.audits.length, 2);
+  const oversized = await http.readSharedBody(streamed([encode(JSON.stringify({ ...raw, text: text + ' ' }))]));
+  await assert.rejects(h.service.previewSharedImport(oversized, actor, session), error => error.status === 413);
+  assert.equal(h.state.audits.length, 2);
+});
+
+test('model import inserts one complete batch with existing brand identities and one count-only audit', async () => {
+  const h = serviceHarness();
+  h.state.brands.push({ id: 'brand', name: 'Synthetic brand', is_active: true, sort_order: 0 });
+  const raw = { kind: 'models', format: 'csv', text: 'brand,model,sort_order,active\nSynthetic brand,Alpha model,4,yes\nSynthetic brand,Second device,8,no' };
+  const preview = await h.service.previewSharedImport(raw, 'owner', 'session');
+  const result = await h.service.applySharedImport(raw, preview.token, [], 'owner', 'session');
+  assert.equal(result.created, 2);
+  assert.deepEqual(h.state.models.map(row => [row.brand_id, row.name, row.sort_order, row.is_active]),
+    [['brand', 'Alpha model', 4, true], ['brand', 'Second device', 8, false]]);
+  assert.equal(h.calls.filter(call => call.query?.startsWith('insert into device_models')).length, 1);
+  assert.equal(h.state.brands.length, 1);
+  assert.equal(h.state.audits.length, 1);
+  assert.deepEqual(plain(h.state.audits[0].after), { created: 2, existing: 0, invalid: 0, acknowledged: 0 });
+});
+
+test('renaming an inactive model under an inactive brand still reviews near matches in that brand', async () => {
+  const h = serviceHarness();
+  h.state.brands.push({ id: 'brand', name: 'Synthetic brand', is_active: false, sort_order: 0 });
+  h.state.models.push(
+    { id: 'old', name: 'Archive', brand_id: 'brand', is_active: false, sort_order: 0 },
+    { id: 'near', name: 'Model X1', brand_id: 'brand', is_active: false, sort_order: 0 },
+  );
+  const raw = { id: 'old', name: 'Model X2', brandId: 'brand', isActive: false };
+  const request = new Request('https://example.test');
+  await assert.rejects(h.service.saveSharedReference('models', raw, 'owner', request), error => conflict(error) && /Did you mean Model X1/.test(error.message));
+  assert.equal(h.state.models[0].name, 'Archive'); assert.equal(h.state.audits.length, 0);
+  const saved = await h.service.saveSharedReference('models', { ...raw, confirmNearMatch: true }, 'owner', request);
+  assert.equal(saved.id, 'old'); assert.equal(saved.name, 'Model X2'); assert.equal(saved.isActive, false);
   assert.equal(h.state.audits.length, 1);
 });
 
