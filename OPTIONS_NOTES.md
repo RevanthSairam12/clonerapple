@@ -1,6 +1,8 @@
 # Product options implementation notes
 
-Current results are in [Phase 0 final verification](docs/phase0-final-verification-20261104.md): 1,639 tests, 1,555 passed, 0 failed, 84 skipped. The four source-test failures are repaired, the shared input passed browser accessibility checks, and live legacy media passed 2/2. Commits and pushes are authorized on the new `backup/phase0-final-verification-20261104` branch. The sections below preserve historical audit and implementation findings; PostgreSQL write fixtures and authenticated application acceptance remain pending.
+Current results are in [Phase 1 shared-list verification](docs/phase1-shared-lists-20261104.md): 1,645 tests, 1,561 passed, 0 failed, 84 skipped; typecheck, production build and the component browser matrix pass. Imports now accept 2,000 data rows and 1,000,000 UTF-8 bytes. The accepted static fallback prices are ₹3,509 and ₹879; Midnight NLU was left alone. [DISPOSABLE_DB_RUNBOOK.md](DISPOSABLE_DB_RUNBOOK.md) documents every skipped-test connection and approval requirement. No database was contacted during this Phase 1 continuation. Backup branch: `backup/phase1-shared-lists-20261104`. Earlier checkpoints below are historical; PostgreSQL engine and authenticated application acceptance remain pending.
+
+## Historical Phase 0 audit
 
 **Date:** 2026-11-04
 **Scope:** read-only audit against `PRODUCT_OPTIONS_FINAL_PLAN.md`. No migration, seed, backfill, business-table write, or real-database fixture was applied.
@@ -107,13 +109,13 @@ The inventory census identified one existing product with three active variants 
 - Phase 5: exercise exact option stock/order/refund/POS behavior in an approved disposable database.
 - Phase 6: rehearse migrations, run authenticated browser proof, write guide and rollout evidence.
 
-## Decisions confirmed by the user — 2026-11-04
+## Current decisions confirmed by the user — 2026-11-04
 
-1. **Inline creation: yes.** Store admins may create models/colours inline; owners alone rename, deactivate and manage them.
-2. **Import size: 500 rows and 256 KB.** Enforce both bounds for paste and CSV; document byte/header accounting explicitly in Phase 1.
-3. **Large price changes: yes.** Require confirmation (never a block) for a drop over 50%, rise over 100%, or price below cost.
+1. **Inline creation: yes.** Store admins and owners may create models/colours inline. Owners alone rename, deactivate, reactivate and manage; bulk paste and CSV import/export are owner-only. Brand creation remains owner-only.
+2. **Import size: 2,000 data rows and 1 MB (1,000,000 UTF-8 bytes).** This supersedes the earlier 500-row/256-KB decision. CSV headers and blank paste lines do not count as data rows; BOM, headers and line endings count as bytes. JSON escaping has a separate streamed transport bound.
+3. **Large price changes: yes.** Require confirmation, never a permanent block, for a drop over 50%, rise over 100%, or price below cost. This is recorded for Phase 2; Phase 1 does not unlock option pricing.
 
-## Phase 0 verification results and remaining gates
+## Historical Phase 0 verification results and remaining gates
 
 - `npm test`: authoritative runner summary **1,532 tests; 1,445 passed; 4 failed; 83 skipped; 0 cancelled**. An earlier draft count incorrectly counted the repeated failure recap; this summary supersedes it. Failed source assertions: `tests/payment-recovery.test.mjs:85` and `tests/stock-behaviour.test.mjs:230,262,319`. Their runtime significance is not yet resolved; no test was weakened or product code changed. Evidence: `.tmp-phase0-tests.txt`.
 - Typecheck and production build passed; existing external-lockfile warning retained.
@@ -123,7 +125,7 @@ The inventory census identified one existing product with three active variants 
 - Local source backup exists; public remote push awaits explicit approval. Existing temporary evidence is retained locally. Phase 0 is **not fully done** until its remote-backup requirement is resolved. Phase 1 has not started.
 - Database-backed fixtures were not run. General database access does not select/approve an exact disposable write target; obtain target hostname, fresh row counts and explicit scope approval before writes. No production migration or business data write was attempted.
 
-## Phase 1 — implementation and acceptance status (2026-11-04)
+## Historical Phase 1 implementation checkpoint (2026-11-04)
 
 **Code implemented; not deployed or fully accepted.** No migration, fixture, seed, reconciliation apply, business-table write, commit or public push was performed in Phase 1. Phase 2 has not started. The Phase 0 statements above describe the earlier audit, not the current source capability.
 
@@ -162,7 +164,7 @@ User selected up to five editors, approximately 20 reads per write, peak five ca
 
 **Stop boundary:** Phase 1 database/authenticated/full browser acceptance remains open, public publication remains unapproved, and Phase 2 is not authorized by this report. No price unlock, unified options table, colour galleries, customer selector redesign or Education Store change was made.
 
-## Phase 1 repair rerun (2026-11-04)
+## Historical Phase 1 repair rerun (2026-11-04)
 
 - Reproduced the four failures: focused baseline 19 total / 14 passed / 4 failed / 1 skipped. Exploration traced obsolete source shapes: `selectionConflict` supplements the reservation/payment blockers, detail actions delegate to fresh exact-selection/cart policy, and payment resolution now distinguishes variant inventory and untracked parents. No production guard was reverted. Permission-system denial blocked reassignment to implement stronger actual-handler/detail tests and the explicit shared-textarea label fix. The denial was not bypassed; the four tests and failed browser acceptance remain open.
 - Fixed independent diagnostic reporting: known case-spec labels use storefront `normaliseKey`; collisions stay visible; unequal values and real catalogue discrepancies stay reported. Fresh parity exit 2: missing `Midnight Black`, extra `Midnight NLU`; two price drifts 349900/350900 and 79900/87900 paise. No business-data adjustment or rename was guessed. Owner choice and identity/SKU/order/reservation/stock provenance must precede any repair.
@@ -172,3 +174,15 @@ User selected up to five editors, approximately 20 reads per write, peak five ca
 - Replaced the unconditional PostgreSQL placeholder with a real opt-in integration path: `tests/helpers/shared-list-fixture.mjs`, `tests/shared-list-integration.test.mjs`, `scripts/shared-list-test-manifest.mjs`; added only transaction-injectable preview/apply/save seams to the existing service, keeping production wrappers/global pool unchanged. Offline focused result **28 total / 27 passed / 0 failed / 1 genuine PostgreSQL skip**. No database client constructed or DB assertion executed. Dedicated target variable only, exact target/code/runtime/TLS/operation hash approved before driver import, schema-only search path, no public defaults/FKs/sequences; refuses existing `itest_shared_lists_v1`; cleanup only with this run's ownership marker.
 - Prepared fixture bounds (not executed counts): default max 1 connection / 32 operations / 26 committed rows / 8 rolled-back rows / 11 rejected inserts / 9 audit-sequence advances; separately approved race max 2 / 33 operations / 28 committed rows / 10 sequence advances. Committed updates products 12, colours 3, models 1; at most 4 rolled-back product trigger touches. Source changes invalidate approval. Generate a future exact-target manifest using securely supplied `SHARED_LIST_DATABASE_URL` and `node scripts/shared-list-test-manifest.mjs` (optional `--race`); this pure command does not connect and is not execution approval. No configured real target was adopted. Owner/schema flag tests do not prove non-owner RLS/session isolation; authenticated app acceptance and full production-schema/privilege equivalence remain pending.
 - The user's conditional advancement request is not satisfied: all-clear still requires the blocked local fixes plus actual browser, separately approved PostgreSQL and authenticated acceptance and unresolved business/provider readiness. Phase 2 has not started.
+
+## Phase 1 main-session completion — 2026-11-04
+
+The [current report](docs/phase1-shared-lists-20261104.md) compares every Phase 1 requirement with the earlier commits. Existing imports, colour links, owner workflows, formula protections, atomic/no-op audit behavior and no-seed rules were retained. Repairs cover the confirmed limits, JSON transport allowance, bounded duplicate planning, one parameterized batch insert, direct paginated product-use review, inactive-brand rename suggestions, stale near-match confirmation, colour length consistency and readable field instructions.
+
+Final default suite: **1,645 total / 1,561 passed / 0 failed / 84 skipped / 0 cancelled**. Typecheck/build pass; 25 static pages; 122 store-admin APIs, 21 account APIs and 11 account pages pass their guards. Admin boundary and dependency audit pass (zero vulnerabilities). Component browser flows pass at 1440/768/390 with no console errors or external requests; measured instruction contrast is at least **6.98:1**. The original four Phase 0 failures remain repaired under their original names.
+
+The offline notification diagnostic renders 102 templates and returns **1 passed / 4 failed** because database/settings/provider checks are deliberately unavailable. This does not supersede the earlier saved-setting readiness measurement of 3 passed / 5 failed. Live parity, settings-table and legacy-media reads were not rerun. The two accepted prices now match the recorded database snapshot in static pages and fallback search/bag references; no saved option, price or Midnight NLU database row was edited.
+
+The [disposable PostgreSQL runbook](DISPOSABLE_DB_RUNBOOK.md) covers Docker, installed Windows and a separate hosted instance, restricted role privileges, all 57 migrations, session/TLS environment variables, exact commands and approval scopes for all 84 skips. It was not executed; all 15 PowerShell blocks parse successfully. Database-engine normalization/rollback/constraints/RLS/race and authenticated owner/admin/viewer acceptance remain pending. Signing/throttling remains process-local and needs deployment consideration.
+
+Work is saved on `backup/phase1-shared-lists-20261104` in logical commits. No action was denied; sandbox restrictions on test/build workers required approved escalation. No migration, database fixture, provider probe/send or business-data write was performed. Stop at Phase 1 and await the user's next instruction.

@@ -2388,7 +2388,9 @@ exhaust it; keep script connection pools at `max: 1`.
 
 ---
 
-### Product options Phase 0 audit — 4 November 2026
+Current product-options results are in [Phase 1 shared-list verification](docs/phase1-shared-lists-20261104.md). The earlier audit, implementation and repair checkpoints below retain historical evidence, including superseded limits and failures. The latest Phase 1 status follows them.
+
+### Historical product options Phase 0 audit — 4 November 2026
 
 Read-only product audit completed against `PRODUCT_OPTIONS_FINAL_PLAN.md`; no migration, seed, backfill, real business-table write, disposable-fixture write, product implementation change, push, or destructive git operation was performed. Existing source work was secured in local checkpoint `77c7dcf` on `backup/product-options-phase0-20261104`; documentation is saved separately. Public remote push is deferred for explicit publication confirmation. Findings are recorded in `OPTIONS_NOTES.md`. The referenced `PRODUCT_EDITOR_FINISH.md` and obsolete simple plan are absent.
 
@@ -2419,15 +2421,15 @@ Read-only product audit completed against `PRODUCT_OPTIONS_FINAL_PLAN.md`; no mi
 
 **Phase 0 conclusion:** stable variant identity, database-authoritative option pricing resolution, exact variant stock/payment plumbing, retirement/replacement, and availability infrastructure exist substantially. Shared colours, colour reconciliation, bulk model/colour import/export, unified options/price/stock table, unlocked option price writes, paired option history UI, colour photos, two-step selector, URL state, option-derived model/colour filters/counts, colour-aware search/cards, and structured model/colour/photo order snapshots remain incomplete. No product code was changed in this phase.
 
-**User decisions confirmed (4 November 2026)**
+**Current user decisions (4 November 2026; supersede earlier limits)**
 
-1. Store admins may create a model/colour inline (create only); owners alone rename, deactivate and manage.
-2. Paste/CSV imports are capped at **500 rows and 256 KB**, not the plan's suggested larger limit.
-3. Price drops over 50%, rises over 100%, or prices below cost require confirmation, never a block.
+1. Store admins and owners may create a model/colour inline; owners alone rename, deactivate, reactivate and manage. Bulk paste and CSV import/export are owner-only.
+2. Paste/CSV imports are capped at **2,000 data rows and 1 MB (1,000,000 UTF-8 bytes)**.
+3. Price drops over 50%, rises over 100%, or prices below cost require confirmation, never a block. Option-price editing stays deferred to Phase 2.
 
 **Remaining Phase 0 gates:** approve public remote publication for the backup; retain and investigate the four failing baseline tests. At this audit checkpoint no Phase 1 implementation or DB-backed fixture acceptance was claimed; the subsequent status follows.
 
-### Product options Phase 1 — shared lists (4 November 2026)
+### Historical product options Phase 1 shared-list checkpoint (4 November 2026)
 
 **Implemented in source; not deployed or fully accepted.** Reused the existing device catalogue, metadata locking/publication/revision/audit, immutable options and stock services. Added shared colours, owner model/colour management and named paginated use warnings, explicit near-match/deactivation confirmation, CSV/paste read-only preview and atomic owner confirmation, safe template/export/error downloads, and admin create-only inline models/colours with draft preservation. Brand creation remains owner-only; viewers cannot write. Prices remain locked. No unified options table, per-colour photo workflow, customer-selector redesign or Education Store work.
 
@@ -2456,7 +2458,7 @@ The mobile inline-colour and failed owner-import screenshots were visually revie
 
 **Open acceptance gates:** separately approved disposable PostgreSQL migration/normalization/index/FK/trigger/RLS/concurrency/rollback/revision proof; authenticated owner/admin/viewer acceptance; successful full shared-list browser flow; unresolved baseline tests/readiness/parity; public backup publication approval. Phase 1 is not fully complete and Phase 2 has not started. Detailed decisions and non-measured workload/backup/SLO targets are in `OPTIONS_NOTES.md`.
 
-### Phase 1 repair rerun — 4 November 2026
+### Historical Phase 1 repair rerun — 4 November 2026
 
 Diagnostic source repairs are complete: the legacy-media checker now requires an explicit credential-free loopback HTTP origin and aggregates sanitized timeout/refused/interrupted/DNS/abort/other transport, HTTP-status and body-cancellation failures. Manual redirects remain unfollowed. No stored URLs, IDs, redirects or raw exceptions are reported. The earlier “local app unavailable” conclusion was unsupported and is corrected above. Without a separately established safe app origin, the fresh check refuses before constructing a database client (exit 1); this is a safety refusal, **not** live HTTP acceptance.
 
@@ -2472,10 +2474,30 @@ Prepared a genuine opt-in PostgreSQL integration path (`tests/shared-list-integr
 
 ### Product options Phase 0 main-session final verification — 4 November 2026
 
-[The current verification report](docs/phase0-final-verification-20261104.md) supersedes the earlier failure and backup-permission results above. The four original failing test names now pass; reservation/payment availability tests execute actual handlers/resolvers, and the detail/listing guards match the current exact-option flow. The shared textarea uses a stable explicit label and linked instructions; its exact accessible name survived repeated typing/clearing at 1440, 768 and 390 pixels.
+[The Phase 0 verification report](docs/phase0-final-verification-20261104.md) supersedes the earlier failure and backup-permission results above. The four original failing test names now pass; reservation/payment availability tests execute actual handlers/resolvers, and the detail/listing guards match the current exact-option flow. The shared textarea uses a stable explicit label and linked instructions; its exact accessible name survived repeated typing/clearing at 1440, 768 and 390 pixels.
 
 The fresh full suite is **1,639 total / 1,555 passed / 0 failed / 84 skipped**. Typecheck, production build, 122 store-admin route guards, account guards, admin boundary, settings checks, whitespace and dependency audit passed (0 vulnerabilities). Diagnostic/legacy regressions are 18/18; PostgreSQL fixture offline tests are 27 passed with one existing live-acceptance skip. The read-only local production media gate passed **2/2 legacy routes**, with no HTTP/transport/cancellation failures and no shared rows to exercise.
 
 Catalogue parity remains failed: iphone18pro-max-clear-magsafe is ₹3,499 static versus ₹3,509 database, cpc-gadzio-silicone-organizer is ₹799 versus ₹879, and iphone17-silicone-black has Midnight NLU instead of Midnight Black. The existing NEWPLOO variant has no exact stock row, zero exact variant order references, and seven product orders without variant IDs; archive-and-replace is proposed only. Notifications remain **3 passed / 5 failed**, with all 102 templates rendered and no provider probe/message.
 
 [All 84 skipped tests](docs/phase0-skipped-tests-20261104.md) are listed by exact name and skip reason; each needs a session database connection plus its fixture write authorization. Authenticated production-browser acceptance and PostgreSQL engine acceptance remain pending. The user authorized logical commits and a push to the new `backup/phase0-final-verification-20261104` branch; generated diagnostics, fixture snapshots and machine-local permissions are ignored. No migration or business-data/provider change was made. Work stops after this backup and waits for the user to say “continue”; Phase 2 has not started.
+
+### Product options Phase 1 main-session completion — 4 November 2026
+
+[The Phase 1 report](docs/phase1-shared-lists-20261104.md) records the comparison with PRODUCT_OPTIONS_FINAL_PLAN.md and the repairs to existing code. Imports accept **2,000 data rows / 1,000,000 UTF-8 bytes** with a separate bounded JSON envelope; maximum-size approvals remain compact. Atomic apply now uses one parameterized insert, preserving strict count-only audit and re-import no-op behavior. Owners can directly review paginated products using a model/colour. Rename checks cover inactive-brand models; edited names invalidate stale confirmation; colour UI/server limits agree; labels and scoped help-text contrast are repaired.
+
+| Current verification | Result |
+| --- | --- |
+| Full suite, DB opt-ins disabled | **1,645 total / 1,561 passed / 0 failed / 84 skipped / 0 cancelled** |
+| Typecheck / production build | Passed; 25 static pages; existing external-lockfile warning |
+| Store-admin / account guards | Passed: 122 store-admin APIs, 21 account APIs and 11 pages |
+| Admin boundary / dependency audit | Passed; zero vulnerabilities |
+| Component browser 1440/768/390 | Passed; imports, downloads, no-op/near review, direct uses, draft preservation; zero console errors/external requests; help contrast ≥6.98:1 |
+| Offline notifications | 102 templates pass rendering; diagnostic total 1 passed / 4 failed; no DB read, provider probe or message |
+| Database/authenticated acceptance | Pending; all 84 skips need disposable session connections and approved fixture scope |
+
+Static fallback prices are now **₹3,509** for iphone18pro-max-clear-magsafe and **₹879** for cpc-gadzio-silicone-organizer, with page/ref regressions against the accepted snapshot. No database price or saved option was edited; the owner will manage Midnight NLU. Live parity/settings/media checks were not rerun.
+
+[DISPOSABLE_DB_RUNBOOK.md](DISPOSABLE_DB_RUNBOOK.md) documents Docker, installed Windows and separate hosted PostgreSQL, a non-superuser/NOBYPASSRLS role with schema creation privilege, all 57 migrations, guarded session/TLS variables and exact commands/approvals for all 84 skips. Documentation only; its 15 PowerShell blocks parse successfully. PostgreSQL engine and authenticated application proof remain pending; component fixtures use synthetic data and mocked persistence. Process-local preview signing/throttling needs consideration before a multi-worker deployment.
+
+Backup: `backup/phase1-shared-lists-20261104`. All work ran in the main session. Sandbox test/build worker restrictions were resolved by approved escalation; no action was denied. No database was contacted, migrated or seeded and no provider was probed. Phase 1 work stops here.
