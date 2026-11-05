@@ -61,13 +61,14 @@ Report: `docs/phase2-options-table-20261105.md`.
 - `scripts/review-product-options.mjs` is a read-only census of products that would show
   **Needs review** (options plus shared stock, missing option prices, duplicate SKUs). It
   refuses non-localhost/non-test hosts, opens a read-only transaction and prints counts only.
-- `docs/migrations-pending.md` lists unapplied migrations 0055–0060 in order, what each adds,
-  which screens and APIs break without it, and the rehearsal steps for a copy of real data.
+- `docs/migrations-pending.md` records the applied migration run for 0055–0061 in order,
+  what each adds, which screens and APIs would break without it, the target and row counts,
+  and the post-application verification.
 - Duplicating a product copies its details, chosen models, colour links and photos with new
   SKUs, zero stock and no price history.
-- `0060_product_options_pricing.sql` is additive and **not applied**. It adds `sell_by`,
-  `sku_pattern`, the paired sale history columns, `change_group`, an option history index
-  and `product_images.colour_id` with its index.
+- `0060_product_options_pricing.sql` is additive and was applied on 2026-11-05 (with
+  0058, 0059 and 0061). It adds `sell_by`, `sku_pattern`, the paired sale history columns,
+  `change_group`, an option history index and `product_images.colour_id` with its index.
 
 **Measured after the follow-ups:** `npm test` **1,671 tests / 1,587 pass / 0 fail / 84
 skipped**; `npm run typecheck` and `npm run build` pass; store-admin guards **122 routes**,
@@ -75,6 +76,242 @@ account guards and admin boundary pass; `npm audit` **0 vulnerabilities**; `git 
 clean apart from LF/CRLF advisories. `check:notifications` remains **3 pass / 5 fail**
 because mail and SMS are not configured; no message was sent. PostgreSQL
 migration/fixture and authenticated browser acceptance were not run.
+
+### Phase 3 — customer product page — 5 November 2026
+
+**Implemented and offline-verified; migrations 0058–0061 are now applied; database and
+browser acceptance are not run.** Report: `docs/phase3-customer-options-20261105.md`.
+
+- The product page asks for the **model first, then the colour** (named swatches;
+  hex is decoration). Only active rows the catalogue supplies are offered, so a
+  model × colour combination that does not exist is never shown. Colour-only and
+  model-only products show only the step they have; the first step is labelled
+  with the option's own name (e.g. Wattage).
+- Choosing a colour switches the gallery to that colour's photos (main first,
+  then stored order; hover photos excluded) and keeps the product's default
+  gallery when the colour has none. The gallery box keeps its size and the next
+  photo is preloaded, so switching is immediate and never shifts layout. Thumbnails
+  are a labelled group with per-photo names.
+- Price, availability and Add to Bag always describe the exact selected row.
+  Before a choice the headline is the **cheapest row's amount**, never "From ₹X"
+  (cards and detail pages use the same minimum), so the first price shown is a
+  real buyable amount; after a choice it is that row's price.
+  The strike-through is the selected row's own regular price while its sale is
+  live. Tests assert the shown amount equals the row's charged price.
+- Locked availability rules: normal mode keeps a sold-out option visible, disabled
+  and labelled **Stock not available**; sale mode disables and marks nothing
+  unavailable and checks stock only at Add to Bag, Buy Now and Pay, refusing with
+  **Out of stock for this option.** The page never substitutes a sibling option.
+- The selection is written to `?model=`/`?colour=` with `history.replaceState`, and
+  the server restores it, so a shared link reopens the same model, colour, price
+  and photos.
+- The bag line, checkout buy-now line, order, receipt, invoice and store-admin
+  order carry the chosen model, colour, SKU, price and photo. The client sends
+  only `variantId`; price and snapshot fields are resolved server-side after the
+  stock locks. `0061_order_item_option_snapshot.sql` stores them as plain-text
+  columns without foreign keys, so renaming or replacing an option or photo never
+  changes an old order. `createOrder` probes for the columns and keeps the previous
+  insert on a database without 0061.
+- **"Only N left" is deliberately not shown.** The storefront payload and the
+  public availability API carry no stock counts; a per-option count would expose
+  one. An exhausted row is refused at purchase instead.
+- `docs/migrations-pending.md` records that 0061 is applied, with the verified
+  `order_items` columns and unchanged 49 order-item rows.
+
+**Measured:** `npm test` **1,693 tests / 1,609 pass / 0 fail / 84 skipped**;
+`npm run typecheck` and `npm run build` pass; store-admin guards **122 routes**,
+account guards and admin boundary pass; `npm audit` **0 vulnerabilities**;
+`git diff --check` clean apart from LF/CRLF advisories.
+
+**Migrations applied 5 November 2026:** the live Supabase target
+(`aws-0-ap-northeast-1.pooler.supabase.com:5432`, database `postgres`, project
+`ttzfovaadeyynggnypru`) was shown with its 55-row `schema_migrations` and row counts
+(15 products / 36 variants / 49 order items), then approved. `npm run db:migrate`
+applied 0058–0061 (0055–0057 were already applied on 2026-11-03). Read-only verification
+found `colours` and `product_variant_colours` with RLS enabled, the new `order_items`,
+`products`, `price_history` and `product_images` columns, the shared-catalogue function,
+six indexes and three triggers. Row counts are unchanged and no order was placed, so no
+order item carries a snapshot yet. The 84 skipped tests need a disposable database and
+were not run.
+
+### Phase 4 — category filters, search and count parity — 5 November 2026
+
+**Implemented and offline-verified; no new migration or index was needed.**
+Report: `docs/phase4-category-filters-20261105.md`.
+
+- Category pages now filter by **Phone model** (grouped by brand), **Colour** (named
+  swatches with counts) and **Price** (four bands in integer paise). A value is only
+  offered when at least one active option in that category matches it, and every count
+  is computed over the products passing the *other* active filters, so the list never
+  offers a combination that yields nothing.
+- A model filter matches a product through its active option rows; a product sold as
+  one shared stock matches through its compatibility list. Deactivated models or brands
+  never become filter values, and archived, inactive or draft products never match.
+- Filters combine with OR inside a kind and AND across kinds. The chosen model narrows
+  the colour list to colours that exist on that model's options. The selection lives in
+  `?model=`/`?colour=`/`?price=` (repeated params), survives reload and a shared link,
+  unknown values are dropped, and **Clear all** empties both the URL and the grid.
+- When a model and/or colour is chosen, each card shows that exact option's price (never
+  "From ₹X"), that option's sale strike-through and — for a colour — that colour's photo
+  when one is linked. A matched but sold-out option keeps the card listed and labelled
+  **Stock not available** in normal mode; a live sale never marks it.
+- This reuses the existing bounded catalogue read (still exactly 9 queries) and the 30s
+  `unstable_cache` snapshot; sale state is still applied per request and the cache key
+  moved to `phase-b2-option-prices-v3`, so a sale never serves a cached price. Existing
+  indexes (`product_device_models_device_idx`, `product_variant_colours_colour`,
+  `product_variant_colours_product`) cover the joins; no additive migration was written.
+- Header search already indexes compatibility model names, so "iphone 17" matches a
+  product whose active options or compatibility list include that model; a deactivated
+  model is not matched.
+
+**Measured:** `npm test` **1,706 tests / 1,622 pass / 0 fail / 84 skipped**;
+`npm run typecheck` and `npm run build` pass; store-admin guards **122 routes**, account
+guards (21 APIs / 11 pages) and admin boundary pass; `npm audit` **0 vulnerabilities**.
+`check:notifications` remains **3 pass / 5 fail** because mail, SMS and the staff/customer
+channels are not configured; no message was sent. A read-only live check through
+`loadCatalogUsing` read 6 categories / 15 products and built the facets without error:
+the live catalogue currently has **1 active device model, 0 compatibility links, 0
+variant-model links and 0 colour links or colour photos**, so the model and colour
+sections correctly render no values until options are entered in store admin; the price
+bands populated for all six categories. No write occurred, and no connection string was
+printed. The 84 skipped tests still need an approved disposable database.
+
+**File map:** `src/lib/storefront/category-filters.ts` (new, pure facet engine),
+`src/lib/catalog/storefront.ts` (model brand/eligibility in the existing snapshot),
+`src/lib/storefront/catalog-merge.ts`, `src/components/collection/{CollectionPage,
+CollectionFilters,CollectionProductCard,CollectionProductGrid,types}.tsx`,
+`collection.css`, `src/lib/storefront/catalog.ts` (cache key), and
+`tests/category-option-filters.test.mjs`.
+
+### Phase 5 — option stock, orders and price integrity — 5 November 2026
+
+**Implemented and verified, including the database acceptance suite (3/3 pass on the
+approved session-pooler target).**
+Report: `docs/phase5-options-lifecycle-20261105.md`.
+
+- Stock and Low-stock screens now say they report per sellable identity: the Stock page
+  separates products from stock lines (marking "one per option" when they differ), shows
+  each option's SKU and model/option label, and prints the product total over tracked,
+  non-legacy options. The Low-stock page lists one row per option under its own count and
+  threshold, with its SKU. The Stock and Low-stock report definitions now describe
+  per-product-or-option rows.
+- The product price history shows the stored model/option label and the option SKU for
+  every entry, so an option's price change is readable without opening the variant.
+- Orders list quick view, order detail, packing slip and invoice name the exact option
+  sold ("iPhone 16 · Red") from the order-time snapshot (migration 0061); old orders keep
+  their stored label and are never rewritten. POS writes the same model/colour/photo
+  snapshot with a pre-0061 fallback insert.
+- Price editing writes only the option, its `price_history` rows and the audit row: a
+  test asserts the edit body contains no order, coupon-redemption, stock or reservation
+  write, and the database test proves an existing order, its coupon hold and its
+  reservation are unchanged while the next purchase pays the new price.
+- New offline suite `tests/phase5-option-admin-surfaces.test.mjs` (9/9 pass) plus
+  database suite `tests/phase5-option-lifecycle.test.mjs` (3/3 pass: full option life,
+  last-unit race between two connections, price-edit isolation). The database suite
+  writes only to new `itest_*` schemas and drops them; its first real run showed the
+  copied `store_admins` needs `email`/`password_hash` and the authoritative sale read
+  needs the `sale_settings` `default` row, so both are seeded in the fixture (production
+  code unchanged).
+
+**Measured:** `npm test` **1,718 tests / 1,631 pass / 0 fail / 87 skipped** (DB opt-ins
+off); `RUN_LEGACY_DB_TESTS=1` Phase 5 suite **3/3 pass** (74.97 s / 38.09 s / 37.38 s);
+`npm run typecheck` and `npm run build` pass; store-admin guards **122 routes**, account
+guards (21 APIs / 11 pages) and admin boundary pass; `npm audit` **0 vulnerabilities**.
+`check:notifications` remains **3 pass / 5 fail** (SMTP/SMS not configured, staff-email
+and customer-SMS matrix cells off; no message sent). No migration, seed, backfill or
+business write was performed: public counts (products 15, product_variants 36, stock 15,
+stock_movements 27, orders 51, order_items 49, coupons 3, coupon_redemptions 4) were
+identical before and after the approved run, and every `itest_*` schema it created was
+dropped. Known limitation: per-option low-stock notifications are still not queued
+(product-level only).
+
+**File map:** `src/lib/store-admin/{catalog.ts,catalog-crud.ts,report-rules.ts,orders.ts,
+order-channel.ts}`, `src/app/(store-admin)/store-admin/(protected)/{stock,low-stock}/
+page.tsx`, `tests/phase5-option-admin-surfaces.test.mjs` and
+`tests/phase5-option-lifecycle.test.mjs` (both new).
+
+### Phase 6 — migration rehearsal, rollout plan and the owner guide — 5 November 2026
+
+**Delivered against the approved throwaway-schema target; one part of the plan cannot be
+proven on it.** Plan item 1 asks for a disposable database the owner provides plus an
+authenticated browser run. The approved target is throwaway `itest_*` schemas on the
+existing Supabase project, so the migration rehearsal and the real concurrency suite ran
+for real, while the signed-in owner-to-customer browser checkout could not be run. It is
+recorded below as not built rather than implied. `PRODUCT_EDITOR_FINISH.md`, which the
+plan points at for F2/F3, is absent from this repo; those steps were reconstructed from
+`PRODUCT_OPTIONS_FINAL_PLAN.md`, `DISPOSABLE_DB_RUNBOOK.md` and
+`docs/migrations-pending.md`.
+
+- Migration rehearsal (`scripts/rehearse-options-migrations.mjs`, new): spends one
+  connection on the approved host, creates a random `itest_phase6_*` schema, replays
+  0001–0057 with the schema rewrites it needs when `public` sits beside it, copies 1,935
+  real rows across 93 tables, applies 0058–0061, asserts the columns, indexes, RLS,
+  normalisation, duplicate and cross-product rules and unchanged counts, re-applies
+  0058–0061 for idempotence, then drops the schema. Final run: **ok, 188/188 checks,
+  168,515 ms**; public counts identical before and after; no `itest_phase6%` schema left.
+- Rehearsal-only rewrites are documented, not patched into applied migrations:
+  `table_schema = 'public'`, unscoped `pg_constraint where conname =` guards, and the
+  `where t.relname =` constraint-replacement loops in 0034/0037 are unambiguous in
+  production but collide when a second schema exists.
+- Real concurrency re-run as Phase 6 evidence: `RUN_LEGACY_DB_TESTS=1` on
+  `tests/phase5-option-lifecycle.test.mjs`, **3/3 pass, 115,298 ms**.
+- Rollout plan `docs/phase6-rollout-plan-20261105.md` (F3 equivalent): backup and restore
+  proof, counts to take before the window, maintenance window, migration order with a
+  gate per file, smoke checks for storefront, PayU test mode, store-admin stock,
+  low-stock, price history, orders, POS and price edit, read-only SQL checks, rollback
+  limits (additive only; a code rollback is safe because of the 0061 probe; a schema
+  rollback means restoring the backup), first-week watch list and what is not covered.
+- Owner guide: `PRODUCTS_AND_CATALOG_SIMPLE_GUIDE.md` is now the one-page **Add a product
+  with models and colours** — shared model CSV import (template, preview, near-match
+  review, 2,000 rows / 1 MB), colour paste, Sell by, the options table and paste preview,
+  per-colour photos, publish, customer check and a troubleshooting table. The old long
+  guide moved to `docs/advanced-products-and-catalog-guide.md` and is linked as the
+  Advanced appendix. Five screenshots in `docs/images/phase6/` were captured from the
+  synthetic component fixture; the guide says they use sample data.
+- Plain vocabulary in the app: `ProductHelp.tsx` rules for Sell by, SKU pattern, paste,
+  stock per option and the price, sale, option and identity rules; "sub-item" removed
+  from `ProductWorkflow`, `VariantEditor` and `ProductMetadataFields`; product-list links
+  read "N options • Edit colours and models". Stale expectations in
+  `tests/product-catalog-guidance.test.mjs`, `tests/product-list-stock.test.mjs`,
+  `tests/product-help.test.mjs` and `scripts/product-admin-ui-browser.py` were updated.
+- The UI fixture (`scripts/product-admin-ui-fixture.mjs`) now admits the two pure rule
+  modules the editor imports (`price-history-rules`, `options-table-rules`) and still
+  refuses every other `src/lib/store-admin` module.
+
+**Migrations in order:** `0058_shared_catalogue_normalization`, `0059_shared_colours`,
+`0060_product_options_pricing`, `0061_order_item_option_snapshot` — applied to the live
+database on 5 November 2026 (0055–0057 before them, see `docs/migrations-pending.md`) and
+rehearsed here in that order, each behind the gate in the rollout plan. Additive only; no
+existing row is rewritten or deleted.
+
+**Measured:** `npm test` **1,727 tests / 1,640 pass / 0 fail / 87 skipped**, 0 cancelled,
+exit 0 (177.9 s; DB opt-ins off); new `tests/phase6-owner-guide.test.mjs` **9/9 pass**;
+`npm run typecheck` and `npm run build` pass (25 static pages, known external-lockfile
+warning); store-admin guards **122 routes**, account guards **21 APIs / 11 pages**, admin
+boundary and settings lists pass; `check:notifications` **3 pass / 5 fail** (provider
+configuration, no message sent); `npm audit` **0 vulnerabilities**; `git diff --check`
+clean apart from existing line-ending warnings. No migration was applied, no business or
+identity row was written, and nothing was committed or pushed.
+
+**Not built / not proven:**
+
+1. The authenticated end-to-end browser run — owner imports models by CSV, pastes
+   colours, creates the red ₹100 and black ₹120 case with stock and colour photos and
+   publishes; a customer filters by model, picks a colour, checks out in test mode with
+   simulated PayU callbacks; only that option's stock moves; the admin shows the price
+   history. The throwaway-schema target cannot sign in an owner without writing to the
+   live identity tables, so this was not executed.
+2. The five screenshots are component previews rendered by the fixture, not captures of a
+   signed-in store admin.
+3. Per-option low-stock notifications are still not queued (product-level only), so the
+   notification check stays 3 pass / 5 fail.
+
+**File map:** `scripts/rehearse-options-migrations.mjs`,
+`scripts/phase6-guide-screenshots.py`, `tests/phase6-owner-guide.test.mjs` (all new);
+`docs/phase6-rollout-plan-20261105.md`, `docs/advanced-products-and-catalog-guide.md`,
+`docs/images/phase6/*.png` (new); `PRODUCTS_AND_CATALOG_SIMPLE_GUIDE.md` (rewritten);
+`src/components/store-admin/{ProductHelp.tsx,VariantEditor.tsx,ProductWorkflow.tsx,
+ProductMetadataFields.tsx}`; `scripts/product-admin-ui-fixture.mjs`.
 
 ### Phase A — customer order flow — 2 November 2026
 

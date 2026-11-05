@@ -1,16 +1,58 @@
-# Pending migrations 0055–0060
+# Migrations 0055–0061 — applied 5 November 2026
 
-Written 5 November 2026 for the Phase 2 options work. These six files exist in
-`migrations/` but are **not applied** to the database this code talks to. Until
-they are applied, parts of the store admin, storefront, checkout and POS fail
-with SQL errors (`column ... does not exist` / `relation ... does not exist`).
+These seven files carry the Phase 2 and Phase 3 options work. All of them are
+now **applied** to the live database this code talks to. This file is kept as
+the record of the target, the approval and the verification; the historical
+"what breaks without it" notes below describe the pre-application state.
 
-They are additive. The order below is the only supported order: 0059 uses
-functions created by 0057 and 0058, 0060 references the `colours` table created
-by 0059, and 0058's function must exist before 0059 can build its unique index.
+## Applied run — 5 November 2026
 
-Do not apply any of them without explicit approval of the exact target database
-and its current `schema_migrations` contents.
+- **Target:** Supabase project `ttzfovaadeyynggnypru`, session pooler
+  `aws-0-ap-northeast-1.pooler.supabase.com:5432`, database `postgres`.
+  Credentials were never printed.
+- **Approved:** the user approved applying the pending files to that exact
+  target after being shown the hostname, the `schema_migrations` contents and
+  the row counts below.
+- **Preflight (`schema_migrations`):** 55 rows. `0055_variant_identity_retirement.sql`,
+  `0056_product_content_revisions.sql` and `0057_catalog_edit_revision.sql`
+  had already been applied on 2026-11-03. The actually pending files were
+  **0058, 0059, 0060, 0061**.
+- **Row counts before the run:** products 15, product_variants 36,
+  order_items 49, device_brands 1, device_models 1; `colours` and
+  `product_variant_colours` absent.
+- **Command:** `npm run db:migrate` (the runner skips applied files and sends
+  each file as one implicit transaction). It reported:
+  `applying 0058… done`, `0059… done`, `0060… done`, `0061… done`.
+- **No rehearsal on a copy was performed.** The preflight above plus the
+  additive/`if not exists` shape of the four files were the basis for approval.
+  No seed, backfill or fixture SQL was run.
+
+### Verified after the run (read-only)
+
+| Check | Result |
+| --- | --- |
+| `schema_migrations` | **59 rows**, with 0058, 0059, 0060 and 0061 recorded |
+| `colours`, `product_variant_colours` | created, **RLS enabled** on both |
+| `order_items` new columns | `variant_device_model_id`, `variant_device_model_name`, `variant_colour_id`, `variant_colour_name`, `variant_colour_hex`, `image_url`, `image_alt` present |
+| `products` new columns | `sell_by`, `sku_pattern` present |
+| `price_history` new columns | `old_sale_price_paise`, `new_sale_price_paise`, `change_group` present |
+| `product_images.colour_id` | present |
+| `shared_catalogue_key(text)` | present |
+| Indexes | `device_brands_shared_name_unique`, `device_models_shared_name_unique`, `colours_shared_name_unique`, `colours_hex_unique`, `idx_price_history_variant`, `idx_product_images_colour` |
+| Triggers | `protect_variant_colour_reference`, `catalog_revision_variant_colours`, `catalog_revision_shared_colour` |
+| Row counts after | products 15, product_variants 36, order_items 49, device_brands 1, device_models 1 — **unchanged**; 0 order items carry a snapshot because no new order was placed |
+
+Offline verification after the migration: `npm test` **1,693 tests / 1,609
+passed / 0 failed / 84 skipped**; typecheck and production build pass; 122
+store-admin routes, 21 account APIs/11 pages and the admin boundary pass;
+`npm audit` 0 vulnerabilities; `git diff --check` clean (LF/CRLF advisories
+only). The 84 skipped tests need a disposable PostgreSQL target and were not
+run (see `DISPOSABLE_DB_RUNBOOK.md`); the live database was used only for the
+migration itself and the read-only checks above.
+
+The order below is the only supported order: 0059 uses functions created by
+0057 and 0058, 0060 references the `colours` table created by 0059, and 0058's
+function must exist before 0059 can build its unique index.
 
 | # | File | Adds | Depends on |
 | --- | --- | --- | --- |
@@ -20,8 +62,9 @@ and its current `schema_migrations` contents.
 | 0058 | `0058_shared_catalogue_normalization.sql` | `shared_catalogue_key(text)` function, duplicate pre-check, unique indexes on `device_brands(name)` and `device_models(brand_id,name)`. | device_brands, device_models |
 | 0059 | `0059_shared_colours.sql` | `colours` table (RLS enabled, no policies) and `product_variant_colours` table (RLS enabled), colour/reference triggers, colour indexes. | 0057, 0058, product_variants |
 | 0060 | `0060_product_options_pricing.sql` | `products.sell_by`, `products.sku_pattern`, `price_history.old_sale_price_paise` / `new_sale_price_paise` / `change_group`, variant history index, `product_images.colour_id` + index. | 0059 |
+| 0061 | `0061_order_item_option_snapshot.sql` | `order_items.variant_device_model_id`, `variant_device_model_name`, `variant_colour_id`, `variant_colour_name`, `variant_colour_hex`, `image_url`, `image_alt` — plain text snapshots, no foreign keys. | order_items |
 
-## What breaks on a database without each one
+## What would break on a database without each one (historical)
 
 ### Without 0055
 
@@ -93,6 +136,17 @@ The product **list** page still loads; its query does not read these columns.
 - Product list and storefront are unaffected (they do not select these
   columns).
 
+### Without 0061
+
+- Nothing fails. `createOrder` probes `information_schema.columns` for
+  `order_items.variant_colour_id` and falls back to the previous insert, so
+  checkout and payment keep working.
+- New orders do not store the model, colour or photo snapshot. Their receipt,
+  invoice, order detail and store-admin order show the live catalogue/row label
+  instead; renaming an option or replacing a photo can therefore change how an
+  old order reads until 0061 is applied and new orders are written.
+- The storefront and bag are unaffected.
+
 ## Rehearsal on a copy of the real data
 
 Never rehearse on the live database. Use a disposable database or a restore of
@@ -118,6 +172,11 @@ a recent backup; confirm the host and row counts before touching it.
    `select count(*) from products where sell_by not in ('single','colour','model','model_colour','other');`
    returns 0, and `select count(*) from product_images where colour_id is not null and colour_id not in (select id from colours);`
    returns 0.
+5b. **Rehearse 0061.** It only adds nullable columns to `order_items`. After
+   it, confirm `select count(*) from order_items where image_url is not null;`
+   returns 0 on existing data (no row was rewritten), then place one test order
+   through the checkout path and confirm its snapshot columns are populated.
+   Read `docs/phase3-customer-options-20261105.md` for what the columns mean.
 6. **Run the read-only review** against the copy only:
 
    ```sh
@@ -138,7 +197,10 @@ a recent backup; confirm the host and row counts before touching it.
 
 ## Current status
 
-- No migration has been applied by this work.
+- Migrations 0055–0061 are **applied**; the record is in the "Applied run"
+  section above.
 - No seed, backfill or fixture SQL was run.
 - `scripts/review-product-options.mjs` has only been run in its refusal paths
   (missing acknowledgement, unsafe host); it has not contacted a database.
+- No order has been placed since 0061 was applied, so no `order_items` row
+  stores an option snapshot yet. That is expected, not a failure.

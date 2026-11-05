@@ -1,5 +1,56 @@
 # Product options implementation notes
 
+## Phase 6 — rehearsal, rollout plan and owner guide (2026-11-05)
+
+The plan asks for a disposable database "that I provide" and an authenticated browser
+acceptance. The approved target was throwaway `itest_*` schemas on the existing Supabase
+project, so the rehearsal and the real concurrency suite ran for real; the signed-in
+browser checkout could not be run and is reported as not built. `PRODUCT_EDITOR_FINISH.md`
+does not exist here, so the F2/F3 steps were reconstructed from the final plan,
+`DISPOSABLE_DB_RUNBOOK.md` and `docs/migrations-pending.md`.
+
+- `scripts/rehearse-options-migrations.mjs` (new) rehearses 0001–0057 plus 0058–0061 on a
+  random `itest_phase6_*` schema beside `public`: it copies 1,935 real rows across 93
+  tables, asserts 188 checks, re-applies the four option migrations for idempotence and
+  drops the schema. Final run ok, 188/188, 168,515 ms; public counts unchanged; no
+  `itest_phase6%` schema left.
+- Rehearsal-only rewrites, documented rather than patched into applied files:
+  `table_schema = 'public'`, unscoped `pg_constraint where conname =` guards, and the
+  `where t.relname =` constraint-replacement loops in 0034/0037. Each is right for a
+  single-schema production and ambiguous when a second schema exists.
+- `docs/phase6-rollout-plan-20261105.md` is the F3 rollout plan: backup and restore,
+  maintenance window, migration order with gates, smoke checks, rollback limits and the
+  first-week watch list.
+- `PRODUCTS_AND_CATALOG_SIMPLE_GUIDE.md` is now the one-page owner guide (models by CSV,
+  colours by paste, Sell by, the options table, per-colour photos, publish, customer
+  check, troubleshooting). The old long guide is `docs/advanced-products-and-catalog-guide.md`,
+  linked as the Advanced appendix. Five screenshots in `docs/images/phase6/` are component
+  previews from the fixture, and the guide says so.
+- Unless `REHEARSE_MIGRATIONS=yes` and a matching `REHEARSE_TARGET` are set, the rehearsal
+  script refuses before opening a connection; `tests/phase6-owner-guide.test.mjs` proves it.
+
+Verification: `npm test` **1,727 tests / 1,640 passed / 0 failed / 87 skipped** (DB opt-ins
+off); new Phase 6 suite 9/9; typecheck and build pass (25 static pages); 122 store-admin
+routes, 21 account APIs/11 pages and the admin boundary pass; `npm audit` zero
+vulnerabilities; notifications remain 3 passed / 5 failed. Not built: the authenticated
+owner-to-customer browser run and real screenshots of a signed-in admin.
+
+## Phase 3 — customer product page (2026-11-05)
+
+The customer now picks the exact option before buying, and every surface keeps that choice.
+
+- `src/lib/storefront/option-selection.ts` is the single pure rule set: `optionSteps` (model first, then colour; only supplied rows), `resolveOptionVariant` (one exact row or nothing), `selectModel`, `optionPrice`, `optionStock`, `galleryForSelection`, `optionSelectionFromSearch`, `optionQuery`. `src/components/shop/OptionSelector.tsx` renders it on both detail pages.
+- Price never says "From". Before a choice the headline is the cheapest exact row's real amount (cards and the live announcement use the same minimum); after a choice it is that row's own price, and the sale/strike-through pair comes from the same row. The amount shown is the amount charged.
+- Locked availability is unchanged: normal mode keeps a sold-out row visible, disabled, "Stock not available"; sale mode disables nothing and checks stock only at Add to Bag, Buy Now and Pay. A refusal names the exact option.
+- Colour photos switch immediately; a colour without photos keeps the default gallery; hover photos are never shown. The gallery keeps its size and preloads the chosen photos; thumbnails are a labelled group.
+- `?model=`/`?colour=` restore the selection server-side and stay current through `history.replaceState`.
+- The client sends only `variantId`; checkout resolves price, model, colour, SKU and photo inside `resolveCartItemsFromDbUsing` after the stock locks. `src/lib/orders/option-snapshot.ts` renders the snapshot first and falls back to the stored label on older orders.
+- Migration `0061_order_item_option_snapshot.sql` adds plain-text snapshot columns to `order_items` without foreign keys, so renames never rewrite old orders. `createOrder` probes `information_schema.columns` and keeps the previous insert when the columns are absent. All pending migrations (0058–0061; 0055–0057 were already applied) were applied to the live Supabase database on 2026-11-05 after the user approved that exact target — see `docs/migrations-pending.md`.
+- **"Only N left" is intentionally absent.** The storefront payload and public availability API never expose stock counts; a per-option count would leak one. An exhausted row is refused at purchase instead. `isLowOptionStock` therefore always returns false.
+- Deliberate test-side changes: the payment-catalogue fixture, the offline order fixture and two source-assertion suites now model the new SQL boundary (capability probes, inline `sql` fragments, exact-row selection). No production guard was reverted.
+
+Verification: `npm test` **1,693 tests / 1,609 passed / 0 failed / 84 skipped**; typecheck and production build pass; 122 store-admin routes, 21 account APIs/11 pages and the admin boundary pass; `npm audit` zero vulnerabilities. New tests: `tests/customer-option-selection.test.mjs` (14) and `tests/order-option-snapshot.test.mjs` (4), plus the 0061 present/absent order tests in `tests/selected-variant-stock.test.mjs`. Report: `docs/phase3-customer-options-20261105.md`.
+
 ## Phase 2 — options, price and stock (2026-11-05)
 
 The lock named in the Phase 1 notes is gone. Option pricing is editable and audited on both write paths:
@@ -25,7 +76,7 @@ Phase 2 follow-ups (same day):
 - Option price and sale editing is restricted to `store_admin` and `store_owner` at the API (`requireStoreRole('store_admin')` on both the draft and variant routes) and in the UI (viewers get a disabled form and `readOnly` price/sale cells). `tests/store-admin-option-edit-roles.test.mjs` exercises the real role gate and both routes.
 - Every `price_history` reader now goes through `src/lib/store-admin/price-history-rules.ts`: a `sale_cleared` row (or any stored 0) is shown as **Sale cleared** with an em dash, never as ₹0.00. `tests/price-history-display.test.mjs` renders the real table.
 - `scripts/review-product-options.mjs` is a read-only census (options plus shared stock, missing prices, duplicate SKUs). It refuses any host that is not localhost or clearly test/staging/sandbox/dev, requires `REVIEW_PRODUCT_OPTIONS=read-only`, opens a read-only transaction, and prints counts only.
-- `docs/migrations-pending.md` lists 0055–0060 in order, what each adds, what breaks without it, and the rehearsal steps for a copy of real data.
+- `docs/migrations-pending.md` lists 0055–0061 in order, what each adds, what breaks without it, and the rehearsal steps for a copy of real data.
 
 Verification after the follow-ups: `npm test` **1,671 tests / 1,587 passed / 0 failed / 84 skipped**; typecheck, production build, store-admin route guard (122 routes), account guard, admin boundary all pass; `npm audit` zero vulnerabilities; `git diff --check` clean apart from LF/CRLF advisories. `check:notifications` remains **3 passed / 5 failed** because mail and SMS are not configured; no message was sent. New tests: `tests/options-table-rules.test.mjs`, `tests/price-history-display.test.mjs`, `tests/store-admin-option-edit-roles.test.mjs`, `tests/review-product-options-safety.test.mjs`, plus updated draft/workflow/duplicate expectations. No migration, fixture or business-data write was performed. Report: `docs/phase2-options-table-20261105.md`.
 
@@ -126,7 +177,7 @@ The inventory census identified one existing product with three active variants 
 3. Phase 3 two-step model/colour selector, per-colour gallery and exact colour photo snapshots are missing.
 4. Phase 4 model/colour category filters/counts, URL state and model-aware search are missing or partial.
 5. Phase 5 needs real populated variant stock/order/refund/POS/report proof and concurrency checks.
-6. Phase 6 disposable database rehearsal, authenticated browser acceptance and rollout/owner guide are not done.
+6. Phase 6: the throwaway-schema migration rehearsal, rollout plan and owner guide are done; the authenticated owner-to-customer browser acceptance was not run on the approved target.
 
 ## Phase plan retained
 
