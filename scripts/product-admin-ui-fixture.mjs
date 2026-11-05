@@ -57,10 +57,13 @@ const server = http.createServer(async (request, response) => {
     if (request.method !== 'GET') { response.writeHead(405).end('GET only'); return; }
     const url = new URL(request.url, `http://127.0.0.1:${port}`);
     response.setHeader('Cache-Control', 'no-store');
-    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; object-src 'none'");
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'");
     if (url.pathname === '/fixture-browser.js') { response.setHeader('Content-Type', 'application/javascript'); response.end(await readFile(path.join(output, 'fixture-browser.js'))); return; }
     if (url.pathname === '/admin.css') { response.setHeader('Content-Type', 'text/css'); response.end(await readFile(path.join(root, 'src/app/(store-admin)/store-admin/store-admin.css'))); return; }
     if (url.pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
+    // Synthetic, empty Media library so the photo picker renders its real empty
+    // state in the fixture. Uploads remain disabled (GET only, no backend).
+    if (url.pathname === '/api/store-admin/media') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ media: [] })); return; }
     if (url.pathname !== '/' || !allowedModes.has(url.searchParams.get('mode') || 'edit')) { response.writeHead(404).end('No fixture here'); return; }
     const markup = renderToString(await createFixture(url.search));
     response.setHeader('Content-Type', 'text/html; charset=utf-8');

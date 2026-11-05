@@ -162,6 +162,45 @@ test('view-only edit renders every section, stock guide and the editable options
   assert.match(html, /Options, price and stock/);
   assert.doesNotMatch(html, /Option prices are read-only/);
 });
+test('the photo picker renders Media selection, main photo, ordering and the legacy URL fallback', () => {
+  const photos = [{ id: 'photo', key: 'photo-1', url: '/fixture.svg', alt: 'Blue case', role: 'primary', sortOrder: 0, colourId: null }];
+  const h = harness('src/components/store-admin/ProductPhotoPicker.tsx');
+  let tree = h.render('ProductPhotoPicker', { photos, onChange() {}, colours: [], canEdit: true });
+  assert.ok(nodes(tree, node => node.type === 'select' && node.props['aria-label'] === 'Photo 1 from Media').length === 1, 'existing Media can be chosen');
+  assert.ok(nodes(tree, node => node.type === 'input' && node.props['aria-label'] === 'Photo 1 description').length === 1, 'alt text is editable');
+  nodes(tree, node => node.type === 'button' && node.props.children === 'Add photos from Media')[0].props.onClick();
+  tree = h.render('ProductPhotoPicker', { photos, onChange() {}, colours: [], canEdit: true });
+  assert.equal(nodes(tree, node => node.type === 'summary' && node.props.children === 'Advanced: paste an image URL').length, 1, 'a legacy pasted URL remains available alongside Media');
+  assert.equal(nodes(tree, node => node.type === 'button' && [].concat(node.props.children ?? []).join('') === 'Remove photo 1').length, 1);
+  const viewerHarness = harness('src/components/store-admin/ProductPhotoPicker.tsx');
+  const renderViewer = () => viewerHarness.render('ProductPhotoPicker', { photos, onChange() {}, colours: [], canEdit: false });
+  nodes(renderViewer(), node => node.type === 'button' && node.props.children === 'Add photos from Media')[0].props.onClick();
+  assert.match(JSON.stringify(renderViewer()), /Only an owner or admin can upload files/, 'viewers cannot upload');
+});
+
+test('an options product hides the shared stock box and offers only a guided move from shared stock', () => {
+  const product = { ...productBase, stock: { onHand: 10, reserved: 2, trackInventory: true, lowStockThreshold: 0 }, variants: [{ id: 'black', sku: 'BLACK', optionName: 'Colour', optionValue: 'Black', optionIdentity: 'black', isActive: true, isPurchasable: true, combinationKey: 'black', sortOrder: 0, stock: null }] };
+  const tree = harness('src/components/store-admin/ProductWorkflow.tsx').render('ProductWorkflow', { ...props, product });
+  assert.equal(field(tree, 'In stock'), undefined, 'a product sold by options never shows the shared In stock box');
+  assert.equal(nodes(tree, node => node.type === 'legend' && node.props.children === 'Move existing stock into the options').length, 1);
+  const move = byLabel(tree, 'Move shared stock to Black');
+  assert.ok(move);
+  assert.equal(move.props.disabled, true, 'moving shared units is a deliberate activation step, never automatic');
+  assert.match(nodes(tree, node => node.type === 'p' && String(node.props.children ?? '').includes('stay in shared stock')).map(node => String(node.props.children)).join(' '), /stay in shared stock/);
+});
+
+test('viewers get a read-only options table while admins and owners can edit prices and sales', () => {
+  const product = { ...productBase, variants: [{ id: 'black', sku: 'BLACK', optionName: 'Colour', optionValue: 'Black', optionIdentity: 'black', isActive: true, isPurchasable: true, combinationKey: 'black', sortOrder: 0, stock: null }] };
+  const viewer = harness('src/components/store-admin/ProductWorkflow.tsx').render('ProductWorkflow', { ...props, product, canEdit: false });
+  assert.equal(byLabel(viewer, 'Price for Black').props.readOnly, true);
+  assert.equal(byLabel(viewer, 'Sale price for Black').props.readOnly, true);
+  assert.ok(nodes(viewer, node => node.type === 'fieldset' && node.props.disabled === true).length > 0, 'the whole form is disabled for a viewer');
+  assert.equal(button(viewer, 'Save changes'), undefined, 'a viewer never gets a save action');
+  const editor = harness('src/components/store-admin/ProductWorkflow.tsx').render('ProductWorkflow', { ...props, product, canEdit: true });
+  assert.equal(byLabel(editor, 'Price for Black').props.readOnly, false);
+  assert.equal(byLabel(editor, 'Sale price for Black').props.readOnly, false);
+});
+
 test('ordinary edit keeps the coordinated payload and untouched prices unchanged after rendering help', async () => {
   const requests = [];
   const h = harness('src/components/store-admin/ProductWorkflow.tsx', { fetch: async (url, init) => { requests.push(JSON.parse(init.body)); return { ok: true, json: async () => ({ product: { id: 'case', catalogRevision: 7 } }) }; } });
@@ -330,7 +369,7 @@ test('activation transfers parent units without also entering them as destinatio
   const activation = nodes(tree, node => node.type === 'label' && String(node.props.children?.[1]).includes('Use these options at checkout'))[0];
   activation.props.children[0].props.onChange({ target: { checked: true } });
   tree = render();
-  field(tree, 'Transfer to Black').props.children.props.onChange({ target: { value: '4' } });
+  byLabel(tree, 'Move shared stock to Black').props.onChange({ target: { value: '4' } });
   field(tree, 'Stock note (optional)').props.children.props.onChange({ target: { value: 'Allocate physical black units' } });
   byLabel(tree, 'In stock for Black').props.onChange({ target: { value: '4' } });
   await submit(render());
