@@ -40,23 +40,41 @@ Report: `docs/phase2-options-table-20261105.md`.
   Remove. Blank price means the product price; clearing a saved override sends an explicit
   clear. Fast entry fills a price, sale or stock value into every active sellable row, or a
   different price for each colour (Red ₹100, Black ₹120) into only the rows with that colour.
-- Stock stays a deliberate choice: a product with options that still keeps one shared stock
-  count shows a **Needs review** notice on the Stock step. Nothing is split or transferred
-  automatically; option stock turns on only through the existing explicit activation.
-- Photos can belong to a shared colour and fall back to the default gallery when that
-  colour has none. Primary and hover stay product-wide; colour photos use the gallery role.
+- Stock stays a deliberate choice: when a product is sold by options the shared **In stock**
+  box is hidden and only the option stock table is shown. If shared units exist, a guided
+  **Move existing stock into the options** step asks how many units go to each row. Nothing
+  is split or transferred automatically, unallocated units stay in shared stock, and option
+  stock turns on only through the existing explicit activation, transfer guard, reservation
+  checks and append-only movements.
+- A spreadsheet block can be pasted into the table (price, sale price, stock per line;
+  tab/comma/semicolon) with a per-line preview and errors; nothing is applied unless every
+  line parses. Arrow keys and Enter move between price, sale and stock cells; Tab stays native.
+- Photos are chosen from the Media library: pick an existing image, upload, set the main
+  photo, reorder, and edit alt text (saved back to Media). A photo can belong to a shared
+  colour and falls back to the default gallery when that colour has none. Primary and hover
+  stay product-wide; colour photos use the gallery role. A pasted URL remains under
+  **Advanced** for legacy images.
+- Option price and sale editing is limited to `store_admin`/`store_owner` in both the API
+  (`requireStoreRole('store_admin')`) and the UI; viewers get a disabled form and read-only
+  cells. A `sale_cleared` history row is always shown as **Sale cleared** with an em dash,
+  never ₹0.00.
+- `scripts/review-product-options.mjs` is a read-only census of products that would show
+  **Needs review** (options plus shared stock, missing option prices, duplicate SKUs). It
+  refuses non-localhost/non-test hosts, opens a read-only transaction and prints counts only.
+- `docs/migrations-pending.md` lists unapplied migrations 0055–0060 in order, what each adds,
+  which screens and APIs break without it, and the rehearsal steps for a copy of real data.
 - Duplicating a product copies its details, chosen models, colour links and photos with new
   SKUs, zero stock and no price history.
 - `0060_product_options_pricing.sql` is additive and **not applied**. It adds `sell_by`,
   `sku_pattern`, the paired sale history columns, `change_group`, an option history index
   and `product_images.colour_id` with its index.
 
-**Measured:** `npm test` **1,654 tests / 1,570 pass / 0 fail / 84 skipped**; `npm run
-typecheck` and `npm run build` pass; store-admin guards **122 routes**, account guards and
-admin boundary pass; `npm audit` **0 vulnerabilities**; `git diff --check` clean apart from
-LF/CRLF advisories. `check:notifications` remains **3 pass / 5 fail** because mail and SMS
-are not configured; no message was sent. PostgreSQL migration/fixture and authenticated
-browser acceptance were not run.
+**Measured after the follow-ups:** `npm test` **1,671 tests / 1,587 pass / 0 fail / 84
+skipped**; `npm run typecheck` and `npm run build` pass; store-admin guards **122 routes**,
+account guards and admin boundary pass; `npm audit` **0 vulnerabilities**; `git diff --check`
+clean apart from LF/CRLF advisories. `check:notifications` remains **3 pass / 5 fail**
+because mail and SMS are not configured; no message was sent. PostgreSQL
+migration/fixture and authenticated browser acceptance were not run.
 
 ### Phase A — customer order flow — 2 November 2026
 

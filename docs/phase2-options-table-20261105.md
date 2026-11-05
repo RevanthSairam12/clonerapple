@@ -62,12 +62,51 @@ Reopening against a real database and an authenticated browser session remain un
 | `git diff --check` | Clean (LF/CRLF advisories only) |
 | `npm run check:notifications` | 3 passed, 5 failed — all environmental (no SMTP/SMS, staff/customer SMS cells off). No message was sent. |
 
-## Deviations from the plan
+## Follow-ups (5 November 2026)
 
-1. **Parent stock is not auto-hidden for option products.** The existing explicit variant-inventory activation and parent-to-variant transfer guard is retained so stock accounting is never inferred or split automatically. Instead, the Stock step now shows a **Needs review** notice whenever a product has options but keeps shared stock. Nothing changes until the person chooses option stock and saves.
-2. **No spreadsheet paste or keyboard-navigation grid.** Fast entry is provided by bulk fill, per-colour price fill, sell-by generation and the reviewed-combination preview. A paste grid can be added on top of the pure `options-table-rules` functions without touching the server.
-3. **Media attachment/upload is not integrated.** Photos are still entered as a public URL or `/media/...` path; the colour link works for either.
-4. **Sale clearing records `new_price_paise = 0`.** This follows the existing `price_history` constraint; `price_kind = 'sale_cleared'` distinguishes it from a real zero price.
+The first three deviations below were closed in the follow-up pass. No database
+was contacted.
+
+1. **Parent stock is hidden for option products, with a guided move.** The
+   shared **In stock** box no longer renders when a product is sold by options;
+   only the option stock table is shown. If shared units exist, a **Move
+   existing stock into the options** step asks how many of the available units
+   go to each row. Nothing is split automatically, unallocated units stay in
+   shared stock, and activation still uses the existing transfer guard,
+   reservation checks and append-only movements.
+2. **Spreadsheet paste and cell navigation exist.** A pasted block (price, sale
+   price, stock per line; tab/comma/semicolon) is parsed by
+   `parseOptionTablePaste`; the preview shows every row and every line-numbered
+   error, and a partial table is never applied. Arrow keys and Enter move
+   between price/sale/stock cells through `nextTableCell`; Tab stays native.
+3. **Photos come from the Media library.** `ProductPhotoPicker` lists media,
+   uploads a new image, sets the main photo, reorders, edits alt text (and
+   saves it back to Media), keeps the colour link and the default-gallery
+   fallback. A pasted URL remains under **Advanced** for legacy images.
+4. **Sale clearing records `new_price_paise = 0`.** This follows the existing
+   `price_history` constraint; `price_kind = 'sale_cleared'` distinguishes it
+   from a real zero price, and every reader now maps it to **Sale cleared**
+   with an em dash through `price-history-rules.ts`.
+
+Also added: `tests/store-admin-option-edit-roles.test.mjs` proves the real
+`requireStoreRole('store_admin')` gate denies viewers and allows admins/owners
+for both the draft and variant APIs; `tests/price-history-display.test.mjs`
+renders the real history table; `scripts/review-product-options.mjs` is a
+refusing, read-only needs-review census; and `docs/migrations-pending.md`
+documents 0055–0060 and the rehearsal.
+
+## Verification after the follow-ups
+
+| Check | Result |
+| --- | --- |
+| `npm test` | **1,671 tests: 1,587 passed, 0 failed, 84 skipped, 0 cancelled** |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed |
+| `check:store-admin-routes` | **122 routes guarded** |
+| `check:account-routes` | **21 API routes and 11 pages** pass |
+| `check:admin-boundary` | Passed |
+| `npm audit` | **0 vulnerabilities** |
+| `git diff --check` | Clean (LF/CRLF advisories only) |
 
 ## Pending gates
 
