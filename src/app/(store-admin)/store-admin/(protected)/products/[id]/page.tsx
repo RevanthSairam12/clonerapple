@@ -3,9 +3,10 @@ import { ProductGuide, ProductHelp } from '@/components/store-admin/ProductHelp'
 import { notFound } from 'next/navigation';
 
 import { ProductWorkflow } from '@/components/store-admin/ProductWorkflow';
+import { PriceHistoryTable } from '@/components/store-admin/PriceHistoryTable';
 import { loadMetadataEditor } from '@/lib/store-admin/product-metadata';
 import { getStoreSession } from '@/lib/store-admin/auth';
-import { formatDate, formatINR, getCatalogProduct, listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
+import { formatDate, getCatalogProduct, listBrands, listCategoryOptions } from '@/lib/store-admin/catalog';
 import { listConditions } from '@/lib/store-admin/catalog-crud';
 
 export const dynamic = 'force-dynamic';
@@ -34,7 +35,7 @@ export default async function StoreAdminProductDetailPage({ params }: { params: 
     {ready && metadata ? <ProductWorkflow key={`${product.id}:${product.catalogRevision}`} product={product} categories={categories} brands={brands} conditions={conditions} metadataReferences={metadata.references} metadataState={metadata.state} canEdit={session.role !== 'store_viewer'} canManageDevices={session.role === 'store_owner'} canCreateShared={session.role === 'store_owner' || session.role === 'store_admin'} /> : <p className="sa-notice">Product references or metadata are unavailable. Apply the catalogue metadata and description migrations, then reload. Editing is paused to preserve the complete product.</p>}
     <ProductGuide><details className="sa-detail-section"><summary>Product record and price history</summary><ProductHelp label="Product record and price history">Read-only reference information and past price changes. Editing the form does not rewrite these records.</ProductHelp>
       <dl className="sa-meta"><div><dt>Product ID</dt><dd className="sa-mono">{product.id}</dd></div><div><dt>Created</dt><dd>{formatDate(product.createdAt)}</dd></div><div><dt>Updated</dt><dd>{formatDate(product.updatedAt)}</dd></div><div><dt>Currency</dt><dd>{product.currency}</dd></div></dl>
-      {product.priceHistory.length === 0 ? <p className="sa-empty">No price history.</p> : <div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Changed</th><th>Kind</th><th>Old</th><th>New</th><th>Source</th><th>Reason</th><th>Changed by</th></tr></thead><tbody>{product.priceHistory.map(row => <tr key={row.id}><td>{formatDate(row.changedAt)}</td><td>{row.priceKind === 'sale' ? 'Sale price' : row.priceKind === 'sale_cleared' ? 'Sale cleared' : 'Regular'}</td><td>{row.oldPricePaise === null ? '—' : formatINR(row.oldPricePaise)}</td><td>{row.priceKind === 'sale_cleared' && row.newPricePaise === 0 ? '—' : formatINR(row.newPricePaise)}</td><td>{row.source}</td><td>{row.reason || '—'}</td><td>{row.changedBy ?? '—'}</td></tr>)}</tbody></table></div>}
+      <PriceHistoryTable rows={product.priceHistory} />
     </details></ProductGuide>
   </div>;
 }

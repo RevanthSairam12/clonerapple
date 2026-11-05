@@ -492,10 +492,14 @@ async function seed(snapshot, reference) {
         summary.stockRows += 1;
 
         // Append one history row only when the price is new or changed.
+        // Compare against the last PRODUCT regular price only: a sale row, a
+        // cleared sale (stored as 0) or an option row is never that baseline.
         const latest = await tx`
           select new_price_paise
           from price_history
           where product_id = ${product.id}
+            and variant_id is null
+            and price_kind = 'regular'
           order by changed_at desc, id desc
           limit 1
         `;

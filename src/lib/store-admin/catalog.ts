@@ -1,6 +1,7 @@
 import { getSql } from '@/lib/platform/db';
 import { readCatalogRevision } from './catalog-revision';
 import type { SellBy } from './options-table-rules';
+import { priceHistoryIsCleared } from './price-history-rules';
 
 /**
  * Read-only catalogue queries for the store admin.
@@ -112,6 +113,8 @@ export interface CatalogPriceHistoryRow {
   changeGroup: string | null;
   /** `regular`, `sale` or `sale_cleared` — which price the row records. */
   priceKind: string;
+  /** True when the row removes a sale; `newPricePaise` is then a 0 sentinel, not a price. */
+  cleared: boolean;
   currency: string;
   source: string;
   reason: string;
@@ -617,6 +620,7 @@ export async function getCatalogProduct(
         newSalePricePaise: nullableNumber(row.new_sale_price_paise),
         changeGroup: row.change_group === null || row.change_group === undefined ? null : text(row.change_group),
         priceKind: text(row.price_kind) || 'regular',
+        cleared: priceHistoryIsCleared(text(row.price_kind)),
         currency: text(row.currency) || 'INR',
         source: text(row.source),
         reason: text(row.reason),
