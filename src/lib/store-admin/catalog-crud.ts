@@ -158,6 +158,12 @@ export interface StockOverviewRow {
   lowStockThreshold: number;
   trackInventory: boolean;
   stockRowId: string | null;
+  /** Totals across the product's sellable stock lines, tracked rows only. */
+  productOnHand: number;
+  productReserved: number;
+  productAvailable: number;
+  /** False when no sellable line of this product is limited. */
+  productTracked: boolean;
 }
 
 export async function listStockOverview(): Promise<CatalogWrite<StockOverviewRow[]>> {
@@ -176,25 +182,50 @@ export async function listStockOverview(): Promise<CatalogWrite<StockOverviewRow
       order by p.name asc
       limit 500
     `) as Row[];
-    return {
-      ok: true,
-      data: rows.map((row) => {
-        const onHand = number(row.on_hand);
-        const reserved = number(row.reserved);
-        return {
-          productId: text(row.id),
-          variantId:nullableText(row.variant_id),variantSku:nullableText(row.variant_sku),variantLabel:nullableText(row.variant_label),legacyBucket:row.variant_id==null&&row.inventory_mode==='variant',
-          name: text(row.name),
-          categoryName: text(row.category_name),
-          onHand,
-          reserved,
-          available: stockAvailable(onHand, reserved),
-          lowStockThreshold: number(row.low_stock_threshold),
-          trackInventory: Boolean(row.track_inventory),
-          stockRowId: nullableText(row.stock_id),
-        };
-      }),
-    };
+    const mapped = rows.map((row) => {
+      const onHand = number(row.on_hand);
+      const reserved = number(row.reserved);
+      return {
+        productId: text(row.id),
+        variantId:nullableText(row.variant_id),variantSku:nullableText(row.variant_sku),variantLabel:nullableText(row.variant_label),legacyBucket:row.variant_id==null&&row.inventory_mode==='variant',
+        name: text(row.name),
+        categoryName: text(row.category_name),
+        onHand,
+        reserved,
+        available: stockAvailable(onHand, reserved),
+        lowStockThreshold: number(row.low_stock_threshold),
+        trackInventory: Boolean(row.track_inventory),
+        stockRowId: nullableText(row.stock_id),
+        productOnHand: 0,
+        productReserved: 0,
+        productAvailable: 0,
+        productTracked: false,
+      };
+    });
+
+    // A variant product's parent row is a retained legacy balance, never part
+    // of the sellable total. Sum only the identities the storefront can sell.
+    const totals = new Map<string, { onHand: number; reserved: number; tracked: boolean }>();
+    for (const row of mapped) {
+      if (row.legacyBucket) continue;
+      const current = totals.get(row.productId) ?? { onHand: 0, reserved: 0, tracked: false };
+      if (row.trackInventory) {
+        current.onHand += row.onHand;
+        current.reserved += row.reserved;
+        current.tracked = true;
+      }
+      totals.set(row.productId, current);
+    }
+    for (const row of mapped) {
+      const total = totals.get(row.productId);
+      if (!total) continue;
+      row.productOnHand = total.onHand;
+      row.productReserved = total.reserved;
+      row.productAvailable = stockAvailable(total.onHand, total.reserved);
+      row.productTracked = total.tracked;
+    }
+
+    return { ok: true, data: mapped };
   } catch {
     console.warn('[store-admin/catalog] could not read stock');
     return fail('unavailable', 'The catalogue is not available.');
@@ -209,12 +240,28 @@ export interface StockMovementRow {
   orderId: string | null;
   createdAt: string;
   createdBy: string | null;
+  /** The exact option the movement touched; null for the product bucket. */
+  variantId: string | null;
+  variantLabel: string | null;
+}
+
+export interface StockOptionRow {
+  variantId: string;
+  variantSku: string | null;
+  variantLabel: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+  lowStockThreshold: number;
+  trackInventory: boolean;
+  hasStockRow: boolean;
 }
 
 export interface StockDetail {
   productId: string;
   name: string;
   categoryName: string;
+  inventoryMode: 'product' | 'variant';
   onHand: number;
   reserved: number;
   available: number;
@@ -222,6 +269,13 @@ export interface StockDetail {
   trackInventory: boolean;
   /** False until settings are saved for a product that has never had a row. */
   hasStockRow: boolean;
+  /** One row per active purchasable option; empty for a product-level product. */
+  options: StockOptionRow[];
+  /** Totals across the sellable identities, tracked rows only. */
+  totalOnHand: number;
+  totalReserved: number;
+  totalAvailable: number;
+  totalTracked: boolean;
   movements: StockMovementRow[];
 }
 
@@ -230,7 +284,7 @@ export async function getStockDetail(productId: string): Promise<CatalogWrite<St
   if (!sql) return fail('unavailable', 'The catalogue is not available.');
   try {
     const rows = (await sql`
-      select p.id, p.name, c.name as category_name,
+      select p.id, p.name, p.inventory_mode, c.name as category_name,
              s.on_hand, s.reserved, s.low_stock_threshold, s.track_inventory
       from products p
       left join categories c on c.id = p.category_id
@@ -241,30 +295,74 @@ export async function getStockDetail(productId: string): Promise<CatalogWrite<St
     const row = rows[0];
     if (!row) return fail('not-found', 'Product not found.');
 
-    const movements = (await sql`
-      select m.id, m.delta, m.reason, m.note, m.order_id, m.created_at,
-             a.email as created_by
-      from stock_movements m
-      left join store_admins a on a.id = m.created_by
-      where m.product_id = ${productId} and m.variant_id is null
-      order by m.created_at desc, m.id desc
-      limit 100
-    `) as Row[];
+    const [movements, optionRows] = await Promise.all([
+      sql`
+        select m.id, m.delta, m.reason, m.note, m.order_id, m.created_at,
+               m.variant_id, v.sku as variant_sku,
+               coalesce(nullif(concat_ws(' / ', dm.name, nullif(v.option_value,'')),''), v.option_value, v.sku) as variant_label,
+               a.email as created_by
+        from stock_movements m
+        left join store_admins a on a.id = m.created_by
+        left join product_variants v on v.id = m.variant_id
+        left join device_models dm on dm.id = v.device_model_id
+        where m.product_id = ${productId}
+        order by m.created_at desc, m.id desc
+        limit 100
+      `,
+      sql`
+        select v.id, v.sku, s.id as stock_id, s.on_hand, s.reserved,
+               s.low_stock_threshold, s.track_inventory,
+               coalesce(nullif(concat_ws(' / ', dm.name, nullif(v.option_value,'')),''), v.option_value, v.sku) as variant_label
+        from product_variants v
+        left join device_models dm on dm.id = v.device_model_id
+        left join stock s on s.product_id = v.product_id and s.variant_id = v.id
+        where v.product_id = ${productId}
+          and v.is_active and v.is_purchasable and v.retired_at is null
+        order by v.sort_order, v.option_value, v.id
+      `,
+    ]) as [Row[], Row[]];
 
     const onHand = number(row.on_hand);
     const reserved = number(row.reserved);
+    const options: StockOptionRow[] = optionRows.map((option) => {
+      const optionOnHand = number(option.on_hand);
+      const optionReserved = number(option.reserved);
+      return {
+        variantId: text(option.id),
+        variantSku: nullableText(option.sku),
+        variantLabel: nullableText(option.variant_label),
+        onHand: optionOnHand,
+        reserved: optionReserved,
+        available: stockAvailable(optionOnHand, optionReserved),
+        lowStockThreshold: number(option.low_stock_threshold),
+        trackInventory: Boolean(option.track_inventory),
+        hasStockRow: option.stock_id !== null && option.stock_id !== undefined,
+      };
+    });
+    const inventoryMode = row.inventory_mode === 'variant' ? 'variant' : 'product';
+    const totalRows = inventoryMode === 'variant'
+      ? options.filter((option) => option.trackInventory)
+      : (row.track_inventory ? [{ onHand, reserved }] : []);
+    const totalOnHand = totalRows.reduce((sum, entry) => sum + entry.onHand, 0);
+    const totalReserved = totalRows.reduce((sum, entry) => sum + entry.reserved, 0);
     return {
       ok: true,
       data: {
         productId: text(row.id),
         name: text(row.name),
         categoryName: text(row.category_name),
+        inventoryMode,
         onHand,
         reserved,
         available: stockAvailable(onHand, reserved),
         lowStockThreshold: number(row.low_stock_threshold),
         trackInventory: Boolean(row.track_inventory),
         hasStockRow: row.track_inventory !== null && row.track_inventory !== undefined,
+        options,
+        totalOnHand,
+        totalReserved,
+        totalAvailable: stockAvailable(totalOnHand, totalReserved),
+        totalTracked: totalRows.length > 0,
         movements: movements.map((movement) => ({
           id: number(movement.id),
           delta: number(movement.delta),
@@ -275,6 +373,11 @@ export async function getStockDetail(productId: string): Promise<CatalogWrite<St
             ? movement.created_at.toISOString()
             : text(movement.created_at),
           createdBy: nullableText(movement.created_by),
+          variantId: nullableText(movement.variant_id),
+          // A parent movement names the product bucket instead of nothing.
+          variantLabel: movement.variant_id === null || movement.variant_id === undefined
+            ? null
+            : nullableText(movement.variant_label) ?? nullableText(movement.variant_sku),
         })),
       },
     };

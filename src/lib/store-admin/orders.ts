@@ -2,6 +2,7 @@ import type postgres from 'postgres';
 
 import { getSql } from '../platform/db';
 import { ensureInvoiceIssuedInTx } from '@/lib/orders/invoice';
+import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
 import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
 
 import { FULFILMENT_TRANSITIONS, mapSaleState, type FulfilmentStatus } from './order-rules';
@@ -305,6 +306,17 @@ export interface OrderSummary {
   createdAt: string;
   updatedAt: string;
   paidAt: string | null;
+  /** What was bought, so the list can name the option without opening it. */
+  itemSummary: OrderItemSummary[];
+}
+
+/** One line of the list summary: what was bought, not just how much. */
+export interface OrderItemSummary {
+  productName: string;
+  quantity: number;
+  /** Model · colour when the order stored the option snapshot. */
+  variantLabel: string | null;
+  variantSku: string | null;
 }
 
 export interface OrderListData {
@@ -348,6 +360,29 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
+function itemSummaryFromRow(value: unknown): OrderItemSummary[] {
+  if (!Array.isArray(value)) return [];
+  const items: OrderItemSummary[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Record<string, unknown>;
+    const productName = nullableText(row.productName ?? row.name);
+    if (!productName) continue;
+    items.push({
+      productName,
+      quantity: integer(row.quantity) || 1,
+      // Snapshot names win; an older line keeps whatever label it stored.
+      variantLabel: optionSnapshotLabel({
+        deviceModelName: nullableText(row.deviceModelName),
+        colourName: nullableText(row.colourName),
+        variantLabel: nullableText(row.variantLabel),
+      }),
+      variantSku: nullableText(row.variantSku),
+    });
+  }
+  return items;
+}
+
 function summaryFromRow(row: Row): OrderSummary {
   const fulfilmentStatus = isFulfilmentStatus(row.fulfilment_status)
     ? row.fulfilment_status
@@ -382,6 +417,7 @@ function summaryFromRow(row: Row): OrderSummary {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     paidAt: nullableIso(row.paid_at),
+    itemSummary: itemSummaryFromRow(row.item_summary ?? row.items),
   };
 }
 
@@ -462,7 +498,19 @@ export async function listOrders(options: {
         s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
         s.amount, s.currency, s.total_paise, s.scheduled_for, s.delivery_slot,
         s.created_at, s.updated_at, s.paid_at,
-        o.order_number, o.customer_name, o.customer_email, o.customer_phone
+        o.order_number, o.customer_name, o.customer_email, o.customer_phone,
+        coalesce((
+          select jsonb_agg(jsonb_build_object(
+            'productName', oi.product_name,
+            'quantity', oi.quantity,
+            'variantSku', oi.variant_sku,
+            'variantLabel', to_jsonb(oi)->>'variant_label',
+            'deviceModelName', to_jsonb(oi)->>'variant_device_model_name',
+            'colourName', to_jsonb(oi)->>'variant_colour_name'
+          ) order by oi.line_number)
+          from order_items oi
+          where oi.order_id = o.id
+        ), '[]'::jsonb) as item_summary
       from order_sale_state s
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
@@ -685,7 +733,12 @@ export async function getOrderDetail(
       sql`
         select line_number, product_id, product_name, variant_id, variant_sku, variant_label, quantity,
                unit_price_paise, reference_price_paise,
-               line_total_paise, currency
+               line_total_paise, currency,
+               to_jsonb(order_items)->>'variant_device_model_name' as variant_device_model_name,
+               to_jsonb(order_items)->>'variant_colour_name' as variant_colour_name,
+               to_jsonb(order_items)->>'variant_colour_hex' as variant_colour_hex,
+               to_jsonb(order_items)->>'image_url' as image_url,
+               to_jsonb(order_items)->>'image_alt' as image_alt
         from order_items
         where order_id = ${orderId}
         order by line_number asc
@@ -737,7 +790,16 @@ export async function getOrderDetail(
           productName: text(row.product_name),
           variantId: nullableText(row.variant_id),
           variantSku: nullableText(row.variant_sku),
-          variantLabel: nullableText(row.variant_label),
+          // The order-time snapshot names the exact option; old rows keep their label.
+          variantLabel: optionSnapshotLabel({
+            deviceModelName: nullableText(row.variant_device_model_name),
+            colourName: nullableText(row.variant_colour_name),
+            colourHex: nullableText(row.variant_colour_hex),
+            variantLabel: nullableText(row.variant_label),
+            imageUrl: nullableText(row.image_url),
+          }) ?? nullableText(row.variant_label),
+          imageUrl: nullableText(row.image_url),
+          imageAlt: nullableText(row.image_alt),
           quantity: integer(row.quantity) || 1,
           unitPricePaise: integer(row.unit_price_paise),
           referencePricePaise: row.reference_price_paise === null || row.reference_price_paise === undefined
@@ -771,6 +833,12 @@ export async function getOrderDetail(
       data: {
         ...summaryFromRow(order),
         items,
+        itemSummary: items.map((item) => ({
+          productName: item.productName,
+          quantity: item.quantity,
+          variantLabel: item.variantLabel ?? null,
+          variantSku: item.variantSku ?? null,
+        })),
         addresses: (addressRows as Row[]).map(maskCustomerAddress),
         history,
         delivery,

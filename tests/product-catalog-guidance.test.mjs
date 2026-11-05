@@ -205,7 +205,7 @@ test('workflow uses refreshed references for readiness, option labels and scoped
   assert.match(text(tree), /Ready — Classification and compatibility/);
   assert.equal(nodes(tree, node => node.type === 'input' && node.props.value === 'Unsaved charger').length, 1);
   assert.equal(metadataNode(tree).props.value.attributeValues.hidden, false);
-  const combineLabel = nodes(tree, node => node.type === 'label' && text(node).includes('Create a sub-item for each selected compatible device'))[0];
+  const combineLabel = nodes(tree, node => node.type === 'label' && text(node).includes('Create an option for each selected compatible device'))[0];
   nodes(combineLabel, node => node.type === 'input')[0].props.onChange({ target: { checked: true } });
   button(h.render(workflowProps), 'Generate options').props.onClick();
   tree = h.render(workflowProps);

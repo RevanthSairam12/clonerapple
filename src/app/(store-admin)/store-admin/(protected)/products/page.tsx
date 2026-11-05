@@ -119,7 +119,7 @@ export default async function StoreAdminProductsPage({ searchParams }: { searchP
                     className="sa-row-sub sa-product-link"
                     href={`/store-admin/products/${encodeURIComponent(product.id)}#product-step-2`}
                   >
-                    {product.optionCount ?? 0} sub-items • {session.role === 'store_viewer' ? 'View' : 'Edit'} colors/models
+                    {product.optionCount ?? 0} options • {session.role === 'store_viewer' ? 'View' : 'Edit'} colours and models
                   </Link><ProductHelp label={`Options for ${product.name}`}>Open individual choices such as Black / Phone A. Each sellable choice keeps its own stock and history.</ProductHelp></div>
                 </td>
                 <td>{product.categoryName}</td>

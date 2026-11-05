@@ -80,6 +80,8 @@ function summary(row: Row): OrderSummary {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     paidAt: nullableIso(row.paid_at),
+    // The POS list is a money view: it shows totals, not item lines.
+    itemSummary: [],
   };
 }
 

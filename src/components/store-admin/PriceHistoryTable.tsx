@@ -43,7 +43,15 @@ export function PriceHistoryTable({ rows }: { rows: CatalogPriceHistoryRow[] }) 
               <tr key={row.id}>
                 <td>{formatDate(row.changedAt)}</td>
                 <td>{priceHistoryKindLabel(row.priceKind)}</td>
-                <td>{priceHistoryScopeLabel(row.variantId)}</td>
+                <td>
+                  {priceHistoryScopeLabel(row.variantId)}
+                  {row.variantId ? (
+                    <span className="sa-row-sub">
+                      {row.variantLabel ?? row.variantId}
+                      {row.variantSku ? ` · ${row.variantSku}` : ''}
+                    </span>
+                  ) : null}
+                </td>
                 <td>{oldPrice === null ? '—' : formatINR(oldPrice)}</td>
                 <td>{newPrice === null ? '—' : formatINR(newPrice)}</td>
                 <td>{oldSale === null ? '—' : formatINR(oldSale)}</td>

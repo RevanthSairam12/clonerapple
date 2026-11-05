@@ -215,7 +215,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
       });
       setCandidates(preview);
       setCandidateNotice(retained.some(option => option.isPurchasable && !option.optionIdentity) ? 'Legacy options have unknown semantic values. Compare their saved labels before explicitly selecting new physical combinations; their identity is never guessed.' : 'Nothing is selected. Select only physical combinations you actually sell.');
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Check the sub-item values.'); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Check the option values.'); }
   }
   function addReviewedOptions() {
     setError('');
@@ -395,7 +395,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
   }
   function replaceOption(option: OptionDraft) {
     if (!option.id || option.retiredAt || retiringIds.has(option.id)) return;
-    if (!window.confirm('Archive this saved sub-item and create an editable replacement? Past orders and stock history keep the original identity. Replacement stock starts at zero; no held units or prices are copied.')) return;
+    if (!window.confirm('Archive this saved option and create an editable replacement? Past orders and stock history keep the original identity. Replacement stock starts at zero; no held units or prices are copied.')) return;
     const key = `option-${crypto.randomUUID()}`;
     setOptions(current => [...current.map(row => row.clientKey === option.clientKey ? { ...row, isActive: false } : row), {
       ...option, id: undefined, replacesVariantId: option.id, clientKey: key, sku: `SKU-${key.slice(-12).toUpperCase()}`, combinationKey: key,
@@ -416,7 +416,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     const labels = new Set<string>();
     const semantics = new Set<string>();
     for (const option of liveOptions.filter(option => !retiringIds.has(option.id ?? ''))) {
-      if (!option.optionName.trim() || !option.optionValue.trim()) throw new Error('Enter an option type and value for every sub-item.');
+      if (!option.optionName.trim() || !option.optionValue.trim()) throw new Error('Enter an option type and value for every option.');
       const identity = JSON.stringify([option.optionName.trim(), option.optionValue.trim()]);
       if (labels.has(identity)) throw new Error('Each non-retired option needs a distinct type and display label.');
       labels.add(identity);
@@ -451,7 +451,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
       if (large.length && !window.confirm(`${large.join('\n\n')}\n\nSave anyway?`)) throw new Error('Nothing was saved: the large price change was not confirmed.');
       if (product && (!Number.isInteger(product.catalogRevision) || product.catalogRevision < 0 || product.catalogRevision > 2_147_483_647)) throw new Error('The edit revision is unavailable. Reload the saved product before editing; this form cannot save without conflict protection.');
       if (photos.some(photo => !photo.url.trim())) throw new Error('Enter a URL for each photo, or remove the empty photo.');
-      if (options.some(option => option.isActive && option.deviceModelId && !metadata.deviceModelIds.includes(option.deviceModelId))) throw new Error('An active sub-item uses a device that is no longer selected in Basics. Restore its compatible device, or archive and replace the sub-item.');
+      if (options.some(option => option.isActive && option.deviceModelId && !metadata.deviceModelIds.includes(option.deviceModelId))) throw new Error('An active option uses a device that is no longer selected in Basics. Restore its compatible device, or archive and replace the option.');
       if ((useOptionStock || form.isActive) && commerceOptions.some(option => selectedType?.requiresCompatibility && !option.deviceModelId)) throw new Error('In Advanced option details, choose a compatible device for each purchasable option.');
       if (commerceOptions.length > 0 && !useOptionStock && form.isActive) throw new Error('Turn on option checkout in Stock, or save as a draft.');
       if (form.isActive && checklist.some(item => !item.ready && !item.recommended)) throw new Error('Finish the Ready to publish checklist, or turn off Publish in the storefront to save as a draft.');
@@ -569,8 +569,8 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     {generatedNotice && <p className="sa-hint" role="status">{generatedNotice}</p>}
     {generatedRows.length > 0 && <fieldset className="sa-detail-card"><legend>Rows to add</legend><p className="sa-hint">New rows start inactive with zero stock, so nothing goes on sale by accident. Add them, then set price and stock below.</p><ul className="sa-plain-list">{generatedRows.map(row => <li key={`${row.deviceModelId ?? ''}:${row.optionName}:${row.optionValue}`}>{row.optionValue} — {row.optionName}</li>)}</ul><button className="sa-btn" type="button" onClick={addGeneratedRows}>Add these rows</button><button className="sa-btn sa-btn-quiet" type="button" onClick={() => { setGeneratedRows([]); setGeneratedNotice(''); }}>Discard</button></fieldset>}
     <details><summary>Other ways to add rows</summary><div className="sa-control-grid"><Field label="Option type"><select className="sa-input" value={optionType} onChange={event => setOptionType(event.target.value)}>{['Model', 'Wattage', 'Colour', 'Size', 'Specification'].map(type => <option key={type}>{type}</option>)}</select></Field><Field label="Option values" help="Separate values with commas or new lines, for example 20W, 30W, 65W."><textarea className="sa-input" rows={2} value={optionValues} onChange={event => setOptionValues(event.target.value)} /></Field></div>
-    <label className="sa-check"><input type="checkbox" checked={combineModels} onChange={event => setCombineModels(event.target.checked)} />Create a sub-item for each selected compatible device</label>
-    <p className="sa-hint">For model × colour combinations, select devices in Basics and enter colours above. With no values, this creates one sub-item per selected device. Compatibility is never guessed.</p>
+    <label className="sa-check"><input type="checkbox" checked={combineModels} onChange={event => setCombineModels(event.target.checked)} />Create an option for each selected compatible device</label>
+    <p className="sa-hint">For model × colour combinations, select devices in Basics and enter colours above. With no values, this creates one option per selected device. Compatibility is never guessed.</p>
     <button className="sa-btn" type="button" onClick={generateOptions}>Generate options</button>
     {candidates.length > 0 && <fieldset className="sa-detail-card"><legend>Review physical combinations</legend><p className="sa-hint" role="status">{candidateNotice}</p>{candidates.map((candidate, index) => <label className="sa-check" key={optionSemanticKey(candidate)}><input type="checkbox" checked={candidate.selected} onChange={event => setCandidates(current => current.map((row, i) => i === index ? { ...row, selected: event.target.checked } : row))} />{candidate.optionValue}</label>)}<button className="sa-btn" type="button" onClick={addReviewedOptions}>Add selected combinations</button><button className="sa-btn sa-btn-quiet" type="button" onClick={() => setCandidates([])}>Discard preview</button></fieldset>}</details>
     <fieldset className="sa-detail-card"><legend>Fill several rows at once</legend><p className="sa-hint">Fills the same value into every active sellable row below. Blank boxes are left alone.</p><div className="sa-control-grid"><Field label="Price ₹ for all rows"><input className="sa-input" type="number" min="0.01" step="0.01" value={bulkPrice} onChange={event => setBulkPrice(event.target.value)} /></Field><Field label="Sale ₹ for all rows"><input className="sa-input" type="number" min="0.01" step="0.01" value={bulkSale} onChange={event => setBulkSale(event.target.value)} /></Field><Field label="Stock for all rows"><input className="sa-input" type="number" min="0" step="1" value={bulkStock} onChange={event => setBulkStock(event.target.value)} /></Field></div><button className="sa-btn" type="button" onClick={applyBulk}>Fill rows</button>

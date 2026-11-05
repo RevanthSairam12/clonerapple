@@ -181,12 +181,12 @@ async function renderProducts(products, role = 'store_admin') {
   return renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) }));
 }
 
-test('listing renders sub-item count, encoded options/stock links and stock labels', async () => {
+test('listing renders option count, encoded options/stock links and stock labels', async () => {
   const html = await renderProducts([
     map(parent()), map(parent({ id: 'missing', stock_id: null, track_inventory: null })),
     map(variants({ id: 'mixed', limited_stock_count: 1, unlimited_stock_count: 1 })),
   ]);
-  assert.match(html, /4 sub-items • Edit colors\/models/);
+  assert.match(html, /4 options • Edit colours and models/);
   assert.match(html, /href="\/store-admin\/products\/case%2Fblue#product-step-2"/);
   assert.match(html, /href="\/store-admin\/products\/case%2Fblue#product-step-3"/);
   assert.match(html, />7 left</);
@@ -203,7 +203,7 @@ test('oversell notice excludes limited/missing/unavailable products and includes
 
 test('viewer can inspect options without being offered stock editing', async () => {
   const html = await renderProducts([map(parent())], 'store_viewer');
-  assert.match(html, /4 sub-items • View colors\/models/);
-  assert.doesNotMatch(html, /href="[^"]*#product-step-3"|>Edit colors\/models<|href="\/store-admin\/products\/new"/);
+  assert.match(html, /4 options • View colours and models/);
+  assert.doesNotMatch(html, /href="[^"]*#product-step-3"|>Edit colours and models<|href="\/store-admin\/products\/new"/);
   assert.match(html, /Help for Stock for Case/);
 });

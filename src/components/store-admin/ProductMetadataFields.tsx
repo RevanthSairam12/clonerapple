@@ -152,7 +152,7 @@ export function ProductMetadataFields({ references: initialReferences, state, ca
     <p className="sa-hint">{type?.requiresCompatibility ? 'At least one active compatible device is required to publish.' : 'Optional. Select only models you have verified; nothing is selected automatically.'} {state ? state.reviewed ? 'Compatibility has been reviewed.' : 'Compatibility has not yet been reviewed.' : ''}</p>
     <label className="sa-check"><input type="checkbox" role="switch" checked={compatibilityEnabled} disabled={disabled} aria-controls={compatibilityId} aria-expanded={compatibilityEnabled} onChange={event => {
       const enabled = event.target.checked;
-      if (!enabled && value.deviceModelIds.length && !window.confirm('Turn off compatible devices and clear the selected models? Active sub-items mapped to a device must be archived or replaced before saving.')) return;
+      if (!enabled && value.deviceModelIds.length && !window.confirm('Turn off compatible devices and clear the selected models? Active options mapped to a device must be archived or replaced before saving.')) return;
       setCompatibilityEnabled(enabled);
       if (!enabled) onChange({ ...value, deviceModelIds: [] });
     }} />Compatible devices active</label>

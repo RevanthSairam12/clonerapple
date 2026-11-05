@@ -119,10 +119,10 @@ export const REPORTS: readonly ReportDefinition[] = [
   {
     key: 'stock',
     howCalculated:
-      'Product-level stock rows today: available is on hand minus reserved; value at cost skips products with no cost, value at retail uses the list price, not the sale price.',
+      'One row per stocked item: the product itself when it is sold as a single item, or each purchasable option when the product is sold by option. Available is on hand minus reserved; value at cost skips items with no cost, value at retail uses the list price, not the sale price.',
     title: 'Stock report',
     description:
-      'On hand, reserved, available, and value at cost and retail for every stocked item.',
+      'On hand, reserved, available, and value at cost and retail for every stocked item or option.',
     group: 'Catalogue',
     groupBy: false,
     filters: { status: false, channel: false, category: true, brand: true },
@@ -130,7 +130,7 @@ export const REPORTS: readonly ReportDefinition[] = [
   {
     key: 'low-stock',
     howCalculated:
-      'Tracked products whose available stock (on hand − reserved) is at or below their threshold, as of now; suggested reorder is twice the threshold minus available, at least one.',
+      'Tracked items (product or option) whose available stock (on hand − reserved) is at or below their own threshold, as of now; suggested reorder is twice the threshold minus available, at least one.',
     title: 'Low-stock report',
     description:
       'Items at or below their threshold, with the last movement and a suggested reorder quantity.',

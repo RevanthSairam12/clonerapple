@@ -78,10 +78,12 @@ test('guide leaves summary and existing help untouched, handles fragments and pr
   assert.doesNotMatch(html, /<p[^>]*>[\s\S]*<details/);
 });
 
-test('help guidance distinguishes stock holds, exact options, locked prices and replacement stock', () => {
+test('help guidance distinguishes stock holds, exact options, sale prices and replacement stock', () => {
   assert.match(productHelpText('Held in checkouts'), /not a count of every pending payment/);
   assert.match(productHelpText('Archive and replace'), /zero stock/);
-  assert.match(productHelpText('Sale price'), /read-only/);
+  // Sale prices are editable per option now; the help explains the rule, not a lock.
+  assert.match(productHelpText('Sale price'), /lower than the regular price on the same row/);
+  assert.doesNotMatch(productHelpText('Sale price'), /read-only|remains locked/);
   assert.match(productHelpText('Internal cost ₹'), /internal purchase cost/);
   assert.match(productHelpText('Active Black'), /archives it/);
   assert.match(productHelpText('Search title'), /search results/);

@@ -104,6 +104,9 @@ export interface CatalogPriceHistoryRow {
   id: number;
   /** Null for the product's own base price; set for an option price. */
   variantId: string | null;
+  /** Which option changed, so two option rows are never indistinguishable. */
+  variantLabel: string | null;
+  variantSku: string | null;
   oldPricePaise: number | null;
   newPricePaise: number;
   /** Paired sale values recorded with the same change, when one existed. */
@@ -536,12 +539,16 @@ export async function getCatalogProduct(
           order by a.sort_order, a.label
         `,
         sql`
-          select id, variant_id, old_price_paise, new_price_paise,
-                 old_sale_price_paise, new_sale_price_paise, change_group,
-                 price_kind, currency, source, reason, changed_by, changed_at
-          from price_history
-          where product_id = ${id}
-          order by changed_at desc, id desc
+          select ph.id, ph.variant_id, ph.old_price_paise, ph.new_price_paise,
+                 ph.old_sale_price_paise, ph.new_sale_price_paise, ph.change_group,
+                 ph.price_kind, ph.currency, ph.source, ph.reason, ph.changed_by, ph.changed_at,
+                 v.sku as variant_sku,
+                 nullif(concat_ws(' / ', dm.name, nullif(v.option_value, '')), '') as variant_label
+          from price_history ph
+          left join product_variants v on v.id = ph.variant_id and v.product_id = ph.product_id
+          left join device_models dm on dm.id = v.device_model_id
+          where ph.product_id = ${id}
+          order by ph.changed_at desc, ph.id desc
           limit 50
         `,
         sql`
@@ -611,9 +618,20 @@ export async function getCatalogProduct(
           : text(row.option_value),
     }));
     const priceHistory: CatalogPriceHistoryRow[] = (historyRows as Row[]).map(
-      (row) => ({
+      (row) => {
+      const variantId = row.variant_id === null || row.variant_id === undefined ? null : text(row.variant_id);
+      const variant = variantId ? variants.find((entry) => entry.id === variantId) : undefined;
+      return {
         id: number(row.id),
-        variantId: row.variant_id === null || row.variant_id === undefined ? null : text(row.variant_id),
+        variantId,
+        // Model and option as stored, so a rename later does not rewrite history.
+        variantLabel:
+          (row.variant_label === null || row.variant_label === undefined ? '' : text(row.variant_label))
+          || (variant ? variant.optionValue || variant.optionName : null),
+        variantSku:
+          (row.variant_sku === null || row.variant_sku === undefined ? '' : text(row.variant_sku))
+          || variant?.sku
+          || null,
         oldPricePaise: nullableNumber(row.old_price_paise),
         newPricePaise: number(row.new_price_paise),
         oldSalePricePaise: nullableNumber(row.old_sale_price_paise),
@@ -628,7 +646,8 @@ export async function getCatalogProduct(
           ? null
           : text(row.changed_by),
         changedAt: iso(row.changed_at),
-      }),
+      };
+      },
     );
 
     const colours = (colourRows as Row[]).map((row) => ({
@@ -915,11 +934,19 @@ export async function listLowStock(limit = 100): Promise<CatalogLoad<CatalogLowS
   try {
     const [rows, countRows] = await Promise.all([
       sql`
-        select s.product_id, s.variant_id,v.sku as variant_sku,p.slug, p.name || case when v.id is null then '' else ' — ' || v.option_value end as name, s.on_hand, s.reserved,
+        select s.product_id, s.variant_id,v.sku as variant_sku,p.slug,
+               p.name || case when v.id is null then ''
+                 else ' — ' || coalesce(
+                   nullif(case when v.option_value ilike dm.name || '%' then v.option_value
+                     else concat_ws(' / ', dm.name, nullif(v.option_value,'')) end, ''),
+                   v.option_value, v.sku, v.id)
+                 end as name,
+               s.on_hand, s.reserved,
                s.low_stock_threshold, s.updated_at
         from stock s
         join products p on p.id = s.product_id
         left join product_variants v on v.id=s.variant_id and v.product_id=p.id
+        left join device_models dm on dm.id = v.device_model_id
         where ((p.inventory_mode='product' and s.variant_id is null) or (p.inventory_mode='variant' and v.is_active and v.is_purchasable))
           and p.deleted_at is null
           and s.track_inventory

@@ -5,6 +5,7 @@ import { resolveEffectivePrice } from '@/lib/storefront/pricing';
 import { readSaleStateUsing } from '@/lib/storefront/sale-state';
 import { getStoreSession } from './auth';
 import { ensureInvoiceIssuedInTx } from '@/lib/orders/invoice';
+import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
 import { inventoryKey } from './variant-inventory-rules';
 import { strictMetadataAudit } from './product-metadata';
 import { restoreSoldStock } from '@/lib/payu/stock';
@@ -95,6 +96,12 @@ export interface PosSaleLine {
   variantId: string|null;
   variantSku: string|null;
   variantLabel: string|null;
+  /** The exact option, written with the line so the receipt keeps it. */
+  deviceModelId?: string | null;
+  deviceModelName?: string | null;
+  colourId?: string | null;
+  colourName?: string | null;
+  colourHex?: string | null;
   quantity: number;
   /** The price charged, typed by the cashier. */
   unitPricePaise: number;
@@ -522,7 +529,14 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
         }
         const variantId=cartLine.variantId??null;
         if((product.inventory_mode==='variant')!==Boolean(variantId)) return {ok:false as const,reason:'invalid-input' as const,error:'Select the exact purchasable combination; product-level selections cannot be substituted.'};
-        const variantRows=variantId?await tx`select v.* from product_variants v left join products p on p.id=v.product_id left join product_types pt on pt.id=p.product_type_id where v.id=${variantId} and v.product_id=${baseId} and v.is_active and v.is_purchasable and v.retired_at is null and nullif(trim(v.sku),'') is not null and nullif(trim(v.combination_key),'') is not null and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null) and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null))`:[];
+        const variantRows=variantId?await tx`select v.*, dm.name as device_model_name, c.id as colour_id, c.name as colour_name, c.hex as colour_hex
+          from product_variants v
+          left join products p on p.id=v.product_id
+          left join product_types pt on pt.id=p.product_type_id
+          left join device_models dm on dm.id=v.device_model_id
+          left join product_variant_colours pvc on pvc.variant_id=v.id
+          left join colours c on c.id=pvc.colour_id
+          where v.id=${variantId} and v.product_id=${baseId} and v.is_active and v.is_purchasable and v.retired_at is null and nullif(trim(v.sku),'') is not null and nullif(trim(v.combination_key),'') is not null and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null) and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dmm on dmm.id=pm.device_model_id join device_brands db on db.id=dmm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null))`:[];
         const variant=variantRows[0];
         if(variantId&&!variant)return {ok:false as const,reason:'invalid-input' as const,error:'Variant is missing, inactive or has an invalid model mapping.'};
         const regularPricePaise = integer(variant?.price_paise_override??product.price_paise);
@@ -539,11 +553,22 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
         if (warning) {
           warnings.push({ productId, productName, message: warning });
         }
+        const optionSnapshot = {
+          deviceModelName: nullableText(variant?.device_model_name),
+          colourName: nullableText(variant?.colour_name),
+          colourHex: nullableText(variant?.colour_hex),
+          variantLabel: variant ? `${text(variant.option_name)}: ${text(variant.option_value)}` : null,
+        };
         lines.push({
           lineNumber: index + 1,
           productId,
           productName,
-          variantId,variantSku:nullableText(variant?.sku),variantLabel:variant?`${text(variant.option_name)}: ${text(variant.option_value)}`:null,
+          variantId,variantSku:nullableText(variant?.sku),variantLabel:optionSnapshotLabel(optionSnapshot),
+          deviceModelId:nullableText(variant?.device_model_id),
+          deviceModelName:optionSnapshot.deviceModelName,
+          colourId:nullableText(variant?.colour_id),
+          colourName:optionSnapshot.colourName,
+          colourHex:optionSnapshot.colourHex,
           quantity: cartLine.quantity,
           unitPricePaise: cartLine.unitPricePaise,
           referencePricePaise: referencePriceOf(product, saleLive, variant),
@@ -622,6 +647,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
       const itemsSnapshot = lines.map((line) => ({
         id: line.productId,
         variantId:line.variantId,variantSku:line.variantSku,variantLabel:line.variantLabel,
+        deviceModelName:line.deviceModelName??null,colourName:line.colourName??null,colourHex:line.colourHex??null,
         name: line.productName,
         quantity: line.quantity,
         unitPrice: line.unitPricePaise / 100,
@@ -650,7 +676,34 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
       const createdId = text(orderRows[0].id);
       await ensureInvoiceIssuedInTx(tx, createdId, input.staffId);
 
+      // The snapshot columns arrive with migration 0061. Probe once so a
+      // database that has not run it keeps the exact previous POS insert.
+      const [snapshotSupport] = (await tx`
+        select exists (
+          select 1 from information_schema.columns
+          where table_name = 'order_items' and column_name = 'variant_colour_id'
+        ) as present
+      `) as Row[];
+      const writeSnapshots = snapshotSupport?.present === true;
       for (const line of lines) {
+        if (writeSnapshots) {
+          await tx`
+            insert into order_items (
+              order_id, line_number, product_id, product_name,variant_id,variant_sku,variant_label,
+              variant_device_model_id, variant_device_model_name,
+              variant_colour_id, variant_colour_name, variant_colour_hex,
+              quantity, unit_price_paise, reference_price_paise,
+              line_total_paise, currency
+            ) values (
+              ${createdId}, ${line.lineNumber}, ${line.productId}, ${line.productName},${line.variantId},${line.variantSku},${line.variantLabel},
+              ${line.deviceModelId ?? null},${line.deviceModelName ?? null},
+              ${line.colourId ?? null},${line.colourName ?? null},${line.colourHex ?? null},
+              ${line.quantity}, ${line.unitPricePaise}, ${line.referencePricePaise},
+              ${line.lineTotalPaise}, 'INR'
+            )
+          `;
+          continue;
+        }
         await tx`
           insert into order_items (
             order_id, line_number, product_id, product_name,variant_id,variant_sku,variant_label,

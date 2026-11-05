@@ -27,7 +27,10 @@ const base = {
     compiler.hooks.normalModuleFactory.tap('FixtureBackendBoundary', factory => {
       factory.hooks.afterResolve.tap('FixtureBackendBoundary', result => {
         const resource = (result.createData.resource || '').replaceAll('\\', '/');
-        if (resource.includes('/src/lib/platform/') || (resource.includes('/src/lib/store-admin/') && !/\/(?:money|catalog-rules|product-option-combinations)\.ts$/.test(resource))) {
+        // Only pure rule modules may cross into the fixture. Every one listed here
+        // is framework-free and database-free; anything else in src/lib/store-admin
+        // is treated as backend and refused.
+        if (resource.includes('/src/lib/platform/') || (resource.includes('/src/lib/store-admin/') && !/\/(?:money|catalog-rules|product-option-combinations|price-history-rules|options-table-rules)\.ts$/.test(resource))) {
           throw new Error(`Fixture refuses backend module: ${resource}`);
         }
       });

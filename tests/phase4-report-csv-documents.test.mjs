@@ -147,7 +147,10 @@ test('account and staff document reads preserve only stored variant snapshots, i
     assert.doesNotMatch(s,/join product_variants/);
   }
   const receipt=source('src/app/account/orders/[txnid]/receipt/page.tsx');
-  assert.match(receipt,/variantId: item.variantId, variantSku: item.variantSku, variantLabel: item.variantLabel/);
+  assert.match(receipt,/variantId: item.variantId, variantSku: item.variantSku/);
+  // The snapshot label names the exact ordered option; the stored row label is the fallback.
+  assert.match(receipt,/variantLabel: optionSnapshotLabel\(item\) \?\? item.variantLabel/);
+  assert.match(receipt,/imageUrl: item.image, imageAlt: item.imageAlt \?\? item.name/);
   assert.match(source('src/app/(store-admin)/store-admin/(protected)/orders/[txnid]/packing-slip/page.tsx'),/item.variantSku \|\| item.productId/);
   assert.match(source('src/app/(store-admin)/store-admin/(protected)/pos/receipt/[txnid]/page.tsx'),/line.variantLabel/);
 });

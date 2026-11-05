@@ -34,9 +34,10 @@ export default async function StoreAdminLowStockPage() {
         <div>
           <h1 className="sa-page-title">Low stock</h1>
           <p className="sa-page-sub">
-            Products whose available-to-buy count has reached the warning level. Only
-            products with stock limits are counted — for everything else
-            checkout ignores the number.
+            Stocked items whose available-to-buy count has reached the warning
+            level. A product sold by option is listed once per option, under its
+            own count and threshold. Only items with stock limits are counted —
+            for everything else checkout ignores the number.
           </p>
         </div>
         <div className="sa-inline-actions">
@@ -51,7 +52,7 @@ export default async function StoreAdminLowStockPage() {
 
       <div className="sa-order-counts">
         <div className="sa-order-count">
-          <span>Products with stock limits</span>
+          <span>Items with stock limits</span>
           <strong>{trackedCount}</strong>
         </div>
         <div className="sa-order-count">
@@ -64,7 +65,7 @@ export default async function StoreAdminLowStockPage() {
         <p className="sa-empty">
           Nothing is low right now.{' '}
           {trackedCount === 0
-            ? 'No product has a stock limit yet, so this list stays empty.'
+            ? 'No product or option has a stock limit yet, so this list stays empty.'
             : ''}
         </p>
       ) : (
@@ -72,7 +73,7 @@ export default async function StoreAdminLowStockPage() {
           <table className="sa-table">
             <thead>
               <tr>
-                <th>Product</th>
+                <th>Product or option</th>
                 <th className="sa-num">In stock</th>
                 <th className="sa-num">Held in checkouts</th>
                 <th className="sa-num">Available to buy</th>

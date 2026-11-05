@@ -26,6 +26,7 @@ export default async function StoreAdminStockPage({
   }
 
   const rows = result.data;
+  const productCount = new Set(rows.map((row) => row.productId)).size;
   const tracked = rows.filter((row) => row.trackInventory&&!row.legacyBucket);
   const low = tracked.filter(
     (row) => row.available > 0 && row.available <= row.lowStockThreshold,
@@ -40,8 +41,9 @@ export default async function StoreAdminStockPage({
         <div>
           <h1 className="sa-page-title">Stock</h1>
           <p className="sa-page-sub">
-            {rows.length} products · {tracked.length} limited · {untracked}{' '}
-            not limited.
+            {productCount} products · {rows.length} stock lines
+            {rows.length === productCount ? '' : ' (one per option)'} ·{' '}
+            {tracked.length} limited · {untracked} not limited.
           </p>
         </div>
         <Link className="sa-btn sa-btn-quiet" href="/store-admin/products">
@@ -53,12 +55,12 @@ export default async function StoreAdminStockPage({
         <div className="sa-stat">
           <span className="sa-stat-label">Stock limited</span>
           <strong className="sa-stat-value">{tracked.length}</strong>
-          <span className="sa-stat-note">Checkout checks these counts</span>
+          <span className="sa-stat-note">Stock lines checkout checks</span>
         </div>
         <div className="sa-stat">
           <span className="sa-stat-label">Low stock</span>
           <strong className="sa-stat-value">{low.length}</strong>
-          <span className="sa-stat-note">At or below the warning level</span>
+          <span className="sa-stat-note">Products or options at or below the warning level</span>
         </div>
         <div className="sa-stat">
           <span className="sa-stat-label">Out of stock</span>
@@ -104,7 +106,8 @@ export default async function StoreAdminStockPage({
                 </td>
               </tr>
             ) : (
-              visible.map((row) => {
+              visible.map((row, index) => {
+                const firstOfProduct = index === 0 || visible[index - 1]?.productId !== row.productId;
                 const state = !row.trackInventory
                   ? 'Not limited'
                   : row.available === 0
@@ -131,6 +134,13 @@ export default async function StoreAdminStockPage({
                       </Link>
                       <span className="sa-row-sub sa-mono">{row.variantSku??row.productId}</span>
                       <span className="sa-row-sub">{row.variantLabel??(row.legacyBucket?'Retained legacy bucket — not sellable':'Product bucket')}</span>
+                      {firstOfProduct ? (
+                        <span className="sa-row-sub">
+                          {row.productTracked
+                            ? `Product total: ${row.productOnHand} in stock · ${row.productAvailable} available`
+                            : 'Product total: not limited'}
+                        </span>
+                      ) : null}
                     </td>
                     <td>{row.categoryName || '—'}</td>
                     <td>

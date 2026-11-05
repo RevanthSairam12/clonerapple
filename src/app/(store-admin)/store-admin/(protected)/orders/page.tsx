@@ -311,6 +311,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
             <tr>
               <th>Transaction</th>
               <th>Customer</th>
+              <th>Items</th>
               <th>Sale state</th>
               <th>Channel</th>
               <th className="sa-num">
@@ -358,6 +359,19 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                 <td>
                   {order.customer.nameMasked}
                   <span className="sa-row-sub">{order.customer.emailMasked}</span>
+                </td>
+                <td>
+                  {order.itemSummary.length === 0 ? (
+                    <span className="sa-row-sub">No item lines</span>
+                  ) : (
+                    order.itemSummary.map((item, index) => (
+                      <span className="sa-row-sub" key={`${order.txnid}-item-${index}`}>
+                        {item.productName} × {item.quantity}
+                        {item.variantLabel ? ` · ${item.variantLabel}` : ''}
+                        {item.variantSku ? ` · ${item.variantSku}` : ''}
+                      </span>
+                    ))
+                  )}
                 </td>
                 <td>
                   <span className={stateClass(order.saleState)}>
@@ -457,7 +471,15 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                 <tbody>
                   {quickOrder.items.map((item) => (
                     <tr key={item.lineNumber}>
-                      <td>{item.productName}</td>
+                      <td>
+                        {item.productName}
+                        {item.variantLabel ? (
+                          <span className="sa-row-sub">{item.variantLabel}</span>
+                        ) : null}
+                        {item.variantSku ? (
+                          <span className="sa-row-sub sa-mono">{item.variantSku}</span>
+                        ) : null}
+                      </td>
                       <td className="sa-num">{item.quantity}</td>
                       <td className="sa-num">
                         {formatAmount(item.lineTotalPaise, item.currency || quickOrder.currency)}
