@@ -9,15 +9,24 @@ export interface CollectionProductGridProps {
   onClearFilters: () => void;
   /** While a sale is live, stock never disables a card's quick add. */
   saleLive?: boolean;
+  /** A filter-specific explanation; the generic text is used when omitted. */
+  emptyMessage?: string;
 }
 
-export function CollectionProductGrid({ products, onClearFilters, saleLive = false }: CollectionProductGridProps) {
+export function CollectionProductGrid({
+  products,
+  onClearFilters,
+  saleLive = false,
+  emptyMessage,
+}: CollectionProductGridProps) {
   if (products.length === 0) {
     return (
       <div className="gz-collection-empty">
-        <h3 className="gz-collection-empty-title">No matching products found</h3>
+        <h3 className="gz-collection-empty-title">
+          {emptyMessage ? 'No products match these filters' : 'No matching products found'}
+        </h3>
         <p className="gz-collection-empty-desc">
-          Try clearing or adjusting your active filters to see all available items.
+          {emptyMessage ?? 'Try clearing or adjusting your active filters to see all available items.'}
         </p>
         <button
           type="button"

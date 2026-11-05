@@ -1,7 +1,12 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import type { CollectionFacetDef } from './types';
+import type { CollectionFacetDef, CollectionFilterKind, CollectionFilterSelection } from './types';
+import type {
+  ColourFilterOption,
+  ModelFilterGroup,
+  PriceFilterOption,
+} from '@/lib/storefront/category-filters';
 
 export const SORT_OPTIONS = [
   { label: 'Featured', value: 'featured' },
@@ -17,6 +22,16 @@ export interface CollectionFiltersProps {
   onClear: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  /** Data-backed filters: model groups, colour swatches and price bands. */
+  modelGroups?: ModelFilterGroup[];
+  colours?: ColourFilterOption[];
+  prices?: PriceFilterOption[];
+  optionSelection?: CollectionFilterSelection;
+  onToggleOption?: (kind: CollectionFilterKind, id: string) => void;
+}
+
+function controlId(kind: string, id: string): string {
+  return `filter-${kind}-${id.replace(/[^a-z0-9_-]+/gi, '-').toLowerCase()}`;
 }
 
 export function CollectionFilters({
@@ -26,6 +41,11 @@ export function CollectionFilters({
   onClear,
   mobileOpen,
   onCloseMobile,
+  modelGroups = [],
+  colours = [],
+  prices = [],
+  optionSelection = { models: [], colours: [], prices: [] },
+  onToggleOption,
 }: CollectionFiltersProps) {
   // Close drawer on Escape key
   useEffect(() => {
@@ -38,10 +58,104 @@ export function CollectionFilters({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [mobileOpen, onCloseMobile]);
 
-  const activeCount = Object.values(selected).reduce((acc, curr) => acc + curr.length, 0);
+  const activeCount =
+    Object.values(selected).reduce((acc, curr) => acc + curr.length, 0)
+    + optionSelection.models.length
+    + optionSelection.colours.length
+    + optionSelection.prices.length;
 
   const renderFilterContent = () => (
     <div className="space-y-6">
+      {modelGroups.length > 0 && (
+        <fieldset className="gz-collection-filter-group border-none p-0 m-0">
+          <legend className="gz-collection-filter-title">Phone model</legend>
+          <div className="gz-collection-filter-options">
+            {modelGroups.map((group) => (
+              <div
+                key={group.brand}
+                className="gz-collection-filter-brand-group"
+                role="group"
+                aria-label={`${group.brand} models`}
+              >
+                <p className="gz-collection-filter-brand">{group.brand}</p>
+                {group.options.map((option) => {
+                  const inputId = controlId('model', option.id);
+                  const isChecked = optionSelection.models.includes(option.id);
+                  return (
+                    <label key={option.id} htmlFor={inputId} className="gz-collection-filter-label">
+                      <input
+                        id={inputId}
+                        type="checkbox"
+                        className="gz-collection-filter-checkbox"
+                        checked={isChecked}
+                        onChange={() => onToggleOption?.('model', option.id)}
+                      />
+                      <span className="gz-collection-filter-text">{option.name}</span>
+                      <span className="gz-collection-filter-count">{option.count}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      {colours.length > 0 && (
+        <fieldset className="gz-collection-filter-group border-none p-0 m-0">
+          <legend className="gz-collection-filter-title">Colour</legend>
+          <div className="gz-collection-filter-options">
+            {colours.map((option) => {
+              const inputId = controlId('colour', option.id);
+              const isChecked = optionSelection.colours.includes(option.id);
+              return (
+                <label key={option.id} htmlFor={inputId} className="gz-collection-filter-label">
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    className="gz-collection-filter-checkbox"
+                    checked={isChecked}
+                    onChange={() => onToggleOption?.('colour', option.id)}
+                  />
+                  <span
+                    className="gz-collection-filter-swatch"
+                    style={{ backgroundColor: option.hex }}
+                    aria-hidden="true"
+                  />
+                  <span className="gz-collection-filter-text">{option.name}</span>
+                  <span className="gz-collection-filter-count">{option.count}</span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      )}
+
+      {prices.length > 0 && (
+        <fieldset className="gz-collection-filter-group border-none p-0 m-0">
+          <legend className="gz-collection-filter-title">Price</legend>
+          <div className="gz-collection-filter-options">
+            {prices.map((option) => {
+              const inputId = controlId('price', option.id);
+              const isChecked = optionSelection.prices.includes(option.id);
+              return (
+                <label key={option.id} htmlFor={inputId} className="gz-collection-filter-label">
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    className="gz-collection-filter-checkbox"
+                    checked={isChecked}
+                    onChange={() => onToggleOption?.('price', option.id)}
+                  />
+                  <span className="gz-collection-filter-text">{option.label}</span>
+                  <span className="gz-collection-filter-count">{option.count}</span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      )}
+
       {filters.map((facet) => (
         <fieldset key={facet.id} className="gz-collection-filter-group border-none p-0 m-0">
           <legend className="gz-collection-filter-title">{facet.label}</legend>

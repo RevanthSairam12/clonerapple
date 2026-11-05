@@ -1,16 +1,34 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { GadzioHeader } from '@/components/header/GadzioHeader';
 import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
 
-import type { CollectionConfig, CollectionProduct } from './types';
+import type {
+  CollectionConfig,
+  CollectionFilterKind,
+  CollectionFilterSelection,
+  CollectionProduct,
+} from './types';
 import { CollectionProductGrid } from './CollectionProductGrid';
 import { CollectionFilters, SORT_OPTIONS } from './CollectionFilters';
 import { CollectionPagination } from './CollectionPagination';
+import {
+  buildCategoryFilterOptions,
+  cardForFilterSelection,
+  categoryFilterQuery,
+  emptyFilterSelection,
+  filterCategoryProducts,
+  filterSelectionIsEmpty,
+  filterValueLabel,
+  parseCategoryFilterSearch,
+  sanitiseCategoryFilterSelection,
+  toggleFilterSelection,
+} from '@/lib/storefront/category-filters';
 
 import './collection.css';
 
@@ -47,7 +65,54 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
   const [sortBy, setSortBy] = useState('featured');
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
-  // Toggle a single filter value
+  // Phone model, Colour and Price live in the URL so a filtered page is
+  // shareable and a deep link renders the same grid.
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const initialSelection = useMemo(
+    () => parseCategoryFilterSearch(searchParams),
+    [searchParams],
+  );
+  const [optionSelection, setOptionSelection] = useState<CollectionFilterSelection>(initialSelection);
+  const initialSelectionKey = categoryFilterQuery(initialSelection);
+  const lastUrlSelection = useRef(initialSelectionKey);
+
+  useEffect(() => {
+    // Only a real URL change resets the state; our own replaceState must not.
+    if (lastUrlSelection.current === initialSelectionKey) return;
+    lastUrlSelection.current = initialSelectionKey;
+    setOptionSelection(parseCategoryFilterSearch(searchParams));
+  }, [initialSelectionKey, searchParams]);
+
+  // Drop values that no longer exist in this category; keep valid combinations.
+  const effectiveSelection = useMemo(
+    () => sanitiseCategoryFilterSelection(products, optionSelection),
+    [products, optionSelection],
+  );
+
+  const filterOptions = useMemo(
+    () => buildCategoryFilterOptions(products, effectiveSelection),
+    [products, effectiveSelection],
+  );
+
+  const writeFilterUrl = (selection: CollectionFilterSelection) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ['model', 'colour', 'price']) params.delete(key);
+    for (const id of selection.models) params.append('model', id);
+    for (const id of selection.colours) params.append('colour', id);
+    for (const id of selection.prices) params.append('price', id);
+    const query = params.toString();
+    window.history.replaceState(null, '', `${pathname}${query ? `?${query}` : ''}`);
+  };
+
+  const toggleOption = (kind: CollectionFilterKind, id: string) => {
+    const next = toggleFilterSelection(effectiveSelection, kind, id);
+    setOptionSelection(next);
+    writeFilterUrl(next);
+  };
+
+  // Toggle a single config facet value
   const toggleFilter = (facetId: string, value: string) => {
     setSelected((prev) => {
       const current = prev[facetId] || [];
@@ -60,39 +125,54 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
 
   const clearAllFilters = () => {
     setSelected({});
+    setOptionSelection(emptyFilterSelection());
+    writeFilterUrl(emptyFilterSelection());
   };
 
-  const activeCount = Object.values(selected).reduce((acc, curr) => acc + curr.length, 0);
+  const activeCount =
+    Object.values(selected).reduce((acc, curr) => acc + curr.length, 0)
+    + effectiveSelection.models.length
+    + effectiveSelection.colours.length
+    + effectiveSelection.prices.length;
 
   // Flatten active chips for display
   const activeChips = useMemo(() => {
-    return Object.entries(selected).flatMap(([facetId, values]) =>
-      values.map((val) => ({
-        key: `${facetId}:${val}`,
-        label: val,
-        onRemove: () => toggleFilter(facetId, val),
-      }))
+    const optionChips = ([
+      ['model', effectiveSelection.models],
+      ['colour', effectiveSelection.colours],
+      ['price', effectiveSelection.prices],
+    ] as const).flatMap(([kind, ids]) =>
+      ids.map((id) => ({
+        key: `${kind}:${id}`,
+        label: filterValueLabel(products, kind, id),
+        onRemove: () => toggleOption(kind, id),
+      })),
     );
-  }, [selected]);
+    return [
+      ...optionChips,
+      ...Object.entries(selected).flatMap(([facetId, values]) =>
+        values.map((val) => ({
+          key: `${facetId}:${val}`,
+          label: val,
+          onRemove: () => toggleFilter(facetId, val),
+        })),
+      ),
+    ];
+  }, [selected, effectiveSelection, products]);
 
   // Filtered & sorted product list
   const filteredProducts = useMemo(() => {
     let result = products;
 
-    // Filter by each active facet
+    // Filter by each active config facet. Phone model and compatibility are
+    // handled by the data-backed model filter below.
     for (const [facetId, selectedVals] of Object.entries(selected)) {
+      if (facetId === 'model' || facetId === 'compatibility') continue;
       if (selectedVals.length > 0) {
         result = result.filter((p) => {
           // Check product.facets
           const facetVal = p.facets?.[facetId];
           if (facetVal && selectedVals.includes(facetVal)) {
-            return true;
-          }
-          // Check compatibility (e.g. for model / compatible with)
-          if (
-            (facetId === 'model' || facetId === 'compatibility') &&
-            p.compatibility?.some((c) => selectedVals.includes(c))
-          ) {
             return true;
           }
           // Check direct fields (material, brand)
@@ -107,6 +187,8 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
       }
     }
 
+    result = filterCategoryProducts(result, effectiveSelection);
+
     // Sort
     if (sortBy === 'price-asc') {
       result = [...result].sort((a, b) => a.price - b.price);
@@ -117,11 +199,51 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
     }
 
     return result;
-  }, [products, selected, sortBy]);
+  }, [products, selected, sortBy, effectiveSelection]);
+
+  // The card price, sold-out mark and colour photo follow the active choice.
+  const cards = useMemo(
+    () => filteredProducts.map((product) => cardForFilterSelection(product, effectiveSelection)),
+    [filteredProducts, effectiveSelection],
+  );
+
+  // Config facets rendered in the sidebar; the model filter replaces the old
+  // compatibility checkbox list.
+  const facetFilters = useMemo(
+    () => config.filters.filter((facet) => facet.id !== 'model' && facet.id !== 'compatibility'),
+    [config.filters],
+  );
 
   // Quick pills
   const quickPillFacet = config.quickPillFacet;
   const quickPills = quickPillFacet ? config.quickPills || [] : [];
+  const quickPillKind: CollectionFilterKind | null =
+    quickPillFacet === 'model' ? 'model' : null;
+
+  // A model pill selects the shared model id the option filters know.
+  const modelOptionIds = useMemo(() => {
+    const byName = new Map<string, string>();
+    for (const group of filterOptions.models) {
+      for (const option of group.options) byName.set(option.name.toLowerCase(), option.id);
+    }
+    return byName;
+  }, [filterOptions.models]);
+
+  const isPillActive = (pill: string) =>
+    quickPillKind === 'model'
+      ? effectiveSelection.models.includes(modelOptionIds.get(pill.toLowerCase()) ?? pill)
+      : (selected[quickPillFacet || ''] || []).includes(pill);
+
+  const togglePill = (pill: string) => {
+    if (!quickPillFacet) return;
+    if (quickPillKind === 'model') {
+      const id = modelOptionIds.get(pill.toLowerCase());
+      if (!id) return;
+      toggleOption('model', id);
+      return;
+    }
+    toggleFilter(quickPillFacet, pill);
+  };
 
   return (
     <div className="gz-collection-root">
@@ -181,13 +303,13 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
             aria-label="Quick category filters"
           >
             {quickPills.map((pill) => {
-              const isActive = (selected[quickPillFacet] || []).includes(pill);
+              const isActive = isPillActive(pill);
               return (
                 <button
                   key={pill}
                   type="button"
                   className={`gz-collection-quick-pill ${isActive ? 'active' : ''}`}
-                  onClick={() => toggleFilter(quickPillFacet, pill)}
+                  onClick={() => togglePill(pill)}
                   aria-pressed={isActive}
                 >
                   {pill} {isActive && '✓'}
@@ -201,12 +323,17 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
         <div className="gz-collection-main">
           {/* 7. Filters: Sidebar on Desktop & Drawer on Mobile */}
           <CollectionFilters
-            filters={config.filters}
+            filters={facetFilters}
             selected={selected}
             onToggle={toggleFilter}
             onClear={clearAllFilters}
             mobileOpen={mobileFilterOpen}
             onCloseMobile={() => setMobileFilterOpen(false)}
+            modelGroups={filterOptions.models}
+            colours={filterOptions.colours}
+            prices={filterOptions.prices}
+            optionSelection={effectiveSelection}
+            onToggleOption={toggleOption}
           />
 
           {/* Product Grid Column */}
@@ -291,9 +418,14 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
 
             {/* 4. Product Grid */}
             <CollectionProductGrid
-              products={filteredProducts}
+              products={cards}
               onClearFilters={clearAllFilters}
               saleLive={saleLive}
+              emptyMessage={
+                filterSelectionIsEmpty(effectiveSelection) && activeCount === 0
+                  ? undefined
+                  : 'No products match these filters. Clear all filters to see everything.'
+              }
             />
 
             {/* 8. Pagination: only renders if total products > 24 */}

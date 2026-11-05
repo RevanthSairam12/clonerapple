@@ -6,6 +6,7 @@ import type { CollectionProduct } from './types';
 import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
 import { useCart } from '@/lib/cart/CartContext';
 import { formatINR } from '@/lib/utils';
+import { STOCK_NOT_AVAILABLE } from '@/lib/storefront/availability-rules';
 
 export interface CollectionProductCardProps {
   product: CollectionProduct;
@@ -66,7 +67,7 @@ export function CollectionProductCard({ product: sourceProduct, saleLive = false
       <div className="gz-collection-card-media">
         {/* Truthful badge: only if real data indicates */}
         {isOutOfStock ? (
-          <span className="gz-collection-card-badge out-of-stock">Out of stock</span>
+          <span className="gz-collection-card-badge out-of-stock">{STOCK_NOT_AVAILABLE}</span>
         ) : isNew ? (
           <span className="gz-collection-card-badge">New</span>
         ) : null}

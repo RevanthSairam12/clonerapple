@@ -779,6 +779,51 @@
   border: 1.5px solid #c7c7cc;
   accent-color: var(--gz-c-accent);
   cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.gz-collection-filter-brand-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gz-collection-filter-brand-group + .gz-collection-filter-brand-group {
+  margin-top: 10px;
+}
+
+.gz-collection-filter-brand {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gz-c-text-tertiary);
+  padding: 4px 6px 2px;
+}
+
+.gz-collection-filter-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.gz-collection-filter-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--gz-c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.gz-collection-filter-swatch {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 /* Empty State */

@@ -17,6 +17,16 @@ export interface CollectionFacetDef {
   options: string[];
 }
 
+/** The three data-backed filters every category page shares. */
+export type CollectionFilterKind = 'model' | 'colour' | 'price';
+
+/** Values from the URL: shared model ids, colour ids and price band ids. */
+export interface CollectionFilterSelection {
+  models: string[];
+  colours: string[];
+  prices: string[];
+}
+
 export interface CollectionConfig {
   slug: string;
   title: string;
@@ -50,8 +60,12 @@ export interface CollectionProduct {
   image: string;
   hoverImage?: string;
   images: string[];
+  /** Photos with their shared-colour link; a colour filter picks its own photo. */
+  photoColours?: import('@/lib/catalog/storefront').StorefrontImage[];
   colors: ColorSwatch[];
   compatibility: string[];
+  /** Active compatibility models with ids and brands (the Phone model filter). */
+  compatibilityModels?: import('@/lib/catalog/storefront').StorefrontCompatibilityModel[];
   material: string;
   brand: string;
   category?: string;
@@ -66,6 +80,21 @@ export interface CollectionProduct {
   isNew?: boolean;
   inStock?: boolean;
   href: string;
+}
+
+/**
+ * Static bundles carry compatibility names only. Give them stable synthetic
+ * keys so the model filter still works when the database is unavailable.
+ */
+function compatibilityModelsFromNames(
+  names: string[] | undefined,
+): import('@/lib/catalog/storefront').StorefrontCompatibilityModel[] {
+  return (names ?? []).flatMap((name) => {
+    const cleaned = name.trim();
+    return cleaned
+      ? [{ id: `compat:${cleaned.toLowerCase()}`, name: cleaned, brandId: '', brandName: '' }]
+      : [];
+  });
 }
 
 /**
@@ -87,8 +116,10 @@ export function normalizeProduct(raw: AccessoryProduct | CaseProduct): Collectio
       image: cp.image,
       hoverImage: hover,
       images: hover ? [cp.image, hover] : [cp.image],
+      photoColours: cp.photoGallery,
       colors: cp.colors || [],
       compatibility: cp.compatibility || [],
+      compatibilityModels: cp.compatibilityModels ?? compatibilityModelsFromNames(cp.compatibility),
       material: cp.material || '',
       brand: cp.brand || 'Gadzio',
       category: 'Cases & Protection',
@@ -124,8 +155,10 @@ export function normalizeProduct(raw: AccessoryProduct | CaseProduct): Collectio
     image: ap.image,
     hoverImage: hover,
     images: ap.images || [ap.image],
+    photoColours: ap.photoGallery,
     colors: ap.colors || [],
     compatibility: ap.compatibility || [],
+    compatibilityModels: ap.compatibilityModels ?? compatibilityModelsFromNames(ap.compatibility),
     material: ap.material || '',
     brand: ap.brand || 'Gadzio',
     category: ap.category,
