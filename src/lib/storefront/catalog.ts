@@ -72,7 +72,7 @@ interface CatalogState {
 
 const readCachedCatalog = unstable_cache(
   async (): Promise<StorefrontCatalogSnapshot | null> => readStorefrontCatalog(),
-  ['storefront-catalog', 'phase-b2-option-prices-v2'],
+  ['storefront-catalog', 'phase-b2-option-prices-v3'],
   { tags: [CATALOG_CACHE_TAG], revalidate: 30 },
 );
 
@@ -106,7 +106,7 @@ function readCachedProduct(id: string) {
         snapshot.products.find((entry) => entry.id.toLowerCase() === normalised) ?? null;
       return { ready: true, product };
     },
-    ['storefront-product', 'phase-b2-option-prices-v2', normalised],
+    ['storefront-product', 'phase-b2-option-prices-v3', normalised],
     { tags: [CATALOG_CACHE_TAG, productCacheTag(id)], revalidate: 30 },
   );
 }

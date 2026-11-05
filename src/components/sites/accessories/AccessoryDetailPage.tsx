@@ -14,7 +14,18 @@ import {
 import { useAvailability } from '@/lib/storefront/use-availability';
 import { verifySelections, priceNeedsReview } from '@/lib/storefront/selection';
 import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
-import { CommerceVariantSelector } from '@/components/shop/CommerceVariantSelector';
+import { OptionSelector } from '@/components/shop/OptionSelector';
+import {
+  formatOptionPaise,
+  galleryForSelection,
+  optionPrice,
+  optionSelectionFromSearch,
+  optionSteps,
+  optionStockMessage,
+  resolveOptionVariant,
+  selectedColourLabel,
+  type OptionSelection,
+} from '@/lib/storefront/option-selection';
 import type { AccessoryProduct, ColorSwatch } from './data/types';
 
 interface Props {
@@ -23,26 +34,43 @@ interface Props {
   saleLive?: boolean;
   /** Storefront stock state for this product, from the catalogue row. */
   inStock?: boolean;
+  /** The shared model/colour selection, restored from the URL by the server. */
+  initialModel?: string | null;
+  initialColour?: string | null;
 }
 
-export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, inStock = true }: Props) {
+export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, inStock = true,
+  initialModel = null, initialColour = null }: Props) {
   const { addItem, items: bagItems } = useCart();
   const router = useRouter();
-  const [selectedVariantId, setSelectedVariantId] = useState('');
+  const variants = sourceProduct.purchasableVariants ?? [];
   const variantMode = sourceProduct.inventoryMode === 'variant';
-  const selectedVariant = sourceProduct.purchasableVariants?.find((variant) => variant.id === selectedVariantId);
-  const selectionProduct = selectedVariant ? { ...sourceProduct, price: selectedVariant.pricePaise / 100,
-    priceDisplay: `₹${(selectedVariant.pricePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-    regularPrice: selectedVariant.onSale ? selectedVariant.regularPricePaise / 100 : undefined,
-    wasPriceDisplay: selectedVariant.onSale ? `₹${(selectedVariant.regularPricePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : undefined } : variantMode ? { ...sourceProduct, priceDisplay: 'Choose model / specification for price',
-      regularPrice: undefined, wasPriceDisplay: undefined } : sourceProduct;
+  const initialSearch = new URLSearchParams();
+  if (initialModel) initialSearch.set('model', initialModel);
+  if (initialColour) initialSearch.set('colour', initialColour);
+  const [selection, setSelection] = useState<OptionSelection>(() => optionSelectionFromSearch(variants, initialSearch.toString()));
+  const selectedVariant = resolveOptionVariant(variants, selection);
+  const selectedVariantId = selectedVariant?.id ?? '';
+  const price = optionPrice(variants, selection, Math.round(sourceProduct.price * 100));
+  const selectionProduct = variantMode && variants.length > 0 ? { ...sourceProduct,
+    price: price.unitPaise / 100,
+    priceDisplay: formatOptionPaise(price.unitPaise),
+    regularPrice: price.onSale && price.regularPaise ? price.regularPaise / 100 : undefined,
+    wasPriceDisplay: price.onSale && price.regularPaise ? formatOptionPaise(price.regularPaise) : undefined } : sourceProduct;
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
-  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedVariantId, selectedColorIndex, sourceProduct.inventoryMode, selectionProduct.price, selectionProduct.regularPrice, selectedVariant?.label]));
+  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedVariantId, selection.modelKey, selection.colourKey, sourceProduct.inventoryMode, selectionProduct.price, selectionProduct.regularPrice, selectedVariant?.label]));
   const product = { ...selectionProduct, ...purchase.priceOverride };
   const availability = useAvailability(product.id, { saleLive, inStock: selectedVariant?.inStock ?? inStock },
     { variantId: selectedVariant?.id, required: variantMode });
   const unavailable = availability.blocked;
   const { notice: availabilityNotice, setNotice: setAvailabilityNotice, pending: isAddingToBag, added: isAdded } = purchase;
+  const steps = optionSteps(variants);
+  const chosenColourName = selectedVariant?.colourName
+    || (selectedVariant && /^colou?r$/i.test(selectedVariant.optionName ?? '') ? selectedVariant.optionValue : null)
+    || null;
+  const colourLabel = selectedColourLabel(variants, selection);
+  const fallbackGallery = sourceProduct.images.length > 0 ? sourceProduct.images : [sourceProduct.image];
+  const photos = galleryForSelection(sourceProduct.photoGallery ?? [], fallbackGallery, selection, sourceProduct.name, colourLabel);
   const [activeImage, setActiveImage] = useState(0);
   const [showStickyBar, setShowStickyBar] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -57,8 +85,32 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
     product.colors[selectedColorIndex] ??
     product.colors[0] ?? { name: product.subtitle, hex: '#1d1d1f' };
 
-  const gallery = product.images.length > 0 ? product.images : [product.image];
-  const mainImage = gallery[activeImage] ?? product.image;
+  const activePhoto = photos[activeImage] ?? photos[0] ?? { url: product.image, alt: product.name };
+  const mainImage = activePhoto.url;
+
+  // A new colour is a new gallery: start at its main photo.
+  useEffect(() => { setActiveImage(0); setImgError(false); }, [selection.modelKey, selection.colourKey]);
+
+  // Preload the chosen colour's photos so a swatch click never shows a gap.
+  const photoKey = photos.map((photo) => photo.url).join('|');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    for (const url of photoKey.split('|').filter(Boolean)) {
+      const image = new window.Image();
+      image.src = url;
+    }
+  }, [photoKey]);
+
+  // Keep the shareable selection in the URL without a server round trip.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (selection.modelKey) url.searchParams.set('model', selection.modelKey);
+    else url.searchParams.delete('model');
+    if (selection.colourKey) url.searchParams.set('colour', selection.colourKey);
+    else url.searchParams.delete('colour');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [selection.modelKey, selection.colourKey]);
 
   // Sticky Bar visibility on scroll
   useEffect(() => {
@@ -70,10 +122,15 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
   }, []);
 
   const handleBuyNow = async () => {
-    if (variantMode && !selectedVariant) { setAvailabilityNotice('Choose your model / specification before buying.'); return; }
+    if (variantMode && !selectedVariant) { setAvailabilityNotice(`Choose your ${steps.modelLabel.toLowerCase()} and colour before buying.`); return; }
     await purchase.run(async (signal) => {
       const checked = await verifySelections([{ productId: product.id, variantId: selectedVariant?.id, quantity: 1 }], signal);
-      if (checked.status !== 'ready') return checked;
+      if (checked.status !== 'ready') {
+        // Sale mode only learns the exact row's stock here; name that option.
+        return variantMode && checked.status === 'unavailable'
+          ? { ...checked, message: optionStockMessage(selectedVariant) }
+          : checked;
+      }
       if (priceNeedsReview(product, checked.prices[0])) return {
         status: 'price_changed', price: checked.prices[0], message: 'The price has changed.',
       };
@@ -98,32 +155,44 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
 
   const handleAddToBag = async () => {
     if (variantMode && !selectedVariant) {
-      setAvailabilityNotice('Choose your model / specification before adding to your bag.');
+      setAvailabilityNotice(`Choose your ${steps.modelLabel.toLowerCase()} and colour before adding to your bag.`);
       return;
     }
     if (unavailable) {
       setAvailabilityNotice(STOCK_NOT_AVAILABLE);
       return;
     }
-    await purchase.run((signal) => addItem({
-      productId: product.id,
-      variantId: selectedVariant?.id, variantSku: selectedVariant?.sku, variantLabel: selectedVariant?.label,
-      name: product.name,
-      subtitle: selectedVariant?.label ?? (hasColors ? currentColor.name : product.subtitle),
-      price: product.price,
-      priceDisplay: product.priceDisplay,
-      wasPriceDisplay: product.wasPriceDisplay,
-      regularPrice: product.regularPrice,
-      image: mainImage,
-      color: selectedVariant ? selectedVariant.optionValue : hasColors ? currentColor.name : undefined,
-      model: selectedVariant?.deviceModelName ?? '',
-      quantity: 1,
-      href: `/shop/product/${encodeURIComponent(product.id)}`,
-    }, { signal }));
+    const subtitle = variantMode
+      ? [selectedVariant?.deviceModelName, chosenColourName].filter(Boolean).join(' • ') || selectedVariant?.label || product.subtitle
+      : selectedVariant?.label ?? (hasColors ? currentColor.name : product.subtitle);
+    await purchase.run(async (signal) => {
+      const result = await addItem({
+        productId: product.id,
+        variantId: selectedVariant?.id, variantSku: selectedVariant?.sku ?? undefined,
+        variantLabel: selectedVariant?.label ?? undefined,
+        name: product.name,
+        subtitle,
+        price: product.price,
+        priceDisplay: product.priceDisplay,
+        wasPriceDisplay: product.wasPriceDisplay,
+        regularPrice: product.regularPrice,
+        image: mainImage,
+        color: chosenColourName ?? (selectedVariant ? selectedVariant.optionValue ?? undefined : hasColors ? currentColor.name : undefined),
+        model: selectedVariant?.deviceModelName ?? '',
+        quantity: 1,
+        href: `/shop/product/${encodeURIComponent(product.id)}`,
+      }, { signal });
+      // The refusal names the exact option that ran out, never a sibling.
+      return variantMode && result.status === 'unavailable'
+        ? { ...result, message: optionStockMessage(selectedVariant) }
+        : result;
+    });
 
   };
 
-  const stickyMeta = selectedVariant?.label ?? (variantMode ? 'Choose options' : hasColors ? currentColor.name : product.subtitle);
+  const stickyMeta = variantMode
+    ? [selectedVariant?.deviceModelName, chosenColourName].filter(Boolean).join(' • ') || 'Choose options'
+    : [currentColor.name, product.subtitle].filter(Boolean).join(' • ');
 
   return (
     <div className="gz-storefront-page min-h-screen bg-[#fff] text-[#1d1d1f] antialiased selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
@@ -202,30 +271,31 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
               ) : (
                 <img
                   src={mainImage}
-                  alt={`${product.name} — ${stickyMeta}`}
+                  alt={activePhoto.alt}
                   className="max-h-full max-w-full object-contain filter drop-shadow-lg select-none transition-all duration-500"
                   onError={() => setImgError(true)}
                 />
               )}
             </div>
 
-            {/* Gallery Thumbnails */}
-            {gallery.length > 1 && (
-              <div className="flex items-center gap-2.5 mt-5">
-                {gallery.map((img, idx) => (
+            {/* The chosen colour's gallery: main photo first, then the rest. */}
+            {photos.length > 1 && (
+              <div className="flex flex-wrap items-center justify-center gap-2.5 mt-5" role="group" aria-label="Product photos">
+                {photos.map((photo, idx) => (
                   <button
-                    key={img + idx}
+                    key={photo.url + idx}
                     type="button"
                     onClick={() => {
                       setActiveImage(idx);
                       setImgError(false);
                     }}
+                    aria-pressed={idx === activeImage}
                     className={`w-16 h-16 rounded-xl bg-[#f5f5f7] border overflow-hidden flex items-center justify-center p-2 transition-all ${
                       idx === activeImage ? 'border-[#0071e3] ring-1 ring-[#0071e3]' : 'border-[#e5e5ea] hover:border-[#86868b]'
                     }`}
-                    aria-label={`View image ${idx + 1}`}
+                    aria-label={`Show photo ${idx + 1}: ${photo.alt}`}
                   >
-                    <img src={img} alt="" className="max-h-full max-w-full object-contain" />
+                    <img src={photo.url} alt="" className="max-h-full max-w-full object-contain" />
                   </button>
                 ))}
               </div>
@@ -271,8 +341,9 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
               <p className="text-sm text-[#86868b]">{product.category}</p>
             </div>
 
-            {variantMode ? <CommerceVariantSelector variants={product.purchasableVariants ?? []}
-              value={selectedVariantId} onChange={(id) => { setSelectedVariantId(id); setAvailabilityNotice(null); }}
+            {variantMode ? <OptionSelector variants={variants}
+              selection={selection}
+              onChange={(next) => { setSelection(next); setAvailabilityNotice(null); }}
               saleLive={availability.saleLive} liveStock={availability.variants} /> : null}
 
             {/* Price Row */}

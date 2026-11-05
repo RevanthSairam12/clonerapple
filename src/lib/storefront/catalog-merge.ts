@@ -39,9 +39,12 @@ export interface CatalogProductSource {
   onSale?: boolean | null;
   image?: string | null;
   gallery?: string[] | null;
+  /** Photos with alt text and the shared colour they belong to. */
+  images?: import('@/lib/catalog/storefront').StorefrontImage[] | null;
   hoverImage?: string | null;
   colors?: { name: string; hex: string }[] | null;
   compatibility?: string[] | null;
+  compatibilityModels?: import('@/lib/catalog/storefront').StorefrontCompatibilityModel[] | null;
   material?: string | null;
   brand?: string | null;
   description?: string | null;
@@ -172,8 +175,10 @@ export function mergeAccessoryProduct(
       : {}),
     image: text(databaseProduct.image) ?? staticProduct.image,
     images: databaseImages ?? staticProduct.images,
+    photoGallery: databaseProduct.images ?? [],
     colors: list(databaseProduct.colors) ?? staticProduct.colors,
     compatibility: databaseProduct.compatibility ?? [],
+    compatibilityModels: databaseProduct.compatibilityModels ?? [],
     material: text(databaseProduct.material) ?? '',
     brand: text(databaseProduct.brand) ?? staticProduct.brand,
     category: text(databaseProduct.categoryName) ?? staticProduct.category,
@@ -218,8 +223,10 @@ export function accessoryProductFromDatabase(
       : {}),
     image,
     images: gallery.length > 0 ? gallery : image ? [image] : [],
+    photoGallery: databaseProduct.images ?? [],
     colors: databaseProduct.colors ?? [],
     compatibility: databaseProduct.compatibility ?? [],
+    compatibilityModels: databaseProduct.compatibilityModels ?? [],
     material: text(databaseProduct.material) ?? '',
     brand: text(databaseProduct.brand) ?? '',
     category: text(databaseProduct.categoryName) ?? '',
@@ -261,8 +268,10 @@ export function mergeCaseProduct(
         }
       : {}),
     image: text(databaseProduct.image) ?? staticProduct.image,
+    photoGallery: databaseProduct.images ?? [],
     colors: list(databaseProduct.colors) ?? staticProduct.colors,
     compatibility: databaseProduct.compatibility ?? [],
+    compatibilityModels: databaseProduct.compatibilityModels ?? [],
     material: (text(databaseProduct.material) ?? '') as CaseProduct['material'],
     brand: (text(databaseProduct.brand) ?? staticProduct.brand) as CaseProduct['brand'],
     features:
@@ -305,8 +314,10 @@ export function caseProductFromDatabase(
         }
       : {}),
     image: text(databaseProduct.image) ?? '',
+    photoGallery: databaseProduct.images ?? [],
     colors: databaseProduct.colors ?? [],
     compatibility: databaseProduct.compatibility ?? [],
+    compatibilityModels: databaseProduct.compatibilityModels ?? [],
     material: (text(databaseProduct.material) ?? '') as CaseProduct['material'],
     brand: (text(databaseProduct.brand) ?? '') as CaseProduct['brand'],
     features: featuresOf(databaseProduct.features, highlights),
@@ -353,8 +364,11 @@ export function collectionProductFromDatabase(
       : {}),
     image,
     images: gallery ?? base?.images ?? (image ? [image] : []),
+    /** The same photos with their shared-colour link, so a colour filter can pick one. */
+    photoColours: databaseProduct.images ?? base?.photoColours ?? [],
     colors: list(databaseProduct.colors) ?? base?.colors ?? [],
     compatibility: databaseProduct.compatibility ?? [],
+    compatibilityModels: databaseProduct.compatibilityModels ?? [],
     material: text(databaseProduct.material) ?? '',
     brand: text(databaseProduct.brand) ?? base?.brand ?? 'Gadzio',
     facets: { ...(databaseProduct.facets ?? {}) },

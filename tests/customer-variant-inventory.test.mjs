@@ -167,20 +167,28 @@ test('click verification never treats sale presentation or failed responses as s
 
 test('customer entry points carry explicit variant selection and enforce stock before purchase', () => {
   const source = file => readFileSync(path.join(root, file), 'utf8');
-  const selector = source('src/components/shop/CommerceVariantSelector.tsx');
-  assert.match(selector, /value="">Choose/);
-  assert.match(selector, /stockBlocked\(liveStock\[variant.id\] \?\? variant.inStock, saleLive\)/);
+  // Two steps, model then colour; only the exact row can be bought.
+  const selector = source('src/components/shop/OptionSelector.tsx');
+  assert.match(selector, /steps\.showModel/);
+  assert.match(selector, /steps\.showColour/);
+  assert.match(selector, /role="radio"/);
+  assert.match(selector, /aria-checked=\{checked\}/);
+  assert.match(selector, /stockBlocked\(stock\[variant!\.id\] \?\? variant!\.inStock, saleLive\)/);
   assert.match(selector, /disabled=\{blocked\}/);
   for (const file of ['src/components/shop/ProductDetailPage.tsx', 'src/components/sites/accessories/AccessoryDetailPage.tsx']) {
     const text = source(file);
-    assert.match(text, /useState\(''\)/);
+    assert.match(text, /optionSelectionFromSearch\(variants/);
+    assert.match(text, /resolveOptionVariant\(variants, selection\)/);
+    // No complete exact row means Add to Bag refuses instead of substituting.
+    assert.match(text, /if \(variantMode && !selectedVariant\)/);
     assert.match(text, /variantId: selectedVariant\?\.id/);
     assert.match(text, /handleBuyNow/);
     assert.match(text, /await verifySelections/);
-    assert.match(text, /priceNeedsReview\(product, checked.prices\[0\]\)/);
-    assert.match(text, /await purchase.run\(\(signal\) => addItem/);
+    assert.match(text, /priceNeedsReview\(product, checked\.prices\[0\]\)/);
+    assert.match(text, /await purchase\.run\(async \(signal\) =>/);
+    assert.match(text, /await addItem\(\{/);
     assert.match(text, /\{ signal \}/);
-    assert.doesNotMatch(text, /model: product.compatibility\[0\]/);
+    assert.doesNotMatch(text, /model: product\.compatibility\[0\]/);
   }
   const checkout = source('src/components/checkout/CheckoutForm.tsx');
   assert.match(checkout, /variantId: i.variantId/);

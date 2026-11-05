@@ -136,6 +136,24 @@ test('legacy text variant IDs are accepted exactly, without normalization or sub
   }
 });
 
+test('priced lines snapshot the exact model, colour and photo read from the database', () => {
+  const row = { id: 'case', name: 'Case', variant_id: 'v1', variant_sku: 'SKU-RED', variant_label: 'iPhone 16 / Red',
+    price_paise: 10000, image_url: '/img/red.png', image_alt: 'Red case',
+    variant_device_model_id: 'iphone16', variant_device_model_name: 'iPhone 16',
+    variant_colour_id: 'red', variant_colour_name: 'Red', variant_colour_hex: '#FF0000' };
+  const item = priceCartLines([{ id: 'case', variantId: 'v1', quantity: 1 }], [row]).items[0];
+  assert.deepEqual({ modelId: item.deviceModelId, modelName: item.deviceModelName, colourId: item.colourId,
+    colourName: item.colourName, colourHex: item.colourHex, image: item.image, imageAlt: item.imageAlt },
+  { modelId: 'iphone16', modelName: 'iPhone 16', colourId: 'red', colourName: 'Red', colourHex: '#FF0000',
+    image: '/img/red.png', imageAlt: 'Red case' });
+
+  // A pre-0061 read simply has no snapshot values; it never invents one.
+  const legacy = priceCartLines([{ id: 'case', variantId: 'v1', quantity: 1 }],
+    [{ ...row, variant_device_model_id: null, variant_colour_id: null, variant_colour_name: null }]).items[0];
+  assert.equal(legacy.deviceModelId, null);
+  assert.equal(legacy.colourName, null);
+});
+
 test('a foreign product variant cannot use another product or parent row', () => {
   const rows = [ROWS[1], { id: 'other', variant_id: 'foreign', name: 'Other', price_paise: 1 }];
   assert.throws(() => priceCartLines([{ id: 'usb-c-cable', variantId: 'foreign', quantity: 1 }], rows), (error) => {

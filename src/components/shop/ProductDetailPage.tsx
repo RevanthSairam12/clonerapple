@@ -14,7 +14,18 @@ import {
 import { useAvailability } from '@/lib/storefront/use-availability';
 import { verifySelections, priceNeedsReview } from '@/lib/storefront/selection';
 import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
-import { CommerceVariantSelector } from '@/components/shop/CommerceVariantSelector';
+import { OptionSelector } from '@/components/shop/OptionSelector';
+import {
+  formatOptionPaise,
+  galleryForSelection,
+  optionPrice,
+  optionSelectionFromSearch,
+  optionSteps,
+  optionStockMessage,
+  resolveOptionVariant,
+  selectedColourLabel,
+  type OptionSelection,
+} from '@/lib/storefront/option-selection';
 import type { Product, ColorSwatch } from '@/components/sites/cases-protection/data/products';
 
 interface Props {
@@ -23,27 +34,71 @@ interface Props {
   saleLive?: boolean;
   /** Storefront stock state for this product, from the catalogue row. */
   inStock?: boolean;
+  /** The shared model/colour selection, restored from the URL by the server. */
+  initialModel?: string | null;
+  initialColour?: string | null;
 }
 
-export function ProductDetailPage({ product: sourceProduct, saleLive = false, inStock = true }: Props) {
+export function ProductDetailPage({ product: sourceProduct, saleLive = false, inStock = true,
+  initialModel = null, initialColour = null }: Props) {
   const router = useRouter();
   const { addItem, items: bagItems } = useCart();
-  const [selectedVariantId, setSelectedVariantId] = useState('');
+  const variants = sourceProduct.purchasableVariants ?? [];
   const variantMode = sourceProduct.inventoryMode === 'variant';
-  const selectedVariant = sourceProduct.purchasableVariants?.find((variant) => variant.id === selectedVariantId);
-  const selectionProduct = selectedVariant ? { ...sourceProduct, price: selectedVariant.pricePaise / 100,
-    priceDisplay: `₹${(selectedVariant.pricePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-    regularPrice: selectedVariant.onSale ? selectedVariant.regularPricePaise / 100 : undefined,
-    wasPriceDisplay: selectedVariant.onSale ? `₹${(selectedVariant.regularPricePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : undefined } : variantMode ? { ...sourceProduct, priceDisplay: 'Choose model / specification for price',
-      regularPrice: undefined, wasPriceDisplay: undefined } : sourceProduct;
+  const initialSearch = new URLSearchParams();
+  if (initialModel) initialSearch.set('model', initialModel);
+  if (initialColour) initialSearch.set('colour', initialColour);
+  const [selection, setSelection] = useState<OptionSelection>(() => optionSelectionFromSearch(variants, initialSearch.toString()));
+  const selectedVariant = resolveOptionVariant(variants, selection);
+  const selectedVariantId = selectedVariant?.id ?? '';
+  const price = optionPrice(variants, selection, Math.round(sourceProduct.price * 100));
+  const selectionProduct = variantMode && variants.length > 0 ? { ...sourceProduct,
+    price: price.unitPaise / 100,
+    priceDisplay: formatOptionPaise(price.unitPaise),
+    regularPrice: price.onSale && price.regularPaise ? price.regularPaise / 100 : undefined,
+    wasPriceDisplay: price.onSale && price.regularPaise ? formatOptionPaise(price.regularPaise) : undefined } : sourceProduct;
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
-  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedVariantId, selectedColorIndex, sourceProduct.inventoryMode, selectionProduct.price, selectionProduct.regularPrice, selectedVariant?.label]));
+  const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedVariantId, selection.modelKey, selection.colourKey, sourceProduct.inventoryMode, selectionProduct.price, selectionProduct.regularPrice, selectedVariant?.label]));
   const product = { ...selectionProduct, ...purchase.priceOverride };
   const availability = useAvailability(product.id, { saleLive, inStock: selectedVariant?.inStock ?? inStock },
     { variantId: selectedVariant?.id, required: variantMode });
   const unavailable = availability.blocked;
   const { notice: availabilityNotice, setNotice: setAvailabilityNotice, pending: isAddingToBag, added: isAdded } = purchase;
   const selectedSize = selectedVariant?.deviceModelName ?? '';
+  const chosenColourName = selectedVariant?.colourName
+    || (selectedVariant && /^colou?r$/i.test(selectedVariant.optionName ?? '') ? selectedVariant.optionValue : null)
+    || null;
+  const steps = optionSteps(variants);
+  const colourLabel = selectedColourLabel(variants, selection);
+  const fallbackPhotos = [sourceProduct.image, ...(sourceProduct.hoverImage ? [sourceProduct.hoverImage] : [])];
+  const photos = galleryForSelection(sourceProduct.photoGallery ?? [], fallbackPhotos, selection, sourceProduct.name, colourLabel);
+  const [activeImage, setActiveImage] = useState(0);
+  const activePhoto = photos[activeImage] ?? photos[0] ?? { url: product.image, alt: product.name };
+  const activeImageUrl = activePhoto.url;
+
+  // A new colour is a new gallery: start at its main photo.
+  useEffect(() => { setActiveImage(0); }, [selection.modelKey, selection.colourKey]);
+
+  // Preload the chosen colour's photos so a swatch click never shows a gap.
+  const photoKey = photos.map((photo) => photo.url).join('|');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    for (const url of photoKey.split('|').filter(Boolean)) {
+      const image = new window.Image();
+      image.src = url;
+    }
+  }, [photoKey]);
+
+  // Keep the shareable selection in the URL without a server round trip.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (selection.modelKey) url.searchParams.set('model', selection.modelKey);
+    else url.searchParams.delete('model');
+    if (selection.colourKey) url.searchParams.set('colour', selection.colourKey);
+    else url.searchParams.delete('colour');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [selection.modelKey, selection.colourKey]);
   const [selectedAngle, setSelectedAngle] = useState<'main' | 'angled' | 'detail'>('main');
   const [showStickyBar, setShowStickyBar] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -118,6 +173,9 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
     name: product.subtitle,
     hex: '#1d1d1f',
   };
+  const stickyMeta = variantMode
+    ? [selectedVariant?.deviceModelName, chosenColourName].filter(Boolean).join(' • ')
+    : [currentColor.name, selectedSize].filter(Boolean).join(' • ');
 
   // Sticky Bar visibility on scroll
   useEffect(() => {
@@ -129,10 +187,15 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
   }, []);
 
   const handleBuyNow = async () => {
-    if (variantMode && !selectedVariant) { setAvailabilityNotice('Choose your model / specification before buying.'); return; }
+    if (variantMode && !selectedVariant) { setAvailabilityNotice(`Choose your ${steps.modelLabel.toLowerCase()} and colour before buying.`); return; }
     await purchase.run(async (signal) => {
       const checked = await verifySelections([{ productId: product.id, variantId: selectedVariant?.id, quantity: 1 }], signal);
-      if (checked.status !== 'ready') return checked;
+      if (checked.status !== 'ready') {
+        // Sale mode only learns the exact row's stock here; name that option.
+        return variantMode && checked.status === 'unavailable'
+          ? { ...checked, message: optionStockMessage(selectedVariant) }
+          : checked;
+      }
       if (priceNeedsReview(product, checked.prices[0])) return {
         status: 'price_changed', price: checked.prices[0], message: 'The price has changed.',
       };
@@ -157,29 +220,38 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
 
   const handleAddToBag = async () => {
     if (variantMode && !selectedVariant) {
-      setAvailabilityNotice('Choose your model / specification before adding to your bag.');
+      setAvailabilityNotice(`Choose your ${steps.modelLabel.toLowerCase()} and colour before adding to your bag.`);
       return;
     }
     if (unavailable) {
       setAvailabilityNotice(STOCK_NOT_AVAILABLE);
       return;
     }
-    const activeImage = selectedAngle === 'detail' && product.hoverImage ? product.hoverImage : product.image;
-    await purchase.run((signal) => addItem({
-      productId: product.id,
-      variantId: selectedVariant?.id, variantSku: selectedVariant?.sku, variantLabel: selectedVariant?.label,
-      name: product.name,
-      subtitle: selectedVariant?.label ?? [currentColor.name, selectedSize].filter(Boolean).join(' • '),
-      price: product.price,
-      priceDisplay: product.priceDisplay,
-      wasPriceDisplay: product.wasPriceDisplay,
-      regularPrice: product.regularPrice,
-      image: activeImage,
-      color: selectedVariant ? selectedVariant.optionValue : currentColor.name,
-      model: selectedSize,
-      quantity: 1,
-      href: `/shop/product/${encodeURIComponent(product.id)}`,
-    }, { signal }));
+    const subtitle = variantMode
+      ? [selectedVariant?.deviceModelName, chosenColourName].filter(Boolean).join(' • ') || selectedVariant?.label || product.subtitle
+      : [currentColor.name, selectedSize].filter(Boolean).join(' • ');
+    await purchase.run(async (signal) => {
+      const result = await addItem({
+        productId: product.id,
+        variantId: selectedVariant?.id, variantSku: selectedVariant?.sku ?? undefined,
+        variantLabel: selectedVariant?.label ?? undefined,
+        name: product.name,
+        subtitle,
+        price: product.price,
+        priceDisplay: product.priceDisplay,
+        wasPriceDisplay: product.wasPriceDisplay,
+        regularPrice: product.regularPrice,
+        image: activeImageUrl,
+        color: chosenColourName ?? (!variantMode ? currentColor.name : undefined),
+        model: selectedVariant?.deviceModelName ?? '',
+        quantity: 1,
+        href: `/shop/product/${encodeURIComponent(product.id)}`,
+      }, { signal });
+      // The refusal names the exact option that ran out, never a sibling.
+      return variantMode && result.status === 'unavailable'
+        ? { ...result, message: optionStockMessage(selectedVariant) }
+        : result;
+    });
 
   };
 
@@ -201,7 +273,7 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
         <div className="max-w-6xl mx-auto px-4 sm:px-8 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
             <span className="font-semibold text-sm truncate">{product.name}</span>
-            <span className="text-xs text-[#86868b] hidden sm:inline">• {currentColor.name} • {selectedSize}</span>
+            {stickyMeta ? <span className="text-xs text-[#86868b] hidden sm:inline">• {stickyMeta}</span> : null}
           </div>
           <div className="flex items-center gap-4">
             {product.wasPriceDisplay ? (
@@ -248,8 +320,8 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
             {/* Main Stage Frame */}
             <div className="relative w-full aspect-square bg-[#f5f5f7] rounded-[28px] overflow-hidden flex items-center justify-center p-8 sm:p-12 transition-all duration-300">
               <img
-                src={product.image}
-                alt={`${product.name} — ${selectedVariant?.label ?? (variantMode ? 'Choose options' : currentColor.name)}`}
+                src={activeImageUrl}
+                alt={activePhoto.alt}
                 className={`max-h-full max-w-full object-contain filter drop-shadow-lg select-none transition-all duration-500 ${
                   selectedAngle === 'angled'
                     ? 'rotate-[-6deg] scale-105'
@@ -290,6 +362,26 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
                 </button>
               </div>
             </div>
+
+            {/* The chosen colour's gallery: main photo first, then the rest. */}
+            {photos.length > 1 ? (
+              <div className="flex flex-wrap items-center justify-center gap-2.5 mt-5 w-full" role="group" aria-label="Product photos">
+                {photos.map((photo, index) => (
+                  <button
+                    key={`${photo.url}-${index}`}
+                    type="button"
+                    onClick={() => setActiveImage(index)}
+                    aria-pressed={index === activeImage}
+                    aria-label={`Show photo ${index + 1}: ${photo.alt}`}
+                    className={`w-16 h-16 sm:w-20 sm:h-20 rounded-xl border overflow-hidden bg-[#f5f5f7] p-1.5 transition-all ${
+                      index === activeImage ? 'border-[#0071e3] ring-1 ring-[#0071e3]' : 'border-[#d2d2d7] hover:border-[#86868b]'
+                    }`}
+                  >
+                    <img src={photo.url} alt="" className="w-full h-full object-contain" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             {/* Micro feature highlights — compatibility badges */}
             <div className="grid grid-cols-3 gap-3 sm:gap-3.5 w-full mt-5">
@@ -366,8 +458,9 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
               </p>
             </div>
 
-            {variantMode ? <CommerceVariantSelector variants={product.purchasableVariants ?? []}
-              value={selectedVariantId} onChange={(id) => { setSelectedVariantId(id); setAvailabilityNotice(null); }}
+            {variantMode ? <OptionSelector variants={variants}
+              selection={selection}
+              onChange={(next) => { setSelection(next); setAvailabilityNotice(null); }}
               saleLive={availability.saleLive} liveStock={availability.variants} /> : null}
 
             {/* Price Row */}

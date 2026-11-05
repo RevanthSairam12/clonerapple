@@ -50,7 +50,10 @@ const policy = { reservationSeconds: 600, failureGraceSeconds: 0, unresolvedMinu
 const key = (productId, variantId) => JSON.stringify([productId, variantId ?? null]);
 const clone = value => structuredClone(value);
 
-function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false } = {}) {
+// `optionSnapshot` models migration 0061 being applied: the catalogue rows
+// carry the model/colour/photo and the order_items columns exist.
+function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
+  optionSnapshot = false } = {}) {
   const stockRow = (product_id, variant_id, on_hand, reserved = 0) => ({
     id: key(product_id, variant_id), product_id, variant_id, on_hand, reserved, track_inventory: true,
   });
@@ -79,9 +82,16 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false } =
   const untouched = () => clone(stocks.filter(row => row.variant_id !== BLACK));
   const originalUntouched = untouched();
 
-  const sql = async (strings, ...values) => {
+  // Synchronous on purpose: inline `sql`...`` fragments compose the catalogue
+  // statement in postgres.js, so this double returns fragment text rather than
+  // a promise. Every real query still returns an awaitable array.
+  const sql = (strings, ...values) => {
     const text = strings.reduce((all, part, i) => all + (i ? `$${i}` : '') + part, '')
       .replace(/\s+/g, ' ').trim().toLowerCase();
+    // The colour-photo subquery, the snapshot column list and the colour join
+    // are fragments of the catalogue statement, not separate queries.
+    if (text === '' || text.startsWith('(') || text.includes('as variant_device_model_id')
+      || text.startsWith('left join product_variant_colours')) return text;
     queries.push({ text, values: clone(values) });
     if (text === 'select pg_advisory_xact_lock_shared(513031,3)') return [];
     if (text.startsWith('select o.id from orders o') || text.startsWith('select o.id, o.txnid, o.status from orders o')) return [];
@@ -96,17 +106,31 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false } =
       { key: 'auto_confirm', value: 'off' },
       { key: 'default_fulfilment_status', value: 'PENDING' },
     ];
+    // The offline schema predates 0059/0060/0061: the capability probes must
+    // report the older shape so the exact previous SQL is exercised.
+    if (text.includes("to_regclass('colours')")) return [{ colours: false }];
+    if (text.includes('from information_schema.columns')) return [{ present: optionSnapshot }];
     if (text.includes('from products p')) {
       assert.equal(forbidCatalog, false, 'historical release/reclaim must not query current purchase eligibility');
       const rows = eligibleVariants.filter(id => stocks.some(s => s.product_id === PRODUCT && s.variant_id === id))
         .map(variant_id => ({ id: PRODUCT, name: 'iPhone 16', inventory_mode: 'variant',
           variant_id, variant_sku: `SKU-${variant_id}`, variant_label: variant_id,
           price_paise: catalogPrice, sale_price_paise: null, option_price_paise: null,
-          option_sale_price_paise: null, track_inventory: true, in_stock: true }));
+          option_sale_price_paise: null, track_inventory: true, in_stock: true,
+          ...(optionSnapshot ? {
+            variant_device_model_id: 'iphone-16', variant_device_model_name: 'iPhone 16',
+            variant_colour_id: variant_id === BLACK ? 'black' : 'blue',
+            variant_colour_name: variant_id === BLACK ? 'Black' : 'Blue',
+            variant_colour_hex: variant_id === BLACK ? '#1D1D1F' : '#0071E3',
+            // The SQL aliases the single chosen photo as url + unit separator + alt.
+            image: `/images/${variant_id}.png${String.fromCharCode(31)}iPhone 16 ${variant_id}`,
+          } : {}) }));
       rows.push({ id: SHARED, name: 'Shared compatibility product', inventory_mode: 'product',
         variant_id: null, price_paise: 12000, sale_price_paise: null,
         track_inventory: true, in_stock: true });
-      return rows.filter(row => values[0].includes(row.id));
+      // Fragments occupy value slots ahead of the id array in this double.
+      const ids = values.find(value => Array.isArray(value)) ?? [];
+      return rows.filter(row => ids.includes(row.id));
     }
     if (text.startsWith('insert into orders (')) {
       const columns = text.match(/^insert into orders \((.*?)\) values/)[1].split(',').map(s => s.trim());
@@ -347,6 +371,40 @@ test('actual checkout reserves selected Black stock; verified callback consumes 
   assert.equal(f.history().length, 2, 'CREATED and PAID only; replay writes no transition');
   assert.deepEqual(f.events().map(e => e[4]), ['paid', 'unchanged']);
   assert.equal(f.queries.filter(q => /^(update stock|insert into stock_movements)/.test(q.text)).length, writesBeforeReplay);
+  assertClaim(f);
+});
+
+test('checkout snapshots the exact model, colour, price and photo when 0061 is applied', async () => {
+  const f = fixture({ optionSnapshot: true });
+  await reserve(f);
+  const item = f.order().items[0];
+  assert.equal(item.deviceModelId, 'iphone-16');
+  assert.equal(item.deviceModelName, 'iPhone 16');
+  assert.equal(item.colourId, 'black');
+  assert.equal(item.colourName, 'Black');
+  assert.equal(item.colourHex, '#1D1D1F');
+  assert.equal(item.image, `/images/${BLACK}.png`);
+  assert.equal(item.imageAlt, `iPhone 16 ${BLACK}`);
+  assert.equal(item.unitPrice, 500, 'the snapshot amount is the row price that was charged');
+  const inserted = f.items()[0];
+  assert.equal(f.queries.find(q => q.text.startsWith('insert into order_items')).text.includes('variant_colour_id'), true);
+  assert.deepEqual({ model: inserted[12], modelName: inserted[13], colour: inserted[14], colourName: inserted[15],
+    hex: inserted[16], image: inserted[17], alt: inserted[18] },
+  { model: 'iphone-16', modelName: 'iPhone 16', colour: 'black', colourName: 'Black',
+    hex: '#1D1D1F', image: `/images/${BLACK}.png`, alt: `iPhone 16 ${BLACK}` });
+  // A later rename or photo replacement cannot rewrite what the order sold.
+  const saved = clone(f.order().items);
+  await callback(f);
+  assert.deepEqual(f.order().items, saved);
+});
+
+test('an older database keeps the previous order_items insert and still reserves stock', async () => {
+  const f = fixture();
+  await reserve(f);
+  const insert = f.queries.find(q => q.text.startsWith('insert into order_items'));
+  assert.doesNotMatch(insert.text, /image_url|variant_colour_id|variant_device_model_id/);
+  assert.equal(f.items()[0][9], BLACK);
+  assert.equal(f.order().items[0].deviceModelName, null, 'no snapshot column was written');
   assertClaim(f);
 });
 

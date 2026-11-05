@@ -234,6 +234,7 @@ export const VERIFY = {
     mihpayid: 'mihpayid_test',
     mode: 'UPI',
     amount: '500.00',
+    amountPaise: 50000,
     raw: null,
   }),
   /** PayU explicitly says the transaction failed. */
@@ -244,6 +245,7 @@ export const VERIFY = {
     mihpayid: null,
     mode: null,
     amount: null,
+    amountPaise: null,
     raw: null,
   }),
   /** The verifier cannot answer: ambiguous, never a failure. */
@@ -254,6 +256,7 @@ export const VERIFY = {
     mihpayid: null,
     mode: null,
     amount: null,
+    amountPaise: null,
     raw: null,
     error: 'verify endpoint unreachable',
   }),

@@ -145,6 +145,25 @@ test('case changes still resolve to the canonical id', () => {
   assert.equal(cart.items[0].quantity, 2);
 });
 
+test('order item lines keep the exact option and photo snapshot, and parent lines stay snapshot-free', () => {
+  const priced = {
+    id: 'case', variantId: 'v1', variantSku: 'SKU-RED', variantLabel: 'iPhone 16 / Red', name: 'Case',
+    quantity: 2, unitPrice: 100, totalPrice: 200, image: '/img/red.png', imageAlt: 'Red case',
+    deviceModelId: 'iphone16', deviceModelName: 'iPhone 16', colourId: 'red', colourName: 'Red', colourHex: '#FF0000',
+  };
+  const [line] = buildOrderItemLines([priced]);
+  assert.deepEqual({ modelId: line.deviceModelId, modelName: line.deviceModelName, colourId: line.colourId,
+    colourName: line.colourName, colourHex: line.colourHex, imageUrl: line.imageUrl, imageAlt: line.imageAlt },
+  { modelId: 'iphone16', modelName: 'iPhone 16', colourId: 'red', colourName: 'Red', colourHex: '#FF0000',
+    imageUrl: '/img/red.png', imageAlt: 'Red case' });
+  assert.equal(line.unitPricePaise, 10000);
+  assert.equal(line.lineTotalPaise, 20000);
+
+  const [parent] = buildOrderItemLines([{ ...priced, id: 'cable', variantId: undefined }]);
+  assert.equal('deviceModelId' in parent, false, 'a parent-only line has no option snapshot');
+  assert.equal(parent.imageUrl, '/img/red.png', 'its photo snapshot still travels with the line');
+});
+
 test('buildOrderItemLines never trusts caller prices', () => {
   const cart = resolveCartItems([{ id: 'pa-gadzio-20w-usbc', quantity: 3 }]);
   const [resolved] = cart.items;

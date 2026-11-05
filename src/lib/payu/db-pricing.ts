@@ -54,6 +54,14 @@ export interface CatalogPriceRow {
   /** The pre-sale price, only when the resolved price is a sale price. */
   regular_price_paise?: number | string | null;
   image_url?: string | null;
+  /** The chosen photo's alt text, stored with the order line. */
+  image_alt?: string | null;
+  /** The exact option this row sells, snapshotted onto the order line. */
+  variant_device_model_id?: string | null;
+  variant_device_model_name?: string | null;
+  variant_colour_id?: string | null;
+  variant_colour_name?: string | null;
+  variant_colour_hex?: string | null;
   /** Scope metadata for coupon matching. */
   category_id?: string | null;
   brand_id?: string | null;
@@ -77,6 +85,13 @@ export interface PricedCartItem {
   /** The pre-sale unit price in paise, when this line is on sale. */
   regularPricePaise?: number;
   image?: string;
+  imageAlt?: string | null;
+  /** The exact option this line sold, as read from the database. */
+  deviceModelId?: string | null;
+  deviceModelName?: string | null;
+  colourId?: string | null;
+  colourName?: string | null;
+  colourHex?: string | null;
   /** Scope metadata for coupon matching. */
   categoryId?: string | null;
   brandId?: string | null;
@@ -193,6 +208,14 @@ export function priceCartLines(
         typeof row.image_url === 'string' && row.image_url.trim()
           ? row.image_url
           : undefined,
+      imageAlt: row.image_alt ? String(row.image_alt) : null,
+      // Snapshotted at order time: renaming or replacing an option or photo
+      // must never change what an old order says it sold.
+      deviceModelId: row.variant_device_model_id ? String(row.variant_device_model_id) : null,
+      deviceModelName: row.variant_device_model_name ? String(row.variant_device_model_name) : null,
+      colourId: row.variant_colour_id ? String(row.variant_colour_id) : null,
+      colourName: row.variant_colour_name ? String(row.variant_colour_name) : null,
+      colourHex: row.variant_colour_hex ? String(row.variant_colour_hex) : null,
       categoryId: row.category_id ? String(row.category_id) : null,
       brandId: row.brand_id ? String(row.brand_id) : null,
       onSale: row.on_sale === true,

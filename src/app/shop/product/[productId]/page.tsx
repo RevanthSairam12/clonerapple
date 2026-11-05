@@ -10,6 +10,8 @@ import { getUserSession } from '@/lib/user-auth';
 
 interface Props {
   params: Promise<{ productId: string }>;
+  /** A shared link restores the model and colour chosen on the product page. */
+  searchParams: Promise<{ model?: string; colour?: string }>;
 }
 
 export const dynamic = 'force-dynamic';
@@ -38,8 +40,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-export default async function ProductPage({ params }: Props) {
+export default async function ProductPage({ params, searchParams }: Props) {
   const { productId } = await params;
+  const query = await searchParams;
   const [detail, sale, session] = await Promise.all([
     getProductDetail(productId),
     readSaleState(),
@@ -60,6 +63,8 @@ export default async function ProductPage({ params }: Props) {
         product={detail.product}
         saleLive={sale.live}
         inStock={detail.stock.inStock}
+        initialModel={query.model ?? null}
+        initialColour={query.colour ?? null}
       />
     );
   }
@@ -70,6 +75,8 @@ export default async function ProductPage({ params }: Props) {
       product={detail.product}
       saleLive={sale.live}
       inStock={detail.stock.inStock}
+      initialModel={query.model ?? null}
+      initialColour={query.colour ?? null}
     />
   );
 }

@@ -300,7 +300,10 @@ test('PayU SQL retains inactive refs without weakening ownership, stock, price o
   assert.match(cart.items[0].variantLabel, /Saved model/);
   assert.equal(cart.priceChanges.length, 1);
   await assert.rejects(payu.resolveCartItemsFromDbUsing(sql, [{ id: 'p', variantId: 'foreign', quantity: 1 }]), /selection is no longer available/);
-  const q = queries[0];
+  // The first statement is the colour-link capability probe; assert on the
+  // catalogue statement itself.
+  const q = queries.find(query => query.includes('from products p'));
+  assert.ok(q, 'the catalogue statement ran');
   for (const pattern of [/c.is_active and c.deleted_at is null/, /p.deleted_at is null/, /and p.is_active/, /v.product_id=p.id/, /v.is_active and v.is_purchasable and v.retired_at is null/, /s.id is not null/, /trim\(v.sku\)/, /trim\(v.combination_key\)/, /requires_compatibility/, /dm.id is not null and db.id is not null/, /pdm.product_id=p.id/, /pdm.archived_at is null/]) assert.match(q, pattern);
   assert.doesNotMatch(q, /\b(?:dm|db).is_active/);
 });

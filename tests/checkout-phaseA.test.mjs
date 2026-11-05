@@ -53,7 +53,8 @@ test('cart aliases and shared footer have neutral checkout branding', async () =
 test('checkout shell and direct buy preserve shared navigation, footer and image', async () => {
   const page = await src('app/checkout/page.tsx');
   assert.match(page, /<GlobalNav bannerVisible=\{false\}/); assert.match(page, /<GlobalFooter/);
-  assert.match(page, /image: requestedProduct.image/);
+  // Buy Now shows the chosen colour's photo when it has one, else the product's.
+  assert.match(page, /image: photos\[0\]\?\.url \?\? requestedProduct\.image/);
 });
 test('initiation shares browser validators and revalidates owned saved addresses before creation', async () => {
   const route = await src('app/api/payu/initiate/route.ts');

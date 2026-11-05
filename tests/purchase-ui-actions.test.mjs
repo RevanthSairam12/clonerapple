@@ -24,8 +24,10 @@ function host({ addItem = async () => ({ status: 'added' }), verifySelections = 
     if (cache.has(relative)) return cache.get(relative);
     const filename = path.join(root, relative), module = { exports: {} };
     const code = ts.transpileModule(readFileSync(filename, 'utf8'), { fileName: filename, compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
-    vm.runInNewContext(code, { module, exports: module.exports, React: react, AbortController, URLSearchParams,
-      window: { scrollY: 0, addEventListener() {}, removeEventListener() {} },
+    vm.runInNewContext(code, { module, exports: module.exports, React: react, AbortController, URL, URLSearchParams,
+      window: { scrollY: 0, addEventListener() {}, removeEventListener() {},
+        location: { href: 'http://localhost/shop/product/p' }, history: { replaceState() {} },
+        Image: function () { this.src = ''; } },
       setTimeout(fn) { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout(id) { timers.delete(id); }, fetch: request,
       require(name) {
         if (name === 'react') return react;
@@ -33,14 +35,23 @@ function host({ addItem = async () => ({ status: 'added' }), verifySelections = 
         if (name === 'next/navigation') return { useRouter: () => ({ push: url => navigations.push(url) }) };
         if (name === '@/lib/cart/CartContext') return { useCart: () => ({ addItem, items: [] }) };
         if (name === '@/lib/storefront/use-availability') return { useAvailability: () => ({ blocked: false }) };
-        if (name === '@/components/shop/CommerceVariantSelector') return { CommerceVariantSelector: props => react.createElement('select', { 'data-variant-picker': true, onChange: event => props.onChange(event.target.value) }) };
+        // The real selector's contract: a model key (or null) plus a colour key.
+        // Driving it by variant id keeps the fixture readable while still
+        // exercising the page's exact-row resolution.
+        if (name === '@/components/shop/OptionSelector') return { OptionSelector: props => react.createElement('select', {
+          'data-variant-picker': true, onChange: event => {
+            const chosen = props.variants.find(entry => entry.id === event.target.value);
+            if (!chosen) return;
+            props.onChange({ modelKey: chosen.deviceModelId ?? null, colourKey: chosen.colourId ?? null });
+          } }) };
         if (name === '@/components/shop/ProductDescriptionSections') return { ProductDescriptionSections: () => null };
         if (name.endsWith('/GlobalNav')) return { GlobalNav: () => null };
         if (name.endsWith('/GlobalFooter')) return { GlobalFooter: () => null };
         if (name.endsWith('/GadzioTrustBar')) return { GadzioTrustBar: () => null };
         if (name === '@/lib/storefront/use-purchase-action') return load('src/lib/storefront/use-purchase-action.ts');
         if (name === '@/lib/storefront/selection') return { verifySelections, priceNeedsReview: (a, b) => a.price !== b.price || a.regularPrice !== b.regularPrice };
-        if (name === '@/lib/storefront/availability-rules') return { STOCK_NOT_AVAILABLE: 'Stock not available', stockBlocked: (stock, sale) => !stock && !sale };
+        if (name === '@/lib/storefront/availability-rules' || name === './availability-rules') return { STOCK_NOT_AVAILABLE: 'Stock not available', stockBlocked: (stock, sale) => !stock && !sale };
+        if (name === '@/lib/storefront/option-selection') return load('src/lib/storefront/option-selection.ts');
         if (name === '@/lib/utils') return { formatINR: value => `₹${value}` };
         throw new Error(`Blocked application/backend import: ${name}`);
       } });
@@ -99,20 +110,28 @@ for (const [file, name] of [
     addItem: async input => { adds.push(input); return { status: 'unavailable', message: 'Exact option unavailable' }; },
     verifySelections: async (lines, signal) => { checks.push({ lines, signal }); return result; },
   });
+  // Two colours under one model: no row is chosen until the customer picks a
+  // colour, so the first Add/Buy must refuse rather than substitute a sibling.
   const detail = { ...product, inventoryMode: 'variant', images: [], inTheBox: [], specs: {}, features: [], highlights: [],
-    purchasableVariants: [{ id: 'exact', sku: 'EXACT', label: 'Exact model', deviceModelName: 'Phone', optionValue: 'Blue', pricePaise: 10000, regularPricePaise: 10000, inStock: true }] };
+    purchasableVariants: [
+      { id: 'exact', sku: 'EXACT', label: 'Phone / Blue', deviceModelId: 'phone-model', deviceModelName: 'Phone',
+        colourId: 'blue', colourName: 'Blue', colourHex: '#0071E3', pricePaise: 10000, regularPricePaise: 10000, inStock: true },
+      { id: 'sibling', sku: 'SIBLING', label: 'Phone / Red', deviceModelId: 'phone-model', deviceModelName: 'Phone',
+        colourId: 'red', colourName: 'Red', colourHex: '#FF3B30', pricePaise: 12000, regularPricePaise: 12000, inStock: true },
+    ] };
   const Component = ui.load(file)[name], props = { product: detail, saleLive: true };
   const render = () => ui.render(Component, props);
   const text = node => node == null ? '' : typeof node !== 'object' ? String(node) : (node.props.children ?? []).map(text).join(' ');
   const buy = () => ui.nodes().find(node => node.type === 'button' && text(node).trim() === 'Buy Now').props.onClick();
   const add = () => ui.nodes().find(node => node.type === 'button' && /Add to Bag/.test(text(node))).props.onClick();
   render();
-  await buy(); await add();
+  await buy(); await add(); render();
   assert.equal(checks.length, 0); assert.equal(adds.length, 0);
+  assert.match(ui.text(), /Choose your model and colour/);
   ui.nodes().find(node => node.props['data-variant-picker']).props.onChange({ target: { value: 'exact' } }); render();
   await add(); render();
   assert.equal(adds[0].variantId, 'exact'); assert.equal(adds[0].variantSku, 'EXACT');
-  assert.match(ui.text(), /Exact option unavailable/);
+  assert.match(ui.text(), /Out of stock for this option/);
   await buy(); render();
   assert.equal(checks[0].lines[0].variantId, 'exact'); assert.equal(checks[0].lines[0].quantity, 1);
   assert.equal(ui.navigations.length, 0, 'sale display cannot bypass exact-stock refusal');

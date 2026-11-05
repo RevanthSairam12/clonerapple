@@ -6,6 +6,7 @@ import { OrderDocument } from '@/components/orders/OrderDocument';
 import { requireAccountPageSession } from '@/lib/account/auth';
 import { getCustomerOrderDetail } from '@/lib/account/orders';
 import { getCustomerDocumentState } from '@/lib/orders/document-data';
+import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
 import { parseCustomerDocumentMode } from '@/lib/orders/document-policy';
 import { orderTotals } from '@/lib/store-admin/order-documents';
 
@@ -45,7 +46,10 @@ export default async function AccountReceiptPage({ params, searchParams }: {
   } : null;
   const items = order.items.map((item, index) => ({
     lineNumber: index + 1, productName: item.name, productId: item.id,
-    variantId: item.variantId, variantSku: item.variantSku, variantLabel: item.variantLabel,
+    variantId: item.variantId, variantSku: item.variantSku,
+    // The snapshot label ("iPhone 16 · Red") replaces the live row label.
+    variantLabel: optionSnapshotLabel(item) ?? item.variantLabel,
+    imageUrl: item.image, imageAlt: item.imageAlt ?? item.name,
     quantity: item.quantity, unitPricePaise: Math.round(item.unitPrice * 100),
     lineTotalPaise: Math.round(item.totalPrice * 100), currency: order.currency,
   }));

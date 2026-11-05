@@ -74,6 +74,7 @@ function mocksFor(order, settings = {}) {
       }), mode),
     },
     '@/lib/orders/fulfilment': fulfilment,
+    '@/lib/orders/option-snapshot': load('src/lib/orders/option-snapshot.ts', {}),
     '@/lib/catalog/storefront': { formatPaise: sharedMoney },
     '@/lib/account/bill-requests': { getBillRequest: async () => null, listBillReasons: async () => [] },
     '@/lib/store-admin/refund-lifecycle': { getRefundRequests: emptyList },

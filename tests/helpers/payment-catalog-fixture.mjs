@@ -13,8 +13,14 @@ export function paymentConnection({ expired = false, rows, failure } = {}) {
   const queries = [];
   const sql = async (strings) => {
     const query = strings.join('?'); queries.push(query);
+    if (query.includes("to_regclass('colours')")) return [{ colours: false }];
+    if (query.includes('from information_schema.columns')) return [{ present: false }];
     if (query.includes('from sale_settings')) return [{ enabled: true, starts_at: null, ends_at: new Date('2026-11-03T12:00:00Z'), db_now: new Date('2026-11-03T11:00:00Z') }];
     if (query.includes('clock_timestamp()')) return [{ db_now: new Date(expired ? '2026-11-03T12:00:00Z' : '2026-11-03T11:59:00Z') }];
+    // Inline `sql`...`` fragments are not queries: in postgres.js they compose
+    // the outer statement. Return their text so the outer query still renders.
+    if (query.trim() === '' || query.includes('from product_images pi')
+      || query.includes('as variant_device_model_id') || query.includes('left join product_variant_colours')) return query;
     if (query.includes('from products p')) { if (failure) throw failure; return rows ?? [
       { id: 'case', name: 'Case', inventory_mode: 'variant', price_paise: 10000, sale_price_paise: 8000, variant_id: 'inherited', variant_sku: 'BASE', option_price_paise: null, option_sale_price_paise: null, track_inventory: true },
       { id: 'case', name: 'Case', inventory_mode: 'variant', price_paise: 10000, sale_price_paise: 8000, variant_id: 'override', variant_sku: 'PRO', option_price_paise: 15000, option_sale_price_paise: 12000, track_inventory: true },

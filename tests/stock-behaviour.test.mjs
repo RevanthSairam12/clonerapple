@@ -238,7 +238,8 @@ test('detail pages render the shared rule and re-check on click', async () => {
     assert.match(text, /useAvailability\(/, `${file} uses the hook`);
     assert.match(text, /const unavailable = availability\.blocked/);
     assert.match(text, /await verifySelections\(/, `${file} checks fresh exact selections before Buy Now`);
-    assert.match(text, /purchase\.run\(\(signal\) => addItem\(/, `${file} delegates Add to authoritative cart validation`);
+    assert.match(text, /purchase\.run\(async \(signal\) =>/, `${file} runs Add through the purchase action`);
+    assert.match(text, /await addItem\(\{/, `${file} delegates Add to authoritative cart validation`);
     assert.match(text, /disabled=\{isAddingToBag \|\| unavailable\}/, `${file} disables both buttons`);
     assert.match(text, /\{unavailable \? STOCK_NOT_AVAILABLE :/, `${file} labels the block`);
   }

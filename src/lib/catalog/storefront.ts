@@ -25,6 +25,25 @@ if (typeof window !== 'undefined') {
 export interface StorefrontColor {
   name: string;
   hex: string;
+  /** The shared colour id, when the swatch comes from the shared list. */
+  id?: string;
+}
+
+/** One product photo with the colour it belongs to (migration 0060). */
+export interface StorefrontImage {
+  url: string;
+  alt: string;
+  colourId: string | null;
+  role: string;
+  sortOrder: number;
+}
+
+/** One active device model a product can be discovered by, with its brand. */
+export interface StorefrontCompatibilityModel {
+  id: string;
+  name: string;
+  brandId: string;
+  brandName: string;
 }
 
 export interface StorefrontSpec {
@@ -50,9 +69,21 @@ export interface StorefrontPurchasableVariant {
   label: string;
   deviceModelId: string | null;
   deviceModelName: string | null;
+  /** Brand of the device model, for the grouped model filter. */
+  deviceModelBrandId?: string | null;
+  deviceModelBrandName?: string | null;
+  /**
+   * False when the model or its brand is deactivated. A saved option keeps
+   * selling, but the model never appears as a discovery filter value.
+   */
+  deviceModelEligible?: boolean;
   optionName: string;
   optionValue: string;
   combinationKey: string;
+  /** Shared colour link (`product_variant_colours`), when one exists. */
+  colourId: string | null;
+  colourName: string | null;
+  colourHex: string | null;
   pricePaise: number;
   regularPricePaise: number;
   salePricePaise: number | null;
@@ -86,6 +117,11 @@ export interface StorefrontProduct {
   compareAtPaise: number | null;
   image: string;
   gallery: string[];
+  /**
+   * The same photos with their colour link, alt text and order, so the detail
+   * page can switch the gallery to the selected colour without a second read.
+   */
+  images: StorefrontImage[];
   hoverImage?: string;
   colors: StorefrontColor[];
   /** Product-level facets, e.g. `{ model: 'iPhone 17', brand: 'Gadzio' }`. */
@@ -96,6 +132,8 @@ export interface StorefrontProduct {
   /** Only explicitly searchable mapped attributes and current device joins. */
   searchValues: string[];
   compatibility: string[];
+  /** The same active models as `compatibility`, with their shared ids and brands. */
+  compatibilityModels: StorefrontCompatibilityModel[];
   material: string;
   brand: string;
   description: string;
@@ -237,12 +275,14 @@ interface ProductAggregate {
   attributes: Row[];
   deviceModels: Row[];
   variants: Row[];
+  variantColours?: Row[];
   stock?: Row;
   variantStock: Row[];
 }
 
 function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontProduct {
   const { row, images, attributes, deviceModels, variants, stock } = aggregate;
+  const variantColours = aggregate.variantColours ?? [];
 
   const price = resolveEffectivePrice(
     {
@@ -273,10 +313,27 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     .filter((image) => text(image.role) !== 'hover')
     .map((image) => text(image.url))
     .filter(Boolean);
+  const storefrontImages: StorefrontImage[] = ordered
+    .map((image) => ({
+      url: text(image.url),
+      alt: text(image.alt),
+      colourId: nullableText(image.colour_id),
+      role: text(image.role),
+      sortOrder: Math.round(number(image.sort_order)),
+    }))
+    .filter((image) => image.url);
 
   // Saved options keep their mapped labels after reference deactivation, but
   // inactive references must not reappear in discovery facets or search.
   const discoveryModels = deviceModels.filter((model) => model.selection_eligible !== false);
+  const compatibilityModels: StorefrontCompatibilityModel[] = discoveryModels
+    .map((model) => ({
+      id: text(model.id),
+      name: text(model.name).trim(),
+      brandId: text(model.brand_id),
+      brandName: text(model.brand_name).trim(),
+    }))
+    .filter((model) => model.id && model.name);
   const projection = projectManagedCatalog(attributes, discoveryModels);
   const { facets: facetsFlat, facetValues, compatibility } = projection;
   // Product merchandising brand is global, unlike type-scoped attributes.
@@ -303,11 +360,18 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
       { pricePaise: price.regularPaise, salePricePaise: price.salePaise }, saleLive,
       { pricePaise: variant.price_paise_override == null ? null : number(variant.price_paise_override),
         salePricePaise: variant.sale_price_paise == null ? null : number(variant.sale_price_paise) });
-    const deviceModelName = nullableText(deviceModels.find((model) => model.id === variant.device_model_id)?.name);
+    const modelRow = deviceModels.find((model) => model.id === variant.device_model_id);
+    const deviceModelName = nullableText(modelRow?.name);
+    const colourLink = variantColours.find((entry) => text(entry.variant_id) === text(variant.id));
     return { id: text(variant.id), sku: text(variant.sku),
       label: [deviceModelName, [text(variant.option_name), text(variant.option_value)].filter(Boolean).join(': ')].filter(Boolean).join(' • ') || text(variant.sku),
       deviceModelId: nullableText(variant.device_model_id), deviceModelName,
+      deviceModelBrandId: nullableText(modelRow?.brand_id),
+      deviceModelBrandName: nullableText(modelRow?.brand_name),
+      deviceModelEligible: modelRow ? modelRow.selection_eligible !== false : true,
       optionName: text(variant.option_name), optionValue: text(variant.option_value), combinationKey: text(variant.combination_key),
+      colourId: nullableText(colourLink?.colour_id), colourName: nullableText(colourLink?.colour_name),
+      colourHex: nullableText(colourLink?.colour_hex),
       pricePaise: variantPrice.unitPaise, regularPricePaise: variantPrice.regularPaise, salePricePaise: variantPrice.salePaise,
       onSale: variantPrice.onSale, inStock: variantStates[index].inStock };
   }) : [];
@@ -333,12 +397,14 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     compareAtPaise: compareAt,
     image: primaryImage(ordered),
     gallery,
+    images: storefrontImages,
     colors,
     facets: facetsFlat,
     facetValues,
     facetLabels: projection.facetLabels,
     searchValues: projection.searchValues,
     compatibility,
+    compatibilityModels,
     material: facetsFlat.material || '',
     brand: text(row.brand) || facetsFlat.brand || '',
     description: text(row.description),
@@ -363,9 +429,19 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
   const badge = nullableText(row.badge);
   if (badge) product.badge = badge;
 
-  // Active variants are the colour swatches the detail page renders. Variants
-  // carry no price yet (see 0011), so this only affects display.
+  // Active variants are the colour swatches the detail page renders. Shared
+  // colour links win; a pre-0059 variant keeps its free-text value as a
+  // display-only swatch.
   if (colors.length === 0) {
+    const linked = variantColours
+      .map((entry) => ({
+        id: text(entry.colour_id),
+        name: text(entry.colour_name),
+        hex: text(entry.colour_hex) || '#1d1d1f',
+      }))
+      .filter((color) => color.name);
+    const unique = new Map<string, StorefrontColor>();
+    for (const color of linked) unique.set(color.id || color.name, color);
     const variantColors = variants
       .filter((variant) => Boolean(variant.is_active))
       .sort((a, b) => number(a.sort_order) - number(b.sort_order))
@@ -374,7 +450,7 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
         hex: text(variant.option_hex) || '#1d1d1f',
       }))
       .filter((color) => color.name);
-    product.colors = variantColors;
+    product.colors = unique.size > 0 ? [...unique.values()] : variantColors;
   }
 
   return applySaleDisplay(product, saleLive);
@@ -389,14 +465,34 @@ export interface CatalogLoad {
   attributes: Row[];
   deviceModels: Row[];
   variants: Row[];
+  /** Shared colour links; empty until migrations 0059/0060 are applied. */
+  variantColours: Row[];
   stock: Row[];
+}
+
+/**
+ * Whether the shared-colour tables exist.
+ *
+ * The storefront must keep serving on a database that has not applied
+ * migrations 0059/0060 yet; `to_regclass` answers without throwing on a
+ * missing relation. Once applied, colour links and per-colour photos load.
+ */
+async function sharedColoursAvailable(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+): Promise<boolean> {
+  const rows = await sql<Array<{ available: boolean }>>`
+    select (to_regclass('colours') is not null
+      and to_regclass('product_variant_colours') is not null) as available
+  `;
+  return rows[0]?.available === true;
 }
 
 /** The read itself, so tests can run it against a throwaway schema. */
 export async function loadCatalogUsing(
   sql: NonNullable<ReturnType<typeof getSql>>,
 ): Promise<CatalogLoad> {
-  const [categories, products, images, attributes, deviceModels, variants, stock] = await Promise.all([
+  const colourLinks = await sharedColoursAvailable(sql);
+  const [categories, products, images, attributes, deviceModels, variants, variantColours, stock] = await Promise.all([
     sql`
       select c.id, c.slug, c.name, c.title, c.subhead, c.breadcrumb_leaf,
              c.count_noun, c.disclaimer, c.nav_label, c.nav_href,
@@ -424,8 +520,9 @@ export async function loadCatalogUsing(
       order by p.sort_order asc, p.name asc
     `,
     sql`
-      select id, product_id, url, alt, role, sort_order
-      from product_images
+      select id, product_id, url, alt, role, sort_order,
+             to_jsonb(pi)->>'colour_id' as colour_id
+      from product_images pi
       where deleted_at is null and is_active
     `,
     sql`
@@ -443,7 +540,8 @@ export async function loadCatalogUsing(
       order by m.sort_order asc, a.key asc
     `,
     sql`
-      select j.product_id, d.id, d.name, (d.is_active and b.is_active) as selection_eligible
+      select j.product_id, d.id, d.name, d.brand_id, b.name as brand_name,
+             (d.is_active and b.is_active) as selection_eligible
       from product_device_models j
       join device_models d on d.id = j.device_model_id
       join device_brands b on b.id = d.brand_id
@@ -456,6 +554,15 @@ export async function loadCatalogUsing(
       from product_variants
       order by sort_order asc
     `,
+    colourLinks
+      ? sql`
+          select vc.variant_id, vc.product_id, vc.colour_id,
+                 c.name as colour_name, c.hex as colour_hex
+          from product_variant_colours vc
+          join colours c on c.id = vc.colour_id
+        `
+      : sql`select null::text as variant_id, null::text as product_id, null::text as colour_id,
+                   null::text as colour_name, null::text as colour_hex where false`,
     sql`
       select product_id, variant_id, on_hand, reserved, low_stock_threshold, track_inventory
       from stock
@@ -469,6 +576,7 @@ export async function loadCatalogUsing(
     attributes: attributes as Row[],
     deviceModels: deviceModels as Row[],
     variants: variants as Row[],
+    variantColours: variantColours as Row[],
     stock: stock as Row[],
   };
 }
@@ -498,6 +606,7 @@ function mapAll(load: CatalogLoad, saleLive: boolean): {
   const attributes = groupByProduct(load.attributes ?? []);
   const deviceModels = groupByProduct(load.deviceModels ?? []);
   const variants = groupByProduct(load.variants);
+  const variantColours = groupByProduct(load.variantColours ?? []);
   const stock = groupByProduct(load.stock);
 
   const byProductId = new Map<string, StorefrontProduct>();
@@ -509,6 +618,7 @@ function mapAll(load: CatalogLoad, saleLive: boolean): {
       attributes: attributes.get(id) ?? [],
       deviceModels: deviceModels.get(id) ?? [],
       variants: variants.get(id) ?? [],
+      variantColours: variantColours.get(id) ?? [],
       stock: stock.get(id)?.find((entry) => entry.variant_id == null),
       variantStock: stock.get(id)?.filter((entry) => entry.variant_id != null) ?? [],
     }, saleLive));
@@ -599,7 +709,9 @@ export function applySaleDisplay(product: StorefrontProduct, saleLive: boolean):
     salePaise: minimum.salePricePaise, onSale: minimum.onSale } : parent;
   const priceFrom = options.some((option) => option.pricePaise !== price.unitPaise);
   const noOptions = product.inventoryMode === 'variant' && !minimum;
-  const priceDisplay = noOptions ? 'Unavailable' : `${priceFrom ? 'From ' : ''}${formatPaise(price.unitPaise)}`;
+  // Cards and detail pages headline the cheapest buyable option, never "From":
+  // the first amount a customer sees is a real price they can act on.
+  const priceDisplay = noOptions ? 'Unavailable' : formatPaise(price.unitPaise);
   const variantsUnchanged = purchasableVariants?.every((variant, index) => variant === product.purchasableVariants?.[index]) ?? true;
   // Once provenance is normalized, a request with unchanged prices keeps the
   // snapshot identity, including all option objects. Never normalize by mutation.

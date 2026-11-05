@@ -57,6 +57,59 @@ async function loadPricingRows(
 ): Promise<PricingRead> {
   if (!sql || ids.length === 0) return { rows: [], unavailable: [] };
 
+  // 0059/0060 may not be applied yet: read the shared colour link only when the
+  // tables exist, so checkout keeps working on an older database.
+  const [capabilities] = await sql<Array<{ colours: boolean }>>`
+    select (to_regclass('colours') is not null
+      and to_regclass('product_variant_colours') is not null) as colours
+  `;
+  const sharedColours = capabilities?.colours === true;
+
+  // The photo this line sells: the chosen colour's own photo first, then the
+  // product's unlinked (default) photos, then anything else. Hover photos are
+  // never sold with a line.
+  const imageColumn = sharedColours
+    ? sql`(
+        select pi.url || chr(31) || coalesce(pi.alt, '')
+        from product_images pi
+        where pi.product_id = p.id
+          and pi.is_active
+          and pi.deleted_at is null
+        order by
+          case
+            when (to_jsonb(pi)->>'colour_id') = vc.colour_id then 0
+            when (to_jsonb(pi)->>'colour_id') is null then 1
+            else 2
+          end,
+          case pi.role when 'primary' then 0 when 'hover' then 1 else 2 end,
+          pi.sort_order,
+          pi.id
+        limit 1
+      ) as image`
+    : sql`(
+        select pi.url || chr(31) || coalesce(pi.alt, '')
+        from product_images pi
+        where pi.product_id = p.id
+          and pi.is_active
+          and pi.deleted_at is null
+        order by
+          case pi.role when 'primary' then 0 when 'hover' then 1 else 2 end,
+          pi.sort_order,
+          pi.id
+        limit 1
+      ) as image`;
+  const snapshotColumns = sharedColours
+    ? sql`v.device_model_id as variant_device_model_id, dm.name as variant_device_model_name,
+           vc.colour_id as variant_colour_id, col.name as variant_colour_name,
+           col.hex as variant_colour_hex,`
+    : sql`v.device_model_id as variant_device_model_id, dm.name as variant_device_model_name,
+           null::text as variant_colour_id, null::text as variant_colour_name,
+           null::text as variant_colour_hex,`;
+  const colourJoins = sharedColours
+    ? sql`left join product_variant_colours vc on vc.variant_id = v.id
+          left join colours col on col.id = vc.colour_id`
+    : sql``;
+
   const rows = await sql`
     select p.id, p.name, p.subtitle, p.inventory_mode,
            p.price_paise, p.sale_price_paise,
@@ -64,20 +117,10 @@ async function loadPricingRows(
            v.sale_price_paise as option_sale_price_paise,
            v.id as variant_id,v.sku as variant_sku,
            concat_ws(' / ',dm.name,v.option_value) as variant_label,
+           ${snapshotColumns}
            p.category_id, p.brand_id,
            p.in_stock, s.track_inventory,
-           (
-             select pi.url
-             from product_images pi
-             where pi.product_id = p.id
-               and pi.is_active
-               and pi.deleted_at is null
-             order by
-               case pi.role when 'primary' then 0 when 'hover' then 1 else 2 end,
-               pi.sort_order,
-               pi.id
-             limit 1
-           ) as image_url
+           ${imageColumn}
     from products p
     join categories c on c.id = p.category_id and c.is_active and c.deleted_at is null
     left join product_variants v on v.product_id=p.id and p.inventory_mode='variant'
@@ -87,6 +130,7 @@ async function loadPricingRows(
     left join device_brands db on db.id=dm.brand_id
     left join product_types pt on pt.id=p.product_type_id
     left join stock s on s.product_id=p.id and s.variant_id is not distinct from v.id
+    ${colourJoins}
     where p.deleted_at is null
       and (p.inventory_mode='product' or (v.id is not null and s.id is not null
         and (not coalesce(pt.requires_compatibility,false) or v.device_model_id is not null)
@@ -123,6 +167,12 @@ async function loadPricingRows(
       unavailable.push(name);
     }
 
+    const [imageUrl, imageAlt] = row.image === null || row.image === undefined
+      ? ['', '']
+      : String(row.image).split(String.fromCharCode(31));
+    const optionalText = (value: unknown) =>
+      value === null || value === undefined || String(value).trim() === '' ? null : String(value);
+
     return {
       id: String(row.id),
       inventory_mode: String(row.inventory_mode || 'product'),
@@ -136,9 +186,13 @@ async function loadPricingRows(
       // The amount PayU will charge: one resolver decides sale vs regular.
       price_paise: price.unitPaise,
       regular_price_paise: price.onSale ? price.regularPaise : null,
-      image_url: row.image_url === null || row.image_url === undefined
-        ? null
-        : String(row.image_url),
+      image_url: imageUrl || null,
+      image_alt: imageAlt || `${name}${row.variant_label ? ` — ${String(row.variant_label)}` : ''}`,
+      variant_device_model_id: optionalText(row.variant_device_model_id),
+      variant_device_model_name: optionalText(row.variant_device_model_name),
+      variant_colour_id: optionalText(row.variant_colour_id),
+      variant_colour_name: optionalText(row.variant_colour_name),
+      variant_colour_hex: optionalText(row.variant_colour_hex),
       category_id: row.category_id === null || row.category_id === undefined
         ? null
         : String(row.category_id),

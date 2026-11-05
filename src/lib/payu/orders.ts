@@ -132,6 +132,15 @@ export interface OrderItemSnapshot {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  /** The photo the customer chose, snapshotted with the line. */
+  image?: string;
+  imageAlt?: string | null;
+  /** The exact option, read from the database at order time. */
+  deviceModelId?: string | null;
+  deviceModelName?: string | null;
+  colourId?: string | null;
+  colourName?: string | null;
+  colourHex?: string | null;
   /** Scope metadata used only while a coupon is being evaluated. */
   categoryId?: string | null;
   brandId?: string | null;
@@ -145,6 +154,14 @@ export interface OrderItemLine {
   variantId?: string | null;
   variantSku?: string | null;
   variantLabel?: string | null;
+  /** The exact option and photo, snapshotted (0061 columns). */
+  deviceModelId?: string | null;
+  deviceModelName?: string | null;
+  colourId?: string | null;
+  colourName?: string | null;
+  colourHex?: string | null;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
   productName: string;
   quantity: number;
   unitPricePaise: number;
@@ -172,6 +189,15 @@ export function buildOrderItemLines(
       lineNumber: index + 1,
       productId: baseId,
       ...(item.variantId ? { variantId: item.variantId, variantSku: item.variantSku, variantLabel: item.variantLabel } : {}),
+      ...(item.variantId ? {
+        deviceModelId: item.deviceModelId ?? null,
+        deviceModelName: item.deviceModelName ?? null,
+        colourId: item.colourId ?? null,
+        colourName: item.colourName ?? null,
+        colourHex: item.colourHex ?? null,
+      } : {}),
+      imageUrl: item.image ?? null,
+      imageAlt: item.imageAlt ?? null,
       productName: item.name,
       quantity: item.quantity,
       unitPricePaise: Math.round(item.unitPrice * 100),
@@ -854,9 +880,38 @@ export async function createOrderUsing(
       )
     `;
 
+    // 0061 may not be applied yet. Write the option/photo snapshot when the
+    // columns exist; an older database keeps its exact previous behaviour.
+    const [snapshotSupport] = await tx<Array<{ present: boolean }>>`
+      select exists (
+        select 1 from information_schema.columns
+        where table_name = 'order_items' and column_name = 'variant_colour_id'
+      ) as present
+    `;
+    const writeSnapshots = snapshotSupport?.present === true;
+
     // Normalised order_items rows: composite cart ids are reduced to catalog
     // base ids here, so every later lookup by product id works.
     for (const [index, line] of itemLines.entries()) {
+      if (writeSnapshots) {
+        await tx`
+          INSERT INTO order_items (
+            order_id, line_number, product_id, product_name, quantity,
+            unit_price_paise, line_total_paise, discount_paise, currency,variant_id,variant_sku,variant_label,
+            variant_device_model_id, variant_device_model_name,
+            variant_colour_id, variant_colour_name, variant_colour_hex,
+            image_url, image_alt
+          ) VALUES (
+            ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
+            ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
+            ${couponLineDiscounts[index] ?? 0}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null},
+            ${line.deviceModelId ?? null},${line.deviceModelName ?? null},
+            ${line.colourId ?? null},${line.colourName ?? null},${line.colourHex ?? null},
+            ${line.imageUrl ?? null},${line.imageAlt ?? null}
+          )
+        `;
+        continue;
+      }
       await tx`
         INSERT INTO order_items (
           order_id, line_number, product_id, product_name, quantity,

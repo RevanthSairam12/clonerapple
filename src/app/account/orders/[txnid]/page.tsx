@@ -7,6 +7,7 @@ import { OrderStatusChip } from '@/components/account/OrderStatusChip';
 import { requireAccountPageSession } from '@/lib/account/auth';
 import { getCustomerOrderDetail } from '@/lib/account/orders';
 import { getCustomerDocumentState } from '@/lib/orders/document-data';
+import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
 import { OrderDocumentStatus } from '@/components/orders/OrderDocument';
 import {
   accountOrderHistoryLabel,
@@ -80,11 +81,11 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
               {order.items.map((item, index) => (
                 <div key={`${item.id}:${item.variantId ?? 'legacy'}:${index}`} className="flex gap-4 py-4">
                   <div className="h-20 w-20 shrink-0 rounded-2xl bg-[#f5f5f7] p-2">
-                    {item.image && <img src={item.image} alt="" className="h-full w-full object-contain" />}
+                    {item.image && <img src={item.image} alt={item.imageAlt ?? item.name} className="h-full w-full object-contain" />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <h4 className="font-semibold">{item.name}</h4>
-                    {item.variantLabel && <p className="text-sm text-[#6e6e73]">{item.variantLabel}</p>}
+                    {optionSnapshotLabel(item) && <p className="text-sm text-[#6e6e73]">{optionSnapshotLabel(item)}</p>}
                     {item.variantSku && <p className="text-xs text-[#6e6e73]">SKU: {item.variantSku}</p>}
                     <p className="mt-1 text-sm text-[#6e6e73]">Qty {item.quantity} · ₹{item.unitPrice.toLocaleString('en-IN')} each</p>
                   </div>

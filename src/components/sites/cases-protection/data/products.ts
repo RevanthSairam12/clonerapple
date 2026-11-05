@@ -35,8 +35,12 @@ export interface Product {
   wasPriceDisplay?: string;
   image: string;
   hoverImage?: string;
+  /** Photos with alt text and a shared-colour link, for the colour gallery. */
+  photoGallery?: import('@/lib/catalog/storefront').StorefrontImage[];
   colors: ColorSwatch[];
   compatibility: string[];
+  /** The same active models with shared ids and brands, for the Phone model filter. */
+  compatibilityModels?: import('@/lib/catalog/storefront').StorefrontCompatibilityModel[];
   material: 'Liquid Silicone' | 'Crystal Clear' | 'AeroWeave Textile' | 'Heavy-Duty Armor' | 'MagSafe Compatible';
   brand: 'Gadzio Signature' | 'Gadzio Pro' | 'Spigen' | 'OtterBox' | 'Nomad' | 'Belkin';
   features: string[];

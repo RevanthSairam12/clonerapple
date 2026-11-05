@@ -35,9 +35,13 @@ export interface AccessoryProduct {
   image: string;
   /** Optional extra gallery images; falls back to [image] when omitted. */
   images: string[];
+  /** Photos with alt text and a shared-colour link, for the colour gallery. */
+  photoGallery?: import('@/lib/catalog/storefront').StorefrontImage[];
   colors: ColorSwatch[];
   /** Devices / things this item is compatible with (shown on the detail page). */
   compatibility: string[];
+  /** The same active models with shared ids and brands, for the Phone model filter. */
+  compatibilityModels?: import('@/lib/catalog/storefront').StorefrontCompatibilityModel[];
   /** Generic material/finish label (used as a search badge). */
   material: string;
   /** Generic brand label (used as a search badge + filter). */

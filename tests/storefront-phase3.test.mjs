@@ -111,7 +111,10 @@ test('typed projection respects each visibility flag, false/zero, and excludes l
 test('batched loader uses current type/category mapping and active definitions/models only', async () => {
   const queries = [];
   await low.loadCatalogUsing(async strings => { queries.push(strings.join('?')); return []; });
-  assert.equal(queries.length, 7);
+  // The seven catalogue reads, plus the colour-table capability probe and the
+  // gated colour-link read (empty when 0059 is not applied).
+  assert.equal(queries.length, 9);
+  assert.ok(queries.some(q => q.includes("to_regclass('colours')")));
   const attributes = queries.find(q => q.includes('join product_type_attributes'));
   for (const required of ['t.id = p.product_type_id', 't.category_id = p.category_id', 't.is_active',
     'm.is_active', 'a.is_active', 'a.deleted_at is null', 'v.archived_at is null', "lower(a.key) <> 'model'"]) {
@@ -213,11 +216,12 @@ test('PDP compatibility is informational, complete and does not inject model var
   assert.match(source, /Compatible devices/);
   assert.match(source, /availableSizes.map\(\(model\) => <p key=\{model\}>\{model\}<\/p>/);
   assert.match(source, /selectedVariant\?\.deviceModelName/);
-  assert.match(source, /CommerceVariantSelector/);
+  // The two-step selector reads the same shared rules; compatibility stays informational.
+  assert.match(source, /<OptionSelector variants=\{variants\}/);
   assert.doesNotMatch(source, /product\.compatibility\[0\]/, 'compatibility display never silently chooses a commerce model');
   assert.equal((source.match(/availableSizes.length > 0 &&/g) ?? []).length, 2);
   assert.doesNotMatch(source, /iPhone (16|17|18) Pro/);
   assert.match(source, /if \(!selectedSize\) return product\.description/);
-  assert.match(source, /model: selectedSize/);
+  assert.match(source, /model: selectedVariant\?\.deviceModelName \?\? ''/);
   assert.match(read('src/components/sites/accessories/AccessoryDetailPage.tsx'), /Section 2: Compatibility \*\/\}\s*\{product.compatibility.length > 0 &&/);
 });

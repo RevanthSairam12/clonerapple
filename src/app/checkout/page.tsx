@@ -6,7 +6,8 @@ import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
-import { getStorefrontRefs } from '@/lib/storefront/catalog';
+import { getProductDetail, getStorefrontRefs } from '@/lib/storefront/catalog';
+import { galleryForSelection } from '@/lib/storefront/option-selection';
 import Link from 'next/link';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
@@ -53,13 +54,22 @@ export default async function CheckoutPage({ searchParams }: Props) {
 
   if (requestedProduct) {
     const variant = requestedProduct.purchasableVariants?.find((entry) => entry.id === variantId);
+    // The chosen colour's own photo, exactly as the product page showed it.
+    const detail = await getProductDetail(requestedProduct.id);
+    const photos = galleryForSelection(
+      detail?.product.photoGallery ?? [],
+      [requestedProduct.image],
+      { modelKey: null, colourKey: variant?.colourId ?? null },
+      requestedProduct.name,
+      variant?.colourName ?? null,
+    );
     items = [
       {
         id: buildCartLineId({ productId: requestedProduct.id, variantId }),
         productId: requestedProduct.id, variantId, variantSku: variant?.sku, variantLabel: variant?.label,
         name: requestedProduct.name + (variant ? ` (${variant.label})` : ''),
         price: requestedProduct.pricePaise / 100,
-        image: requestedProduct.image,
+        image: photos[0]?.url ?? requestedProduct.image,
         ...(requestedProduct.regularPricePaise !== undefined
           ? { regularPrice: requestedProduct.regularPricePaise! / 100 }
           : {}),
