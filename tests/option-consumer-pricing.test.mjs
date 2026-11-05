@@ -19,13 +19,14 @@ function fixture(options = [{ price_paise_override: 1200 }, {}]) {
 }
 const row = data => snapshotFromLoad(data).products[0];
 
-test('category minimum uses effective eligible option prices, and From only for different amounts', () => {
+test('category minimum uses effective eligible option prices and headlines the cheapest amount', () => {
   const regular = row(fixture());
   assert.equal(regular.pricePaise, 1000);
-  assert.equal(regular.priceDisplay, 'From ₹10.00');
+  assert.equal(regular.priceDisplay, '₹10.00', 'the cheapest buyable option, never "From"');
+  assert.equal(regular.priceFrom, true, 'the flag still records that rows differ');
   const sale = applySaleDisplay(regular, true);
   assert.equal(sale.pricePaise, 800);
-  assert.equal(sale.priceDisplay, 'From ₹8.00');
+  assert.equal(sale.priceDisplay, '₹8.00');
   assert.equal(sale.regularPricePaise, 1000);
   assert.equal(sale.purchasableVariants[0].pricePaise, 1200, 'regular override suppresses parent sale');
   const equal = applySaleDisplay(row(fixture([{ price_paise_override: 1200, sale_price_paise: 800 }, {}])), true);
@@ -74,14 +75,14 @@ test('configured OOS options still participate independently of stock checks', (
   const data = fixture([{ price_paise_override: 500 }, { price_paise_override: 900 }]);
   data.stock[0].on_hand = 0;
   const product = row(data);
-  assert.equal(product.priceDisplay, 'From ₹5.00');
+  assert.equal(product.priceDisplay, '₹5.00', 'sold-out rows still set the cheapest headline');
   assert.equal(product.purchasableVariants[0].inStock, false);
 });
 
 test('search/card projections retain minimum label without leaking internal parent defaults', () => {
   const product = applySaleDisplay(row(fixture()), true);
   for (const projection of [refFromDatabase(product), accessoryProductFromDatabase(product), collectionProductFromDatabase(product)]) {
-    assert.equal(projection.priceDisplay, 'From ₹8.00');
+    assert.equal(projection.priceDisplay, '₹8.00');
     assert.equal(projection.wasPriceDisplay, '₹10.00');
     assert.ok(!('parentPricePaise' in projection));
     assert.ok(!('parentSalePricePaise' in projection));
@@ -169,8 +170,13 @@ test('customer price surfaces use server label and detail has no implicit select
   }
   for (const file of ['src/components/shop/ProductDetailPage.tsx', 'src/components/sites/accessories/AccessoryDetailPage.tsx']) {
     const source = await readFile(path.join(root, file), 'utf8');
-    assert.match(source, /priceDisplay: 'Choose model \/ specification for price'/);
-    assert.match(source, /regularPrice: undefined, wasPriceDisplay: undefined/);
-    assert.match(source, /price: selectedVariant\.pricePaise \/ 100/);
+    // The shared resolver decides the exact row's price, or the cheapest row's
+    // amount until the customer chooses. No surface shows a "From" range.
+    assert.match(source, /const price = optionPrice\(variants, selection/);
+    assert.match(source, /priceDisplay: formatOptionPaise\(price\.unitPaise\)/);
+    assert.doesNotMatch(source, /From \$\{formatOptionPaise/);
+    assert.match(source, /regularPrice: price\.onSale && price\.regularPaise \? price\.regularPaise \/ 100 : undefined/);
+    assert.match(source, /price: price\.unitPaise \/ 100/);
+    assert.doesNotMatch(source, /selectedVariant\.pricePaise/);
   }
 });
