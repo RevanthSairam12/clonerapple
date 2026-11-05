@@ -6,6 +6,7 @@
  * plan the server applies.
  */
 
+import { parseRupeesToPaise } from './money';
 import { normalizeOptionIdentity } from './product-option-combinations';
 
 export type SellBy = 'single' | 'colour' | 'model' | 'model_colour' | 'other';
@@ -267,4 +268,130 @@ function formatPaisePlain(paise: number): string {
 /** Colour swatches always carry their name, never colour alone. */
 export function colourText(colour: { name: string; hex: string } | null | undefined): string {
   return colour ? `${colour.name} (${colour.hex})` : 'No colour';
+}
+
+/* ------------------------------------------------- spreadsheet paste ---- */
+
+export interface PastedOptionRow {
+  /** 1-based line number in the pasted text, so an error points at what was pasted. */
+  line: number;
+  /** Position among the active sellable rows, in table order. */
+  rowIndex: number;
+  pricePaise?: number;
+  salePricePaise?: number;
+  stock?: number;
+}
+
+export interface OptionPasteResult {
+  rows: PastedOptionRow[];
+  errors: string[];
+}
+
+const PASTE_HEADERS = new Set(['price', 'sale', 'sale price', 'stock', 'price ₹', 'sale ₹']);
+
+/**
+ * Parse a pasted block of price, sale and stock values. One line per active
+ * sellable row, columns separated by tab (spreadsheet copy), comma or
+ * semicolon. A blank cell leaves that value unchanged. Nothing is applied
+ * unless every line parses, so a partial paste can never silently land.
+ */
+export function parseOptionTablePaste(text: string, rowCount: number): OptionPasteResult {
+  const errors: string[] = [];
+  const rows: PastedOptionRow[] = [];
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  let skippedHeader = false;
+  let rowIndex = 0;
+
+  for (const [index, raw] of lines.entries()) {
+    const line = raw.trim();
+    if (!line) continue;
+    const cells = line.split(/\t|,|;/).map((cell) => cell.trim());
+
+    if (!skippedHeader && !rows.length && cells.every((cell) => !cell || PASTE_HEADERS.has(cell.toLowerCase()))) {
+      skippedHeader = true;
+      continue;
+    }
+    if (cells.length > 3) {
+      errors.push(`Line ${index + 1}: use at most three columns — price, sale price, stock.`);
+      continue;
+    }
+    while (cells.length < 3) cells.push('');
+
+    let pricePaise: number | undefined;
+    let salePricePaise: number | undefined;
+    let stock: number | undefined;
+    let lineError = '';
+
+    if (cells[0]) {
+      const parsed = parseRupeesToPaise(cells[0]);
+      if (!parsed.ok) lineError = `price: ${parsed.message}`;
+      else if (parsed.paise === null || parsed.paise <= 0) lineError = 'price must be above zero.';
+      else pricePaise = parsed.paise;
+    }
+    if (cells[1] && !lineError) {
+      const parsed = parseRupeesToPaise(cells[1]);
+      if (!parsed.ok) lineError = `sale price: ${parsed.message}`;
+      else if (parsed.paise === null || parsed.paise <= 0) lineError = 'sale price must be above zero.';
+      else salePricePaise = parsed.paise;
+    }
+    if (cells[2] && !lineError) {
+      if (!/^\d+$/.test(cells[2])) lineError = 'stock must be a whole number of units.';
+      else if (Number(cells[2]) > 1_000_000) lineError = 'stock must be 1,000,000 units or fewer.';
+      else stock = Number(cells[2]);
+    }
+    if (!lineError && salePricePaise !== undefined && pricePaise !== undefined && salePricePaise >= pricePaise) {
+      lineError = 'sale price must be below the price on the same line.';
+    }
+    if (!lineError && pricePaise === undefined && salePricePaise === undefined && stock === undefined) {
+      lineError = 'nothing to apply — enter a price, sale price or stock.';
+    }
+    if (lineError) {
+      errors.push(`Line ${index + 1}: ${lineError}`);
+      continue;
+    }
+    if (rowIndex >= rowCount) {
+      errors.push(`Line ${index + 1}: there are only ${rowCount} active sellable rows.`);
+      continue;
+    }
+    rows.push({ line: index + 1, rowIndex, pricePaise, salePricePaise, stock });
+    rowIndex += 1;
+  }
+
+  if (!rows.length && !errors.length) {
+    errors.push('Paste at least one row of price, sale price or stock values.');
+  }
+  return { rows, errors };
+}
+
+/* ------------------------------------------------ keyboard navigation --- */
+
+/**
+ * Where arrow keys and Enter move focus inside the price/sale/stock grid.
+ * Tab is deliberately untouched: the browser already moves through the form
+ * in reading order. Returns null at an edge or for an unhandled key.
+ */
+export function nextTableCell(
+  row: number,
+  column: number,
+  rowCount: number,
+  columnCount: number,
+  key: string,
+): { row: number; column: number } | null {
+  if (rowCount <= 0 || columnCount <= 0) return null;
+  let nextRow = row;
+  let nextColumn = column;
+
+  if (key === 'ArrowDown' || key === 'Enter') nextRow = row + 1;
+  else if (key === 'ArrowUp') nextRow = row - 1;
+  else if (key === 'ArrowRight') {
+    nextColumn = column + 1;
+    if (nextColumn >= columnCount) { nextRow = row + 1; nextColumn = 0; }
+  } else if (key === 'ArrowLeft') {
+    nextColumn = column - 1;
+    if (nextColumn < 0) { nextRow = row - 1; nextColumn = columnCount - 1; }
+  } else return null;
+
+  if (nextRow === row && nextColumn === column) return null;
+  if (nextRow < 0 || nextRow >= rowCount || nextColumn < 0 || nextColumn >= columnCount) return null;
+  return { row: nextRow, column: nextColumn };
 }

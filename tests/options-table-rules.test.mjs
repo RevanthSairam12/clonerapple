@@ -70,6 +70,40 @@ test('row warnings are plain words and never block',()=>{
   assert.ok(duplicate.some(w=>/used by another row/.test(w)));
 });
 
+test('pasted rows parse only when every line is valid',()=>{
+  const pasted=rules.parseOptionTablePaste('price\tsale\tstock\n120\t100\t5\n180\t\t3',2);
+  assert.deepEqual(pasted.errors,[]);
+  assert.equal(pasted.rows.length,2);
+  assert.deepEqual(pasted.rows[0],{line:2,rowIndex:0,pricePaise:12000,salePricePaise:10000,stock:5});
+  assert.deepEqual(pasted.rows[1],{line:3,rowIndex:1,pricePaise:18000,salePricePaise:undefined,stock:3});
+  const blank=rules.parseOptionTablePaste('100,,',1);
+  assert.deepEqual(blank.rows,[{line:1,rowIndex:0,pricePaise:10000,salePricePaise:undefined,stock:undefined}]);
+});
+
+test('pasted rows report clear line errors and never apply a partial table',()=>{
+  const tooMany=rules.parseOptionTablePaste('100\t120\t1',1);
+  assert.match(tooMany.errors[0],/Line 1: sale price must be below/);
+  assert.equal(tooMany.rows.length,0);
+  const overflow=rules.parseOptionTablePaste('100\t\t1\n200\t\t2',1);
+  assert.match(overflow.errors[0],/only 1 active sellable row/);
+  const badStock=rules.parseOptionTablePaste('100\t\tmany',1);
+  assert.match(badStock.errors[0],/whole number/);
+  const empty=rules.parseOptionTablePaste('','1');
+  assert.match(empty.errors[0],/at least one row/);
+  const tooWide=rules.parseOptionTablePaste('1\t2\t3\t4',4);
+  assert.match(tooWide.errors[0],/at most three columns/);
+});
+
+test('arrow, Enter and Left/Right move between grid cells while Tab stays native',()=>{
+  assert.deepEqual(rules.nextTableCell(0,0,2,3,'ArrowRight'),{row:0,column:1});
+  assert.deepEqual(rules.nextTableCell(0,2,2,3,'ArrowRight'),{row:1,column:0});
+  assert.deepEqual(rules.nextTableCell(1,0,2,3,'ArrowLeft'),{row:0,column:2});
+  assert.deepEqual(rules.nextTableCell(0,1,2,3,'ArrowDown'),{row:1,column:1});
+  assert.deepEqual(rules.nextTableCell(1,1,2,3,'Enter'),null,'Enter at the last row stays put');
+  assert.equal(rules.nextTableCell(0,1,2,3,'Tab'),null,'Tab uses the browser order');
+  assert.deepEqual(rules.nextTableCell(1,2,2,3,'ArrowRight'),null);
+});
+
 test('variant price input treats blank, null and a number differently',()=>{
   const base={sku:'SKU-1',optionName:'Colour',optionValue:'Black'};
   assert.equal(crud.validateVariantInput(base).value.priceOverridePaise,undefined,'omitted means unchanged');
