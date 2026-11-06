@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/platform/db';
+import { deleteFromStorage } from '@/lib/platform/storage';
 
 import type { CatalogWrite } from './catalog-writes';
 import { altError } from './media-rules';
@@ -157,15 +158,24 @@ export async function updateMediaAlt(
   }
 }
 
-/** Soft delete. Refused while a product image or brand logo still points at it. */
+/**
+ * Soft delete. Refused while a product image or brand logo still points at it.
+ *
+ * The storage object is removed after the row is archived (L-8). The row is
+ * soft-deleted, but the object lives at a public CDN URL, so leaving it behind
+ * meant "archived" media stayed downloadable by anyone who kept the link.
+ * Removal is best-effort: the archive has already committed, and a Storage
+ * outage must not fail the staff action — the failure is logged without the URL.
+ */
 export async function archiveMedia(
   id: string,
 ): Promise<CatalogWrite<{ before: Row; after: Row }>> {
   const sql = getSql();
   if (!sql) return fail('unavailable', 'The media library is not available.');
 
+  let result: CatalogWrite<{ before: Row; after: Row }>;
   try {
-    return await sql.begin(async (tx) => {
+    result = await sql.begin(async (tx) => {
       const rows = (await tx`
         select * from store_media where id = ${id} and deleted_at is null for update
       `) as Row[];
@@ -194,4 +204,15 @@ export async function archiveMedia(
     console.warn('[store-admin/media] could not archive media');
     return fail('unavailable', 'The media library is not available.');
   }
+
+  if (result.ok) {
+    const storagePath = text(result.data.before.storage_path);
+    if (storagePath) {
+      const removed = await deleteFromStorage(storagePath);
+      if (!removed) {
+        console.warn('[store-admin/media] archived row still has its storage object');
+      }
+    }
+  }
+  return result;
 }

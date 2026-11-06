@@ -50,3 +50,26 @@ export async function uploadToStorage(
     throw new Error(`storage upload failed (${res.status}): ${body.slice(0, 200)}`);
   }
 }
+
+/**
+ * Remove an object from the media bucket. Returns false when Storage is not
+ * configured, the path is empty or the request failed — never throws, because
+ * an archived row must not be held hostage by a Storage outage.
+ *
+ * Called when a media row is archived (L-8): the row is soft-deleted, but the
+ * object would otherwise stay publicly fetchable in the bucket forever.
+ */
+export async function deleteFromStorage(path: string): Promise<boolean> {
+  const key = (path || '').trim();
+  if (!storageConfigured() || !key) return false;
+  const encoded = key.split('/').map(encodeURIComponent).join('/');
+  try {
+    const res = await fetch(`${PROJECT_URL}/storage/v1/object/${BUCKET}/${encoded}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
