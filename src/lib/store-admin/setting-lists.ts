@@ -401,6 +401,16 @@ export function isListKind(value: unknown): value is string {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(LIST_KINDS, value);
 }
 
+/**
+ * Lists whose edits change what every customer receives. Templates can carry
+ * links and copied into email HTML, so only a store owner may write them.
+ * Reading them stays available to every signed-in role.
+ */
+export const OWNER_ONLY_LIST_KINDS: ReadonlySet<string> = new Set([
+  'automated-messages',
+  'email-templates',
+]);
+
 /* ---------------------------------------------------------- conversions */
 
 const SLUG_RE = /^[a-z0-9_.-]+$/;

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { MessageBody } from './MessageBody';
 import type { CustomerMessageView } from '@/lib/account/messages';
 
 export function MessagesManager({ initialMessages }: { initialMessages: CustomerMessageView[] }) {
@@ -131,14 +132,7 @@ export function MessagesManager({ initialMessages }: { initialMessages: Customer
 
                 {isOpen && (
                   <div className="border-t border-[#f5f5f7] bg-[#f9f9fb] px-5 py-4 pl-10 text-sm">
-                    <div
-                      className="text-[#1d1d1f] whitespace-pre-wrap leading-relaxed"
-                      dangerouslySetInnerHTML={
-                        msg.body.startsWith('<') ? { __html: msg.body } : undefined
-                      }
-                    >
-                      {!msg.body.startsWith('<') ? msg.body : undefined}
-                    </div>
+                    <MessageBody body={msg.body} />
 
                     {msg.orderTxnid && (
                       <div className="mt-4 pt-3 border-t border-[#e5e5ea]">

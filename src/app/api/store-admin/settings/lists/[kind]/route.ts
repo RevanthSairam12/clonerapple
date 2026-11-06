@@ -5,6 +5,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import {
   LIST_KINDS,
+  OWNER_ONLY_LIST_KINDS,
   isListKind,
   listSettingRows,
   saveSettingRow,
@@ -66,10 +67,12 @@ export async function POST(request: Request, context: Context) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole('store_admin');
+  // Message and email templates are owner-only: their text is delivered to
+  // customers and their email copy is rendered as HTML.
+  const { kind } = await context.params;
+  const guard = await requireStoreRole(OWNER_ONLY_LIST_KINDS.has(kind) ? 'store_owner' : 'store_admin');
   if (!guard.ok) return guard.response;
 
-  const { kind } = await context.params;
   if (!isListKind(kind)) {
     return NextResponse.json({ error: 'Unknown list.' }, { status: 404 });
   }
