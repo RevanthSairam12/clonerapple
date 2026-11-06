@@ -1,4 +1,5 @@
 import { getSql } from '@/lib/platform/db';
+import { isThemeColorKey, isThemeHexColor } from '@/lib/website/theme-rules';
 
 /**
  * Server-side writes for the Website screens (storefront content and theme).
@@ -145,6 +146,11 @@ export async function saveThemeValue(
   value: string,
   editorName: string,
 ): Promise<StoreResult<true>> {
+  // Defence in depth for the root-layout interpolation: a colour key may only
+  // store a complete hex value, whatever route reaches this seam.
+  if (isThemeColorKey(key) && !isThemeHexColor(value)) {
+    return { ok: false, error: 'Theme colours must be a hex value such as #006D2E.' };
+  }
   const sql = getSql();
   if (!sql) return unavailable();
   try {

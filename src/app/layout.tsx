@@ -4,6 +4,7 @@ import { getThemeSettings } from "@/lib/content";
 import { CartProvider } from "@/lib/cart/CartContext";
 import { FONT_FALLBACK, FONT_LOADERS } from "@/lib/fontLoaders";
 import { resolveSiteFontName } from "@/lib/fonts";
+import { safeThemeColor } from "@/lib/website/theme-rules";
 
 export default async function RootLayout({
   children,
@@ -21,10 +22,15 @@ export default async function RootLayout({
   // CSS variable overrides — emitted only when an editor set a value, so the
   // untouched site ships byte-identical CSS. Doubled class for specificity
   // over the `.oppo-root` token block in oppo.css regardless of order.
+  // Only a complete hex colour reaches the stylesheet. A stored value such as
+  // `red; }` or `</style><script>…` is ignored and the coded token stands.
   const varOverrides: string[] = [];
-  if (settings.oppoPrimaryColor) varOverrides.push(`--oppo-green: ${settings.oppoPrimaryColor}`);
-  if (settings.oppoGreenDark) varOverrides.push(`--oppo-green-dark: ${settings.oppoGreenDark}`);
-  if (settings.oppoGreenLight) varOverrides.push(`--oppo-green-light: ${settings.oppoGreenLight}`);
+  const primaryColor = safeThemeColor(settings.oppoPrimaryColor);
+  const greenDark = safeThemeColor(settings.oppoGreenDark);
+  const greenLight = safeThemeColor(settings.oppoGreenLight);
+  if (primaryColor) varOverrides.push(`--oppo-green: ${primaryColor}`);
+  if (greenDark) varOverrides.push(`--oppo-green-dark: ${greenDark}`);
+  if (greenLight) varOverrides.push(`--oppo-green-light: ${greenLight}`);
   // Kept pointing at the self-hosted face rather than deleted: the token is set
   // here but consumed by the OPPO stylesheet, which is not in this tree.
   varOverrides.push(`--oppo-font: var(--font-site), ${FONT_FALLBACK}`);
