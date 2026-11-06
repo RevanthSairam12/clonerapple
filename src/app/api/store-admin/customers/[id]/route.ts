@@ -18,7 +18,9 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireStoreRole();
+  // Viewers get the customer list, not the full record: it carries order
+  // history, payment references and saved addresses.
+  const guard = await requireStoreRole('store_admin');
   if (!guard.ok) return guard.response;
 
   const { id } = await context.params;

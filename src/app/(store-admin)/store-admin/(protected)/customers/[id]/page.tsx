@@ -405,13 +405,23 @@ export default async function StoreAdminCustomerDetailPage({
                   <p>
                     {address.city}, {address.state} {address.pincode}
                   </p>
+                  {canReveal ? (
+                    <CustomerRevealForm
+                      customerId={customer.id}
+                      field="address"
+                      addressId={address.id}
+                      label="Full address"
+                      masked="Street and postal code hidden"
+                    />
+                  ) : null}
                 </div>
               ))}
             </div>
           )}
           <p className="sa-lock-note">
-            Phone numbers are masked. Anonymising the account deletes every
-            saved address.
+            Phone numbers, street lines and postal codes are masked. An owner
+            can reveal a full address with a written reason; every reveal is
+            audited. Anonymising the account deletes every saved address.
           </p>
         </section>
       ) : null}

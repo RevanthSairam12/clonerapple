@@ -30,3 +30,12 @@ export function maskCustomerPhone(value: string | null | undefined): string {
   if (digits.length <= 4) return '*'.repeat(digits.length);
   return `${digits.slice(0, 2)}${'*'.repeat(digits.length - 4)}${digits.slice(-2)}`;
 }
+
+/**
+ * Street lines and postal codes are full PII. The customer detail shows that a
+ * value exists; the owner-only audited reveal returns it. Empty stays empty so
+ * the UI can skip an optional line.
+ */
+export function maskCustomerAddressPart(value: string | null | undefined): string {
+  return (value ?? '').trim() ? '[redacted]' : '';
+}

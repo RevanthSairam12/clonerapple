@@ -4,9 +4,11 @@ import { useState } from 'react';
 
 interface Props {
   customerId: string;
-  field: 'email' | 'phone';
+  field: 'email' | 'phone' | 'address';
   label: string;
   masked: string;
+  /** Required when `field` is `address`; scopes the reveal to this customer. */
+  addressId?: string;
   endpoint?: string;
 }
 
@@ -16,13 +18,13 @@ interface Props {
  * The reason is mandatory client-side and enforced again server-side; the
  * server records who revealed which field and why (never the value).
  */
-export function CustomerRevealForm({ customerId, field, label, masked, endpoint }: Props) {
+export function CustomerRevealForm({ customerId, field, label, masked, addressId, endpoint }: Props) {
   const [reason, setReason] = useState('');
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const inputId = `reveal-reason-${field}`;
+  const inputId = `reveal-reason-${field}${addressId ? `-${addressId}` : ''}`;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -37,7 +39,7 @@ export function CustomerRevealForm({ customerId, field, label, masked, endpoint 
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ field, reason }),
+          body: JSON.stringify(addressId ? { field, reason, addressId } : { field, reason }),
         },
       );
 

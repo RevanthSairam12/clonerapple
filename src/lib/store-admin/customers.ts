@@ -2,7 +2,7 @@ import { getSql } from '@/lib/platform/db';
 
 import type { CustomerFilters, CustomerGroup } from './customer-rules';
 import { CUSTOMER_PAGE_SIZE } from './customer-rules';
-import { maskCustomerEmail, maskCustomerPhone } from './masking';
+import { maskCustomerAddressPart, maskCustomerEmail, maskCustomerPhone } from './masking';
 
 /**
  * Read-only customer queries for the store admin.
@@ -416,11 +416,13 @@ export async function getCustomerDetail(
       id: text(row.id),
       name: text(row.name),
       phoneMasked: maskCustomerPhone(text(row.phone)),
-      line1: text(row.line1),
-      line2: text(row.line2),
+      // Street lines and the postal code are only returned by the audited,
+      // owner-only reveal; every role sees them masked here.
+      line1: maskCustomerAddressPart(text(row.line1)),
+      line2: maskCustomerAddressPart(text(row.line2)),
       city: text(row.city),
       state: text(row.state),
-      pincode: text(row.pincode),
+      pincode: maskCustomerAddressPart(text(row.pincode)),
       isDefault: row.is_default === true || text(row.is_default) === 'true',
     }));
 
@@ -491,10 +493,10 @@ export async function getCustomerDetail(
 
 /* ------------------------------------------------------------ reveal */
 
-export type RevealField = 'email' | 'phone';
+export type RevealField = 'email' | 'phone' | 'address';
 
 export function isRevealField(value: unknown): value is RevealField {
-  return value === 'email' || value === 'phone';
+  return value === 'email' || value === 'phone' || value === 'address';
 }
 
 export type RevealResult =
@@ -502,13 +504,15 @@ export type RevealResult =
   | { ok: false; reason: 'unavailable' | 'not-found' | 'no-value' };
 
 /**
- * Return one unmasked field for the owner-only reveal endpoint.
+ * Return one unmasked field for the owner-only reveal endpoint. An address is
+ * returned only when `addressId` names a live address of this customer.
  * Everything about *when* this may be called lives in the route; this function
- * only fetches the single requested column.
+ * only fetches the requested value.
  */
 export async function revealCustomerField(
   id: string,
   field: RevealField,
+  addressId?: string,
 ): Promise<RevealResult> {
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable' };
@@ -523,6 +527,31 @@ export async function revealCustomerField(
       `) as Row[];
       const email = text((rows[0] ?? {}).email).trim();
       return email ? { ok: true, value: email } : { ok: false, reason: 'not-found' };
+    }
+
+    if (field === 'address') {
+      // Scoped by user_id: an address id borrowed from another customer is a
+      // not-found, never that customer's data.
+      const address = (addressId ?? '').trim();
+      if (!address) return { ok: false, reason: 'not-found' };
+      const rows = (await sql`
+        select line1, line2, city, state, pincode
+        from customer_addresses
+        where id = ${address} and user_id = ${customerId} and deleted_at is null
+        limit 1
+      `) as Row[];
+      const row = rows[0];
+      if (!row) return { ok: false, reason: 'not-found' };
+      const line = [text(row.line1), text(row.line2)]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(', ');
+      const region = [text(row.city), text(row.state), text(row.pincode)]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(', ');
+      const value = [line, region].filter(Boolean).join(' — ');
+      return value ? { ok: true, value } : { ok: false, reason: 'no-value' };
     }
 
     const rows = (await sql`

@@ -46,7 +46,7 @@ export async function POST(
 
   const { id } = await context.params;
 
-  let body: { field?: unknown; reason?: unknown };
+  let body: { field?: unknown; reason?: unknown; addressId?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -55,10 +55,17 @@ export async function POST(
 
   const field = body.field;
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  const addressId = typeof body.addressId === 'string' ? body.addressId.trim() : '';
 
   if (!isRevealField(field)) {
     return NextResponse.json(
-      { error: 'Field must be "email" or "phone".' },
+      { error: 'Field must be "email", "phone" or "address".' },
+      { status: 400 },
+    );
+  }
+  if (field === 'address' && (!addressId || addressId.length > 100)) {
+    return NextResponse.json(
+      { error: 'An address id is required to reveal an address.' },
       { status: 400 },
     );
   }
@@ -94,7 +101,7 @@ export async function POST(
       entityId: id,
       status: 'denied',
       reason: 'rate_limited',
-      after: { field },
+      after: { field, ...(addressId ? { addressId } : {}) },
       request,
     });
     return NextResponse.json(
@@ -103,7 +110,7 @@ export async function POST(
     );
   }
 
-  const result = await revealCustomerField(id, field);
+  const result = await revealCustomerField(id, field, addressId);
 
   if (!result.ok) {
     if (result.reason === 'not-found') {
@@ -127,7 +134,7 @@ export async function POST(
     action: 'customer.reveal',
     entity: 'customer',
     entityId: id,
-    after: { field },
+    after: { field, ...(addressId ? { addressId } : {}) },
     reason,
     request,
   });
