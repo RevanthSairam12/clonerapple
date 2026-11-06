@@ -43,8 +43,9 @@ test('the content type is sniffed from magic bytes, not the extension', () => {
   webm.set([0x1a, 0x45, 0xdf, 0xa3], 0);
   assert.equal(sniffMime(webm), 'video/webm');
 
+  // SVG is not sniffed: it is an active document and uploads must reject it.
   const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
-  assert.equal(sniffMime(svg), 'image/svg+xml');
+  assert.equal(sniffMime(svg), null);
 });
 
 test('an HTML file renamed to .png is refused', () => {
@@ -56,7 +57,7 @@ test('an HTML file renamed to .png is refused', () => {
 test('only the allowed media types are accepted', () => {
   assert.equal(isAllowedMediaType('image/png'), true);
   assert.equal(isAllowedMediaType('video/mp4'), true);
-  assert.equal(isAllowedMediaType('image/svg+xml'), true);
+  assert.equal(isAllowedMediaType('image/svg+xml'), false);
   assert.equal(isAllowedMediaType('application/pdf'), false);
   assert.equal(isAllowedMediaType('text/html'), false);
   assert.equal(MAX_MEDIA_BYTES, 25 * 1024 * 1024);

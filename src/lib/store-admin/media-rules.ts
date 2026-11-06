@@ -2,12 +2,14 @@
 
 export const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25 MB
 
+// No SVG: it is an active document (script, foreignObject, external fetches)
+// and cannot be made safe by sniffing alone. Existing SVG rows still serve
+// through /api/media/[id] as a download (see the route).
 export const ALLOWED_MEDIA_TYPES = [
   'image/jpeg',
   'image/png',
   'image/webp',
   'image/gif',
-  'image/svg+xml',
   'image/avif',
   'video/webm',
   'video/mp4',
@@ -19,7 +21,6 @@ export const MEDIA_EXTENSIONS: Record<MediaMime, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
   'image/gif': 'gif',
-  'image/svg+xml': 'svg',
   'image/avif': 'avif',
   'video/webm': 'webm',
   'video/mp4': 'mp4',
@@ -76,8 +77,8 @@ export function sniffMime(bytes: Uint8Array): MediaMime | null {
   if (bytes.length >= 12 && ascii(bytes, 4, 4) === 'ftyp') {
     return 'video/mp4';
   }
-  const head = new TextDecoder().decode(bytes.subarray(0, 512)).trim().toLowerCase();
-  if (head.startsWith('<?xml') || head.startsWith('<svg')) return 'image/svg+xml';
+  // SVG is deliberately not recognised here: uploads must reject it, and a
+  // null sniff is the rejection path.
   return null;
 }
 
