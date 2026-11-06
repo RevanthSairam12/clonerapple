@@ -46,6 +46,9 @@ const SENSITIVE_ROUTES = {
   'settings/notifications/route.ts': 'store_owner',
   'settings/notifications/retry/route.ts': 'store_owner',
   'settings/lists/[kind]/route.ts': null,
+  // The general settings write admits an admin; `mail_*` stays owner-only
+  // inside `updateStoreSettings` (asserted by the mail_* test below).
+  'settings/route.ts': 'store_admin',
   // Money.
   'orders/[txnid]/reveal/route.ts': 'store_owner',
   'orders/[txnid]/void/route.ts': 'store_owner',
@@ -116,6 +119,7 @@ test('the meaning of each requirement for each role', () => {
     'expenses/route.ts': { store_viewer: false, store_admin: true, store_owner: true },
     'media/route.ts': { store_viewer: false, store_admin: true, store_owner: true },
     'staff/[id]/route.ts': { store_viewer: false, store_admin: false, store_owner: true },
+    'settings/route.ts': { store_viewer: false, store_admin: true, store_owner: true },
   };
 
   for (const [route, expected] of Object.entries(matrix)) {
@@ -129,6 +133,54 @@ test('the meaning of each requirement for each role', () => {
       );
     }
   }
+});
+
+test('mail_* settings are owner-only through the settings write', async () => {
+  const source = await sourceOf('settings/route.ts');
+
+  // The route admits an admin, then hands the write the owner flag.
+  assert.match(source, /requireStoreRole\('store_admin'\)/);
+  assert.match(source, /guard\.session\.role === 'store_owner'/);
+  assert.match(
+    source,
+    /updateStoreSettings\(\s*values,\s*guard\.session\.adminId,\s*guard\.session\.role === 'store_owner'/,
+    'the owner flag must reach the write as its third argument',
+  );
+  assert.match(source, /result\.reason === 'forbidden' \? 403/);
+
+  const { isOwnerOnlySetting } = await jiti.import(
+    path.join(root, 'src', 'lib', 'store-admin', 'settings-rules.ts'),
+  );
+
+  for (const key of [
+    'mail_host',
+    'mail_port',
+    'mail_username',
+    'mail_encryption',
+    'mail_from_email',
+    'mail_from_name',
+  ]) {
+    assert.equal(isOwnerOnlySetting(key), true, `${key} must be owner-only`);
+  }
+  assert.equal(
+    isOwnerOnlySetting('shipping_charge_paise'),
+    false,
+    'operational settings stay admin-editable',
+  );
+
+  // A viewer never reaches the write; an admin reaches it but does not satisfy
+  // the owner-only requirement; an owner satisfies both.
+  assert.equal(roleSatisfies('store_viewer', ['store_admin']), false);
+  assert.equal(roleSatisfies('store_admin', ['store_admin']), true);
+  assert.equal(roleSatisfies('store_admin', ['store_owner']), false);
+  assert.equal(roleSatisfies('store_owner', ['store_owner']), true);
+
+  const settingsSource = await readFile(
+    path.join(root, 'src', 'lib', 'store-admin', 'settings.ts'),
+    'utf8',
+  );
+  assert.match(settingsSource, /if \(isOwnerOnlySetting\(item\.key\) && !canEditOwnerOnly\)/);
+  assert.match(settingsSource, /reason: 'forbidden'/);
 });
 
 test('no mutating sensitive handler is left open to any signed-in staff member', async () => {
