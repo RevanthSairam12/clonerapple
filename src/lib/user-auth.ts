@@ -183,7 +183,7 @@ export async function signUp(
   firstName: string,
   lastName: string,
 ): Promise<
-  | { ok: true; token: string }
+  | { ok: true; token: string | null }
   | { ok: false; error: string; retryAfterSec?: number }
 > {
   const sql = getSql();
@@ -201,10 +201,15 @@ export async function signUp(
     };
   }
 
-  // Check for existing user
+  // Check for existing user. The response must not reveal which case this is:
+  // an existing address gets the same success shape with no token, after the
+  // same password-hashing work as a new account so the timing does not leak it
+  // either. The route sets no cookie without a token, so the caller simply
+  // lands on the sign-in page.
   const existing = await sql`select id from users where email = ${normalized}`;
   if (existing.length > 0) {
-    return { ok: false, error: 'An account with this email already exists.' };
+    await bcrypt.hash(password, BCRYPT_ROUNDS);
+    return { ok: true, token: null };
   }
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -239,6 +244,8 @@ export async function signIn(
   email: string,
   password: string,
 ): Promise<
+  // A successful sign-in always issues a token; only signUp can answer
+  // "success" without one (the duplicate-address branch).
   | { ok: true; token: string }
   | { ok: false; error: string; retryAfterSec?: number }
 > {

@@ -63,7 +63,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 409 });
   }
 
-  const store = await cookies();
-  store.set(userSessionCookie.name, result.token, userSessionCookie.options);
+  // A duplicate address returns the same success body with no session token;
+  // whether the account already existed is not observable from the response.
+  if (result.token) {
+    const store = await cookies();
+    store.set(userSessionCookie.name, result.token, userSessionCookie.options);
+  }
   return NextResponse.json({ ok: true });
 }
