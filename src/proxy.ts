@@ -12,6 +12,7 @@ import {
   type MaintenanceState,
 } from '@/lib/storefront/maintenance';
 import { maintenanceView, renderMaintenanceDocument } from '@/lib/storefront/maintenance-view';
+import { applySecurityHeaders as applySecurityHeadersTo } from '@/lib/platform/security-headers';
 
 /**
  * Store Admin session gate and storefront maintenance gate. Legacy pages
@@ -63,21 +64,8 @@ function maintenanceResponse(pathname: string, state: MaintenanceState): NextRes
 }
 
 function applySecurityHeaders(response: NextResponse): NextResponse {
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-Frame-Options', 'DENY');
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
-  // PayU's hosted checkout is a multi-hop flow: the POST to /_payment is then
-  // redirected across PayU's own hosts (payu.in, payubiz.in, payumoney.com).
-  // form-action is re-checked on every hop, not just the URL the form names, so
-  // the hosts are allowed as a family rather than as two literals — a literal
-  // list blocked the redirect and the payment page never loaded.
-  const payuHosts = 'https://*.payu.in https://payu.in https://*.payubiz.in https://*.payumoney.com';
-  response.headers.set(
-    'Content-Security-Policy',
-    `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ${payuHosts}; form-action 'self' ${payuHosts}; frame-ancestors 'none';`
-  );
-  return response;
+  // Defined in `src/lib/platform/security-headers.ts` so the CSP can be tested.
+  return applySecurityHeadersTo(response);
 }
 
 export async function proxy(request: NextRequest) {
