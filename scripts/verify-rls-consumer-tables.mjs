@@ -14,12 +14,12 @@ async function loadEnvLocal() {
   }
 }
 
-async function readRows(table) {
+async function readRows(table, select = '*') {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, '');
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!base || !key) throw new Error('Supabase REST configuration is unavailable.');
 
-  const response = await fetch(`${base}/rest/v1/${table}?select=*&limit=1000`, {
+  const response = await fetch(`${base}/rest/v1/${table}?select=${encodeURIComponent(select)}&limit=1000`, {
     headers: {
       apikey: key,
       Authorization: `Bearer ${key}`,
@@ -42,18 +42,28 @@ function consumerCheck(result) {
   return result.status === 401 || result.status === 403 || (result.status >= 200 && result.status < 300 && result.rows === 0);
 }
 
+/** A relation that must not be readable with the publishable key at all. */
+function deniedCheck(result) {
+  return result.status === 401 || result.status === 403;
+}
+
 async function main() {
   await loadEnvLocal();
 
   const users = await readRows('users');
   const userSessions = await readRows('user_sessions');
   const orders = await readRows('orders');
+  // H-1: the view is security_invoker and has no public grant.
+  const orderSaleState = await readRows('order_sale_state', 'id');
   const contentBlocks = await readRows('content_blocks');
-  const products = await readRows('products');
+  // Explicit public columns: `select=*` also asks for cost_paise, which is not
+  // granted to anon (M-2).
+  const products = await readRows('products', 'id,name,price_paise');
 
   print('users', users);
   print('user_sessions', userSessions);
   print('orders', orders);
+  print('order_sale_state', orderSaleState);
   print('content_blocks', contentBlocks);
   print('products', products);
 
@@ -61,10 +71,11 @@ async function main() {
     !consumerCheck(users) ||
     !consumerCheck(userSessions) ||
     !consumerCheck(orders) ||
+    !deniedCheck(orderSaleState) ||
     contentBlocks.status !== 200 ||
     contentBlocks.rows === 0 ||
     products.status !== 200 ||
-    products.rows !== 12
+    products.rows === 0
   ) {
     process.exitCode = 1;
   }
