@@ -121,8 +121,12 @@ test('customer pages preserve shipment/access boundaries while result status rem
   assert.match(detail, /order\.address &&/);
   assert.match(detail, /order\.shippingPaise/);
   assert.match(status, /resolveReturnAccess\(/);
-  assert.match(status, /!summaryOnly && shipmentStarted \? order\.delivery : null/);
+  // A shared return link (summary access) shows the outcome only: shipment,
+  // items and the status timeline are owner-only (L-2).
+  assert.match(status, /access === 'owner' && shipmentStarted \? order\.delivery : null/);
   assert.match(status, /\{delivery && <section/);
+  assert.match(status, /\{access === 'owner' && order\.items\.length > 0 && <section/);
+  assert.match(status, /\{access === 'owner' && <section className="mt-8" aria-labelledby="order-timeline-title">/);
   assert.match(status, /state\.canCheck \? access === 'owner' \? <CheckPaymentButton/);
   assert.doesNotMatch(status, /Shipment details will appear after pickup|FULFILMENT_STEPS|Order progress/);
 });

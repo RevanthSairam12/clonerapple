@@ -81,11 +81,14 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
     : route === 'status' ? '#order-summary' : statusHref;
   const reference = order.orderNumber ? `#${order.orderNumber}` : order.txnid;
   const shipmentStarted = hasShipmentStarted(order.fulfilmentStatus, order.history);
-  const delivery = !summaryOnly && shipmentStarted ? order.delivery : null;
+  // Everything past the result summary belongs to the signed-in owner.
+  const delivery = access === 'owner' && shipmentStarted ? order.delivery : null;
   const trackingUrl = validateHttpsTrackingUrl(delivery?.trackingUrl);
-  const timeline = order.history.map((entry) => ({ ...entry,
-    label: accountOrderHistoryLabel(entry.domain, entry.toStatus, delivery?.method),
-  })).filter((entry): entry is typeof entry & { label: string } => Boolean(entry.label));
+  const timeline = access === 'owner'
+    ? order.history.map((entry) => ({ ...entry,
+        label: accountOrderHistoryLabel(entry.domain, entry.toStatus, delivery?.method),
+      })).filter((entry): entry is typeof entry & { label: string } => Boolean(entry.label))
+    : [];
   const amount = state.amountLabel === 'Amount received' ? documentState.capturedPaise : order.totalPaise;
 
   return <ResultCard>
@@ -99,7 +102,7 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
     {/* What was bought, straight under the result. The photo and option names
         are the snapshot stored with the order, not a live catalogue lookup, so
         a later rename or retired photo cannot change this page. */}
-    {order.items.length > 0 && <section className="mt-8" aria-labelledby="order-items-title">
+    {access === 'owner' && order.items.length > 0 && <section className="mt-8" aria-labelledby="order-items-title">
       <h2 id="order-items-title" className="text-base font-bold">{order.items.length === 1 ? 'Item' : `Items (${order.items.length})`}</h2>
       <ul className="mt-4 space-y-4">
         {order.items.map((item, index) => {
@@ -132,7 +135,7 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
     </section>
 
     {route === 'status' && <>
-      <section className="mt-8" aria-labelledby="order-timeline-title">
+      {access === 'owner' && <section className="mt-8" aria-labelledby="order-timeline-title">
         <h2 id="order-timeline-title" className="text-base font-bold">Status timeline</h2>
         {timeline.length ? <ol className="mt-4 space-y-4 border-l-2 border-black/15 pl-5">
           {timeline.map((entry, index) => <li key={`${entry.createdAt}-${index}`}>
@@ -140,7 +143,7 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
             <p className="mt-1 text-xs text-[#333336]">{formatDate(entry.createdAt)}</p>
           </li>)}
         </ol> : <p className="mt-3 text-sm text-[#333336]">No status updates are available yet.</p>}
-      </section>
+      </section>}
       {delivery && <section className="mt-8 rounded-2xl border border-black/10 p-5" aria-label="Delivery details">
         <h2 className="text-base font-bold">Delivery</h2>
         <dl className="mt-4 space-y-3 text-sm">
