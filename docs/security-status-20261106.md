@@ -6,6 +6,9 @@
 **Accepted risks:** [security-known-risks-20261106.md](security-known-risks-20261106.md)
 **Remediation plan for the two open accepted risks:** [security-roadmap-20261106.md](security-roadmap-20261106.md)
 **Flows that need external services:** [staging-runbook-20261106.md](staging-runbook-20261106.md)
+**Production environment settings:** [production-env-20261106.md](production-env-20261106.md)
+**Browser-level XSS check:** [browser-xss-manual-20261107.md](browser-xss-manual-20261107.md)
+**Replay of 0063-0067:** [scripts/replay-check.md](../scripts/replay-check.md)
 
 Status vocabulary:
 
@@ -81,9 +84,9 @@ Postgres that has neither the Supabase API roles nor every table. The replay pro
 |---|------|------|---------------------|
 | 1 | L-9: expense receipts in the public bucket | accepted risk, planned | [roadmap](security-roadmap-20261106.md#l-9) |
 | 2 | I-1: `DATABASE_URL` connects as the table owner | accepted risk, planned | [roadmap](security-roadmap-20261106.md#i-1) |
-| 3 | Live staff-session role matrix (viewer / admin / owner against a running instance) | NOT TESTED — no staff credentials used | `scripts/staging-verify.mjs` |
+| 3 | Live staff-session role matrix (viewer / admin / owner against a running instance) | NOT TESTED — no staff credentials used. The harness exists and was exercised against a local fixture, not a real deployment | `scripts/staging-verify.mjs` |
 | 4 | Live SMTP allow-list refusal and delivery | NOT TESTED — no SMTP credentials | [staging runbook](staging-runbook-20261106.md) |
-| 5 | Browser-level XSS rendering of message bodies and theme colours | NOT TESTED — Playwright is not a dependency | [manual procedure](staging-runbook-20261106.md) and `docs/browser-xss-manual-20261106.md` |
+| 5 | Browser-level XSS rendering of message bodies and theme colours | **tested in a real browser** (9/9 on 2026-11-07 via `scripts/browser-xss-check.mjs`); the end-to-end editor→database path is NOT TESTED — needs a running instance | [browser-xss-manual-20261107.md](browser-xss-manual-20261107.md) |
 | 6 | PayU sandbox: return-token expiry, duplicate webhook, payload shape | NOT TESTED — no sandbox credentials | [staging runbook](staging-runbook-20261106.md) |
 | 7 | Storefront smoke test after the `products` grant change | NOT TESTED — needs a running instance | [staging runbook](staging-runbook-20261106.md) |
 | 8 | Two-parallel-checkouts inventory race | NOT TESTED — needs a running instance with a seeded last unit | [staging runbook](staging-runbook-20261106.md) |
