@@ -59,6 +59,8 @@ async function main() {
   // Explicit public columns: `select=*` also asks for cost_paise, which is not
   // granted to anon (M-2).
   const products = await readRows('products', 'id,name,price_paise');
+  // M-2: internal costing columns must not be readable with the publishable key.
+  const productCost = await readRows('products', 'id,cost_paise');
 
   print('users', users);
   print('user_sessions', userSessions);
@@ -66,6 +68,7 @@ async function main() {
   print('order_sale_state', orderSaleState);
   print('content_blocks', contentBlocks);
   print('products', products);
+  print('products.cost_paise', productCost);
 
   if (
     !consumerCheck(users) ||
@@ -75,7 +78,8 @@ async function main() {
     contentBlocks.status !== 200 ||
     contentBlocks.rows === 0 ||
     products.status !== 200 ||
-    products.rows === 0
+    products.rows === 0 ||
+    !deniedCheck(productCost)
   ) {
     process.exitCode = 1;
   }
