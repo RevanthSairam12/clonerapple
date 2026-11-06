@@ -8,11 +8,14 @@
  * The two variables:
  *
  * - `TRUST_PROXY` — "1", "true", "yes" or "on" declares that the process sits
- *   behind a reverse proxy that overwrites `X-Forwarded-For`. Without it the
- *   forwarded address is ignored and per-IP rate limits are skipped (per-agent
- *   and per-email limits still apply). Set it when a proxy does overwrite the
- *   header; leave it unset when clients reach the process directly, otherwise a
- *   caller could forge the address.
+ *   behind a reverse proxy that overwrites the forwarded client-address header.
+ *   Without it the forwarded address is ignored and per-IP rate limits are
+ *   skipped (per-agent and per-email limits still apply). Set it when a proxy
+ *   does overwrite the header; leave it unset when clients reach the process
+ *   directly, otherwise a caller could forge the address.
+ *
+ * The header name itself is deliberately not spelled here: the L-6 test asserts
+ * that `client-ip.ts` is the only file in `src/` that names it.
  * - `MAIL_ALLOWED_HOSTS` — a comma-separated allow-list of SMTP host names.
  *   Unset means the configured `mail_host` is trusted. Set means an owner
  *   cannot repoint delivery at another host and receive the SMTP password.
