@@ -93,12 +93,18 @@ test('unknown keys are refused', () => {
   assert.equal(isStoreSettingKey('not_a_setting'), false);
 });
 
-test('maintenance is the only owner-only group', () => {
+test('maintenance and mail are the owner-only groups', () => {
+  // `mail_*` decides where the server's SMTP password is sent, so it is owner
+  // only along with the storefront maintenance keys (H-3).
   for (const field of SETTING_FIELDS) {
     assert.equal(
       isOwnerOnlySetting(field.key),
-      field.key.startsWith('maintenance_'),
+      field.key.startsWith('maintenance_') || field.key.startsWith('mail_'),
       field.key,
     );
   }
+  for (const key of ['mail_host', 'mail_port', 'mail_username', 'mail_password', 'mail_encryption', 'mail_from_email']) {
+    assert.equal(isOwnerOnlySetting(key), true, key);
+  }
+  assert.equal(isOwnerOnlySetting('store_name'), false);
 });
