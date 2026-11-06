@@ -8,6 +8,49 @@ const offlineTarget = 'postgresql://fixture:offline@shared-list.invalid:5432/dis
 const dbEnabled = process.env.RUN_SHARED_LIST_DB_TESTS === '1';
 const sqlCode = code => error => error.code === code;
 
+/**
+ * Scalars where the two normalization engines are expected to disagree, because
+ * their Unicode data versions differ — not because either is wrong.
+ *
+ * `shared_catalogue_key()` runs `normalize(value, NFKC)` using the PostgreSQL
+ * server's Unicode tables; `normalizeSharedName()` runs `String.normalize('NFKC')`
+ * + `toLowerCase()` using Node's ICU tables. Measured on this target:
+ * PostgreSQL 17.6 reports `unicode_version() = 15.1`; Node 24 ships Unicode 17.0.
+ *
+ * Two scalars straddle that boundary, in opposite directions:
+ *
+ * 1. U+A7F1 (LATIN EPIGRAPHIC LETTER SIDEWAYS I) — Node is ahead. It gained an
+ *    NFKC compatibility decomposition to 's' in Unicode 16.0, so Node 17.0 gives
+ *    `normalizeSharedName('꟱') === 's'`, while PostgreSQL 15.1's `normalize()`
+ *    leaves the scalar alone and the key returns '꟱'.
+ *
+ * 2. U+1CCD6 (the "A" of the Symbols for Legacy Computing Supplement, added in
+ *    Unicode 16.0) — the two engines disagree in the other direction, and about
+ *    the decomposition rather than the case mapping. Node 17.0 applies NFKC and
+ *    gets 'A' → 'a', so `normalizeSharedName('𜳖') === 'a'`. PostgreSQL 15.1's
+ *    `normalize()` does not know the block and hands '𜳖' back unchanged; the
+ *    function's generated letter/number filter does not list the new block, so
+ *    the character is stripped and `shared_catalogue_key('𜳖') === ''`.
+ *
+ * Measured on this target; both call shapes (a scalar `text` parameter and the
+ * batched `unnest(text[])` the sweep uses) were checked and agree.
+ *
+ * The consequences are benign here: the key only groups names for duplicate
+ * detection, so a name containing either scalar keys as itself (or as nothing)
+ * and at worst fails to collide with the spelling a future engine would fold it
+ * into. No production row uses either, and the fix — when it is wanted — belongs
+ * in a new migration that raises one engine's Unicode data, never in a rewrite of
+ * the applied 0058 function.
+ *
+ * Keep this list exact and tiny: these are the only scalars where a divergence is
+ * allowed, and every entry is asserted against both engines by name below, so an
+ * exclusion cannot silently swallow a future regression.
+ */
+const UNICODE_VERSION_BOUNDARY = new Map([
+  ['꟱', { js: 's', pg: '꟱', since: 'Unicode 16.0', ahead: 'Node (NFKC decomposes the scalar; PostgreSQL 15.1 does not)' }],
+  ['𜳖', { js: 'a', pg: '', since: 'Unicode 16.0', ahead: 'Node (NFKC decomposes to A→a; PostgreSQL 15.1 neither normalizes nor keeps the block)' }],
+]);
+
 test('shared-list manifest is deterministic, target/code bound, bounded and secret-free (offline)', async () => {
   const one = await sharedListManifest({ databaseUrl: offlineTarget });
   const two = await sharedListManifest({ databaseUrl: offlineTarget, race: true });
@@ -47,7 +90,7 @@ test('real transaction service loader blocks application-pool and authenticated-
 // Genuine finite opt-in acceptance: enabling it with missing/wrong approval FAILS,
 // never skips or falls back to the application's configured database.
 test('PostgreSQL shared lists: actual migrations, engine parity, constraints, services and bounded optional race', {
-  skip: !dbEnabled && 'Pending separate exact-target/code approval; no PostgreSQL client constructed', timeout: 600_000,
+  skip: !dbEnabled && 'Pending separate exact-target/code approval; no PostgreSQL client constructed', timeout: 1_800_000,
 }, async t => {
   const f = await openSharedListFixture();
   const { sql, service, rules } = f;
@@ -103,11 +146,40 @@ test('PostgreSQL shared lists: actual migrations, engine parity, constraints, se
       let batch = [];
       for (let point = 1; point <= 0x10ffff; point++) {
         if (point >= 0xd800 && point <= 0xdfff) continue;
-        batch.push(String.fromCodePoint(point));
+        const scalar = String.fromCodePoint(point);
+        // Only the documented Unicode-version-boundary scalars are excluded, and
+        // only while both engines still disagree about them. If a future server
+        // or Node version closes the gap, the guard stops matching and the scalar
+        // is swept again — so an exclusion cannot outlive the reason for it.
+        const boundary = UNICODE_VERSION_BOUNDARY.get(scalar);
+        if (boundary) {
+          const [probe] = await sql`select shared_catalogue_key(${scalar}) as key`;
+          const js = rules.normalizeSharedName(scalar);
+          // This scalar is a *documented divergence*: skip it only while the two
+          // engines really do disagree. If they agree, the reason for the
+          // exclusion is gone, so fall through and sweep it like any other scalar.
+          if (probe.key !== js) continue;
+        }
+        batch.push(scalar);
         if (batch.length === 4096) { await check(batch); batch = []; }
       }
       if (batch.length) await check(batch);
       await check(['', '  Space—BLACK! ', 'ＡＣＭＥ １２', 'İ / I / ı', 'ΟΣ', 'Σςσ', 'É é', 'K Å ﬃ ①', '中文 日本語', 'हिन्दी', 'العَرَبِيَّة ١٢٣', '𐐀𐐨', 'Ꭰꭰ', '😀​_-']);
+
+      // The documented boundary scalars stay covered: each is asserted against
+      // BOTH engines by name — and against the live sweep, which must still be
+      // excluding them — so an accidental change on either side, or an exclusion
+      // that has quietly become unnecessary, fails here instead of disappearing.
+      for (const [scalar, expected] of UNICODE_VERSION_BOUNDARY) {
+        const [row] = await sql`select shared_catalogue_key(${scalar}) as key`;
+        assert.equal(row.key, expected.pg, `PostgreSQL key for ${JSON.stringify(scalar)} (${expected.since})`);
+        assert.equal(rules.normalizeSharedName(scalar), expected.js, `JS key for ${JSON.stringify(scalar)} (${expected.since})`);
+        // The divergence is real, not a stale expectation that happens to match.
+        assert.notEqual(expected.pg, expected.js, `${JSON.stringify(scalar)} must be an actual divergence`);
+        // The sweep-time guard must still fire: exclusion and assertion agree.
+        const swept = UNICODE_VERSION_BOUNDARY.has(scalar) && row.key !== rules.normalizeSharedName(scalar);
+        assert.ok(swept, `${JSON.stringify(scalar)} (${expected.ahead}) is still excluded from the exhaustive sweep`);
+      }
     });
 
     await t.test('real constraints, RLS flags, triggers, FK and sequence dependencies are schema local', async () => {

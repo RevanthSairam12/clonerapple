@@ -195,7 +195,7 @@ test('inventory adjustment retains live options, while product-to-variant activa
     const queries = [];
     const tx = async (strings, ...values) => {
       const q = strings.join('?').replace(/\s+/g, ' ').trim(); queries.push(q);
-      if (q.startsWith('select id,inventory_mode')) return [{ id: 'p', inventory_mode: mode }];
+      if (q.startsWith('select id,name,inventory_mode')) return [{ id: 'p', name: 'Product', inventory_mode: mode }];
       if (q.startsWith('select v.id')) {
         assert.match(q, /v.retired_at is null/);
         assert.match(q, /pm.archived_at is null/);

@@ -96,6 +96,31 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
       <p className="mt-3 text-sm leading-relaxed text-[#333336]">{state.message}</p>
     </header>
 
+    {/* What was bought, straight under the result. The photo and option names
+        are the snapshot stored with the order, not a live catalogue lookup, so
+        a later rename or retired photo cannot change this page. */}
+    {order.items.length > 0 && <section className="mt-8" aria-labelledby="order-items-title">
+      <h2 id="order-items-title" className="text-base font-bold">{order.items.length === 1 ? 'Item' : `Items (${order.items.length})`}</h2>
+      <ul className="mt-4 space-y-4">
+        {order.items.map((item, index) => {
+          const optionLabel = [item.deviceModelName, item.colourName].filter(Boolean).join(' • ');
+          return <li key={`${item.name}-${index}`} className="flex items-start gap-4">
+            {item.imageUrl
+              ? <img src={item.imageUrl} alt={item.imageAlt ?? item.name} width={64} height={64} className="h-16 w-16 shrink-0 rounded-xl border border-black/10 bg-white object-contain p-1" loading="lazy" />
+              : <div className="h-16 w-16 shrink-0 rounded-xl border border-dashed border-black/15 bg-[#e8eaee]/40" aria-hidden="true" />}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{item.name}</p>
+              {optionLabel ? <p className="mt-0.5 flex items-center gap-2 text-xs text-[#333336]">
+                {item.colourHex ? <span className="inline-block h-3 w-3 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: item.colourHex }} aria-hidden="true" /> : null}
+                <span>{optionLabel}</span>
+              </p> : null}
+              <p className="mt-1 text-xs text-[#333336]">Qty {item.quantity} · {formatPaise(item.lineTotalPaise)}</p>
+            </div>
+          </li>;
+        })}
+      </ul>
+    </section>}
+
     <section id="order-summary" tabIndex={-1} className="mt-8 scroll-mt-32 rounded-2xl border border-black/10 bg-[#e8eaee]/40 p-5 focus-visible:outline-2 focus-visible:outline-black" aria-label="Order summary">
       <dl className="space-y-4 text-sm">
         <div className="flex flex-wrap justify-between gap-2"><dt className="text-[#333336]">Order reference</dt><dd className="min-w-0 break-all font-semibold">{reference}</dd></div>

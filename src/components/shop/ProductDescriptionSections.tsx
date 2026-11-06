@@ -32,7 +32,25 @@ export function ProductDescriptionSections({ sections, className = '', defaultOp
       <div className="mt-6 max-w-3xl space-y-4 text-[13.5px] sm:text-[14px] leading-[1.65] text-[#1d1d1f]">
         {section.type === 'text' && <RichText blocks={section.blocks} />}
         {section.type === 'bullets' && <ul className="list-disc pl-5 space-y-2">{section.items.map((item, index) => <li key={index}><Inline content={item} /></li>)}</ul>}
-        {section.type === 'specs' && <dl className="divide-y divide-[#e5e5ea]">{section.rows.map((row, index) => <div key={index} className="grid grid-cols-1 gap-2 py-3 sm:grid-cols-3"><dt className="font-semibold whitespace-pre-wrap break-words">{row.label}</dt><dd className="sm:col-span-2 whitespace-pre-wrap break-words">{row.value}</dd></div>)}</dl>}
+        {/* One line per specification, as a bulleted list. Each stored row is a
+            label/value pair; a row with only a label (or only a value) still
+            prints as one line rather than an empty half. A value may hold its
+            own line breaks, and every line inside it becomes its own point. */}
+        {section.type === 'specs' && <ul className="list-disc space-y-2 pl-5">{section.rows.flatMap((row, index) => {
+          const label = row.label.trim();
+          const lines = row.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+          if (lines.length <= 1) {
+            const value = lines[0] ?? '';
+            return [<li key={index} className="whitespace-pre-wrap break-words">
+              {label && <strong className="font-semibold">{label}</strong>}
+              {label && value ? <span aria-hidden="true">: </span> : null}
+              {value}
+            </li>];
+          }
+          return lines.map((line, lineIndex) => <li key={`${index}-${lineIndex}`} className="whitespace-pre-wrap break-words">
+            {lineIndex === 0 && label ? <><strong className="font-semibold">{label}</strong><span aria-hidden="true">: </span></> : null}{line}
+          </li>);
+        })}</ul>}
         {section.type === 'faq' && section.items.map((item, index) => <div key={index} className="space-y-2"><h3 className="font-semibold whitespace-pre-wrap break-words">{item.question}</h3><RichText blocks={item.answer} /></div>)}
       </div>
     </details>)}

@@ -276,6 +276,23 @@ test('before a model is chosen the colour step waits and the headline is the che
   assert.match(html, /Choose a model, ₹100\.00/, 'the announcement states the cheapest amount, not a range');
 });
 
+test('a model whose rows carry no shared colour is offered disabled, never guessed', () => {
+  // Two rows share one model and nothing tells them apart.
+  const unlinked = (id, pricePaise) => ({ id, sku: `SKU-${id}`, label: 'iPhone 16', ...PHONE, pricePaise, regularPricePaise: pricePaise, inStock: true });
+  const variants = [unlinked('u1', 10000), unlinked('u2', 12000)];
+  const html = render({ variants, selection: { modelKey: null, colourKey: null } });
+  assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="iPhone 16 — Option unavailable"/);
+  assert.equal((html.match(/role="radiogroup"/g) ?? []).length, 1, 'no colour step can exist');
+});
+
+test('a chosen model with a single unlinked row has no empty colour step', () => {
+  const variants = [{ id: 'solo', sku: 'SKU-solo', label: 'iPhone 16', ...PHONE, pricePaise: 10000, regularPricePaise: 10000, inStock: true }];
+  const html = render({ variants, selection: { modelKey: 'iphone16', colourKey: null } });
+  assert.equal((html.match(/role="radiogroup"/g) ?? []).length, 1, 'model step only');
+  assert.doesNotMatch(html, /<legend[^>]*>Colour/);
+  assert.match(html, /aria-live="polite">iPhone 16, ₹100\.00, in stock/);
+});
+
 test('the page reserves gallery space, preloads the next photo and syncs the URL', () => {
   const source = readFileSync(path.join(root, 'src/components/shop/ProductDetailPage.tsx'), 'utf8');
   // The main image keeps the same box while photos differ in size.

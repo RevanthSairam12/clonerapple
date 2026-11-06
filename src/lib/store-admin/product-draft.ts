@@ -3,10 +3,11 @@ import type { TransactionSql, Sql } from 'postgres';
 import { getSql } from '@/lib/platform/db';
 import { metadataGate, MetadataError, saveProductMetadataUsing, strictMetadataAudit } from './product-metadata';
 import { checkPricePair, checkSalePrice } from './catalog-crud-rules';
-import { adjustVariantInventoryUsing, activateVariantInventoryUsing } from './variant-inventory';
+import { adjustVariantInventoryUsing, activateVariantInventoryUsing, refreshVariantStockGate } from './variant-inventory';
 import { draftMoney, parseProductDraft, type ProductDraft } from './product-draft-rules';
 import { writeProductContentUsing } from './product-content';
 import { assertCatalogRevision, readCatalogRevision } from './catalog-revision';
+import { saveVariantColourUsing } from './variant-colour';
 import { saveVariantIdentityUsing } from './variant-identity';
 import { largePriceChange } from './options-table-rules';
 
@@ -114,6 +115,9 @@ export async function saveProductDraftInTransaction(tx:TransactionSql,draft:Prod
     const [old]=await tx`select * from product_variants where id=${variantId} and product_id=${id} for update`;
     if(v.id&&!old)throw new ProductDraftError('Option not found.',404);
     const saved=await saveVariantIdentityUsing(tx,id,v,staffId,request);
+    // The colour relationship the storefront selects by. Retired options are
+    // read-only, and an existing link is never rewritten.
+    if(!saved.before?.retired_at)await saveVariantColourUsing(tx,id,saved.id,v.colourId);
     if(!saved.before?.retired_at)warnings.push(...(await updateVariantPricingUsing(tx,id,saved.id,{pricePaise:option.pricePaise,salePricePaise:option.salePricePaise,confirmLargeChange:draft.confirmLargePriceChanges},staffId,request)).warnings);
     if(option.clientKey)optionIds[option.clientKey]=saved.id;
     if(option.stock){if(saved.before?.retired_at)throw new ProductDraftError('Retired options cannot receive stock adjustments.');await adjustVariantInventoryUsing(tx,{...option.stock,productId:id,variantId:saved.id},staffId,request);}
@@ -129,6 +133,10 @@ export async function saveProductDraftInTransaction(tx:TransactionSql,draft:Prod
     if(invalid.length)throw new ProductDraftError('An active purchasable option has an invalid SKU, combination key or compatible device. Review Price and options before publishing.');
   }
   await tx`update products set is_active=${p.isActive} where id=${id}`;
+  // After every option write. In variant mode the flag means "any option is
+  // buyable", so a stale product-mode value or an explicit product-level switch
+  // must never outlive the rows that actually decide availability.
+  await refreshVariantStockGate(tx,id,staffId);
   await saveProductMetadataUsing(tx,id,{},staffId,{request,enforcePublication:true});
   await strictMetadataAudit(tx,{actorId:staffId,action:created?'catalog.product.draft.create':'catalog.product.draft.save',entity:'product',entityId:id,before:before?{pricePaise:before.price_paise,salePricePaise:before.sale_price_paise,isActive:before.is_active}:null,after:{pricePaise:p.pricePaise,salePricePaise:sale,isActive:p.isActive,galleryCount:draft.gallery?.length,optionCount:draft.options?.length},request});
   const [savedProduct]=await tx`select catalog_revision from products where id=${id}`;

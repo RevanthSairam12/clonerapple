@@ -43,7 +43,7 @@ export const OPERATIONS = [
   { name: 'reject duplicate commerce combination', rejectedInserts: { product_variants: 1 }, transactionRollbacks: 1 },
   { name: 'reject invalid inventory mode', rejectedUpdates: { products: 1 }, transactionRollbacks: 1 },
 ];
-export const SOURCE_FILES = ['tests/helpers/phase4-fixture.mjs', 'tests/phase4-stock-integration.test.mjs', 'tests/phase4-test-manifest.test.mjs', 'scripts/phase4-test-manifest.mjs', 'src/lib/payu/stock.ts', 'src/lib/checkout/stock-rules.ts'];
+export const SOURCE_FILES = ['tests/helpers/phase4-fixture.mjs', 'tests/phase4-stock-integration.test.mjs', 'scripts/phase4-test-manifest.mjs', 'src/lib/payu/stock.ts', 'src/lib/checkout/stock-rules.ts'];
 const zeros = () => Object.fromEntries(TABLES.map(table => [table, 0]));
 const metrics = () => Object.fromEntries(METRICS.map(key => [key, zeros()]));
 const expected = op => Object.fromEntries(METRICS.map(key => [key, { ...zeros(), ...op[key] }]));

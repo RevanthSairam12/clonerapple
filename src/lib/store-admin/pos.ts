@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 
 import { getSql } from '@/lib/platform/db';
 import { resolveEffectivePrice } from '@/lib/storefront/pricing';
-import { readSaleStateUsing } from '@/lib/storefront/sale-state';
 import { getStoreSession } from './auth';
 import { ensureInvoiceIssuedInTx } from '@/lib/orders/invoice';
 import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
@@ -162,7 +161,6 @@ export async function getPosCatalog(): Promise<PosCatalogLoad> {
 /** Injected connection keeps reference-pricing tests entirely offline. */
 export async function getPosCatalogUsing(sql: Sql): Promise<PosCatalogLoad> {
   try {
-    const saleLive = await referenceSaleLiveUsing(sql);
     const rows = (await sql`
       select p.id, p.name, p.subtitle, p.price_paise, p.sale_price_paise, p.currency,
              v.price_paise_override, v.sale_price_paise as variant_sale_price_paise,
@@ -184,7 +182,7 @@ export async function getPosCatalogUsing(sql: Sql): Promise<PosCatalogLoad> {
         id:inventoryKey(text(row.id),nullableText(row.variant_id)),productId:text(row.id),variantId:nullableText(row.variant_id),variantSku:nullableText(row.variant_sku),variantLabel:nullableText(row.variant_label),
         name: text(row.name)+(row.variant_label?` — ${text(row.variant_label)}`:''),
         subtitle: text(row.subtitle),
-        listPricePaise: referencePriceOf(row, saleLive, row.variant_id ? {
+        listPricePaise: referencePriceOf(row, row.variant_id ? {
           price_paise_override: row.price_paise_override,
           sale_price_paise: row.variant_sale_price_paise,
         } : undefined),
@@ -199,20 +197,20 @@ export async function getPosCatalogUsing(sql: Sql): Promise<PosCatalogLoad> {
   }
 }
 
-async function referenceSaleLiveUsing(sql: Sql | import('postgres').TransactionSql): Promise<boolean> {
-  try {
-    return (await readSaleStateUsing(sql)).live;
-  } catch {
-    // A failed reference read must not change or prevent a cashier's charge.
-    return false;
-  }
-}
-
-function referencePriceOf(product: Row, saleLive: boolean, option?: Row): number {
+/**
+ * The comparison price shown at the till, and what "Use list price" inserts.
+ *
+ * `order_items.reference_price_paise` and the POS "List" figure are the
+ * **regular** catalogue price (migration 0040), not the price a live sale
+ * advertises: a cashier must be able to see and charge the normal price even
+ * while the storefront is discounting. The resolver is therefore always called
+ * with the sale switched off, so a sale override can never lower it.
+ */
+function referencePriceOf(product: Row, option?: Row): number {
   return resolveEffectivePrice({ pricePaise: number(product.price_paise),
-    salePricePaise: product.sale_price_paise == null ? null : number(product.sale_price_paise) }, saleLive,
+    salePricePaise: product.sale_price_paise == null ? null : number(product.sale_price_paise) }, false,
   option ? { pricePaise: option.price_paise_override == null ? null : number(option.price_paise_override),
-    salePricePaise: option.sale_price_paise == null ? null : number(option.sale_price_paise) } : undefined).unitPaise;
+    salePricePaise: option.sale_price_paise == null ? null : number(option.sale_price_paise) } : undefined).regularPaise;
 }
 
 /* ---------------------------------------------------------- shifts */
@@ -484,7 +482,6 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
   const priced = validatePosPrices(input.lines, cart.lines);
   if (!priced.ok) return { ok: false, reason: 'invalid-input', error: priced.error };
 
-  const saleLive = await referenceSaleLiveUsing(sql);
   const txnid = `POS-${randomBytes(9).toString('hex').toUpperCase()}`;
   const orderId = `ord_${randomBytes(12).toString('hex')}`;
   const customerPhone = input.customerPhone?.trim() || null;
@@ -571,7 +568,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
           colourHex:optionSnapshot.colourHex,
           quantity: cartLine.quantity,
           unitPricePaise: cartLine.unitPricePaise,
-          referencePricePaise: referencePriceOf(product, saleLive, variant),
+          referencePricePaise: referencePriceOf(product, variant),
           lineTotalPaise: cartLine.unitPricePaise * cartLine.quantity,
           currency: 'INR',
         });

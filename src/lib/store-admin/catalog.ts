@@ -94,6 +94,8 @@ export interface CatalogVariant {
   deviceModelId: string | null;
   combinationKey: string | null;
   optionIdentity?: string | null;
+  /** The shared colour this row sells, from `product_variant_colours`. */
+  colourId: string | null;
   retiredAt?: string | null;
   stock: CatalogStockRow | null;
   isActive: boolean;
@@ -524,8 +526,10 @@ export async function getCatalogProduct(
           select v.id, v.sku, v.option_name, v.option_value, v.option_hex,
                  v.price_paise_override, v.sale_price_paise, v.is_active, v.sort_order,
                  v.is_purchasable,v.device_model_id,v.combination_key,v.option_identity,v.retired_at,
+                 pvc.colour_id,
                  s.id as stock_id,s.on_hand,s.reserved,s.track_inventory,s.low_stock_threshold,s.updated_at as stock_updated_at
           from product_variants v left join stock s on s.product_id=v.product_id and s.variant_id=v.id
+            left join product_variant_colours pvc on pvc.variant_id=v.id and pvc.product_id=v.product_id
           where v.product_id = ${id}
           order by v.sort_order, v.option_value
         `,
@@ -588,6 +592,7 @@ export async function getCatalogProduct(
       salePricePaise: nullableNumber(row.sale_price_paise),
       isPurchasable:Boolean(row.is_purchasable),deviceModelId:row.device_model_id == null?null:text(row.device_model_id),combinationKey:row.combination_key == null?null:text(row.combination_key),
       optionIdentity:row.option_identity==null?null:text(row.option_identity),retiredAt:iso(row.retired_at)||null,
+      colourId:row.colour_id==null?null:text(row.colour_id),
       stock:row.stock_id?{onHand:number(row.on_hand),reserved:number(row.reserved),trackInventory:Boolean(row.track_inventory),lowStockThreshold:number(row.low_stock_threshold),updatedAt:iso(row.stock_updated_at)}:null,
       isActive: Boolean(row.is_active),
       sortOrder: number(row.sort_order),

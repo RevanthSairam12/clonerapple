@@ -417,6 +417,13 @@ export interface VariantInput {
   combinationKey?: string | null;
   /** Explicit normalized option value, never inferred from a model display label. */
   optionIdentity?: string | null;
+  /**
+   * The shared colour this option row sells, by `colours.id`. This is the only
+   * colour identity the storefront reads; it is never inferred from the option
+   * label or hex. Omitted means "leave the saved link untouched", and links are
+   * append-only — correcting one means archiving and replacing the option.
+   */
+  colourId?: string | null;
   /** Owned saved variant to retire; only valid when creating a new identity. */
   replacesVariantId?: string;
   /** The person confirmed a large option price change. Never sent by default. */
@@ -463,6 +470,17 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
     return { ok: false, error: 'The colour must be a hex value such as #1f2937.' };
   }
 
+  // Colour identity is a reference to a shared colour row, never a label or a
+  // hex value typed into this form. An empty value means "no colour link".
+  const rawColourId = trimmed(body.colourId);
+  const colourId = rawColourId || null;
+  if (body.colourId !== undefined && body.colourId !== null && typeof body.colourId !== 'string') {
+    return { ok: false, error: 'Choose a shared colour for this option.' };
+  }
+  if (colourId && !ID_RE.test(colourId)) {
+    return { ok: false, error: 'Choose a shared colour for this option.' };
+  }
+
   let priceOverridePaise: number | null | undefined;
   if (body.priceOverridePaise !== undefined) {
     if (body.priceOverridePaise === null || body.priceOverridePaise === '') {
@@ -505,6 +523,7 @@ export function validateVariantInput(input: unknown): FieldResult<VariantInput> 
       ...(body.deviceModelId === undefined ? {} : {deviceModelId}),
       ...(body.combinationKey === undefined ? {} : {combinationKey}),
       ...(body.optionIdentity === undefined ? {} : {optionIdentity}),
+      ...(body.colourId === undefined ? {} : {colourId}),
       ...(body.replacesVariantId === undefined ? {} : {replacesVariantId:body.replacesVariantId as string}),
       ...(priceOverridePaise === undefined ? {} : {priceOverridePaise}),
       ...(salePricePaise === undefined ? {} : {salePricePaise}),

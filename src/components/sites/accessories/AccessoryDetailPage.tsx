@@ -613,14 +613,17 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
                         <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">Specifications</h3>
                       </div>
                       <div className="md:col-span-9 lg:col-span-9 max-w-3xl text-[13.5px] sm:text-[14px] text-[#1d1d1f]">
-                        <dl className="divide-y divide-[#e5e5ea]">
+                        {/* One specification per line, as points — the same
+                            shape the structured Specifications section uses. */}
+                        <ul className="list-disc space-y-2 pl-5">
                           {product.specs.map((spec) => (
-                            <div key={spec.label} className="flex justify-between gap-6 py-2.5">
-                              <dt className="text-[#6e6e73]">{spec.label}</dt>
-                              <dd className="font-medium text-right">{spec.value}</dd>
-                            </div>
+                            <li key={spec.label} className="break-words">
+                              <span className="font-semibold">{spec.label}</span>
+                              <span aria-hidden="true">: </span>
+                              <span>{spec.value}</span>
+                            </li>
                           ))}
-                        </dl>
+                        </ul>
                       </div>
                     </div>
 

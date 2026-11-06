@@ -39,8 +39,10 @@ interface Props {
   canCreateShared?: boolean;
   onDeviceBusyChange?: (busy: boolean) => void;
   onDeviceDirtyChange?: (dirty: boolean) => void;
+  /** A colour was just saved to the shared list; the option picker can offer it. */
+  onColourCreated?: (colour: { id: string; name: string; hex: string; isActive: boolean }) => void;
 }
-export function ProductMetadataFields({ references: initialReferences, state, categoryId, value, onChange, onReferencesChange, disabled = false, canManageDevices = false, canCreateShared = false, onDeviceBusyChange, onDeviceDirtyChange }: Props) {
+export function ProductMetadataFields({ references: initialReferences, state, categoryId, value, onChange, onReferencesChange, disabled = false, canManageDevices = false, canCreateShared = false, onDeviceBusyChange, onDeviceDirtyChange, onColourCreated }: Props) {
   const [references, setReferences] = useState(initialReferences);
   const [search, setSearch] = useState('');
   const [compatibilityEnabled, setCompatibilityEnabled] = useState(value.deviceModelIds.length > 0);
@@ -99,7 +101,8 @@ export function ProductMetadataFields({ references: initialReferences, state, ca
       deviceCreated('models', { ...reference, brandId: reference.brandId, brandName: references.brands.find(brand => brand.id === reference.brandId)?.name ?? 'Unavailable brand' });
     } else if (kind === 'colours') {
       setCreatedColours(current => [...current.filter(item => item.id !== reference.id), reference]);
-      setCreatedNotice(`${reference.name} (${reference.hex}) saved to shared colours. It is not selected or bound to any product option.`);
+      setCreatedNotice(`${reference.name} (${reference.hex}) saved to shared colours. Choose it on an option row under Price and options; nothing is bound automatically.`);
+      onColourCreated?.({ id: reference.id, name: reference.name, hex: reference.hex ?? '', isActive: reference.isActive });
     }
   }
   const toggle = (id: string) => onChange({ ...value, deviceModelIds: value.deviceModelIds.includes(id) ? value.deviceModelIds.filter(item => item !== id) : [...value.deviceModelIds, id] });
@@ -145,8 +148,8 @@ export function ProductMetadataFields({ references: initialReferences, state, ca
     </details> : null}
     {canCreateShared ? <details><summary>Add shared colour (reference only)</summary>
       <SharedListInlineCreator kind="colours" brands={references.brands} canCreate={canCreateShared} disabled={disabled || reloading || creatorBusy || brandBusy || colourBusy} onCreated={sharedCreated} onBusyChange={setColourBusy} onDirtyChange={setColourDirty} />
-      <p className="sa-hint">Shared colour creation is available now; binding colours to product options is deferred. No default selection is made. <a href="/store-admin/colours" target="_blank" rel="noopener noreferrer">View shared colours (new tab)</a></p>
-      {createdColours.length ? <ul>{createdColours.map(colour => <li key={colour.id}>{colour.name} ({colour.hex}) — saved, not selected</li>)}</ul> : null}
+      <p className="sa-hint">A saved colour becomes available in the Colour picker under Price and options. It is never bound to an option automatically. <a href="/store-admin/colours" target="_blank" rel="noopener noreferrer">View shared colours (new tab)</a></p>
+      {createdColours.length ? <ul>{createdColours.map(colour => <li key={colour.id}>{colour.name} ({colour.hex}) — saved, choose it on an option row</li>)}</ul> : null}
     </details> : null}
     <h3 className="sa-card-title">Compatible device models</h3>
     <p className="sa-hint">{type?.requiresCompatibility ? 'At least one active compatible device is required to publish.' : 'Optional. Select only models you have verified; nothing is selected automatically.'} {state ? state.reviewed ? 'Compatibility has been reviewed.' : 'Compatibility has not yet been reviewed.' : ''}</p>

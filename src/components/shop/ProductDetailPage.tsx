@@ -65,9 +65,9 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
   const unavailable = availability.blocked;
   const { notice: availabilityNotice, setNotice: setAvailabilityNotice, pending: isAddingToBag, added: isAdded } = purchase;
   const selectedSize = selectedVariant?.deviceModelName ?? '';
-  const chosenColourName = selectedVariant?.colourName
-    || (selectedVariant && /^colou?r$/i.test(selectedVariant.optionName ?? '') ? selectedVariant.optionValue : null)
-    || null;
+  // The shared colour record is the only source of a colour name. The option's
+  // free text is its label, never a colour identity, so it is not used here.
+  const chosenColourName = selectedVariant?.colourName || null;
   const steps = optionSteps(variants);
   const colourLabel = selectedColourLabel(variants, selection);
   const fallbackPhotos = [sourceProduct.image, ...(sourceProduct.hoverImage ? [sourceProduct.hoverImage] : [])];
@@ -705,14 +705,17 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
                 {Object.values(product.specs).some(Boolean) && (
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8 mt-8">
                     <h3 className="md:col-span-3 text-[15px] font-semibold">Tech Specs</h3>
-                    <dl className="md:col-span-9 space-y-2 text-sm">
+                    {/* One specification per line, as points — the same shape
+                        the structured Specifications section renders. */}
+                    <ul className="md:col-span-9 list-disc space-y-2 pl-5 text-sm">
                       {Object.entries(product.specs).filter(([, value]) => value).map(([label, value]) => (
-                        <div key={label} className="flex gap-4">
-                          <dt className="font-medium">{label.replace(/([a-z])([A-Z])/g, '$1 $2')}</dt>
-                          <dd>{value}</dd>
-                        </div>
+                        <li key={label} className="break-words">
+                          <span className="font-medium">{label.replace(/([a-z])([A-Z])/g, '$1 $2')}</span>
+                          <span aria-hidden="true">: </span>
+                          {value}
+                        </li>
                       ))}
-                    </dl>
+                    </ul>
                   </div>
                 )}
 

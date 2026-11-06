@@ -351,6 +351,9 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     (!variant.device_model_id || deviceModels.some((model) => model.id === variant.device_model_id)));
   const variantStates = configured.map((variant) => {
     const variantStock = aggregate.variantStock.find((entry) => entry.variant_id === variant.id);
+    // A variant row is judged on its own count. The parent gate is passed as
+    // `true`: in variant mode the product-level `in_stock` flag is not a
+    // customer stock pool, and an untracked option is sellable by definition.
     const snapshot = stockStateFrom(variantStock ?? { track_inventory: true, on_hand: 0, reserved: 0 }, true);
     return { id: text(row.id), variantId: text(variant.id), inStock: snapshot.state !== 'out_of_stock',
       tracked: snapshot.tracked, available: snapshot.tracked ? snapshot.available : null, lowStockThreshold: snapshot.threshold };
@@ -376,6 +379,11 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
       onSale: variantPrice.onSale, inStock: variantStates[index].inStock };
   }) : [];
   const parentState = stockStateFrom(stock, Boolean(row.in_stock));
+  // In variant mode the product-level gate and the parent balance are legacy
+  // product-mode state: they are not a customer stock pool and no longer gate
+  // a purchase. Only the option rows decide, exactly as the click-time read
+  // does. Availability is whether any option is buyable; the unit total is the
+  // sum of the option rows alone.
   const aggregateState = aggregateVariantAvailability(text(row.id), variantStates);
   const stockState = inventoryMode === 'variant' ? { state: aggregateState.inStock ? 'in_stock' as const : 'out_of_stock' as const,
     available: aggregateState.available, threshold: null, tracked: aggregateState.tracked } : parentState;

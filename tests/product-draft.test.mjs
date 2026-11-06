@@ -93,6 +93,23 @@ test('a large option price change asks for confirmation and never silently appli
   await service.saveProductDraftUsing(confirmed.sql,confirmedDraft,'staff');
   assert.equal(confirmed.events.at(-1).query,'COMMIT');
 });
+test('a draft option links its shared colour and the variant gate follows the rows',async()=>{
+  const {sql,events}=draftTx();
+  // The colour exists and is active; the option has no link yet.
+  const wrapped={begin:fn=>sql.begin(tx=>fn(Object.assign(async(strings,...values)=>{
+    const query=strings.join('?').replace(/\s+/g,' ').trim();
+    if(query.startsWith('select id from colours'))return[{id:values[0]}];
+    return tx(strings,...values);
+  },{json:tx.json})))};
+  const draft=rules.parseProductDraft({id:'product-a',product:editProduct,options:[{...savedOption,colourId:'c-red'}]});
+  await service.saveProductDraftUsing(wrapped,draft,'staff');
+  const insert=events.findIndex(e=>e.query.startsWith('insert into product_variant_colours'));
+  assert.ok(insert>-1,'the colour link is written inside the same draft transaction');
+  assert.deepEqual(events[insert].values,['variant-a','product-a','c-red']);
+  const gate=events.findIndex(e=>e.query.startsWith('update products set in_stock=exists('));
+  assert.ok(gate>insert,'the variant-mode gate is re-derived after the option writes');
+  assert.equal(events.at(-1).query,'COMMIT');
+});
 test('draft rejects commerce identity changes inside enclosing rollback',async()=>{
   const {sql,events}=draftTx();
   const draft=rules.parseProductDraft({id:'product-a',product:editProduct,options:[{...savedOption,sku:'CHANGED'}]});

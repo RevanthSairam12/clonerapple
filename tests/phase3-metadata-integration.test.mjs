@@ -173,6 +173,24 @@ test('Phase3 actual migration and metadata/duplicate service transactions in pri
         await tx`update device_models set is_active=false where id='device_on'`;
         await saveProductMetadataUsing(tx, 'source', {}, 'phase3_owner', { enforcePublication: true });
       }, /active compatible device/);
+      // Reactivating the model restores *selectability* (metadataReferencesUsing
+      // drops inactive models, so a still-inactive one would fail the save with
+      // 'A selected device model is unknown or inactive.'). Publication is then
+      // accepted because the save itself stamps compatibility_reviewed_at, and
+      // with no live commerce options and an is_active-only membership the
+      // remaining review conditions are all false. Runs inside one transaction
+      // that restores the inactive model: the cases after it, and the manifest's
+      // accepted insert totals, are written against the deactivated state.
+      await fixture.operation('publish under review', async tx => {
+        await tx`update device_models set is_active=true where id='device_on'`;
+        await saveProductMetadataUsing(tx, 'source', {}, 'phase3_owner', { enforcePublication: true });
+        const state = await productMetadataUsing(tx, 'source');
+        assert.deepEqual(state.problems, []);
+        assert.equal(state.reviewed, true);
+        assert.equal(state.needsCompatibilityReview, false);
+        await tx`update device_models set is_active=false where id='device_on'`;
+        throw new Error('intentional review-state probe rollback');
+      }, /intentional review-state probe rollback/);
       await fixture.operation('reject inactive type publication', async tx => {
         await tx`update product_types set is_active=false where id='type_a'`;
         await saveProductMetadataUsing(tx, 'source', {}, 'phase3_owner', { enforcePublication: true });

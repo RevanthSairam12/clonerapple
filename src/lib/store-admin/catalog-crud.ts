@@ -20,6 +20,8 @@ import {
 } from './catalog-crud-rules';
 import type { CatalogWrite, CatalogWriteFailure } from './catalog-writes';
 import { ProductDraftError, updateVariantPricingUsing } from './product-draft';
+import { saveVariantColourUsing } from './variant-colour';
+import { refreshVariantStockGate } from './variant-inventory';
 import { saveVariantIdentityUsing, VariantIdentityError } from './variant-identity';
 
 if (typeof window !== 'undefined') {
@@ -886,8 +888,13 @@ export async function upsertVariant(
       if (input.id && !before) return fail('not-found', 'Variant not found.');
       const saved=await saveVariantIdentityUsing(tx,productId,input,staffId);
       const rows=[saved.after];
+      // Retired options are read-only; a live row may gain its first colour link.
+      const colourId = saved.before?.retired_at
+        ? null
+        : await saveVariantColourUsing(tx, productId, saved.id, input.colourId);
 
-      await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.variant.save',entity:'product',entityId:productId,before,after:rows[0] ?? {}});
+      await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.variant.save',entity:'product',entityId:productId,
+        before, after:{...(rows[0] ?? {}), ...(colourId === null ? {} : {colour_id:colourId})}});
 
       // Option pricing is unlocked and audited: the helper validates the sale
       // pair, asks for confirmation on a large change and appends paired
@@ -905,6 +912,10 @@ export async function upsertVariant(
             },
             staffId,
           );
+
+      // Activating, deactivating or replacing an option changes whether the
+      // product is buyable at all; the variant-mode gate follows the rows.
+      await refreshVariantStockGate(tx, productId, staffId);
 
       return {
         ok: true as const,

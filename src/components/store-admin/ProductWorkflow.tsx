@@ -96,7 +96,9 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
   }));
   const [metadata, setMetadata] = useState(() => emptyMetadataDraft(metadataState));
   const [photos, setPhotos] = useState<Photo[]>(() => (product?.images ?? []).filter(image => !image.deletedAt).map(image => ({ id: image.id, key: image.id, url: image.url, alt: image.alt, role: image.role, sortOrder: image.sortOrder, colourId: image.colourId })));
-  const sharedColours = product?.colours ?? colourChoices ?? [];
+  // Seeded from the server payload; a colour created inline in Product details is
+  // appended here so it can be picked on an option row without reloading the page.
+  const [sharedColours, setSharedColours] = useState(() => product?.colours ?? colourChoices ?? []);
   const [options, setOptions] = useState<OptionDraft[]>(() => (product?.variants ?? []).map(option => ({
     id: option.id, clientKey: option.id, sku: option.sku ?? '', optionName: option.optionName, optionValue: option.optionValue,
     optionHex: option.optionHex ?? '', deviceModelId: option.deviceModelId ?? '', combinationKey: option.combinationKey ?? '',
@@ -104,7 +106,9 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     isActive: option.isActive, isPurchasable: option.isPurchasable, sortOrder: option.sortOrder,
     price: moneyInput(option.pricePaiseOverride), salePrice: moneyInput(option.salePricePaise), count: String(option.stock?.onHand ?? 0),
     threshold: String(option.stock?.lowStockThreshold ?? 0), trackInventory: option.stock?.trackInventory ?? false, originalStock: option.stock,
-    colourId: sharedColours.find(colour => option.optionHex && colour.hex.toLowerCase() === option.optionHex.toLowerCase())?.id ?? '',
+    // The saved link is the truth. A hex value is presentational and never
+    // stands in for colour identity, so it is not used to guess one.
+    colourId: option.colourId ?? '',
   })));
   const [sellBy, setSellBy] = useState<SellBy>(product?.sellBy ?? 'single');
   const [skuPattern, setSkuPattern] = useState(product?.skuPattern ?? '');
@@ -477,7 +481,10 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
         optionName: option.optionName, optionValue: option.optionValue, optionHex: option.optionHex || null,
         deviceModelId: option.deviceModelId || null, combinationKey: option.combinationKey || null,
         optionIdentity: option.optionIdentity,
-    isActive: option.isActive, isPurchasable: option.isPurchasable, sortOrder: option.sortOrder,
+        // The shared colour this row sells. Omitted when none is chosen, so a
+        // row without a colour never invents one from its label or hex.
+        ...(option.colourId ? { colourId: option.colourId } : {}),
+        isActive: option.isActive, isPurchasable: option.isPurchasable, sortOrder: option.sortOrder,
         ...(option.retiredAt ? {} : pricePayload(option)),
         ...(option.isActive && option.isPurchasable ? { stock: stockPatch(option.originalStock, transferring ? String(option.originalStock?.onHand ?? 0) : option.count, option.threshold, option.replacesVariantId ? true : option.trackInventory, option.replacesVariantId || (activateOptions && stockSource === 'receipt') ? 'receipt' : stockReason, stockNote) } : {}),
       }));
@@ -538,7 +545,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
       </div>
       <ProductSpecificationsEditor value={description} onChange={setDescription} disabled={disabled} />
       {product?.descriptionSections == null && initialSections !== JSON.stringify(description.sections) && <p className="sa-notice">Saving adopts the converted older description and specifications as structured product content. Existing sections are retained and changes are recorded in content history.</p>}
-      <ProductMetadataFields references={metadataReferences} state={metadataState} categoryId={form.categoryId} value={metadata} onChange={setMetadata} onReferencesChange={setMetadataReferences} disabled={disabled} canManageDevices={canManageDevices && canEdit} canCreateShared={canCreateShared && canEdit} onDeviceBusyChange={setDeviceBusy} onDeviceDirtyChange={setDeviceDirty} />
+      <ProductMetadataFields references={metadataReferences} state={metadataState} categoryId={form.categoryId} value={metadata} onChange={setMetadata} onReferencesChange={setMetadataReferences} disabled={disabled} canManageDevices={canManageDevices && canEdit} canCreateShared={canCreateShared && canEdit} onDeviceBusyChange={setDeviceBusy} onDeviceDirtyChange={setDeviceDirty} onColourCreated={colour => setSharedColours(current => (current.some(item => item.id === colour.id) ? current : [...current, colour]))} />
       <details><summary>More product settings</summary><div className="sa-control-grid">
         <Field label="Page address (slug)" help="Leave blank to use the name. Changing it changes the product URL.">{input('slug', 80)}</Field>
         <Field label="Brand label" help="Legacy free-text product brand label, kept for existing product copy. Choosing a Brand record fills this label; editing it does not change that record or device compatibility.">{input('brand', 80)}</Field>
@@ -583,13 +590,18 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     {!masterTracking && <p className="sa-notice">Stock is not limited, so this can be sold without end. <button type="button" className="sa-btn sa-btn-small" onClick={() => setMasterTracking(true)}>Turn on</button></p>}
     <div className="sa-table-wrap"><table className="sa-table"><caption>One row per option — price, sale, stock and visibility save together</caption><thead><tr><th>Model or option</th><th>Colour</th><th>SKU</th><th>Price ₹</th><th>Sale ₹</th><th>Stock</th><th>Active</th><th>History</th><th>Remove</th></tr></thead><tbody>{options.map((option, rowIndex) => {
       const locked = !!option.retiredAt || (!!option.id && option.isPurchasable) || retiringIds.has(option.id ?? '');
+      // A saved link is append-only at the database level, so the picker stops
+      // offering a different colour once one is recorded. Otherwise it stays
+      // editable even when the rest of the row's identity is locked, so the
+      // owner can attach the missing colour an existing row still needs.
+      const colourLocked = !!option.retiredAt || retiringIds.has(option.id ?? '') || (!!option.id && !!option.colourId);
       const model = modelOf(option);
       const colour = colourOf(option);
       const history = option.id ? (product?.priceHistory ?? []).filter(row => row.variantId === option.id) : [];
       const warnings = rowWarnings.get(option.clientKey) ?? [];
       return <tr key={option.clientKey}>
         <td><Field label={`Option type for ${option.optionValue}`}><input className="sa-input" readOnly={locked} maxLength={40} value={option.optionName} onChange={event => updateOption(option.clientKey, { optionName: event.target.value })} /></Field><Field label={`Model, colour or value for ${option.optionValue}`}><input className="sa-input" readOnly={locked} maxLength={60} value={option.optionValue} onChange={event => updateOption(option.clientKey, { optionValue: event.target.value })} /></Field>{model && <span className="sa-row-sub">Model: {model.brandName} {model.name}</span>}{option.retiredAt && <span className="sa-row-sub">Retired — read-only history</span>}{retiringIds.has(option.id ?? '') && <span className="sa-row-sub">Retires when replacement is saved</span>}{!option.isPurchasable && <span className="sa-row-sub">Display only</span>}</td>
-        <td>{sharedColours.length > 0 ? <select aria-label={`Colour for ${option.optionValue}`} className="sa-input" disabled={locked} value={option.colourId} onChange={event => { const next = sharedColours.find(item => item.id === event.target.value); updateOption(option.clientKey, { colourId: event.target.value, ...(next ? { optionHex: next.hex } : {}) }); }}><option value="">No colour</option>{sharedColours.filter(item => item.isActive !== false || item.id === option.colourId).map(item => <option key={item.id} value={item.id}>{item.name} ({item.hex})</option>)}</select> : <span className="sa-row-sub">Add colours in Basics</span>}{colour && <span className="sa-swatch" aria-hidden="true" style={{ background: colour.hex }} />}</td>
+        <td>{sharedColours.length > 0 ? <select aria-label={`Colour for ${option.optionValue}`} className="sa-input" disabled={colourLocked} value={option.colourId} onChange={event => { const next = sharedColours.find(item => item.id === event.target.value); updateOption(option.clientKey, { colourId: event.target.value, ...(next ? { optionHex: next.hex } : {}) }); }}><option value="">No colour</option>{sharedColours.filter(item => item.isActive !== false || item.id === option.colourId).map(item => <option key={item.id} value={item.id}>{item.name} ({item.hex})</option>)}</select> : <span className="sa-row-sub">Add colours in Basics</span>}{colour && <span className="sa-swatch" aria-hidden="true" style={{ background: colour.hex }} />}{!!option.id && !!option.colourId && <span className="sa-row-sub">Saved colour — archive and replace to change it</span>}</td>
         <td><input aria-label={`SKU for ${option.optionValue}`} className="sa-input sa-input-mono" maxLength={64} disabled={!!option.retiredAt || (!!option.id && option.savedSku != null) || retiringIds.has(option.id ?? '')} value={option.sku} onChange={event => updateOption(option.clientKey, { sku: event.target.value.toUpperCase() })} />{warnings.map(warning => <span className="sa-row-sub" key={warning}>{warning}</span>)}</td>
         <td><input ref={node => { if (node) cellRefs.set(`${rowIndex}:0`, node); else cellRefs.delete(`${rowIndex}:0`); }} onKeyDown={event => moveCell(event, rowIndex, 0)} aria-label={`Price for ${option.optionValue}`} className="sa-input" type="number" min="0.01" step="0.01" readOnly={!canEdit} disabled={!!option.retiredAt || retiringIds.has(option.id ?? '')} placeholder={form.price || 'Product price'} value={option.price} onChange={event => updateOption(option.clientKey, { price: event.target.value })} /></td>
         <td><input ref={node => { if (node) cellRefs.set(`${rowIndex}:1`, node); else cellRefs.delete(`${rowIndex}:1`); }} onKeyDown={event => moveCell(event, rowIndex, 1)} aria-label={`Sale price for ${option.optionValue}`} className="sa-input" type="number" min="0.01" step="0.01" readOnly={!canEdit} disabled={!!option.retiredAt || retiringIds.has(option.id ?? '')} placeholder="No sale" value={option.salePrice} onChange={event => updateOption(option.clientKey, { salePrice: event.target.value })} /></td>

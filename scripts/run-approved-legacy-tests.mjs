@@ -10,6 +10,7 @@ const files = [
   'order-cancel-stock-integration', 'order-stock-integration', 'pos-entered-prices',
   'reports-correctness-integration', 'sale-admin', 'sale-boundary-display',
   'sale-price-entry', 'sale-pricing', 'staff-accounts-integration', 'stock-behaviour',
+  'phase5-option-lifecycle',
   'payu-callback-integration', 'shipping-order-integration',
 ];
 const selected = process.argv.slice(2);

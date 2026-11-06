@@ -222,8 +222,8 @@ and customer-SMS matrix cells off; no message sent). No migration, seed, backfil
 business write was performed: public counts (products 15, product_variants 36, stock 15,
 stock_movements 27, orders 51, order_items 49, coupons 3, coupon_redemptions 4) were
 identical before and after the approved run, and every `itest_*` schema it created was
-dropped. Known limitation: per-option low-stock notifications are still not queued
-(product-level only).
+dropped. Per-option low-stock notifications were not yet queued at this point; see the
+Phase 7 section below, which adds them.
 
 **File map:** `src/lib/store-admin/{catalog.ts,catalog-crud.ts,report-rules.ts,orders.ts,
 order-channel.ts}`, `src/app/(store-admin)/store-admin/(protected)/{stock,low-stock}/
@@ -312,6 +312,44 @@ identity row was written, and nothing was committed or pushed.
 `docs/images/phase6/*.png` (new); `PRODUCTS_AND_CATALOG_SIMPLE_GUIDE.md` (rewritten);
 `src/components/store-admin/{ProductHelp.tsx,VariantEditor.tsx,ProductWorkflow.tsx,
 ProductMetadataFields.tsx}`; `scripts/product-admin-ui-fixture.mjs`.
+
+### Phase 7 — per-option low-stock alerts — 6 November 2026
+
+**Implemented and unit-verified (19/19 offline tests pass).** This closes limitation 3 of
+Phase 6: a staff low-stock alert now fires for the **option** that crossed its own
+threshold, not only for the product.
+
+- **One option, one count.** The low-stock crossing is judged per stock row: option A
+  dropping below its own threshold alerts even while option B sits well stocked, and a
+  colour already low never re-alerts on every later adjustment. The product-level path
+  is unchanged, so a simple product still alerts once.
+- **The alert names the option.** `stockAlertProductName(productName, optionLabel)`
+  (new, in `src/lib/notifications/stock-events.ts`) renders `iPhone 18 Case — Colour:
+  Red`. Without it, one colour going low read as the whole product going low. The label
+  is trimmed and the whole string capped at 300 characters, because it reaches a
+  template.
+- **The movement is the dedupe token.** `adjustVariantInventoryUsing` now returns the
+  `stock_movements.id` it wrote (`returning id`), plus the option label, the product
+  name, and the availability before and after. The route keys the message
+  `movement:<id>`, so a retry cannot send the same alert twice — the same guarantee the
+  product-level path already had.
+- **The link opens the option.** The staff link carries the option
+  (`/store-admin/stock/<product>?variant=<option>`), so the alert lands on the row that
+  needs attention.
+- **A brand-new stock row never alerts.** With no prior count there is no crossing, so
+  `stockKnown` is false and the row is skipped. Queueing happens after the transaction
+  commits and is fire-and-forget, so a mail outage cannot fail an adjustment.
+- Tests: 4 new cases in `tests/variant-admin-pos.test.mjs` (option label, movement id
+  and both availability counts returned; a product-level row carries no option label; a
+  source contract pinning the route's per-row crossing test, option link and
+  `movement:<id>` token, and that the service itself never queues) and 2 new cases in
+  `tests/notifications-events.test.mjs` (option naming, including the empty and
+  over-long cases; independent per-option crossings).
+
+**File map:** `src/lib/notifications/stock-events.ts`,
+`src/lib/store-admin/variant-inventory.ts`,
+`src/app/api/store-admin/catalog/products/[id]/variant-inventory/route.ts`;
+`tests/variant-admin-pos.test.mjs`, `tests/notifications-events.test.mjs`.
 
 ### Phase A — customer order flow — 2 November 2026
 
@@ -2383,8 +2421,10 @@ appears in a log line, an audit row or the admin screen.
 **Known limits.** Indian transactional SMS through MSG91 requires a DLT-registered
 template id. The `sms_dlt_template_id` setting now exists, is sent as `DLT_TE_ID`, and MSG91
 sending stays `SKIPPED` (“needs an India DLT template id”) until it is filled in, so a send
-is never reported as working when carriers would drop it. The POS in-store sale path and sale/refund-induced
-low-stock crossings do not raise notifications yet; nor does a later edit to delivery
+is never reported as working when carriers would drop it. Manual stock adjustments — a
+product-level row or a single option — do raise low-stock and back-in-stock alerts
+(§ Phase 7); the POS in-store sale path and sale/refund-induced low-stock crossings still
+do not, nor does a later edit to delivery
 details after `shipped` (the first message already carried the tracking data). There is no
 customer “forgot password” flow to notify. Staff in-app messages are marked `SENT` and are
 visible in the delivery log but have no separate inbox screen; a customer in-app cell has
@@ -2570,7 +2610,7 @@ These are deliberate gaps, not bugs.
 | Storefront consuming `product_collections` | The table, API and read layer exist, but no homepage/category rail reads them yet. Phase 1 explicitly excluded collections; wiring them is a later phase. |
 | Marketing/newsletter sending | Transactional messages only in this phase. `checkout_marketing_optin` still feeds the subscriber list, not a sender. |
 | SMS DLT template ids | MSG91 transactional SMS in India normally needs a DLT-registered template, and no such setting exists. Live MSG91 SMS may be rejected until an id field is designed; reported rather than invented. |
-| POS and staff-initiated notifications | In-store sales and their low-stock crossings do not enqueue. A later edit to delivery details after `shipped` sends no second message. |
+| POS and staff-initiated notifications | In-store sales and their sale/refund-induced low-stock crossings do not enqueue. Manual stock adjustments (product or per-option) **do** queue low-stock and back-in-stock alerts (§ Phase 7). A later edit to delivery details after `shipped` sends no second message. |
 | PayU refund API | Manual refunds by design. The admin records the refund and the owner moves money in the PayU dashboard. |
 | Courier API integration | Third-party courier; the owner supplies a tracking URL template. |
 | Wallet, loyalty, serial/IMEI tracking, vendor/marketplace modules | Out of scope for a single store. |

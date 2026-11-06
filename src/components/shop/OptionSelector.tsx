@@ -16,6 +16,9 @@ import {
 } from '@/lib/storefront/option-selection';
 import { STOCK_NOT_AVAILABLE, stockBlocked } from '@/lib/storefront/availability-rules';
 
+/** Shown when several rows share a model but no shared colour tells them apart. */
+const OPTIONS_INCOMPLETE = 'Option unavailable';
+
 /**
  * The two-step customer selector: model first, then colour.
  *
@@ -46,6 +49,9 @@ export function OptionSelector({ variants, selection, onChange, saleLive, liveSt
   const price = optionPrice(variants, selection);
   const colourLabel = selectedColourLabel(variants, selection);
   const chosenModel = steps.showModel ? steps.models.find((model) => model.key === selection.modelKey) ?? null : null;
+  // Only the colours the chosen model's own rows carry. A model whose single
+  // row has no colour link has no colour step at all.
+  const colourChoices = steps.showModel ? chosenModel?.colours ?? [] : steps.colours;
   const announcement = selectedVariant
     ? [
         steps.showModel ? chosenModel?.label : null,
@@ -100,7 +106,12 @@ export function OptionSelector({ variants, selection, onChange, saleLive, liveSt
           <div role="radiogroup" aria-label={steps.modelLabel} className="flex flex-wrap gap-2.5">
             {steps.models.map((model) => {
               const checked = selection.modelKey === model.key;
-              const blocked = modelIsBlocked(model);
+              // Two rows with no shared colour cannot be told apart. Offering
+              // the model would silently buy whichever row sorted first, so it
+              // stays disabled and says the option is being set up.
+              const unavailable = !model.selectable;
+              const blocked = unavailable || modelIsBlocked(model);
+              const note = unavailable ? OPTIONS_INCOMPLETE : STOCK_NOT_AVAILABLE;
               return (
                 <button
                   key={model.key}
@@ -108,7 +119,7 @@ export function OptionSelector({ variants, selection, onChange, saleLive, liveSt
                   role="radio"
                   aria-checked={checked}
                   disabled={blocked}
-                  aria-label={`${model.label}${blocked ? ` — ${STOCK_NOT_AVAILABLE}` : ''}`}
+                  aria-label={`${model.label}${blocked ? ` — ${note}` : ''}`}
                   onClick={() => onChange(selectModel(variants, selection, model.key))}
                   className={`px-3.5 py-2 rounded-xl border text-xs font-medium transition-all min-h-10 ${
                     checked
@@ -119,7 +130,7 @@ export function OptionSelector({ variants, selection, onChange, saleLive, liveSt
                   }`}
                 >
                   {model.label}
-                  {blocked ? <span className="block text-[11px] text-[#a1a1a6] mt-0.5">{STOCK_NOT_AVAILABLE}</span> : null}
+                  {blocked ? <span className="block text-[11px] text-[#a1a1a6] mt-0.5">{note}</span> : null}
                 </button>
               );
             })}
@@ -127,7 +138,7 @@ export function OptionSelector({ variants, selection, onChange, saleLive, liveSt
         </fieldset>
       ) : null}
 
-      {steps.showColour && (!steps.showModel || selection.modelKey) ? (
+      {colourChoices.length > 0 && (!steps.showModel || selection.modelKey) ? (
         <fieldset>
           <legend className="text-xs font-semibold uppercase tracking-wider text-[#1d1d1f] mb-3">
             Colour

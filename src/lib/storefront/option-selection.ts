@@ -57,6 +57,17 @@ export interface OptionModel {
   key: string;
   label: string;
   colours: OptionColour[];
+  /** Variant rows this model actually has, linked and unlinked alike. */
+  rowCount: number;
+  /**
+   * Whether a customer can name exactly one row for this model.
+   *
+   * A model with colours is chosen through its colour step. A model with a
+   * single row is that row. A model with several rows and no colour links
+   * cannot be resolved without guessing, so it is not selectable: the
+   * catalogue data is incomplete and must be corrected by the owner.
+   */
+  selectable: boolean;
 }
 
 export interface OptionSteps {
@@ -132,7 +143,9 @@ function colourOf(variant: OptionVariant): OptionColour | null {
   if (!key) return null;
   return {
     key,
-    label: clean(variant.colourName) || clean(variant.optionValue) || 'Colour',
+    // The shared colour record supplies the name. The option's free text is
+    // never a stand-in for it, because that text is not colour identity.
+    label: clean(variant.colourName) || 'Colour',
     hex: normalizeHex(variant.colourHex),
   };
 }
@@ -156,15 +169,21 @@ export function optionSteps(variants: readonly OptionVariant[]): OptionSteps {
     if (modelKey) {
       let model = models.find((entry) => entry.key === modelKey);
       if (!model) {
-        model = { key: modelKey, label: optionModelLabel(variant), colours: [] };
+        model = { key: modelKey, label: optionModelLabel(variant), colours: [], rowCount: 0, selectable: false };
         models.push(model);
       }
+      model.rowCount += 1;
       pushColour(model.colours, colour);
       if (!optionName && !clean(variant.deviceModelId)) optionName = clean(variant.optionName);
     } else {
       pushColour(looseColours, colour);
     }
   }
+  // Only a model the customer can name exactly one row for is offered. Colours
+  // carry shared-colour identity, so they are the only discriminator; a lone
+  // row needs none. Several rows with no colour links are an incomplete
+  // catalogue, never an invitation to pick the first row.
+  for (const model of models) model.selectable = model.colours.length > 0 || model.rowCount === 1;
 
   const showModel = models.length > 0;
   const showColour = showModel
@@ -189,13 +208,15 @@ export function resolveOptionVariant(
   variants: readonly OptionVariant[],
   selection: OptionSelection,
 ): OptionVariant | undefined {
-  return variants.find((variant) => {
-    const modelKey = optionModelKey(variant);
-    if (modelKey && modelKey !== selection.modelKey) return false;
-    const colourKey = optionColourKey(variant);
-    if (colourKey && colourKey !== selection.colourKey) return false;
-    return true;
-  });
+  const modelKey = selection.modelKey ?? null;
+  const colourKey = selection.colourKey ?? null;
+  // Both identities must match exactly, and the match must be unique. A
+  // selection that names no colour must never fall through to "whichever row
+  // came first": two rows sharing a model are told apart only by their shared
+  // colour, so an unlinked pair is ambiguous and resolves to nothing.
+  const matches = variants.filter((variant) =>
+    optionModelKey(variant) === modelKey && optionColourKey(variant) === colourKey);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function optionSelectionComplete(
@@ -243,14 +264,14 @@ export function optionSelectionFromSearch(
   let modelKey: string | null = clean(params.get('model')) || null;
   let colourKey: string | null = clean(params.get('colour')) || null;
 
-  if (modelKey && !steps.models.some((model) => model.key === modelKey)) {
+  if (modelKey && !steps.models.some((model) => model.key === modelKey && model.selectable)) {
     modelKey = null;
     colourKey = null;
   }
   if (colourKey) {
     const carrying = modelKey
-      ? steps.models.filter((model) => model.key === modelKey)
-      : steps.models.filter((model) => model.colours.some((colour) => colour.key === colourKey));
+      ? steps.models.filter((model) => model.key === modelKey && model.selectable)
+      : steps.models.filter((model) => model.selectable && model.colours.some((colour) => colour.key === colourKey));
     const colours = modelKey
       ? carrying[0]?.colours ?? []
       : steps.showModel ? carrying.flatMap((model) => model.colours) : steps.colours;
@@ -283,6 +304,9 @@ export function selectModel(
 ): OptionSelection {
   const steps = optionSteps(variants);
   const model = steps.models.find((entry) => entry.key === modelKey);
+  // A model whose rows cannot be told apart is not a choice the customer can
+  // make; keep the previous selection rather than record an unresolvable one.
+  if (model && !model.selectable) return selection;
   if (model) {
     if (selection.colourKey && model.colours.some((colour) => colour.key === selection.colourKey)) {
       return { modelKey, colourKey: selection.colourKey };

@@ -282,11 +282,15 @@ test('every online charged price goes through the one resolver', async () => {
     assert.match(source, /resolveEffectivePrice/, `${file} must use the resolver`);
   }
 
-  // POS resolves reference amounts only. Charges and totals must remain the
+  // POS resolves reference amounts only, and those are the regular catalogue
+  // price regardless of a live sale. Charges and totals must remain the
   // validated cashier inputs, never a catalogue/sale-derived amount.
   const pos = await readFile(path.join(root, 'src/lib/store-admin/pos.ts'), 'utf8');
   assert.match(pos, /listPricePaise: referencePriceOf\(/);
   assert.match(pos, /referencePricePaise: referencePriceOf\(/);
+  // The reference resolver is called with the sale off, so a sale can never
+  // lower the list figure a cashier reads or charges.
+  assert.match(pos, /pricePaise: number\(product\.price_paise\),\s*\n\s*salePricePaise: product\.sale_price_paise == null \? null : number\(product\.sale_price_paise\) \}, false,/);
   assert.match(pos, /unitPricePaise: cartLine\.unitPricePaise/);
   assert.match(pos, /lineTotalPaise: cartLine\.unitPricePaise \* cartLine\.quantity/);
   assert.doesNotMatch(pos, /cartLine\.unitPricePaise\s*=|unitPricePaise:\s*(?:resolveEffectivePrice|referencePriceOf|regularPricePaise|saleLive)/);

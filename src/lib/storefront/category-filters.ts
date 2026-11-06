@@ -204,7 +204,9 @@ function productColours(product: CollectionProduct): { id: string; name: string;
     seen.add(id);
     return [{
       id,
-      name: String(variant.colourName ?? variant.optionValue ?? '').trim() || 'Colour',
+      // The name comes from the shared colour record only; the option's free
+      // text is its label and is never used as a colour name.
+      name: String(variant.colourName ?? '').trim() || 'Colour',
       hex: normalizeHex(variant.colourHex),
     }];
   });

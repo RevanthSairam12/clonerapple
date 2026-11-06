@@ -188,14 +188,7 @@ Each generated sellable sub-item must have:
 
 Do not assume every possible combination actually exists. Let the admin review and activate only the combinations they physically sell.
 
-### Important distinction
 
-Support two scenarios:
-
-A. One physical product fits multiple devices:
-- One product.
-- Multiple compatible devices.
-- One shared stock pool if that is how the item is sold.
 
 B. Different physical versions for different devices:
 - One parent product.

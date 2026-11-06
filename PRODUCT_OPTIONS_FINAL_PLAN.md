@@ -233,7 +233,7 @@ me only the decisions still open. Do not change product code yet. Stop and wait 
 
 For later phases, replace "Phase 0" with the next phase number.
 
-## Manual checks after each phase
+## Manual checks after each phasee
 - **1:** paste five phone models; upload a small CSV with one duplicate spelling ("iPhone16 pro") and check the preview warns you; upload the same file again and check nothing changes; try a CSV cell starting with `=`; add colours with hex codes.
 - **2:** create a case with models and colours; type Red 100 and Black 120; give each row a stock number and photos per colour; save and reopen; change a price and open History.
 - **3:** open the product as a customer on a phone-sized window; pick a model, then Red, then Black and watch the photos, price and availability change; set one option's stock to 0 and check it shows "Stock not available" and is disabled.

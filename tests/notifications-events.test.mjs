@@ -23,7 +23,7 @@ const {
 } = await jiti.import(
   path.join(here, '..', 'src', 'lib', 'notifications', 'order-context.ts'),
 );
-const { stockNotificationEvent } = await jiti.import(
+const { stockAlertProductName, stockNotificationEvent } = await jiti.import(
   path.join(here, '..', 'src', 'lib', 'notifications', 'stock-events.ts'),
 );
 
@@ -128,6 +128,40 @@ test('a stock alert only fires on a crossing, never on every adjustment', () => 
   assert.equal(
     stockNotificationEvent({ availableBefore: 4, availableAfter: 1, threshold: 0 }),
     null,
+  );
+});
+
+test('an option alert names the option, and a product alert names only the product', () => {
+  // Staff must be able to tell which option went low from the message alone.
+  assert.equal(stockAlertProductName('iPhone 18 Case', 'Colour: Red'), 'iPhone 18 Case — Colour: Red');
+  // A product-level row has no option, so the name is unchanged.
+  assert.equal(stockAlertProductName('iPhone 18 Case', null), 'iPhone 18 Case');
+  assert.equal(stockAlertProductName('iPhone 18 Case', undefined), 'iPhone 18 Case');
+  assert.equal(stockAlertProductName('iPhone 18 Case', '   '), 'iPhone 18 Case');
+  // A label without a product still reads as something, never as a dangling dash.
+  assert.equal(stockAlertProductName('', 'Colour: Red'), 'Colour: Red');
+  assert.equal(stockAlertProductName('', ''), '');
+  // The name reaches a template, so it is bounded.
+  assert.ok(stockAlertProductName('x'.repeat(500), 'y'.repeat(500)).length <= 300);
+});
+
+test('each option crosses its own threshold independently', () => {
+  // A red option dropping below its own threshold alerts even though a sibling
+  // option is still well stocked: the two counts never average or share a row.
+  assert.equal(
+    stockNotificationEvent({ availableBefore: 9, availableAfter: 1, threshold: 2 }),
+    'low_stock',
+  );
+  // The sibling option, unchanged and above threshold, raises nothing.
+  assert.equal(
+    stockNotificationEvent({ availableBefore: 40, availableAfter: 40, threshold: 2 }),
+    null,
+  );
+  // Two different options at the same count are still two separate movements,
+  // so both may alert; dedupe is by movement, not by product or by count.
+  assert.equal(
+    stockNotificationEvent({ availableBefore: 5, availableAfter: 2, threshold: 3 }),
+    'low_stock',
   );
 });
 

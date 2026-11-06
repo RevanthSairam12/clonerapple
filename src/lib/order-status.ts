@@ -35,6 +35,25 @@ export interface CustomerStatusDelivery {
   deliveredAt: string | null;
 }
 
+/**
+ * One purchased line, as the customer saw it when the order was placed.
+ *
+ * The 0061 snapshot columns are plain text so a later rename, price change or
+ * retired photo can never rewrite an old order. Rows written before that
+ * migration carry nulls and simply render without the extra detail.
+ */
+export interface CustomerStatusItem {
+  name: string;
+  quantity: number;
+  unitPricePaise: number;
+  lineTotalPaise: number;
+  deviceModelName: string | null;
+  colourName: string | null;
+  colourHex: string | null;
+  imageUrl: string | null;
+  imageAlt: string | null;
+}
+
 export interface CustomerStatusData {
   id: string;
   txnid: string;
@@ -60,6 +79,8 @@ export interface CustomerStatusData {
   updatedAt: string;
   delivery: CustomerStatusDelivery | null;
   history: Array<{ domain: string; toStatus: string; createdAt: string }>;
+  /** Ordered lines, in the order they were bought. Empty for older orders. */
+  items: CustomerStatusItem[];
 }
 
 export type CustomerStatusLoad =
@@ -92,7 +113,7 @@ export async function getCustomerOrderStatus(
     const order = orderRows[0];
     if (!order) return { ok: false, reason: 'not-found' };
 
-    const [deliveryRows, historyRows] = await Promise.all([
+    const [deliveryRows, historyRows, itemRows] = await Promise.all([
       sql`
         select d.status, d.delivery_method, d.courier_name, d.carrier,
                d.tracking_number, d.tracking_url,
@@ -113,6 +134,19 @@ export async function getCustomerOrderStatus(
         from order_status_history
         where order_id = ${text(order.id)}
         order by created_at asc, id asc
+      `,
+      // The 0061 columns may not exist on an older database. Reading them
+      // through jsonb keeps this query valid either way and yields nulls.
+      sql`
+        select product_name, quantity, unit_price_paise, line_total_paise,
+               to_jsonb(order_items)->>'variant_device_model_name' as device_model_name,
+               to_jsonb(order_items)->>'variant_colour_name' as colour_name,
+               to_jsonb(order_items)->>'variant_colour_hex' as colour_hex,
+               to_jsonb(order_items)->>'image_url' as image_url,
+               to_jsonb(order_items)->>'image_alt' as image_alt
+        from order_items
+        where order_id = ${text(order.id)}
+        order by line_number asc
       `,
     ]);
 
@@ -139,6 +173,24 @@ export async function getCustomerOrderStatus(
       ? deliveryRow.delivery_method
       : details.method === 'self' || details.method === 'courier' ? details.method : null;
     const trackingUrl = validateHttpsTrackingUrl(deliveryRow?.tracking_url ?? details.trackingUrl);
+
+    const items: CustomerStatusItem[] = (itemRows as Row[]).flatMap((row) => {
+      const name = text(row.product_name).trim();
+      if (!name) return [];
+      const quantity = Math.max(0, Math.round(Number(row.quantity) || 0));
+      const unitPricePaise = Math.max(0, Math.round(Number(row.unit_price_paise) || 0));
+      return [{
+        name,
+        quantity,
+        unitPricePaise,
+        lineTotalPaise: Math.max(0, Math.round(Number(row.line_total_paise) || unitPricePaise * quantity)),
+        deviceModelName: nullableText(row.device_model_name),
+        colourName: nullableText(row.colour_name),
+        colourHex: nullableText(row.colour_hex),
+        imageUrl: nullableText(row.image_url),
+        imageAlt: nullableText(row.image_alt),
+      }];
+    });
 
     const orderNumber = Number(order.order_number);
     const totalPaise = Math.max(
@@ -180,6 +232,7 @@ export async function getCustomerOrderStatus(
             }
           : null,
         history,
+        items,
       },
     };
   } catch {

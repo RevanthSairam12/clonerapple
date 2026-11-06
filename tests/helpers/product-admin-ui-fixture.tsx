@@ -33,7 +33,10 @@ export const product: CatalogProductDetail = {
   id: 'fixture-case-blue', slug: 'fixture-case-blue', name: 'Fixture protective case', subtitle: 'Synthetic data — not a real product',
   pricePaise: 129900, salePricePaise: 99900, currency: 'INR', isActive: true, inStock: true, trackInventory: true,
   optionCount: 2, inventoryMode: 'variant', sellBy: 'colour', skuPattern: null, available: 15, stockStatus: 'limited', sortOrder: 0, updatedAt: stamp,
-  colours: [{ id: 'fixture-colour-blue', name: 'Blue', hex: '#0055cc', isActive: true }],
+  colours: [
+    { id: 'fixture-colour-blue', name: 'Blue', hex: '#0055cc', isActive: true },
+    { id: 'fixture-colour-black', name: 'Black', hex: '#111111', isActive: true },
+  ],
   categoryId: 'fixture-cases', categorySlug: 'cases', categoryName: 'Cases', deviceModels: [{ id: 'fixture-phone-0', name: 'Phone A' }],
   description: '', shortDescription: 'A synthetic case for fixture browser verification.',
   descriptionSections: [
@@ -47,7 +50,8 @@ export const product: CatalogProductDetail = {
   images: [{ id: 'fixture-photo', url: '/fixture-photo.svg', alt: 'Synthetic blue case', role: 'primary', sortOrder: 0, colourId: null, isActive: true, deletedAt: null }],
   variants: ['Blue', 'Black'].map((optionValue, index) => ({ id: `fixture-option-${index}`, sku: `FIXTURE-${index}`, optionName: 'Colour', optionValue,
     optionHex: index ? '#111111' : '#0055cc', pricePaiseOverride: index ? null : 139900, salePricePaise: null, isPurchasable: true,
-    deviceModelId: 'fixture-phone-0', optionIdentity: optionValue.toLowerCase(), combinationKey: `fixture-combination-${index}`, stock: stock(index ? 5 : 12, index ? 0 : 2), isActive: true, sortOrder: index })),
+    deviceModelId: 'fixture-phone-0', optionIdentity: optionValue.toLowerCase(), colourId: index ? 'fixture-colour-black' : 'fixture-colour-blue',
+    combinationKey: `fixture-combination-${index}`, stock: stock(index ? 5 : 12, index ? 0 : 2), isActive: true, sortOrder: index })),
 };
 
 // Aliased ONLY by the fixture webpack configuration. No real auth/data module is executed.

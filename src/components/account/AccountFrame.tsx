@@ -53,7 +53,15 @@ export async function AccountFrame({
           )}
         </div>
         <div className="grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
-          <nav aria-label="Account" className="rounded-3xl border border-[#e5e5ea] bg-white p-2 shadow-sm">
+          {/* Sticky on `lg` only: below that the nav is a horizontal strip above
+              the content and sticking it would eat the viewport. The offset is
+              the sticky header's own height, measured in gadzio.css as
+              `--gz-nav-height` (56px, 96px from `anav` up) — the same token the
+              accessory pages pin their sticky sidebars to. */}
+          <nav
+            aria-label="Account"
+            className="rounded-3xl border border-[#e5e5ea] bg-white p-2 shadow-sm lg:sticky lg:top-[calc(var(--gz-nav-height,56px)_+_1.5rem)] lg:max-h-[calc(100dvh_-_var(--gz-nav-height,56px)_-_3rem)] lg:overflow-y-auto"
+          >
             <div className="flex gap-2 overflow-x-auto lg:block lg:space-y-1">
               {links.map(([href, label]) => {
                 const isSelected = active === href || (href !== '/account' && active.startsWith(href));

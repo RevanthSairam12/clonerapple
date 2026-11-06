@@ -70,8 +70,37 @@ test('renderer escapes hostile strings, removes unsafe links and hidden sections
   assert.ok(html.includes('&lt;img'));
   assert.ok(!html.includes('<script>') && !html.includes('<img') && !html.includes('javascript:') && !html.includes('Secret heading'));
   assert.ok(html.includes('rel="nofollow noopener noreferrer"'));
-  for (const tag of ['<details', '<summary', '<strong>', '<em>', '<ol', '<dl', '<dt', '<dd', '<h3']) assert.ok(html.includes(tag), tag);
+  for (const tag of ['<details', '<summary', '<strong>', '<em>', '<ol', '<li', '<h3']) assert.ok(html.includes(tag), tag);
   assert.equal(renderToStaticMarkup(React.createElement(ProductDescriptionSections, { sections: [{ type: 'html' }] })), '');
+});
+
+test('specifications render one point per line, keeping label and value on the same point', () => {
+  const sections = [{ ...createDescriptionSection('specs', 'specs'), rows: [
+    { label: 'Material', value: 'Liquid Silicone' },
+    { label: 'Warranty', value: '1 year' },
+    // A value written as several lines becomes one point per line; the label
+    // stays on the first of them rather than repeating or being dropped.
+    { label: 'Compatibility', value: 'iPhone 17 Pro\niPhone 17 Pro Max' },
+    { label: 'MagSafe', value: '' },
+  ] }];
+  const html = renderToStaticMarkup(React.createElement(ProductDescriptionSections, { sections }));
+  // Server rendering separates adjacent text nodes with a comment, so compare
+  // against the text content rather than the raw markup.
+  const text = html.replace(/<!-- -->/g, '').replace(/<[^>]+>/g, '');
+  const points = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/g)]
+    .map(match => match[1].replace(/<!-- -->/g, '').replace(/<[^>]+>/g, ''));
+  assert.ok(html.includes('<ul class="list-disc'), 'renders as a bulleted list');
+  assert.equal(points.length, 5, 'two single-line rows, two lines from one row, one label-only row');
+  assert.ok(!html.includes('<dl') && !html.includes('<dt') && !html.includes('<dd'), 'no definition list remains');
+  assert.deepEqual(points, [
+    'Material: Liquid Silicone',
+    'Warranty: 1 year',
+    'Compatibility: iPhone 17 Pro',
+    'iPhone 17 Pro Max',
+    'MagSafe',
+  ]);
+  assert.ok(text.includes('Material: Liquid Silicone'));
+  assert.ok(!points.some(point => !point.trim()), 'no blank points');
 });
 test('controlled editor exposes formatting, starter, visibility and accessible reorder controls without saving', () => {
   const sections = ['text', 'bullets', 'specs', 'faq'].map((type, i) => createDescriptionSection(type, `s${i}`));

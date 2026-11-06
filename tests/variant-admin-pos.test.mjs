@@ -41,9 +41,10 @@ function fakeTx({auditFails=false}={}){
   const events=[];
   const tx=async(strings,...values)=>{
     const query=strings.join('?').replace(/\s+/g,' ').trim();events.push({query,values});
-    if(query.startsWith('select id,inventory_mode'))return[{id:'p',inventory_mode:'variant'}];
-    if(query.startsWith('select v.id'))return[{id:'a'}];
+    if(query.startsWith('select id,name,inventory_mode'))return[{id:'p',name:'Phone',inventory_mode:'variant'}];
+    if(query.startsWith('select v.id'))return[{id:'a',option_name:'Colour',option_value:'Black'}];
     if(query.startsWith('select * from stock'))return[{id:'s',on_hand:10,reserved:2,track_inventory:true,low_stock_threshold:1}];
+    if(query.startsWith('insert into stock_movements'))return[{id:42}];
     if(query.startsWith('insert into store_admin_audit')&&auditFails)throw new Error('audit unavailable');
     return [];
   };
@@ -61,6 +62,32 @@ test('absolute adjustment locks exact row before deriving delta; writes ledger a
   const movement=events.find(e=>e.query.startsWith('insert into stock_movements'));
   assert.equal(movement.values[2],-3);
   assert.ok(events.some(e=>e.query.startsWith('insert into store_admin_audit')));
+});
+test('an option adjustment reports the option label, the movement id and both availability counts',async()=>{
+  const {tx}=fakeTx();
+  const after=await adjustVariantInventoryUsing(tx,{productId:'p',variantId:'a',onHand:7,reason:'adjustment'},'staff');
+  assert.equal(after.variantId,'a');
+  assert.equal(after.variantLabel,'Colour: Black','the alert must name the option, not just the product');
+  assert.equal(after.productName,'Phone');
+  assert.equal(after.movementId,42,'the ledger row keys the alert so a retry cannot duplicate it');
+  assert.equal(after.availableBefore,8,'availability excludes reserved units');
+  assert.equal(after.availableAfter,5);
+  assert.equal(after.stockKnown,true);
+});
+test('a product-level row carries no option label and skips an option-shaped alert',async()=>{
+  const events=[];
+  const tx=async(strings,...values)=>{
+    const query=strings.join('?').replace(/\s+/g,' ').trim();events.push({query,values});
+    if(query.startsWith('select id,name,inventory_mode'))return[{id:'p',name:'Phone',inventory_mode:'product'}];
+    if(query.startsWith('select * from stock'))return[{id:'s',on_hand:10,reserved:2,track_inventory:true,low_stock_threshold:1}];
+    if(query.startsWith('insert into stock_movements'))return[{id:7}];
+    return [];
+  };
+  tx.json=v=>v;
+  const after=await adjustVariantInventoryUsing(tx,{productId:'p',variantId:null,delta:-4,reason:'adjustment'},'staff');
+  assert.equal(after.variantId,null);
+  assert.equal(after.variantLabel,null);
+  assert.equal(after.movementId,7);
 });
 test('audit failure propagates so the enclosing transaction must roll back',async()=>{
   const {tx}=fakeTx({auditFails:true});
@@ -91,4 +118,23 @@ test('source contracts pin guarded route, activation holds, paired transfers, ex
   assert.match(source,/variant_id is not distinct from/);assert.match(source,/on_hand-reserved >=/);
   assert.match(source,/variant_id,variant_sku,variant_label/);assert.match(source,/variantId:nullableText\(item.variant_id\)/);
   assert.match(source,/pg_advisory_xact_lock_shared/);assert.match(source,/action:'pos.sale'/);assert.match(source,/action:'pos.void'/);
+});
+test('per-option low stock alerts are wired through the option write path, not the product one',async()=>{
+  const read=rel=>readFile(path.join(root,rel),'utf8');
+  const api=await read('src/app/api/store-admin/catalog/products/[id]/variant-inventory/route.ts');
+  // The crossing test is the shared one, and each row is judged on its own count.
+  assert.match(api,/stockNotificationEvent\(\{availableBefore:row\.availableBefore,availableAfter:row\.availableAfter,threshold:row\.lowStockThreshold\}\)/);
+  assert.match(api,/for\(const row of rows\)/);
+  // The alert names the option, links to that option's row, and is keyed by the
+  // movement so a retry cannot send a duplicate.
+  assert.match(api,/stockAlertProductName\(row\.productName,row\.variantLabel\)/);
+  assert.match(api,/variant=\$\{encodeURIComponent\(row\.variantId\)\}/);
+  assert.match(api,/token:`movement:\$\{row\.movementId\}`/);
+  // Queueing happens after the rows are written, so a mail outage cannot fail
+  // the adjustment, and a new stock row (no prior count) never alerts.
+  assert.match(api,/if\(!row\.stockKnown\) continue;/);
+  const service=await read('src/lib/store-admin/variant-inventory.ts');
+  assert.match(service,/returning id/);
+  assert.match(service,/variantLabel,productName:String\(product\.name/);
+  assert.doesNotMatch(service,/queueNotification/,'the service owns no request context; the route queues');
 });

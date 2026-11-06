@@ -5,14 +5,41 @@ import { metadataGate, strictMetadataAudit, MetadataError } from './product-meta
 import { inventoryDelta, inventoryKey, validateAllocation, validateInventoryChange, type InventoryChange } from './variant-inventory-rules';
 export { validateInventoryChange } from './variant-inventory-rules';
 
+/**
+ * Re-derive `products.in_stock` for a variant-mode product.
+ *
+ * The flag is a gate, not a count: it means "at least one option is buyable".
+ * Variant mode has no product-level stock pool, so leaving the value product
+ * mode wrote behind shows a stale yes/no in the admin list and exports. Call
+ * this after anything that can change buyability — stock, option identity or
+ * activation. It never runs for product-mode products, where the flag is the
+ * real stock answer.
+ */
+export async function refreshVariantStockGate(tx: TransactionSql, productId: string, staffId: string) {
+  await tx`update products set in_stock=exists(
+      select 1 from stock s join product_variants v on v.id=s.variant_id and v.product_id=s.product_id
+      where s.product_id=${productId} and v.is_active and v.is_purchasable and v.retired_at is null
+        and (not s.track_inventory or s.on_hand-s.reserved>0)),updated_at=now(),updated_by=${staffId}
+    where id=${productId} and inventory_mode='variant'
+      and in_stock is distinct from exists(
+        select 1 from stock s join product_variants v on v.id=s.variant_id and v.product_id=s.product_id
+        where s.product_id=${productId} and v.is_active and v.is_purchasable and v.retired_at is null
+          and (not s.track_inventory or s.on_hand-s.reserved>0))`;
+}
+
 /** Caller owns the transaction. Absolute-set deltas are derived only after the exact row lock. */
 export async function adjustVariantInventoryUsing(tx: TransactionSql, raw: InventoryChange, staffId: string, request?: Request) {
   const input = validateInventoryChange(raw);
-  const [product] = await tx`select id,inventory_mode from products where id=${input.productId} and deleted_at is null`;
+  const [product] = await tx`select id,name,inventory_mode from products where id=${input.productId} and deleted_at is null`;
   if (!product) throw new MetadataError('Product not found.');
+  // The option's display label, for a per-option low-stock alert. A product-level
+  // row has no option, so the alert names the product alone.
+  let variantLabel: string | null = null;
   if (input.variantId) {
-    const [variant] = await tx`select v.id from product_variants v where v.id=${input.variantId} and v.product_id=${input.productId} and v.is_purchasable and v.is_active and v.retired_at is null and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null and ((dm.is_active and db.is_active) or ${product.inventory_mode === 'variant'})))`;
+    const [variant] = await tx`select v.id,v.option_name,v.option_value from product_variants v where v.id=${input.variantId} and v.product_id=${input.productId} and v.is_purchasable and v.is_active and v.retired_at is null and (v.device_model_id is null or exists(select 1 from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=v.product_id and pm.device_model_id=v.device_model_id and pm.archived_at is null and ((dm.is_active and db.is_active) or ${product.inventory_mode === 'variant'})))`;
     if (!variant) throw new MetadataError('Select an active purchasable variant with a valid model mapping.');
+    const name = String(variant.option_name ?? '').trim(), value = String(variant.option_value ?? '').trim();
+    variantLabel = name && value ? `${name}: ${value}` : value || name || null;
   }
   const [before] = await tx`select * from stock where product_id=${input.productId} and variant_id is not distinct from ${input.variantId}::text for update`;
   if (!before && (input.onHand === undefined || input.trackInventory === undefined)) throw new MetadataError('A new stock row needs an explicit count and tracking choice.');
@@ -24,10 +51,23 @@ export async function adjustVariantInventoryUsing(tx: TransactionSql, raw: Inven
   const id = String(before?.id ?? `stk_${randomBytes(8).toString('hex')}`);
   if (before) await tx`update stock set on_hand=${onHand+delta},track_inventory=${tracking},low_stock_threshold=${threshold},updated_at=now(),updated_by=${staffId} where id=${id}`;
   else await tx`insert into stock(id,product_id,variant_id,on_hand,reserved,track_inventory,low_stock_threshold,updated_by) values(${id},${input.productId},${input.variantId},${onHand+delta},0,${tracking},${threshold},${staffId})`;
-  if (delta !== 0) await tx`insert into stock_movements(product_id,variant_id,delta,reason,note,created_by) values(${input.productId},${input.variantId},${delta},${input.reason},${input.note ?? ''},${staffId})`;
+  // The ledger row is the movement identity: a crossing notification is keyed on
+  // it, so the same adjustment can never alert twice even if it is retried.
+  let movementId = 0;
+  if (delta !== 0) {
+    const movement = await tx`insert into stock_movements(product_id,variant_id,delta,reason,note,created_by) values(${input.productId},${input.variantId},${delta},${input.reason},${input.note ?? ''},${staffId}) returning id`;
+    movementId = Number(movement[0]?.id ?? 0);
+  }
   if (!input.variantId && product.inventory_mode==='product') await tx`update products set in_stock=${!tracking||onHand+delta-reserved>0},updated_at=now(),updated_by=${staffId} where id=${input.productId} and inventory_mode='product'`;
-  const after = {onHand:onHand+delta,reserved,trackInventory:tracking,lowStockThreshold:threshold};
-  await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.stock.exact',entity:'product',entityId:input.productId,before:before?{variantId:input.variantId,onHand,reserved,trackInventory:before.track_inventory,lowStockThreshold:before.low_stock_threshold}:null,after:{variantId:input.variantId,...after},reason:input.reason,request});
+  // Keep the gate honest after the count moves.
+  if (product.inventory_mode==='variant') await refreshVariantStockGate(tx,input.productId,staffId);
+  const after = {onHand:onHand+delta,reserved,trackInventory:tracking,lowStockThreshold:threshold,
+    // Enough for the caller to raise a crossing alert: the option's own label,
+    // the name it is sold under, and the movement that caused the change.
+    variantId:input.variantId,variantLabel,productName:String(product.name ?? ''),movementId,
+    availableBefore:onHand-reserved,availableAfter:onHand+delta-reserved,
+    stockKnown:Boolean(before)};
+  await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.stock.exact',entity:'product',entityId:input.productId,before:before?{variantId:input.variantId,onHand,reserved,trackInventory:before.track_inventory,lowStockThreshold:before.low_stock_threshold}:null,after:{variantId:input.variantId,onHand:onHand+delta,reserved,trackInventory:tracking,lowStockThreshold:threshold},reason:input.reason,request});
   return after;
 }
 
@@ -91,6 +131,10 @@ export async function activateVariantInventoryUsing(tx: TransactionSql, productI
       await tx`insert into stock_movements(product_id,variant_id,delta,reason,note,created_by) values(${productId},null,${-row.quantity},'adjustment',${`Allocate to ${row.variantId}: ${body.reason}`.slice(0,200)},${staffId}),(${productId},${row.variantId},${row.quantity},'adjustment',${`Allocate from legacy: ${body.reason}`.slice(0,200)},${staffId})`;
     }
     await tx`update products set inventory_mode='variant',updated_at=now(),updated_by=${staffId} where id=${productId}`;
+    // Re-derive the gate from the option rows now that they are the only stock
+    // pool. Leaving the legacy product-mode value here is what made an
+    // activated product read as sold out while its options were buyable.
+    await refreshVariantStockGate(tx,productId,staffId);
     await strictMetadataAudit(tx,{actorId:staffId,action:'catalog.inventory.activate',entity:'product',entityId:productId,before:{inventoryMode:'product',parentOnHand:Number(parent?.on_hand ?? 0)},after:{inventoryMode:'variant',parentOnHand:Number(parent?.on_hand ?? 0)-transfer,allocations},reason:String(body.reason),request});
     return {alreadyActive:false};
 }

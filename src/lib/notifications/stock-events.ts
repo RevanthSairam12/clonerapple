@@ -21,3 +21,19 @@ export function stockNotificationEvent(input: {
   if (before > threshold && after > 0 && after <= threshold) return 'low_stock';
   return null;
 }
+
+/**
+ * The name a stock alert shows: the product on its own for a product-level
+ * row, or "Product — Colour: Black" for one option.
+ *
+ * One option crossing its threshold must not read as the whole product going
+ * low, so the option's own label is part of the name staff see. The label is
+ * trimmed and the whole string capped, because it reaches a template.
+ */
+export function stockAlertProductName(productName: string, optionLabel?: string | null): string {
+  const name = String(productName ?? '').trim().slice(0, 200);
+  const label = String(optionLabel ?? '').trim().slice(0, 120);
+  if (!label) return name;
+  if (!name) return label;
+  return `${name} — ${label}`.slice(0, 300);
+}

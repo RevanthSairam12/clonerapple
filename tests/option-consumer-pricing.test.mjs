@@ -119,10 +119,14 @@ function fakeSql({ live = true, override = null, optionSale = null, entered = 77
     confirmUnusualPrices: true, confirmedFreeItemIds: [JSON.stringify(['p', 'v0'])] } };
 }
 
+// The POS "List" figure and `order_items.reference_price_paise` are the regular
+// catalogue price (migration 0040): a cashier must be able to see and charge
+// the normal price even while a live sale is discounting it, so a sale price
+// never lowers the reference. `live` and `unreadable` therefore change nothing.
 for (const scenario of [
-  { live: false, expected: 1000 }, { expected: 800 },
-  { override: 1200, expected: 1200 }, { override: 1200, optionSale: 900, expected: 900 },
-  { optionSale: 700, expected: 700 }, { override: 0, expected: 0 },
+  { live: false, expected: 1000 }, { expected: 1000 },
+  { override: 1200, expected: 1200 }, { override: 1200, optionSale: 900, expected: 1200 },
+  { optionSale: 700, expected: 1000 }, { override: 0, expected: 0 },
   { override: -10, expected: 0 }, { override: 1200, optionSale: 1400, expected: 1200 },
   { unreadable: true, expected: 1000 },
 ]) {
@@ -151,7 +155,8 @@ test('POS retains explicitly confirmed zero and unusually high staff prices', as
     assert.equal(result.ok, true);
     assert.equal(result.data.lines[0].unitPricePaise, entered);
     assert.equal(result.data.totalPaise, entered * 2);
-    assert.equal(result.data.lines[0].referencePricePaise, 800);
+    // Reference is the regular price, not the live sale price.
+    assert.equal(result.data.lines[0].referencePricePaise, 1000);
   }
 });
 
