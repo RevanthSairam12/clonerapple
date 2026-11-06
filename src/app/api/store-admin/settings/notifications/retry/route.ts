@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 /**
  * Retry one terminal FAILED message.
  *
- * Only store admins and owners may trigger a send; viewers can read the log.
+ * Triggering a send is owner-only; viewers and admins can read the log.
  * The audit row names the message id and outcome, never its recipient, subject
  * or body.
  */
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole('store_admin');
+  const guard = await requireStoreRole('store_owner');
   if (!guard.ok) return guard.response;
 
   let body: { id?: unknown };

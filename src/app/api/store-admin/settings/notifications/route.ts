@@ -24,12 +24,15 @@ export async function GET() {
   );
 }
 
-/** Toggle one channel × audience × topic cell. */
+/**
+ * Toggle one channel × audience × topic cell. The matrix decides what is
+ * delivered, so it is owner-only; every role can still read it.
+ */
 export async function POST(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole('store_admin');
+  const guard = await requireStoreRole('store_owner');
   if (!guard.ok) return guard.response;
 
   let body: { id?: unknown; isActive?: unknown };

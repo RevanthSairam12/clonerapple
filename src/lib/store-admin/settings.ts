@@ -65,7 +65,8 @@ export type SettingUpdateResult =
  * key that actually changed, for the audit log.
  *
  * `canEditOwnerOnly` is false for admins: the maintenance switch takes the
- * storefront offline and stays with the owner.
+ * storefront offline, and the `mail_*` keys decide where the server's SMTP
+ * password is sent. Both stay with the owner.
  */
 export async function updateStoreSettings(
   input: { key: unknown; value: unknown }[],
@@ -94,7 +95,7 @@ export async function updateStoreSettings(
       return {
         ok: false,
         reason: 'forbidden',
-        error: 'Only a store owner can change maintenance settings.',
+        error: 'Only a store owner can change this setting.',
       };
     }
     const validation = validateSettingValue(item.key, item.value);

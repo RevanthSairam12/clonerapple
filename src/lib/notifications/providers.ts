@@ -61,6 +61,36 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * `MAIL_ALLOWED_HOSTS` is a comma-separated allow-list of SMTP hosts. When it
+ * is unset the configured host is trusted, so existing deployments keep
+ * working; once it is set, repointing `mail_host` at an attacker's server is
+ * not enough to receive the password. Comparison is case-insensitive on the
+ * exact host name.
+ */
+export function mailHostAllowed(host: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const configured = env.MAIL_ALLOWED_HOSTS?.trim();
+  if (!configured) return true;
+  const target = host.trim().toLowerCase();
+  if (!target) return false;
+  return configured
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(target);
+}
+
+const warnedHosts = new Set<string>();
+
+/** One warning per process and host; never logs the host or a credential. */
+function warnDisallowedHost(host: string): void {
+  if (warnedHosts.has(host)) return;
+  warnedHosts.add(host);
+  console.warn(
+    '[notifications] SMTP host is not in MAIL_ALLOWED_HOSTS; refusing to send the mail password.',
+  );
+}
+
 /** What is missing before SMTP can send. Never includes a value. */
 export function mailConfigProblem(
   settings: StoreSettings,
@@ -74,6 +104,10 @@ export function mailConfigProblem(
   }
   if (!settings.mail_host.trim()) {
     return 'mail not configured (SMTP host is missing)';
+  }
+  if (!mailHostAllowed(settings.mail_host, env)) {
+    warnDisallowedHost(settings.mail_host);
+    return 'mail not configured (SMTP host is not in MAIL_ALLOWED_HOSTS)';
   }
   if (!settings.mail_from_email.trim()) {
     return 'mail not configured (From email is missing)';
@@ -164,12 +198,18 @@ function smtpFailure(error: unknown): DeliveryResult {
  */
 export function smtpOptions(settings: StoreSettings, env: NodeJS.ProcessEnv = process.env) {
   const username = settings.mail_username.trim();
+  const host = settings.mail_host.trim();
+  // Defence in depth: `mailConfigProblem` already refuses a disallowed host,
+  // but if any caller builds a transport directly the password must still
+  // never leave the server for a host that is not on the allow-list.
+  const allowed = mailHostAllowed(host, env);
+  if (username && !allowed) warnDisallowedHost(host);
   return {
-    host: settings.mail_host.trim(),
+    host,
     port: Number(settings.mail_port),
     secure: settings.mail_encryption === 'ssl',
     requireTLS: settings.mail_encryption === 'tls',
-    auth: username ? { user: username, pass: env.MAIL_PASSWORD ?? '' } : undefined,
+    auth: username && allowed ? { user: username, pass: env.MAIL_PASSWORD ?? '' } : undefined,
     connectionTimeout: PROVIDER_TIMEOUT_MS,
     greetingTimeout: PROVIDER_TIMEOUT_MS,
     socketTimeout: PROVIDER_TIMEOUT_MS,

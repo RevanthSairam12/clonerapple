@@ -711,6 +711,9 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
       if (!allowed.includes(text)) {
         return { ok: false, error: `Choose a valid value for ${field.label}.` };
       }
+      if (key === 'mail_encryption' && !mailEncryptionAllowed(text)) {
+        return { ok: false, error: 'SMTP encryption cannot be turned off outside development.' };
+      }
       return { ok: true, value: text };
     }
     case 'datetime':
@@ -724,9 +727,24 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
   }
 }
 
-/** Owner-only settings groups: the maintenance switch takes the shop offline. */
+/**
+ * Owner-only settings groups: maintenance takes the shop offline, and the
+ * `mail_*` keys decide where the server's SMTP password is sent.
+ */
 export function isOwnerOnlySetting(key: string): boolean {
-  return key.startsWith('maintenance_');
+  return key.startsWith('maintenance_') || key.startsWith('mail_');
+}
+
+/**
+ * `mail_encryption = "none"` would send the SMTP login in clear text. It is
+ * accepted only in local development; every other environment must use
+ * STARTTLS or SSL.
+ */
+export function mailEncryptionAllowed(
+  value: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return value !== 'none' || env.NODE_ENV === 'development';
 }
 
 /**
