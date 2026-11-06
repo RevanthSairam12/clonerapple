@@ -70,7 +70,10 @@ for (const route of routes) {
     for (const token of [undefined, 'unsigned-token']) {
       const f = await fixture({ owner: false, token });
       const html = await f.render(route);
-      assert.match(html, /Sign in to view this order/);
+      // L-7: the not-yours answer is the generic one, not a "sign in" hint that
+      // would confirm the reference exists.
+      assert.match(html, /Order status unavailable/);
+      assert.doesNotMatch(html, /Sign in to view this order/);
       assert.doesNotMatch(html, /Rs 120|#42|safe-reference|data-clear-cart|Payment receipt/);
       assert.equal(f.reads(), 0);
     }
@@ -111,9 +114,14 @@ test('status guest refresh preserves signed token and recovery flag with no succ
 
 test('safe missing, not-found and document-unavailable branches do not claim payment success', async () => {
   const f = await fixture();
-  assert.match(await f.render('success', { txnid: undefined }), /No transaction identifier/);
+  const absent = await f.render('success', { txnid: undefined });
+  assert.match(absent, /Order status unavailable/);
   assert.equal(f.reads(), 0);
-  assert.match(await f.render('failed', { txnid: ['one', 'two'] }), /No transaction identifier/);
+  assert.match(await f.render('failed', { txnid: ['one', 'two'] }), /Order status unavailable/);
+  // L-7: an absent reference and an existing order the caller cannot see render
+  // the identical document, so the page is not an existence oracle.
+  const notYours = await fixture({ owner: false });
+  assert.equal(absent, await notYours.render('success'));
   for (const options of [{ available: false }, { documentFails: true }]) {
     const fail = await fixture(options);
     const html = await fail.render('success');
