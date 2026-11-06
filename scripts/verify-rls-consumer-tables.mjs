@@ -61,6 +61,8 @@ async function main() {
   const products = await readRows('products', 'id,name,price_paise');
   // M-2: internal costing columns must not be readable with the publishable key.
   const productCost = await readRows('products', 'id,cost_paise');
+  // L-1: the migration ledger is internal.
+  const schemaMigrations = await readRows('schema_migrations', 'filename');
 
   print('users', users);
   print('user_sessions', userSessions);
@@ -69,6 +71,7 @@ async function main() {
   print('content_blocks', contentBlocks);
   print('products', products);
   print('products.cost_paise', productCost);
+  print('schema_migrations', schemaMigrations);
 
   if (
     !consumerCheck(users) ||
@@ -79,7 +82,8 @@ async function main() {
     contentBlocks.rows === 0 ||
     products.status !== 200 ||
     products.rows === 0 ||
-    !deniedCheck(productCost)
+    !deniedCheck(productCost) ||
+    !deniedCheck(schemaMigrations)
   ) {
     process.exitCode = 1;
   }

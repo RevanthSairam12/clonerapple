@@ -40,11 +40,25 @@ const FORBIDDEN =
   /\b(drop\s+(table|column|database)|truncate|alter\s+table\s+\w+\s+drop\s+(?!constraint\b|policy\b))\b/i;
 
 // Track applied migrations so re-running is a no-op for old files.
+// SECURITY (L-1): the table is internal. RLS with no policies plus no grants
+// for the Supabase API roles keeps the migration ledger off PostgREST; the
+// runner connects as the table owner and is unaffected. The role guards keep
+// a plain local Postgres (no anon/authenticated) working.
 await sql.unsafe(`
   create table if not exists schema_migrations (
     filename text primary key,
     applied_at timestamptz not null default now()
   );
+  alter table schema_migrations enable row level security;
+  do $$
+  begin
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+      execute 'revoke all on schema_migrations from anon';
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+      execute 'revoke all on schema_migrations from authenticated';
+    end if;
+  end $$;
 `);
 const applied = new Set(
   (await sql`select filename from schema_migrations`).map((r) => r.filename),
