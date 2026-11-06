@@ -25,6 +25,9 @@ import {
  */
 export const dynamic = 'force-dynamic';
 
+/** Room for multipart boundaries and the small text fields, not file bytes. */
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
+
 export async function GET() {
   const guard = await requireStoreRole();
   if (!guard.ok) return guard.response;
@@ -48,6 +51,14 @@ export async function POST(request: Request) {
       { error: 'Storage is not configured (missing service role key).' },
       { status: 503 },
     );
+  }
+
+  // I-5: refuse a declared-oversized body before Next buffers the whole
+  // multipart payload in memory. Content-Length is advisory (a chunked request
+  // omits it), so the file.size check after parsing stays authoritative.
+  const declaredLength = Number(request.headers.get('content-length') ?? '');
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MEDIA_BYTES + MULTIPART_OVERHEAD_BYTES) {
+    return NextResponse.json({ error: 'Files must be 25 MB or smaller.' }, { status: 413 });
   }
 
   let form: FormData;
