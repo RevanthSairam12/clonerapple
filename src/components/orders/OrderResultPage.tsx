@@ -23,15 +23,19 @@ function ResultCard({ children }: { children: ReactNode }) {
   return <div className="mx-auto w-full max-w-2xl rounded-2xl border border-black/10 bg-white p-6 shadow-sm sm:p-10">{children}</div>;
 }
 
-function Unavailable({ signIn = false, missing = false }: { signIn?: boolean; missing?: boolean }) {
+/**
+ * One answer for every non-owner case: no identifier, an unknown reference, or
+ * an order that belongs to someone else. Distinguishing "sign in" from "could
+ * not load" told an anonymous caller whether a txnid exists (L-7), which matters
+ * when order numbering makes references guessable.
+ */
+function Unavailable() {
   return <ResultCard>
-    <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{signIn ? 'Sign in to view this order' : 'Order status unavailable'}</h1>
-    <p className="mt-3 text-sm leading-relaxed text-[#333336]">{signIn
-      ? 'Please sign in with the account that placed this order, or use a valid payment return link.'
-      : missing ? 'No transaction identifier was provided.' : 'We could not load this order. Check your reference or try again later.'}</p>
+    <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Order status unavailable</h1>
+    <p className="mt-3 text-sm leading-relaxed text-[#333336]">We could not load this order. Check the reference, sign in with the account that placed it, or use the payment return link.</p>
     <div className="mt-8 grid gap-3 sm:grid-cols-2" aria-label="Order actions">
-      {signIn && <Link href="/auth" className={primaryAction}>Sign in</Link>}
-      <Link href="/" className={signIn ? secondaryAction : primaryAction}>Continue shopping</Link>
+      <Link href="/auth" className={primaryAction}>Sign in</Link>
+      <Link href="/" className={secondaryAction}>Continue shopping</Link>
     </div>
   </ResultCard>;
 }
@@ -53,7 +57,7 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
   const rt = typeof query.rt === 'string' ? query.rt : undefined;
   const recovery = typeof query.recovery === 'string' ? query.recovery : undefined;
   const preserveCart = recovery === '1';
-  if (!txnid) return <Unavailable missing />;
+  if (!txnid) return <Unavailable />;
 
   const [session, result] = await Promise.all([getUserSession(), getCustomerOrderStatus(txnid)]);
   if (!result.ok) return <Unavailable />;
@@ -62,7 +66,7 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
     txnid: order.txnid, token: rt, userId: order.userId,
     sessionUserId: session?.userId ?? null,
   });
-  if (!access) return <Unavailable signIn />;
+  if (!access) return <Unavailable />;
 
   // Read document facts only after return access is established. The customer
   // projection strips pre-delivery invoice identity; no document DTO goes to guests.
