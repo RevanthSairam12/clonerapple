@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { getSql } from '@/lib/platform/db';
+import { clientIpFromHeaders } from '@/lib/platform/client-ip';
 
 /**
  * Append-only audit log for store admin actions.
@@ -142,8 +143,9 @@ function networkContext(request: Request | null | undefined): AuditNetworkContex
   }
 
   const headers = request.headers;
-  const forwarded = headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  const ip = forwarded || headers.get('x-real-ip') || '';
+  // Only a trusted proxy makes the forwarded address meaningful; untrusted
+  // values are ignored so the audit trail is not attacker-authored.
+  const ip = clientIpFromHeaders(headers);
 
   return {
     requestId: headers.get('x-request-id') || headers.get('x-vercel-id') || null,

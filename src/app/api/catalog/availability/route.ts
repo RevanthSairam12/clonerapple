@@ -6,6 +6,7 @@ import { toPublicAvailability } from '@/lib/storefront/availability-rules';
 import { readAvailabilityUsing } from '@/lib/storefront/availability-server';
 import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { clientIpFromRequest } from '@/lib/platform/client-ip';
 
 /**
  * Click-time availability.
@@ -23,10 +24,6 @@ export const runtime = 'nodejs';
 
 const MAX_IDS = 50;
 
-function clientIp(request: Request): string {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded || request.headers.get('x-real-ip')?.trim() || '127.0.0.1';
-}
 
 export async function GET(request: Request) {
   const originViolation = assertSameOrigin(request);
@@ -35,11 +32,12 @@ export async function GET(request: Request) {
   const closed = await requireStorefrontOpen();
   if (closed) return closed;
 
-  const limited = checkRateLimit(`catalog-availability:${clientIp(request)}`, {
+  const ip = clientIpFromRequest(request);
+  const limited = ip ? checkRateLimit(`catalog-availability:${ip}`, {
     limit: 60,
     windowMs: 60_000,
-  });
-  if (!limited.allowed) {
+  }) : null;
+  if (limited && !limited.allowed) {
     return NextResponse.json(
       { error: 'Too many availability checks. Please try again shortly.' },
       { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },

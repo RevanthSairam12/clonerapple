@@ -1,9 +1,27 @@
 /**
  * In-Memory Sliding Window Rate Limiter
- * 
+ *
  * Protects payment endpoints against abuse, card testing, and denial of service.
  * Automatic memory cleanup prevents memory leaks in long-running processes.
+ *
+ * LIMITS OF THIS STORE
+ * --------------------
+ * Counters live in this process only. A restart forgets them, and a
+ * multi-instance deploy gives each instance its own window, so the effective
+ * limit is `limit x instances`. That is accepted today because the store runs as
+ * a single Node process.
+ *
+ * TODO(security): before running more than one instance (or on a serverless
+ * host), back `checkRateLimit` with a shared store (Redis/Postgres). The
+ * `RateLimitStore` interface below is the seam: implement it and swap the
+ * `store` constant; callers do not change.
  */
+
+/** The shape a shared limiter would implement; `checkRateLimit` is the entry point callers use. */
+export interface RateLimitStore {
+  increment(key: string, windowMs: number): Promise<RateLimitResult>;
+  reset(key: string): Promise<void>;
+}
 
 interface RateLimitEntry {
   timestamps: number[];

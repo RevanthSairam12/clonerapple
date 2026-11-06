@@ -10,6 +10,7 @@ import {
   PASSWORD_MAX_BYTES,
 } from './auth/validation';
 import { checkRateLimit } from './payu/rate-limit';
+import { clientIpFromHeaders } from './platform/client-ip';
 import { deviceLabel } from './store-admin/customer-rules';
 
 /**
@@ -50,8 +51,14 @@ const LOCKOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 const attempts = new Map<string, AttemptRecord>();
 
-function attemptKeys(email: string, ip: string): [string, string] {
-  return [`user-email:${email}`, `user-ip:${ip}`];
+/**
+ * One key per identity, plus a per-IP key only when a trusted proxy supplied an
+ * address. An untrusted header would otherwise let a caller rotate the address
+ * and never hit the IP bucket, and a shared 'unknown' bucket would let one
+ * client lock every account out.
+ */
+function attemptKeys(email: string, ip: string): string[] {
+  return ip ? [`user-email:${email}`, `user-ip:${ip}`] : [`user-email:${email}`];
 }
 
 function isLocked(email: string, ip: string): boolean {
@@ -88,12 +95,9 @@ interface RequestContext {
 
 async function requestContext(): Promise<RequestContext> {
   const h = await headers();
-  const ip =
-    h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    h.get('x-real-ip') ||
-    '';
+  const ip = clientIpFromHeaders(h);
   return {
-    ip: ip || 'unknown',
+    ip,
     device: deviceLabel(h.get('user-agent')),
     ipHash: ip ? createHash('sha256').update(ip).digest('hex') : null,
   };
@@ -157,8 +161,11 @@ function tooManyRequests(
   const emailLimit =
     scope === 'signup' ? SIGNUP_EMAIL_LIMIT : SIGNIN_EMAIL_LIMIT;
 
-  const ipResult = checkRateLimit(`user-${scope}-ip:${ip}`, ipLimit);
-  if (!ipResult.allowed) return Math.max(1, ipResult.retryAfterSec);
+  // The per-IP bucket only exists behind a trusted proxy (see client-ip.ts).
+  if (ip) {
+    const ipResult = checkRateLimit(`user-${scope}-ip:${ip}`, ipLimit);
+    if (!ipResult.allowed) return Math.max(1, ipResult.retryAfterSec);
+  }
 
   const emailResult = checkRateLimit(
     `user-${scope}-email:${email}`,

@@ -14,17 +14,13 @@ import {
 } from '@/lib/coupons/store';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { clientIpFromRequest } from '@/lib/platform/client-ip';
 import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { getUserSession } from '@/lib/user-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function getClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0].trim();
-  return req.headers.get('x-real-ip') || '127.0.0.1';
-}
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
@@ -47,12 +43,12 @@ export async function POST(req: NextRequest) {
   const closed = await requireStorefrontOpen();
   if (closed) return closed;
 
-  const ip = getClientIp(req);
-  const ipLimit = checkRateLimit(`coupon-validate-ip:${ip}`, {
+  const ip = clientIpFromRequest(req);
+  const ipLimit = ip ? checkRateLimit(`coupon-validate-ip:${ip}`, {
     limit: 10,
     windowMs: 60 * 1000,
-  });
-  if (!ipLimit.allowed) {
+  }) : null;
+  if (ipLimit && !ipLimit.allowed) {
     return NextResponse.json(
       { valid: false, message: 'Too many attempts. Please wait a minute and try again.' },
       { status: 429, headers: { ...NO_STORE, 'Retry-After': String(ipLimit.retryAfterSec) } },

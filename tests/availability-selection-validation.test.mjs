@@ -16,6 +16,9 @@ const mocks = {
   '@/lib/storefront/availability-server': { readAvailabilityUsing: async (_sql, _ids, lines) => ({ products: lines }) },
   '@/lib/storefront/maintenance-guard': { requireStorefrontOpen: async () => null },
   '@/lib/payu/rate-limit': { checkRateLimit: () => ({ allowed: true }) },
+  // No proxy is declared in the fixture, so the address is unknown and the
+  // per-IP bucket is skipped (L-6).
+  '@/lib/platform/client-ip': { clientIpFromRequest: () => '' },
 };
 vm.runInNewContext(source, { module, exports: module.exports, URL, console, require(name) {
   if (!(name in mocks)) throw Error(`Unexpected backend import: ${name}`);

@@ -5,6 +5,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { isRevealField, revealCustomerField } from '@/lib/store-admin/customers';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { clientIpFromRequest } from '@/lib/platform/client-ip';
 
 /**
  * POST /api/store-admin/customers/[id]/reveal
@@ -27,12 +28,6 @@ const REVEAL_REASON_MAX = 200;
 const REVEAL_WINDOW_MS = 10 * 60 * 1000;
 const REVEAL_ACTOR_LIMIT = 20;
 const REVEAL_IP_LIMIT = 40;
-
-function clientIp(request: Request): string {
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0].trim();
-  return request.headers.get('x-real-ip') || 'unknown';
-}
 
 export async function POST(
   request: Request,
@@ -78,20 +73,25 @@ export async function POST(
     );
   }
 
-  const ip = clientIp(request);
+  // The actor bucket always applies; the IP bucket only when a trusted proxy
+  // supplied an address (client-ip.ts). Without one a shared bucket would let a
+  // single caller block every owner.
+  const ip = clientIpFromRequest(request);
   const actorLimit = checkRateLimit(`store-reveal:actor:${guard.session.adminId}`, {
     limit: REVEAL_ACTOR_LIMIT,
     windowMs: REVEAL_WINDOW_MS,
   });
-  const ipLimit = checkRateLimit(`store-reveal:ip:${ip}`, {
-    limit: REVEAL_IP_LIMIT,
-    windowMs: REVEAL_WINDOW_MS,
-  });
+  const ipLimit = ip
+    ? checkRateLimit(`store-reveal:ip:${ip}`, {
+        limit: REVEAL_IP_LIMIT,
+        windowMs: REVEAL_WINDOW_MS,
+      })
+    : null;
 
-  if (!actorLimit.allowed || !ipLimit.allowed) {
+  if (!actorLimit.allowed || (ipLimit && !ipLimit.allowed)) {
     const retryAfterSec = Math.max(
       1,
-      actorLimit.allowed ? ipLimit.retryAfterSec : actorLimit.retryAfterSec,
+      !actorLimit.allowed ? actorLimit.retryAfterSec : (ipLimit?.retryAfterSec ?? 1),
     );
     await writeAudit({
       actorId: guard.session.adminId,

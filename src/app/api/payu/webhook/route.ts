@@ -3,15 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readCallbackData } from '@/lib/payu/callback-route';
 import { logPayUEvent, processPayUCallback } from '@/lib/payu/process-response';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { clientIpFromRequest } from '@/lib/platform/client-ip';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function getClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0].trim();
-  return req.headers.get('x-real-ip') || '127.0.0.1';
-}
 
 /**
  * PayU's server-to-server notification.
@@ -28,10 +24,13 @@ function getClientIp(req: NextRequest): string {
  */
 export async function POST(req: NextRequest) {
   try {
-    const ip = getClientIp(req);
-    // Rate limit: a gateway retry storm must not exhaust the pool.
-    const limit = checkRateLimit(`payu-webhook-ip:${ip}`, { limit: 100, windowMs: 60 * 1000 });
-    if (!limit.allowed) {
+    const ip = clientIpFromRequest(req);
+    // Rate limit: a gateway retry storm must not exhaust the pool. Only a
+    // trusted proxy address makes a per-IP bucket meaningful.
+    const limit = ip
+      ? checkRateLimit(`payu-webhook-ip:${ip}`, { limit: 100, windowMs: 60 * 1000 })
+      : null;
+    if (limit && !limit.allowed) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
     }
 

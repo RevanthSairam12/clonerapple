@@ -15,6 +15,7 @@ import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { clientIpFromRequest } from '@/lib/platform/client-ip';
 import { getCustomerAddress } from '@/lib/account/addresses';
 import { validateCheckoutContact, validateIndianAddress } from '@/lib/checkout/india-validation';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
@@ -29,11 +30,6 @@ import { revalidateCatalog } from '@/lib/storefront/revalidate';
 
 export const runtime = 'nodejs';
 
-function getClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0].trim();
-  return req.headers.get('x-real-ip') || '127.0.0.1';
-}
 
 /**
  * Generates an alphanumeric, cryptographically random transaction ID (max 25 chars).
@@ -55,11 +51,15 @@ export async function POST(req: NextRequest) {
     const closed = await requireStorefrontOpen();
     if (closed) return closed;
 
-    const ip = getClientIp(req);
+    const ip = clientIpFromRequest(req);
 
-    // Rate limit per IP: max 20 initiate requests per 5 minutes
-    const ipLimit = checkRateLimit(`payu-init-ip:${ip}`, { limit: 20, windowMs: 5 * 60 * 1000 });
-    if (!ipLimit.allowed) {
+    // Rate limit per IP when a trusted proxy supplies one: max 20 initiate
+    // requests per 5 minutes. Without a trusted address the account limit below
+    // is the control.
+    const ipLimit = ip
+      ? checkRateLimit(`payu-init-ip:${ip}`, { limit: 20, windowMs: 5 * 60 * 1000 })
+      : null;
+    if (ipLimit && !ipLimit.allowed) {
       return NextResponse.json(
         { error: 'Too many payment requests from this IP. Please wait a few minutes.' },
         { status: 429, headers: { 'Retry-After': String(ipLimit.retryAfterSec) } }

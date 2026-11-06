@@ -118,7 +118,7 @@ export async function loadSharedListServices() {
   const rules = await load('src/lib/catalog/shared-list-rules.ts', {});
   const catalog = await load('src/lib/store-admin/catalog-rules.ts', {});
   const metadataRules = await load('src/lib/catalog/product-metadata-rules.ts', { '@/lib/store-admin/catalog-rules': catalog });
-  const audit = await load('src/lib/store-admin/audit.ts', { 'node:crypto': crypto, '@/lib/platform/db': noPool });
+  const audit = await load('src/lib/store-admin/audit.ts', { 'node:crypto': crypto, '@/lib/platform/db': noPool, '@/lib/platform/client-ip': { clientIpFromHeaders: () => '' } });
   const metadata = await load('src/lib/store-admin/product-metadata.ts', { 'node:crypto': crypto, '@/lib/platform/db': noPool, './audit': audit, './catalog-rules': catalog, '@/lib/catalog/shared-list-rules': rules, '@/lib/catalog/product-metadata-rules': metadataRules });
   const service = await load('src/lib/store-admin/shared-lists.ts', { 'node:crypto': crypto, 'next/headers': { cookies() { throw new Error('Authenticated app acceptance is separate'); } }, '@/lib/platform/db': noPool, '@/lib/catalog/shared-list-rules': rules, './product-metadata': metadata });
   return { service, rules };
