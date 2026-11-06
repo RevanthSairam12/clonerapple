@@ -58,8 +58,12 @@ export function isStoreRole(value: unknown): value is StoreRole {
   return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
 }
 
-/** True when `role` is at least the level of every role in `required`. */
-function roleSatisfies(role: StoreRole, required: StoreRole[]): boolean {
+/**
+ * True when `role` is at least the level of every role in `required`.
+ * Exported for the role-matrix test, which asserts the same decision the guard
+ * makes for each sensitive route.
+ */
+export function roleSatisfies(role: StoreRole, required: StoreRole[]): boolean {
   if (required.length === 0) return true;
   return required.some((r) => ROLE_RANK[role] >= ROLE_RANK[r]);
 }
