@@ -222,9 +222,9 @@ export function maintenanceStatus(state: MaintenanceState): MaintenanceStatus {
 /**
  * How long a decision is reused. Long enough that a busy storefront does not
  * query per request; short enough that turning maintenance on is visible
- * within about ten seconds.
+ * within 3 seconds.
  */
-export const MAINTENANCE_CACHE_MS = 5_000;
+export const MAINTENANCE_CACHE_MS = 3_000;
 
 interface CacheEntry {
   state: MaintenanceState;
@@ -248,10 +248,10 @@ export function clearMaintenanceCache(): void {
  * Fail open in every failure mode: no database, a query error, a row that
  * cannot be parsed. A settings outage never takes the shop down.
  */
-async function readMaintenanceState(): Promise<MaintenanceState> {
+async function readMaintenanceState(): Promise<{ state: MaintenanceState; cacheable: boolean }> {
   const sql = getSql();
   const nodeNow = new Date().toISOString();
-  if (!sql) return maintenanceOff(nodeNow);
+  if (!sql) return { state: maintenanceOff(nodeNow), cacheable: false };
 
   try {
     // One round trip. The window values are entered as wall-clock
@@ -285,11 +285,13 @@ async function readMaintenanceState(): Promise<MaintenanceState> {
     `) as Record<string, unknown>[];
 
     const row = rows[0];
-    if (!row) return maintenanceOff(nodeNow);
-    return stateFromRow(row) ?? maintenanceOff(nodeNow);
+    if (!row) return { state: maintenanceOff(nodeNow), cacheable: false };
+    const parsed = stateFromRow(row);
+    if (!parsed) return { state: maintenanceOff(nodeNow), cacheable: false };
+    return { state: parsed, cacheable: true };
   } catch {
     console.warn('[maintenance] settings could not be read; the store stays up');
-    return maintenanceOff(nodeNow);
+    return { state: maintenanceOff(nodeNow), cacheable: false };
   }
 }
 
@@ -331,14 +333,32 @@ export function stateFromRow(row: Record<string, unknown>): MaintenanceState | n
   };
 }
 
+function advanceMaintenanceState(cached: MaintenanceState, elapsedMs: number): MaintenanceState {
+  const baseNowMs = Date.parse(cached.now);
+  const advancedNowMs = Number.isFinite(baseNowMs)
+    ? baseNowMs + Math.max(0, elapsedMs)
+    : Date.now();
+  const active = evaluateMaintenance(cached, advancedNowMs);
+  return {
+    ...cached,
+    active,
+    now: new Date(advancedNowMs).toISOString(),
+    cached: true,
+  };
+}
+
 function startMaintenanceRefresh(): Promise<MaintenanceState> {
   if (globalForMaintenance.__gadzioMaintenanceInflight) {
     return globalForMaintenance.__gadzioMaintenanceInflight;
   }
   const inflight = (async (): Promise<MaintenanceState> => {
-    const state = await readMaintenanceState();
-    // Record completion time so pool queue wait never shortens or collapses the TTL.
-    globalForMaintenance.__gadzioMaintenance = { state, at: Date.now() };
+    const { state, cacheable } = await readMaintenanceState();
+    if (cacheable) {
+      // Record completion time so pool queue wait never shortens or collapses the TTL.
+      globalForMaintenance.__gadzioMaintenance = { state, at: Date.now() };
+    } else {
+      globalForMaintenance.__gadzioMaintenance = undefined;
+    }
     return state;
   })().finally(() => {
     if (globalForMaintenance.__gadzioMaintenanceInflight === inflight) {
@@ -350,28 +370,15 @@ function startMaintenanceRefresh(): Promise<MaintenanceState> {
 }
 
 /**
- * The state the storefront should act on. Cached for a few seconds; a cache
- * hit is only ever used while it is younger than MAINTENANCE_CACHE_MS.
+ * The state the storefront should act on. Cached for 3 seconds; a cache
+ * hit is only ever used while it is younger than MAINTENANCE_CACHE_MS, and
+ * re-evaluates the window against the database clock advanced by elapsed time.
  */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   const cached = globalForMaintenance.__gadzioMaintenance;
   const now = Date.now();
   if (cached && now - cached.at < MAINTENANCE_CACHE_MS) {
-    return { ...cached.state, cached: true };
-  }
-  if (cached) {
-    void startMaintenanceRefresh();
-    const baseNowMs = Date.parse(cached.state.now);
-    const advancedNowMs = Number.isFinite(baseNowMs)
-      ? baseNowMs + Math.max(0, now - cached.at)
-      : now;
-    const active = evaluateMaintenance(cached.state, advancedNowMs);
-    return {
-      ...cached.state,
-      active,
-      now: new Date(advancedNowMs).toISOString(),
-      cached: true,
-    };
+    return advanceMaintenanceState(cached.state, now - cached.at);
   }
 
   const state = await startMaintenanceRefresh();

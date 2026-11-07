@@ -96,7 +96,7 @@ export async function readSaleStateUsing(
   };
 }
 
-const SALE_STATE_CACHE_TTL_MS = 2_000;
+export const SALE_STATE_CACHE_TTL_MS = 3_000;
 
 interface SaleCacheSlot {
   state: SaleState | null;
@@ -125,6 +125,20 @@ export function clearSaleStateCache(): void {
   globalForSaleState.__gadzioCatalogSnapshot = null;
 }
 
+function advanceSaleState(cached: SaleState, elapsedMs: number): SaleState {
+  const baseMs = Date.parse(cached.databaseNow);
+  const advancedIso = Number.isFinite(baseMs)
+    ? new Date(baseMs + Math.max(0, elapsedMs)).toISOString()
+    : cached.databaseNow;
+  const status = saleStatusAt(cached, advancedIso);
+  return {
+    ...cached,
+    status,
+    live: status === 'live',
+    databaseNow: advancedIso,
+  };
+}
+
 function startSaleStateRefresh(sql: postgres.Sql, slot: SaleCacheSlot): Promise<SaleState> {
   if (slot.inflight) return slot.inflight;
   const inflight = (async (): Promise<SaleState> => {
@@ -135,6 +149,8 @@ function startSaleStateRefresh(sql: postgres.Sql, slot: SaleCacheSlot): Promise<
       return state;
     } catch {
       console.warn('[storefront/sale] sale settings unavailable; using regular prices and normal mode');
+      slot.state = null;
+      slot.at = 0;
       return { ...SALE_OFF };
     }
   })().finally(() => {
@@ -154,22 +170,7 @@ export async function readSaleState(): Promise<SaleState> {
   const slot = saleCacheSlot();
   const now = Date.now();
   if (slot.state && now - slot.at < SALE_STATE_CACHE_TTL_MS) {
-    return { ...slot.state };
+    return advanceSaleState(slot.state, now - slot.at);
   }
-  if (slot.state) {
-    void startSaleStateRefresh(sql, slot);
-    const baseMs = Date.parse(slot.state.databaseNow);
-    const advancedIso = Number.isFinite(baseMs)
-      ? new Date(baseMs + Math.max(0, now - slot.at)).toISOString()
-      : slot.state.databaseNow;
-    const status = saleStatusAt(slot.state, advancedIso);
-    return {
-      ...slot.state,
-      status,
-      live: status === 'live',
-      databaseNow: advancedIso,
-    };
-  }
-
   return { ...(await startSaleStateRefresh(sql, slot)) };
 }

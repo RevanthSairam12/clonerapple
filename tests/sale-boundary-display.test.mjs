@@ -192,6 +192,66 @@ test('the sale write path revalidates so a price edit is not delayed by the cach
   assert.match(route, /revalidateCatalog\(\)/);
 });
 
+test('per-instance sale-state cache is 3 seconds, deduplicates in-flight reads, advances DB clock across boundaries, and does not cache fail-safe errors', async () => {
+  const saleStateMod = await jiti.import(
+    path.join(root, 'src', 'lib', 'storefront', 'sale-state.ts'),
+  );
+  assert.equal(saleStateMod.SALE_STATE_CACHE_TTL_MS, 3_000, 'TTL is 3 seconds');
+
+  const previousSql = globalThis.__gadzioSql;
+  const savedUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = 'postgresql://cache:test@127.0.0.1:5432/test';
+  saleStateMod.clearSaleStateCache();
+
+  try {
+    let queries = 0;
+    let shouldFail = true;
+    const baseDbNow = Date.parse('2026-10-30T09:59:59.950Z'); // 50ms before sale start
+    globalThis.__gadzioSql = async () => {
+      queries += 1;
+      if (shouldFail) throw new Error('transient DB error');
+      return [
+        {
+          enabled: true,
+          starts_at: new Date('2026-10-30T10:00:00.000Z'),
+          ends_at: new Date('2026-10-30T12:00:00.000Z'),
+          updated_at: new Date('2026-10-30T09:00:00.000Z'),
+          updated_by: 'owner',
+          db_now: new Date(baseDbNow),
+        },
+      ];
+    };
+
+    const failSafe = await saleStateMod.readSaleState();
+    assert.equal(failSafe.live, false);
+    assert.equal(failSafe.unreadable, true);
+    assert.equal(queries, 1);
+
+    // Next request immediately retries because SALE_OFF is not cached
+    shouldFail = false;
+    const [first, second] = await Promise.all([
+      saleStateMod.readSaleState(),
+      saleStateMod.readSaleState(),
+    ]);
+    assert.equal(queries, 2, 'concurrent cache misses share one in-flight query');
+    assert.equal(first.status, 'scheduled');
+    assert.equal(first.live, false);
+    assert.equal(second.live, false);
+
+    // Wait 80ms so elapsed time pushes databaseNow past 10:00:00.000Z while still inside the 3s cache
+    await new Promise((r) => setTimeout(r, 80));
+    const afterStart = await saleStateMod.readSaleState();
+    assert.equal(queries, 2, 'still served from the 3s per-instance cache (zero extra DB connections)');
+    assert.equal(afterStart.status, 'live', 'scheduled sale flips to live on time using advanced DB clock');
+    assert.equal(afterStart.live, true);
+  } finally {
+    saleStateMod.clearSaleStateCache();
+    globalThis.__gadzioSql = previousSql;
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  }
+});
+
 /* -------------------------------------------------- database behaviour */
 
 const TABLES = [

@@ -346,3 +346,60 @@ test('the proxy reads maintenance before doing any other work', () => {
   assert.match(proxy, /Retry-After/);
   assert.match(proxy, /status: 503/);
 });
+
+test('per-instance maintenance cache is 3 seconds, deduplicates in-flight reads, advances DB clock across boundaries, and does not cache fail-open errors', async () => {
+  assert.equal(maintenance.MAINTENANCE_CACHE_MS, 3_000, 'TTL is 3 seconds');
+
+  const previousSql = globalThis.__gadzioSql;
+  const savedUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = 'postgresql://cache:test@127.0.0.1:5432/test';
+  maintenance.clearMaintenanceCache();
+
+  try {
+    // 1. Fail-open is not cached: a transient outage retries on the very next request.
+    let queries = 0;
+    let shouldFail = true;
+    const baseDbNow = Date.parse('2026-10-30T09:59:59.950Z'); // 50ms before window start
+    globalThis.__gadzioSql = async () => {
+      queries += 1;
+      if (shouldFail) throw new Error('transient DB outage');
+      return [
+        {
+          db_now: new Date(baseDbNow),
+          enabled: 'on',
+          message: 'Scheduled window',
+          trade_name: 'Gadzio',
+          timezone: 'Asia/Kolkata',
+          starts_at: new Date('2026-10-30T10:00:00.000Z'),
+          ends_at: new Date('2026-10-30T12:00:00.000Z'),
+        },
+      ];
+    };
+
+    const failOpen = await maintenance.getMaintenanceState();
+    assert.equal(failOpen.active, false);
+    assert.equal(queries, 1);
+
+    // Next request immediately retries and succeeds
+    shouldFail = false;
+    const [first, second] = await Promise.all([
+      maintenance.getMaintenanceState(),
+      maintenance.getMaintenanceState(),
+    ]);
+    assert.equal(queries, 2, 'concurrent cache misses share one in-flight query');
+    assert.equal(first.active, false, '50ms before starts_at is not yet active');
+    assert.equal(second.active, false);
+
+    // 2. Subsequent call within 3s does NOT query the DB, and advances the DB clock across starts_at
+    await new Promise((r) => setTimeout(r, 80));
+    const afterStart = await maintenance.getMaintenanceState();
+    assert.equal(queries, 2, 'still served from the 3s per-instance cache (zero extra DB connections)');
+    assert.equal(afterStart.cached, true);
+    assert.equal(afterStart.active, true, 'scheduled window flips to active on time using advanced DB clock');
+  } finally {
+    maintenance.clearMaintenanceCache();
+    globalThis.__gadzioSql = previousSql;
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  }
+});
