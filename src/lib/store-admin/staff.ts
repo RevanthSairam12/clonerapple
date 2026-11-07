@@ -416,6 +416,7 @@ export async function resetStaffPassword(
   }
 
   try {
+    const hash = await bcrypt.hash(check.value, BCRYPT_ROUNDS);
     return await sql.begin(async (tx) => {
       const rows = (await tx`
         select id from store_admins where id = ${id.trim()} and removed_at is null for update
@@ -424,7 +425,6 @@ export async function resetStaffPassword(
         return { ok: false as const, reason: 'not-found' as const, error: 'That staff member does not exist.' };
       }
 
-      const hash = await bcrypt.hash(check.value, BCRYPT_ROUNDS);
       await tx`
         update store_admins
         set password_hash = ${hash},
@@ -516,6 +516,7 @@ export async function changeOwnPassword(input: {
   }
 
   try {
+    const hash = await bcrypt.hash(check.value, BCRYPT_ROUNDS);
     return await sql.begin(async (tx) => {
       const rows = (await tx`
         select password_hash from store_admins
@@ -540,7 +541,6 @@ export async function changeOwnPassword(input: {
         return { ok: false as const, reason: 'invalid-input' as const, error: 'Current password is incorrect' };
       }
 
-      const hash = await bcrypt.hash(check.value, BCRYPT_ROUNDS);
       await tx`
         update store_admins
         set password_hash = ${hash},
