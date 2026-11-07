@@ -14,7 +14,7 @@ const { getStoreSessionForToken } = await jiti.import('../src/lib/store-admin/au
 
 test('real staff removal frees email, revokes sessions and preserves immutable history', { skip: skipReason() }, async () => {
   const schema = `itest_staff_${randomBytes(8).toString('hex')}`;
-  const sql = postgres(process.env.DATABASE_URL, {
+  const sql = postgres(process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL, {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: false,

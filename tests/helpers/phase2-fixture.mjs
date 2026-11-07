@@ -17,7 +17,7 @@ export const ORDERS = [
 export const TABLES = ['users', 'store_admins', 'store_settings', 'orders', 'order_status_history', 'order_payments', 'return_requests', 'order_items', 'return_items', 'refunds', 'refund_obligations', 'coupon_redemptions', 'stock_movements', 'store_admin_audit', 'invoice_number_counters', 'bill_request_reasons', 'bill_requests', 'refund_requests', 'refund_request_events'];
 
 /** Pure preapproval output. Never imports a database client or loads environment files. */
-export async function phase2Manifest(databaseUrl = process.env.DATABASE_URL) {
+export async function phase2Manifest(databaseUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL) {
   let hostname = null;
   if (databaseUrl) {
     try { hostname = new URL(databaseUrl).hostname; }
@@ -81,14 +81,15 @@ create trigger audit_immutable before update or delete on store_admin_audit for 
 export async function openPhase2Fixture() {
   // All guards run before even constructing a lazy client.
   assert.equal(process.env.RUN_PHASE2_DB_TESTS, '1', 'Phase2 database tests require explicit approval');
-  const manifest = await phase2Manifest();
-  assert.ok(manifest.hostname, 'Supply DATABASE_URL explicitly; environment files are never loaded');
+  const connectionUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+  const manifest = await phase2Manifest(connectionUrl);
+  assert.ok(manifest.hostname, 'Supply DATABASE_MIGRATION_URL or DATABASE_URL explicitly; environment files are never loaded');
   assert.equal(process.env.PHASE2_APPROVED_MANIFEST, manifest.approvalSha256, 'Generate and approve the exact Phase2 write manifest before execution');
-  const url = new URL(process.env.DATABASE_URL);
+  const url = new URL(connectionUrl);
   assert.notEqual(url.port, '6543', 'Requires a session connection, not a transaction pooler');
   const { default: postgres } = await import('postgres');
   const options = { max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, fetch_types: false, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } };
-  const sql = postgres(process.env.DATABASE_URL, options);
+  const sql = postgres(connectionUrl, options);
   let created = false;
   async function pinned(client) {
     const [row] = await client`select current_schema() as name, current_setting('search_path') as path`;
@@ -97,7 +98,7 @@ export async function openPhase2Fixture() {
   const fixture = {
     sql, manifest,
     async race(callback) {
-      const second = postgres(process.env.DATABASE_URL, options);
+      const second = postgres(connectionUrl, options);
       try {
         await pinned(sql); await pinned(second);
         const [one] = await sql`select pg_backend_pid() as pid`;

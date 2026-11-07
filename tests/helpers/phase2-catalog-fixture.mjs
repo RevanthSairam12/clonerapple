@@ -9,7 +9,7 @@ export const MIGRATIONS = ['0055_variant_identity_retirement.sql', '0056_product
 export const TABLES = ['store_admins', 'categories', 'attributes', 'product_types', 'product_type_attributes', 'device_brands', 'device_models', 'products', 'product_variants', 'product_images', 'product_device_models', 'product_attribute_values', 'product_facets', 'product_specs', 'stock', 'order_items', 'store_admin_audit', 'price_history', 'product_content_revisions', 'colours', 'product_variant_colours'];
 const SOURCES = ['tests/helpers/phase2-catalog-fixture.mjs', 'tests/phase2-catalog-integration.test.mjs', 'src/lib/store-admin/product-content.ts', 'src/lib/store-admin/product-duplicate.ts', 'src/lib/store-admin/catalog-revision.ts', 'src/lib/store-admin/product-metadata.ts', 'src/lib/store-admin/audit.ts', 'src/lib/catalog/product-description.ts', 'src/lib/platform/db.ts'];
 /** Pure preflight: no .env loading, SQL client construction or connection. */
-export async function phase2CatalogManifest(databaseUrl = process.env.DATABASE_URL) {
+export async function phase2CatalogManifest(databaseUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL) {
   let target = null;
   if (databaseUrl) {
     const url = new URL(databaseUrl);
@@ -74,15 +74,16 @@ ${TABLES.filter(table => table !== 'product_content_revisions').map(table => `al
 `;
 export async function openPhase2CatalogFixture() {
   assert.equal(process.env.RUN_PHASE2_CATALOG_DB_TESTS, '1', 'Explicit fixture write approval required');
-  const manifest = await phase2CatalogManifest();
-  assert.ok(manifest.target, 'Supply DATABASE_URL explicitly; no env files loaded');
+  const connectionUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+  const manifest = await phase2CatalogManifest(connectionUrl);
+  assert.ok(manifest.target, 'Supply DATABASE_MIGRATION_URL or DATABASE_URL explicitly; no env files loaded');
   assert.equal(process.env.PHASE2_CATALOG_APPROVED_MANIFEST, manifest.approvalSha256, 'Approve the exact catalog fixture manifest before execution');
-  const target = new URL(process.env.DATABASE_URL);
+  const target = new URL(connectionUrl);
   assert.ok(['postgres:', 'postgresql:'].includes(target.protocol));
   assert.notEqual(target.port, '6543', 'Session connections required for independent races');
   const { default: postgres } = await import('postgres');
   const options = { max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, fetch_types: false, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 20000, lock_timeout: 10000 } };
-  const sql = postgres(process.env.DATABASE_URL, options), peer = postgres(process.env.DATABASE_URL, options);
+  const sql = postgres(connectionUrl, options), peer = postgres(connectionUrl, options);
   let created = false;
   const fixture = { sql, peer, manifest,
     async close() {

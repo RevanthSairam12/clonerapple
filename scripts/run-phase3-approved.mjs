@@ -4,14 +4,14 @@ import { spawnSync } from 'node:child_process';
 import { phase3Manifest } from '../tests/helpers/phase3-fixture.mjs';
 const config = {};
 for (const line of fs.readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
-  const match = line.match(/^\s*(DATABASE_URL|DATABASE_SSL)\s*=\s*(.*?)\s*$/);
+  const match = line.match(/^\s*(DATABASE_MIGRATION_URL|DATABASE_URL|DATABASE_SSL)\s*=\s*(.*?)\s*$/);
   if (!match) continue;
   let value = match[2];
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
   config[match[1]] = value;
 }
 try {
-  const url = process.env.DATABASE_URL || config.DATABASE_URL;
+  const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || config.DATABASE_MIGRATION_URL || config.DATABASE_URL;
   const target = new URL(url);
   if (target.hostname !== 'aws-0-ap-northeast-1.pooler.supabase.com' || target.pathname !== '/postgres' || target.port === '6543') throw new Error('Target mismatch; no connection attempted');
   const manifest = await phase3Manifest(url);

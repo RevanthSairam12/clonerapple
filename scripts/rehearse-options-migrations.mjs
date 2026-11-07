@@ -39,8 +39,9 @@ try {
   // DATABASE_URL must come from the real environment.
 }
 
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is not set. Nothing was contacted.');
+const connectionUrl = (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+if (!connectionUrl) {
+  console.error('DATABASE_MIGRATION_URL or DATABASE_URL is not set. Nothing was contacted.');
   process.exit(1);
 }
 if (process.env.REHEARSE_MIGRATIONS !== 'yes') {
@@ -51,7 +52,12 @@ if (process.env.REHEARSE_MIGRATIONS !== 'yes') {
 
 let host;
 try {
-  host = new URL(process.env.DATABASE_URL).hostname;
+  const parsed = new URL(connectionUrl);
+  if (parsed.port === '6543') {
+    console.error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
+    process.exit(1);
+  }
+  host = parsed.hostname;
 } catch {
   console.error('DATABASE_URL is not a URL. Nothing was contacted.');
   process.exit(1);
@@ -77,7 +83,7 @@ const FORBIDDEN =
 const schema = `itest_phase6_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`;
 if (!/^itest_phase6_[a-z0-9]+$/.test(schema)) throw new Error('Refusing an unexpected schema name.');
 
-const sql = postgres(process.env.DATABASE_URL, {
+const sql = postgres(connectionUrl, {
   max: 1,
   ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
   onnotice: () => {},

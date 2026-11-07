@@ -17,14 +17,15 @@ const selected = process.argv.slice(2);
 if (selected.some(file => !files.includes(file))) throw new Error('Unknown test file');
 const config = {};
 for (const line of fs.readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
-  const match = line.match(/^\s*(DATABASE_URL|DATABASE_SSL)\s*=\s*(.*?)\s*$/);
+  const match = line.match(/^\s*(DATABASE_MIGRATION_URL|DATABASE_URL|DATABASE_SSL)\s*=\s*(.*?)\s*$/);
   if (!match) continue;
   let value = match[2];
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
   config[match[1]] = value;
 }
-const url = process.env.DATABASE_URL || config.DATABASE_URL;
+const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || config.DATABASE_MIGRATION_URL || config.DATABASE_URL;
 const target = new URL(url);
+if (target.port === '6543') throw new Error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
 if (target.hostname !== 'aws-0-ap-northeast-1.pooler.supabase.com' || target.pathname !== '/postgres' || (target.port && target.port !== '5432')) throw new Error('Approved target mismatch; no connection attempted');
 const directory = fs.mkdtempSync('.tmp-approved-sql-');
 console.log('Evidence directory:', directory);
@@ -33,7 +34,7 @@ for (const file of selected.length ? selected : files) {
   const log = path.join(directory, `${file}.log`);
   const fd = fs.openSync(log, 'wx');
   const result = spawnSync(process.execPath, ['--test', '--test-reporter=spec', `tests/${file}.test.mjs`], {
-    env: { ...process.env, DATABASE_URL: url, DATABASE_SSL: config.DATABASE_SSL || 'true',
+    env: { ...process.env, DATABASE_MIGRATION_URL: url, DATABASE_URL: url, DATABASE_SSL: config.DATABASE_SSL || 'true',
       RUN_LEGACY_DB_TESTS: '1', RUN_PAYU_CALLBACK_INTEGRATION: '1', RUN_SHIPPING_ORDER_INTEGRATION: '1',
       RUN_PHASE2_DB_TESTS: '0', RUN_PHASE3_DB_TESTS: '0', RUN_PHASE4_DB_TESTS: '0' },
     stdio: ['ignore', fd, fd],

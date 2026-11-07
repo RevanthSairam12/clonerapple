@@ -171,14 +171,20 @@ async function loadEnvLocal() {
 }
 
 function requireDatabaseUrl() {
-  if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is not set. Add it to .env.local and retry.');
+  const connectionUrl = (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+  if (!connectionUrl) {
+    console.error('DATABASE_MIGRATION_URL or DATABASE_URL is not set. Add it to .env.local and retry.');
     process.exit(1);
   }
+  if (new URL(connectionUrl).port === '6543') {
+    console.error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
+    process.exit(1);
+  }
+  return connectionUrl;
 }
 
 async function seed(snapshot, reference) {
-  const sql = postgres(process.env.DATABASE_URL, {
+  const sql = postgres(requireDatabaseUrl(), {
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     onnotice: () => {},
   });

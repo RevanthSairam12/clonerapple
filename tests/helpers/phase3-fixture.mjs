@@ -104,7 +104,7 @@ export const REJECTED_INSERTS = counts({ product_types: 4, product_type_attribut
 const SOURCE_FILES = ['tests/helpers/phase3-fixture.mjs', 'tests/phase3-metadata-integration.test.mjs', 'scripts/phase3-test-manifest.mjs', 'src/lib/store-admin/product-metadata.ts', 'src/lib/catalog/product-metadata-rules.ts', 'src/lib/store-admin/product-duplicate.ts', 'src/lib/store-admin/catalog-rules.ts', 'src/lib/store-admin/audit.ts', 'src/lib/platform/db.ts'];
 
 /** Pure approval calculation: no env file loading, client import or connection. */
-export async function phase3Manifest(databaseUrl = process.env.DATABASE_URL) {
+export async function phase3Manifest(databaseUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL) {
   let hostname = null;
   if (databaseUrl) {
     try { hostname = new URL(databaseUrl).hostname; }
@@ -166,14 +166,15 @@ ${TABLES.slice(0, 12).map(table => `alter table ${table} enable row level securi
 export async function openPhase3Fixture() {
   // Must precede even the postgres module import/client constructor.
   assert.equal(process.env.RUN_PHASE3_DB_TESTS, '1', 'Phase3 DB tests require explicit write approval');
-  const manifest = await phase3Manifest();
-  assert.ok(manifest.hostname, 'Supply DATABASE_URL explicitly; no env files are loaded');
+  const connectionUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+  const manifest = await phase3Manifest(connectionUrl);
+  assert.ok(manifest.hostname, 'Supply DATABASE_MIGRATION_URL or DATABASE_URL explicitly; no env files are loaded');
   assert.equal(process.env.PHASE3_APPROVED_MANIFEST, manifest.approvalSha256, 'Generate and approve the exact Phase3 write manifest before execution');
-  const target = new URL(process.env.DATABASE_URL);
+  const target = new URL(connectionUrl);
   assert.ok(['postgres:', 'postgresql:'].includes(target.protocol), 'Requires a PostgreSQL target');
   assert.notEqual(target.port, '6543', 'Requires a session connection');
   const { default: postgres } = await import('postgres');
-  const sql = postgres(process.env.DATABASE_URL, { max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 120000, lock_timeout: 10000 } });
+  const sql = postgres(connectionUrl, { max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 120000, lock_timeout: 10000 } });
   let created = false;
   const done = new Set(), rejected = zeros();
   async function snapshot(tx) {

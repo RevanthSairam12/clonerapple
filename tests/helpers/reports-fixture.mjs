@@ -20,9 +20,13 @@ import { createFixtureSchema, dropFixtureSchema } from './isolated-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+function fixtureConnectionUrl() {
+  return (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+}
+
 export async function loadEnv() {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') return;
-  if (process.env.DATABASE_URL) return;
+  if (fixtureConnectionUrl()) return;
   try {
     const env = await readFile(path.join(here, '..', '..', '.env.local'), 'utf8');
     for (const line of env.split('\n')) {
@@ -36,17 +40,19 @@ export async function loadEnv() {
 
 export function skipReason() {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') return 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval';
-  if (!process.env.DATABASE_URL) return 'DATABASE_URL is not set';
-  const url = new URL(process.env.DATABASE_URL);
+  const raw = fixtureConnectionUrl();
+  if (!raw) return 'DATABASE_MIGRATION_URL / DATABASE_URL is not set';
+  const url = new URL(raw);
   if (url.port === '6543') return 'temporary-schema isolation needs a session connection (not port 6543)';
   return false;
 }
 
 function client() {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
-  const url = new URL(process.env.DATABASE_URL);
+  const raw = fixtureConnectionUrl();
+  const url = new URL(raw);
   if (url.port === '6543') throw new Error('Requires a session connection, not transaction pooler port 6543.');
-  return postgres(process.env.DATABASE_URL, {
+  return postgres(raw, {
     max: 1,
     idle_timeout: 20,
     connect_timeout: 10,
@@ -107,7 +113,7 @@ export async function withSchema(label, fn) {
     if (!view) throw new Error('order_sale_state view definition not found in migration 0037');
     await sql.unsafe(view[0]);
 
-    pool = postgres(process.env.DATABASE_URL, {
+    pool = postgres(fixtureConnectionUrl(), {
       max: 5,
       idle_timeout: 20,
       connect_timeout: 10,

@@ -54,14 +54,20 @@ function check(id, ok, detail) {
 
 async function main() {
   await loadEnvLocal();
-  if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is not set; nothing was checked.');
+  const connectionUrl = (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+  if (!connectionUrl) {
+    console.error('DATABASE_MIGRATION_URL or DATABASE_URL is not set; nothing was checked.');
+    process.exitCode = 1;
+    return;
+  }
+  if (new URL(connectionUrl).port === '6543') {
+    console.error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
     process.exitCode = 1;
     return;
   }
 
   // One short-lived client keeps well inside the 15-session pooler cap.
-  const sql = postgres(process.env.DATABASE_URL, {
+  const sql = postgres(connectionUrl, {
     max: 1,
     idle_timeout: 5,
     connect_timeout: 10,

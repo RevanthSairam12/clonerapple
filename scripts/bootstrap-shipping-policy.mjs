@@ -96,13 +96,19 @@ async function main() {
   }
   // Native env loading respects existing process variables and never prints values.
   try { process.loadEnvFile(path.join(root, '.env.local')); } catch { /* external env is supported */ }
-  if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is required. No changes made.');
+  const connectionUrl = (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+  if (!connectionUrl) {
+    console.error('DATABASE_MIGRATION_URL or DATABASE_URL is required. No changes made.');
+    process.exitCode = 1;
+    return;
+  }
+  if (new URL(connectionUrl).port === '6543') {
+    console.error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
     process.exitCode = 1;
     return;
   }
   const { default: postgres } = await import('postgres');
-  const sql = postgres(process.env.DATABASE_URL, {
+  const sql = postgres(connectionUrl, {
     max: 1, prepare: false,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     onnotice: () => {},

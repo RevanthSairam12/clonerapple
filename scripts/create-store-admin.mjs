@@ -62,8 +62,13 @@ if (process.argv.slice(2).some((a) => a === '--password' || a.startsWith('--pass
   console.error('Do not pass the password on the command line. Use STORE_ADMIN_PASSWORD or the prompt.');
   process.exit(1);
 }
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is not set. Add it to .env.local and retry.');
+const connectionUrl = (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+if (!connectionUrl) {
+  console.error('Neither DATABASE_MIGRATION_URL nor DATABASE_URL is set. Add it to .env.local and retry.');
+  process.exit(1);
+}
+if (new URL(connectionUrl).port === '6543') {
+  console.error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
   process.exit(1);
 }
 
@@ -145,7 +150,7 @@ if (!password || password.length < 8) {
   process.exit(1);
 }
 
-const sql = postgres(process.env.DATABASE_URL, {
+const sql = postgres(connectionUrl, {
   ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
   onnotice: () => {},
 });

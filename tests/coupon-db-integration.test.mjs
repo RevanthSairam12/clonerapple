@@ -36,8 +36,12 @@ if (process.env.RUN_LEGACY_DB_TESTS === '1' && !process.env.DATABASE_URL) {
   }
 }
 
+function fixtureConnectionUrl() {
+  return (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
+}
+
 function connectionDetails() {
-  const url = new URL(process.env.DATABASE_URL);
+  const url = new URL(fixtureConnectionUrl());
   return {
     transactionPooler: url.port === '6543',
   };
@@ -45,15 +49,16 @@ function connectionDetails() {
 
 const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
   ? 'legacy database tests require explicit RUN_LEGACY_DB_TESTS=1 approval'
-  : !process.env.DATABASE_URL
-  ? 'DATABASE_URL is not set'
+  : !fixtureConnectionUrl()
+  ? 'DATABASE_MIGRATION_URL / DATABASE_URL is not set'
   : connectionDetails().transactionPooler
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
 function client(schema = 'pg_catalog') {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
-  return postgres(process.env.DATABASE_URL, {
+  if (connectionDetails().transactionPooler) throw new Error('Requires a session connection, not port 6543.');
+  return postgres(fixtureConnectionUrl(), {
     max: 1,
     idle_timeout: 20,
     connect_timeout: 10,

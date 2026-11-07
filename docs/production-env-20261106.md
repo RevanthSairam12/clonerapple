@@ -1,11 +1,21 @@
 # Production environment settings
 
-Two environment variables decide whether a production deployment is safe against forged client
-addresses and against an owner repointing email delivery. Both have a working default, so an
-unconfigured deployment runs — this page explains when each value applies and what the server logs at
-boot.
+Environment variables decide how the application connects to PostgreSQL, whether a production
+deployment is safe against forged client addresses, and whether an owner can repoint email delivery.
+Each variable has a safe default, so an unconfigured deployment runs — this page explains when each
+value applies and what the server logs at boot.
 
 Placeholders for every variable are in [`.env.example`](../.env.example). Never commit a real value.
+
+---
+
+## `DATABASE_URL`, `DATABASE_MIGRATION_URL` and `DATABASE_POOL_MAX` (Vercel & Supabase)
+
+| Variable | Port / Pooler mode | Used by | Why |
+|----------|--------------------|---------|-----|
+| `DATABASE_URL` | **6543** (Supabase Supavisor **Transaction** pooler) | Next.js application runtime (`getSql()`) | Multiplexes serverless function instances across short-lived transactions; `db.ts` automatically sets `prepare: false` on port `6543` and configures `idle_timeout: 20`, `connect_timeout: 10`, `max_lifetime: 1800`. |
+| `DATABASE_MIGRATION_URL` | **5432** (Supabase Supavisor **Session** pooler or Direct connection) | `npm run db:migrate`, CLI scripts, and isolated `itest_*` / `fs_*` test fixtures | DDL migrations, `SET search_path`, and session-scoped test fixtures require session state that transaction mode (`6543`) does not preserve. Prefers `DATABASE_MIGRATION_URL`, falls back to `DATABASE_URL`, and **refuses port `6543`** with an explicit error. |
+| `DATABASE_POOL_MAX` | Integer `1`–`100` (optional; default `10` in production, `5` in dev) | Next.js application runtime (`getSql()`) | Caps concurrent connections per Node instance. |
 
 ---
 

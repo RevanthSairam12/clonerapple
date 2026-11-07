@@ -19,9 +19,10 @@ const jiti = createJiti(import.meta.url, { alias: { '@': path.join(root, 'src') 
 const { createOrderUsing } = await jiti.import(path.join(root, 'src/lib/payu/orders.ts'));
 const { processPayUCallback } = await jiti.import(path.join(root, 'src/lib/payu/process-response.ts'));
 const { computeReverseHash } = await jiti.import(path.join(root, 'src/lib/payu/hash.ts'));
+const fixtureConnectionUrl = () => (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
 const skip = process.env.RUN_PAYU_CALLBACK_INTEGRATION !== '1'
   ? 'opt-in only: database-test approval required'
-  : !process.env.DATABASE_URL ? 'DATABASE_URL is not set' : false;
+  : !fixtureConnectionUrl() ? 'DATABASE_MIGRATION_URL / DATABASE_URL is not set' : false;
 const schema = `itest_payu_${randomBytes(10).toString('hex')}`;
 const envKeys = ['PAYU_KEY', 'PAYU_SALT', 'APP_BASE_URL', 'PAYU_RETURN_SECRET'];
 let sql;
@@ -29,13 +30,14 @@ let saved;
 
 before(async () => {
   if (skip) return;
-  if (new URL(process.env.DATABASE_URL).port === '6543') throw new Error('Requires a session connection, not transaction pooler port 6543.');
+  const connUrl = fixtureConnectionUrl();
+  if (new URL(connUrl).port === '6543') throw new Error('Requires a session connection, not transaction pooler port 6543.');
   saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
   process.env.PAYU_KEY = 'integration-key';
   process.env.PAYU_SALT = 'integration-salt';
   process.env.APP_BASE_URL = 'https://store.example.test';
   delete process.env.PAYU_RETURN_SECRET;
-  sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: 'pg_catalog' } });
+  sql = postgres(connUrl, { max: 1, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: 'pg_catalog' } });
   const tables = ['categories', 'products', 'stock', 'stock_movements', 'orders', 'order_items', 'order_addresses', 'order_status_history', 'store_settings', 'coupons', 'coupon_targets', 'coupon_redemptions', 'refund_obligations'];
   await createFixtureSchema(sql, schema, tables);
   assert.equal((await sql`select current_schema() as name`)[0].name, schema);

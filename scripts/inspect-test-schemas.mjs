@@ -5,11 +5,12 @@ let sql;
 try {
   const config = {};
   for (const line of fs.readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*(DATABASE_URL|DATABASE_SSL)\s*=\s*(.*?)\s*$/);
+    const m = line.match(/^\s*(DATABASE_MIGRATION_URL|DATABASE_URL|DATABASE_SSL)\s*=\s*(.*?)\s*$/);
     if (m) config[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
   }
-  const connection = process.env.DATABASE_URL || config.DATABASE_URL;
+  const connection = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || config.DATABASE_MIGRATION_URL || config.DATABASE_URL;
   const target = new URL(connection);
+  if (target.port === '6543') throw new Error('Refusing port 6543 (transaction pooler): use a session connection on port 5432.');
   if (target.hostname !== 'aws-0-ap-northeast-1.pooler.supabase.com' || target.pathname !== '/postgres' || (target.port && target.port !== '5432')) throw new Error('target');
   sql = postgres(connection, { max: 1, prepare: false, connect_timeout: 10, onnotice: () => {},
     ssl: (process.env.DATABASE_SSL || config.DATABASE_SSL) === 'false' ? undefined : 'require',

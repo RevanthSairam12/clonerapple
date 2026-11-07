@@ -6,7 +6,7 @@ try {
   const approved = JSON.parse(fs.readFileSync('.tmp-phase5-run-manifest.json', 'utf8'));
   const text = fs.readFileSync('.env.local', 'utf8');
   const value = name => text.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*?)\\s*$`, 'm'))?.[1]?.replace(/^(['"])(.*)\1$/, '$2');
-  const target = process.env.DATABASE_URL || value('DATABASE_URL');
+  const target = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || value('DATABASE_MIGRATION_URL') || value('DATABASE_URL');
   const current = await phase5Manifest(target);
   if (current.approvalSha256 !== approved.approvalSha256) {
     const changed = Object.keys(current.sourceSha256).filter(file => current.sourceSha256[file] !== approved.sourceSha256[file]);

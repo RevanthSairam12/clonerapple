@@ -114,10 +114,11 @@ ${TABLES.map(table => `alter table ${table} enable row level security;`).join('\
 export async function openPhase4Fixture() {
   // These gates MUST precede importing/constructing a SQL client.
   assert.equal(process.env.RUN_PHASE4_DB_TESTS, '1', 'Phase4 DB tests require explicit write approval');
-  const manifest = await phase4Manifest(process.env.DATABASE_URL);
+  const connectionUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+  const manifest = await phase4Manifest(connectionUrl);
   assert.equal(process.env.PHASE4_APPROVED_MANIFEST, manifest.approvalSha256, 'Generate and approve the exact Phase4 write manifest before execution');
   const { default: postgres } = await import('postgres');
-  const sql = postgres(process.env.DATABASE_URL, { max: 2, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, fetch_types: false, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } });
+  const sql = postgres(connectionUrl, { max: 2, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, fetch_types: false, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } });
   let created = false, active = null;
   const done = new Set();
   const rows = async () => {

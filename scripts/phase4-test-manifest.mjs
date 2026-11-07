@@ -10,7 +10,7 @@ export async function printPhase4Manifest(target, output = console.log) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { await printPhase4Manifest(process.env.DATABASE_URL); }
+  try { await printPhase4Manifest(process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL); }
   catch {
     console.error('Cannot generate Phase4 manifest: supply an explicit session target and valid source files. No database connection was made; target details withheld.');
     process.exitCode = 1;

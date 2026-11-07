@@ -5,11 +5,11 @@ import path from 'node:path';
 import { ROOT, phase3Manifest } from '../tests/helpers/phase3-fixture.mjs';
 
 try {
-  let target = process.env.DATABASE_URL;
+  let target = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
   if (process.argv.includes('--configured-hostname') && !target) {
-    // Read only DATABASE_URL, never load/export the environment file.
+    // Read only DATABASE_MIGRATION_URL / DATABASE_URL, never load/export the environment file.
     const text = await readFile(path.join(ROOT, '.env.local'), 'utf8');
-    const match = text.match(/^\s*DATABASE_URL\s*=\s*(.*?)\s*$/m);
+    const match = text.match(/^\s*(?:DATABASE_MIGRATION_URL|DATABASE_URL)\s*=\s*(.*?)\s*$/m);
     target = match?.[1]?.replace(/^(["'])(.*)\1$/, '$2');
   }
   const manifest = await phase3Manifest(target);

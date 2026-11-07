@@ -54,3 +54,52 @@ test('two evaluations of the db module share one pool', async () => {
   await a.end({ timeout: 0 });
   globalThis.__gadzioSql = null;
 });
+
+test('DATABASE_MIGRATION_URL prefers migration URL, falls back to DATABASE_URL, and refuses port 6543', async () => {
+  const load = () =>
+    createJiti(import.meta.url, {
+      moduleCache: false,
+      alias: { '@': path.join(root, 'src') },
+    }).import(path.join(root, 'src', 'lib', 'platform', 'db.ts'));
+
+  const mod = await load();
+
+  // 1. Prefers DATABASE_MIGRATION_URL over DATABASE_URL (even when DATABASE_URL is port 6543)
+  assert.equal(
+    mod.resolveMigrationDatabaseUrl({
+      DATABASE_URL: 'postgresql://app:pass@pooler.supabase.com:6543/postgres',
+      DATABASE_MIGRATION_URL: 'postgresql://mig:pass@pooler.supabase.com:5432/postgres',
+    }),
+    'postgresql://mig:pass@pooler.supabase.com:5432/postgres',
+  );
+
+  // 2. Falls back to DATABASE_URL when DATABASE_MIGRATION_URL is unset
+  assert.equal(
+    mod.resolveMigrationDatabaseUrl({
+      DATABASE_URL: 'postgresql://app:pass@pooler.supabase.com:5432/postgres',
+    }),
+    'postgresql://app:pass@pooler.supabase.com:5432/postgres',
+  );
+
+  // 3. Refuses port 6543 with a clear message
+  assert.throws(
+    () =>
+      mod.resolveMigrationDatabaseUrl({
+        DATABASE_MIGRATION_URL: 'postgresql://mig:pass@pooler.supabase.com:6543/postgres',
+      }),
+    /Refusing port 6543 \(transaction pooler\)/,
+  );
+  assert.throws(
+    () =>
+      mod.resolveMigrationDatabaseUrl({
+        DATABASE_URL: 'postgresql://app:pass@pooler.supabase.com:6543/postgres',
+      }),
+    /Refusing port 6543 \(transaction pooler\)/,
+  );
+
+  // 4. Throws when neither is set
+  assert.throws(
+    () => mod.resolveMigrationDatabaseUrl({}),
+    /Neither DATABASE_MIGRATION_URL nor DATABASE_URL is set/,
+  );
+});

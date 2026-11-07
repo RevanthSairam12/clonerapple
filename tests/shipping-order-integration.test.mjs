@@ -31,9 +31,10 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
+const fixtureConnectionUrl = () => (process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || '').trim();
 const run = process.env.RUN_SHIPPING_ORDER_INTEGRATION === '1';
 const skip = run
-  ? (!process.env.DATABASE_URL ? 'DATABASE_URL is not set' : false)
+  ? (!fixtureConnectionUrl() ? 'DATABASE_MIGRATION_URL / DATABASE_URL is not set' : false)
   : 'opt-in only: set RUN_SHIPPING_ORDER_INTEGRATION=1 after database-test approval';
 
 const jiti = createJiti(import.meta.url, {
@@ -46,7 +47,7 @@ const [{ createOrderUsing }, { TotalChangedError }] = await Promise.all([
 ]);
 
 function connectionDetails() {
-  const url = new URL(process.env.DATABASE_URL);
+  const url = new URL(fixtureConnectionUrl());
   return {
     transactionPooler: url.port === '6543',
     isPooler: url.hostname.includes('pooler'),
@@ -54,7 +55,7 @@ function connectionDetails() {
 }
 
 function client() {
-  return postgres(process.env.DATABASE_URL, {
+  return postgres(fixtureConnectionUrl(), {
     max: 1,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: false,
