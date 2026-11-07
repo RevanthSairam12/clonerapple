@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { getSql } from '@/lib/platform/db';
+import { setTransactionTimeouts } from '@/lib/checkout/transaction-guards';
 import { generateCouponCode } from '@/lib/coupons/codes';
 
 import { formatPaise } from './amount';
@@ -648,6 +649,7 @@ export async function createCoupon(
   try {
     const id = newCouponId();
     await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       await insertCoupon(tx, id, columnsFrom(values), 'active', actor.actorId);
       await replaceTargets(tx, id, values.targets);
       await auditCoupon(tx, actor, {
@@ -689,6 +691,7 @@ export async function updateCoupon(
 
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const existing = (await tx`
         select * from coupons where id = ${id} for update
       `) as Row[];
@@ -787,6 +790,7 @@ export async function setCouponStatus(
 
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const rows = (await tx`
         select * from coupons where id = ${id} for update
       `) as Row[];
@@ -863,6 +867,7 @@ export async function archiveCouponOnDelete(
 
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const rows = (await tx`
         select * from coupons where id = ${id} for update
       `) as Row[];
@@ -935,6 +940,7 @@ export async function duplicateCoupon(
   try {
     const newId = newCouponId();
     const copied = await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const rows = await tx`select * from coupons where id = ${id} for update`;
       if (!rows.length) return fail('not-found', 'That coupon does not exist.');
       const source = mapRow(rows[0]);
@@ -1045,6 +1051,7 @@ export async function bulkGenerateCoupons(
   const list = [...codes];
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const clashes = (await tx`
         select upper(code) as code from coupons
         where upper(code) in ${tx(list)}
@@ -1119,6 +1126,7 @@ export async function setCouponsVisibility(
   if (!sql) return fail('unavailable', 'Coupons are not available.');
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const rows = await tx`
         select id, status, archived_at, show_to_all_users from coupons
         where id in ${tx(parsed.ids)} order by id for update

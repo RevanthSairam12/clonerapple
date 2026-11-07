@@ -54,6 +54,7 @@ import {
   releasedClaimLines,
   releaseClaimedStock,
 } from './stock';
+import { setTransactionTimeouts } from '@/lib/checkout/transaction-guards';
 
 /**
  * Order Model and Database Access Layer
@@ -636,6 +637,7 @@ export async function createOrderUsing(
   const reservationSeconds = Math.max(0, Math.trunc(params.reservationSeconds ?? 0));
 
   return await sql.begin(async (tx) => {
+    await setTransactionTimeouts(tx);
     // Shared configuration fence: activation cannot race a parent-only checkout.
     await tx`select pg_advisory_xact_lock_shared(513031,3)`;
     let items = legacy?.items ?? [];
@@ -1240,6 +1242,7 @@ export async function transitionOrderStatusUsing(
   const policy = params.policy ?? DEFAULT_RESERVATION_POLICY;
 
   return await sql.begin(async (tx) => {
+    await setTransactionTimeouts(tx);
     // Acquire exclusive row lock
     const lockedRows = await tx<RawOrderRow[]>`
       SELECT * FROM orders WHERE txnid = ${params.txnid} FOR UPDATE
@@ -1536,6 +1539,7 @@ export async function claimDueOrders(
   const legacyStaleMinutes = Math.max(Math.trunc(options.legacyStaleMinutes ?? 15), 1);
 
   const rows = await sql.begin(async (tx) => {
+    await setTransactionTimeouts(tx);
     return await tx<RawOrderRow[]>`
       with due as (
         select id
@@ -1645,6 +1649,7 @@ export async function releaseOrderReservation(
   if (!sql) return { outcome: 'not-found', order: null, stockReleased: false, statusChanged: false };
 
   return await sql.begin(async (tx) => {
+    await setTransactionTimeouts(tx);
     const rows = await tx<RawOrderRow[]>`
       select * from orders where txnid = ${input.txnid} for update
     `;

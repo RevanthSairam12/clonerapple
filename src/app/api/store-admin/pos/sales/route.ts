@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { createPosSale } from '@/lib/store-admin/pos';
 import { isPosMethod, validatePosReference } from '@/lib/store-admin/pos-rules';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
+import { BUSY_RETRY_AFTER } from '@/lib/checkout/transaction-guards';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,13 +69,18 @@ export async function POST(request: Request) {
         ? 400
         : result.reason === 'forbidden'
           ? 403
-          : 409;
+          : result.reason === 'unavailable'
+            ? 503
+            : 409;
     return NextResponse.json(
       {
         error: result.error,
         ...(result.warnings ? { needsConfirmation: true, warnings: result.warnings } : {}),
       },
-      { status },
+      {
+        status,
+        ...(status === 503 ? { headers: { 'Retry-After': BUSY_RETRY_AFTER } } : {}),
+      },
     );
   }
 

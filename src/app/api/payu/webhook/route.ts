@@ -4,6 +4,7 @@ import { readCallbackData } from '@/lib/payu/callback-route';
 import { logPayUEvent, processPayUCallback } from '@/lib/payu/process-response';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
+import { BUSY_RETRY_AFTER, isTransactionTimeout } from '@/lib/checkout/transaction-guards';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,6 +62,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ status: 'ok', txnid: result.txnid });
   } catch (err: unknown) {
+    if (isTransactionTimeout(err)) {
+      return NextResponse.json(
+        { error: 'Service temporarily busy. Please try again.' },
+        { status: 503, headers: { 'Retry-After': BUSY_RETRY_AFTER } },
+      );
+    }
     console.error('[PayU Webhook Error]:', (err as Error).message);
     // A 500 makes the gateway retry; the processor is idempotent, so a repeat
     // can never double-count.

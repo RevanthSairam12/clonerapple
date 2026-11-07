@@ -23,6 +23,7 @@ import {
   type PosPriceWarning,
 } from './pos-rules';
 import { DEFAULT_SETTINGS, normalizeToggle } from './settings-rules';
+import { setTransactionTimeouts } from '@/lib/checkout/transaction-guards';
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -277,6 +278,7 @@ export async function openShift(input: {
   if (!sql) return { ok: false, reason: 'unavailable', error: 'Shifts are not available.' };
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const existing = (await tx`
         select id from pos_shifts
         where staff_id = ${input.staffId} and status = 'OPEN'
@@ -319,6 +321,7 @@ export async function closeShift(input: {
   if (!sql) return { ok: false, reason: 'unavailable', error: 'Shifts are not available.' };
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const rows = (await tx`
         select id, opening_float_paise from pos_shifts
         where staff_id = ${input.staffId} and status = 'OPEN'
@@ -488,6 +491,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
 
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       // Configuration activation cannot race an old parent-identity sale.
       await tx`select pg_advisory_xact_lock_shared(513031,3)`;
       // The shift must be open for the whole transaction.
@@ -826,6 +830,7 @@ export async function voidPosSale(input: {
 
   try {
     return await sql.begin(async (tx) => {
+      await setTransactionTimeouts(tx);
       const orderRows = (await tx`
         select id, txnid, channel, status, fulfilment_status,
                pos_shift_id, pos_receipt_no, cancel_reason

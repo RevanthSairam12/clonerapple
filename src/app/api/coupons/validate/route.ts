@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { quoteShipping } from '@/lib/checkout/shipping-rules';
+import { BUSY_MESSAGE, BUSY_RETRY_AFTER, isTransactionTimeout } from '@/lib/checkout/transaction-guards';
 import {
   couponRejectionMessage,
   isValidCouponCode,
@@ -151,7 +152,13 @@ export async function POST(req: NextRequest) {
       },
       { headers: NO_STORE },
     );
-  } catch {
+  } catch (error: unknown) {
+    if (isTransactionTimeout(error)) {
+      return NextResponse.json(
+        { valid: false, message: BUSY_MESSAGE, code: 'busy' },
+        { status: 503, headers: { ...NO_STORE, 'Retry-After': BUSY_RETRY_AFTER } },
+      );
+    }
     // The coupon tables being unreadable never applies a discount. Checkout
     // can proceed without one; it can never proceed on an unverified code.
     console.warn('[coupons/validate] coupon lookup failed');

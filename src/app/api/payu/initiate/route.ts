@@ -21,6 +21,7 @@ import { validateCheckoutContact, validateIndianAddress } from '@/lib/checkout/i
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
 import { parseReservationPolicy } from '@/lib/checkout/reservation-rules';
+import { BUSY_MESSAGE, BUSY_RETRY_AFTER, isTransactionTimeout } from '@/lib/checkout/transaction-guards';
 import { hasUsableNumbering, readOrderNumberSettings } from '@/lib/orders/numbering';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
@@ -323,6 +324,12 @@ export async function POST(req: NextRequest) {
           { status: 409 },
         );
       }
+      if (isTransactionTimeout(error)) {
+        return NextResponse.json(
+          { success: false, error: BUSY_MESSAGE, code: 'busy' },
+          { status: 503, headers: { 'Retry-After': BUSY_RETRY_AFTER } },
+        );
+      }
       // A coupon that cannot be checked must never be charged blind: the
       // order is not created and the customer is told to remove the code.
       // Without a coupon the normal error path below applies.
@@ -411,6 +418,12 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error: unknown) {
+    if (isTransactionTimeout(error)) {
+      return NextResponse.json(
+        { success: false, error: BUSY_MESSAGE, code: 'busy' },
+        { status: 503, headers: { 'Retry-After': BUSY_RETRY_AFTER } },
+      );
+    }
     console.error('[PayU Initiate Error]:', (error as Error).message);
     return NextResponse.json(
       { error: 'Failed to initiate payment. Please try again later.' },
