@@ -117,32 +117,42 @@ export async function openPhase4Fixture() {
   const manifest = await phase4Manifest(process.env.DATABASE_URL);
   assert.equal(process.env.PHASE4_APPROVED_MANIFEST, manifest.approvalSha256, 'Generate and approve the exact Phase4 write manifest before execution');
   const { default: postgres } = await import('postgres');
-  const sql = postgres(process.env.DATABASE_URL, { max: 2, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } });
+  const sql = postgres(process.env.DATABASE_URL, { max: 2, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, fetch_types: false, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } });
   let created = false, active = null;
   const done = new Set();
   const rows = async () => {
-    const result = zeros();
-    for (const table of TABLES) result[table] = (await sql.unsafe(`select count(*)::int n from "${SCHEMA}"."${table}"`))[0].n;
-    return result;
+    const [row] = await sql.unsafe(`
+      select ${TABLES.map(t => `(select count(*)::int from "${SCHEMA}"."${t}") as "${t}"`).join(', ')}
+    `);
+    return Object.fromEntries(TABLES.map(t => [t, Number(row[t] ?? 0)]));
   };
   const sequences = async () => {
-    const values = {};
-    for (const seq of manifest.sequences) {
-      const [row] = await sql.unsafe(`select last_value::int n,is_called from ${seq.name}`);
-      values[seq.name] = row.is_called ? row.n : 0;
-    }
-    return values;
+    const [row] = await sql.unsafe(`
+      select ${manifest.sequences.map((s, i) => `(select case when is_called then last_value::int else 0 end from ${s.name}) as "s${i}"`).join(', ')}
+    `);
+    return Object.fromEntries(manifest.sequences.map((s, i) => [s.name, Number(row[`s${i}`] ?? 0)]));
   };
   function instrument(tx, record) {
-    return async (strings, ...values) => {
+    return Object.assign(async (strings, ...values) => {
+      if (!strings || !Array.isArray(strings.raw)) return tx(strings, ...values);
       const text = strings.join('?');
+      const cteWrite = text.match(/^\s*with\s+(?:claimed|restored)\s+as\s*\(\s*update\s+stock\b/i);
       const write = text.match(/^\s*(insert\s+into|update|delete\s+from)\s+([a-z_]+)/i);
       const kind = write?.[1].toLowerCase().split(/\s/)[0];
       const table = write?.[2];
       if (write) assert.ok(TABLES.includes(table), 'Write outside declared local tables');
       try {
         const result = await tx(strings, ...values);
-        if (write) {
+        if (cteWrite) {
+          const n = result.count;
+          assert.ok(Number.isInteger(n), 'SQL row count required');
+          if (n > 0) {
+            record.updates.stock += n;
+            record.inserts.stock_movements += n;
+          } else {
+            record.zeroRowUpdates.stock++;
+          }
+        } else if (write) {
           const n = result.count;
           assert.ok(Number.isInteger(n), 'SQL row count required');
           record[{ insert: 'inserts', update: 'updates', delete: 'deletes' }[kind]][table] += n;
@@ -150,10 +160,11 @@ export async function openPhase4Fixture() {
         }
         return result;
       } catch (error) {
-        if (write) record[{ insert: 'rejectedInserts', update: 'rejectedUpdates', delete: 'rejectedDeletes' }[kind]][table]++;
+        if (cteWrite) record.rejectedUpdates.stock++;
+        else if (write) record[{ insert: 'rejectedInserts', update: 'rejectedUpdates', delete: 'rejectedDeletes' }[kind]][table]++;
         throw error;
       }
-    };
+    }, { json: tx.json, array: tx.array, unsafe: tx.unsafe, savepoint: tx.savepoint });
   }
   const fixture = {
     sql, manifest,
@@ -191,7 +202,7 @@ export async function openPhase4Fixture() {
     },
     async close() {
       try { if (created) await sql.unsafe(`drop schema "${SCHEMA}" cascade`); }
-      finally { await sql.end({ timeout: 5 }); }
+      finally { await sql.end({ timeout: 1 }); }
     },
   };
   try {

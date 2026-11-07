@@ -92,8 +92,7 @@ test(
       });
 
       for (let i = 0; i < buyerCount; i += 1) {
-        const conn = client();
-        await conn.unsafe(`set search_path to "${schema}"`);
+        const conn = client(schema);
         connections.push(conn);
       }
 
@@ -211,8 +210,7 @@ test(
 
       // Now launch `heldUnits` concurrent fresh buyers racing to lazily expire and claim the freed units
       for (let i = 0; i < heldUnits; i += 1) {
-        const conn = client();
-        await conn.unsafe(`set search_path to "${schema}"`);
+        const conn = client(schema);
         connections.push(conn);
       }
 

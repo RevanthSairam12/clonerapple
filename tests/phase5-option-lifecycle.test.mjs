@@ -48,12 +48,15 @@ const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
       ? 'temporary-schema isolation needs a session connection (not port 6543)'
       : false;
 
-function client() {
+function client(schema = 'pg_catalog') {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const url = new URL(process.env.DATABASE_URL);
   return postgres(process.env.DATABASE_URL, {
     max: 1,
-    connection: { search_path: 'pg_catalog', statement_timeout: 20000 },
+    idle_timeout: 20,
+    connect_timeout: 10,
+    max_lifetime: 1800,
+    connection: { search_path: schema, statement_timeout: 20000 },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !(url.hostname.includes('pooler') && url.port === '6543'),
     onnotice: () => {},
@@ -466,7 +469,7 @@ test('two buyers of the last unit of one option: one order; a sibling option sti
   const schema = `itest_${tag}`;
   const k = fixtureKeys(tag);
   const a = client();
-  const b = client();
+  const b = client(schema);
 
   try {
     await createFixtureSchema(a, schema, TABLES);

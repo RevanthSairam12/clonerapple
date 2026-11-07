@@ -27,6 +27,15 @@ const globalForSql = globalThis as typeof globalThis & { __gadzioSql?: Sql | nul
 
 let warned = false;
 
+export function resolvePoolMax(
+  envMax = process.env.DATABASE_POOL_MAX,
+  nodeEnv = process.env.NODE_ENV,
+): number {
+  const parsed = Number.parseInt(envMax || '', 10);
+  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 100) return parsed;
+  return nodeEnv === 'production' ? 10 : 5;
+}
+
 export function getSql(): Sql | null {
   if (!process.env.DATABASE_URL) {
     if (!warned && process.env.NODE_ENV !== 'production') {
@@ -46,7 +55,10 @@ export function getSql(): Sql | null {
     const isPooler = url.hostname.includes('pooler') && url.port === '6543';
 
     globalForSql.__gadzioSql = postgres(process.env.DATABASE_URL, {
-      max: process.env.NODE_ENV === 'production' ? 10 : 5,
+      max: resolvePoolMax(),
+      idle_timeout: 20,
+      connect_timeout: 10,
+      max_lifetime: 1800,
       // Supabase and most hosted Postgres require TLS.
       ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
       prepare: !isPooler,

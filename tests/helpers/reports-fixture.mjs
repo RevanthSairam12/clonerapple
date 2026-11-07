@@ -48,6 +48,9 @@ function client() {
   if (url.port === '6543') throw new Error('Requires a session connection, not transaction pooler port 6543.');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    max_lifetime: 1800,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: false,
     onnotice: () => {},
@@ -82,11 +85,16 @@ const TABLES = [
   'store_settings',
 ];
 
-/** Run `fn(sql)` inside a fresh schema that is always dropped afterwards. */
+/** Run `fn(sql)` inside a fresh schema that is always dropped afterwards.
+ * Uses `max: 5` pinned to `schema` so reports and analytics functions that issue
+ * `Promise.all([...sql\`...\`, ...])` do not serialize 7+ queries on a single
+ * socket or lose their `search_path` if the connection reconnects.
+ */
 export async function withSchema(label, fn) {
   const suffix = `${Date.now().toString(36)}${randomBytes(4).toString('hex')}`;
   const schema = `itest_${label}_${suffix}`;
   const sql = client();
+  let pool;
   try {
     await createFixtureSchema(sql, schema, TABLES);
 
@@ -99,12 +107,28 @@ export async function withSchema(label, fn) {
     if (!view) throw new Error('order_sale_state view definition not found in migration 0037');
     await sql.unsafe(view[0]);
 
-    return await fn(sql);
+    pool = postgres(process.env.DATABASE_URL, {
+      max: 5,
+      idle_timeout: 20,
+      connect_timeout: 10,
+      max_lifetime: 1800,
+      ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
+      prepare: false,
+      onnotice: () => {},
+      connection: { search_path: schema },
+    });
+    globalThis.__gadzioSql = pool;
+
+    return await fn(pool);
   } finally {
     try {
-      await dropFixtureSchema(sql, schema);
+      if (pool) await pool.end({ timeout: 5 });
     } finally {
-      await sql.end({ timeout: 5 });
+      try {
+        await dropFixtureSchema(sql, schema);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
     }
   }
 }

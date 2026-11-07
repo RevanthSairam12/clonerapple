@@ -261,11 +261,11 @@ test('a verified payment racing expiry leaves one consistent paid order', { skip
   const user = `fsraceuser${s}`;
   const txnid = `FSRACE${s}`;
   const a = client();
-  const b = client();
+  let b;
 
   try {
     await openSchema(a, schema);
-    await b.unsafe(`set search_path to "${schema}"`);
+    b = client(schema);
     await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 1 });
     await addUser(a, user);
     const created = await createOrderUsing(a, orderParams({ productId, txnid, userId: user }));
@@ -296,7 +296,7 @@ test('a verified payment racing expiry leaves one consistent paid order', { skip
     assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
     assert.ok(await movementCount(a, created.order.id) <= 3);
   } finally {
-    await b.end();
+    if (b) await b.end({ timeout: 1 });
     await closeSchema(a, schema);
   }
 });
@@ -349,8 +349,7 @@ test('high concurrency: many buyers, one unit, exactly one order', { skip }, asy
     await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 1 });
 
     for (let index = 0; index < 5; index += 1) {
-      const connection = client();
-      await connection.unsafe(`set search_path to "${schema}"`);
+      const connection = client(schema);
       buyers.push(connection);
     }
 
@@ -376,7 +375,7 @@ test('high concurrency: many buyers, one unit, exactly one order', { skip }, asy
     const count = await a`select count(*)::int as count from orders`;
     assert.equal(Number(count[0].count), 1);
   } finally {
-    for (const connection of buyers) await connection.end();
+    for (const connection of buyers) await connection.end({ timeout: 1 });
     await closeSchema(a, schema);
   }
 });

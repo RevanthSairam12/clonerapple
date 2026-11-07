@@ -183,7 +183,7 @@ test('Phase3 actual migration and metadata/duplicate service transactions in pri
       // accepted insert totals, are written against the deactivated state.
       await fixture.operation('publish under review', async tx => {
         await tx`update device_models set is_active=true where id='device_on'`;
-        await saveProductMetadataUsing(tx, 'source', {}, 'phase3_owner', { enforcePublication: true });
+        await saveProductMetadataUsing(tx, 'source', { deviceModelIds: ['device_on'] }, 'phase3_owner', { enforcePublication: true });
         const state = await productMetadataUsing(tx, 'source');
         assert.deepEqual(state.problems, []);
         assert.equal(state.reviewed, true);

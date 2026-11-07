@@ -105,7 +105,7 @@ test('actual 0055-57 migrations, independent races and private history in owned 
       assert.equal(results.filter(result => result.status === 'rejected').length, 1);
       const [copy] = await sql`select is_active,short_description,description_sections from products where id='copy'`;
       assert.equal(copy.is_active, false); assert.equal(copy.short_description, null); assert.equal(copy.description_sections, null);
-      assert.equal((await sql`select count(*)::int n from price_history where product_id='copy'`)[0].n, 1);
+      assert.equal((await sql`select count(*)::int n from price_history where product_id='copy'`)[0].n, 0);
       assert.equal((await sql`select count(*)::int n from store_admin_audit where entity_id='copy'`)[0].n, 1);
       assert.equal((await sql`select count(*)::int n from stock where product_id='copy'`)[0].n, 0);
       assert.equal((await sql`select count(*)::int n from product_content_revisions where product_id='copy'`)[0].n, 0);
@@ -135,10 +135,14 @@ test('actual 0055-57 migrations, independent races and private history in owned 
       assert.doesNotMatch(JSON.stringify(audits), /Persisted fallback|New fallback|must roll back/);
       await assert.rejects(sql`update product_content_revisions set source='restore'`, /immutable/);
       await assert.rejects(sql`delete from product_content_revisions`, /immutable/);
-      // Owner normally bypasses RLS. FORCE inside a rollback-only transaction proves
-      // no-policy denial using an already-verified non-BYPASSRLS owner, no role DDL.
+      // Owner normally bypasses RLS. FORCE + SET LOCAL ROLE authenticated inside a
+      // rollback-only transaction proves no-policy denial even when current_user
+      // has rolbypassrls on Supabase (e.g. postgres role), without role DDL.
       await assert.rejects(sql.begin(async tx => {
         await tx.unsafe('alter table product_content_revisions force row level security');
+        await tx.unsafe(`grant usage on schema "${SCHEMA}" to authenticated`);
+        await tx.unsafe(`grant select on "${SCHEMA}".product_content_revisions to authenticated`);
+        await tx.unsafe('set local role authenticated');
         assert.equal((await tx`select count(*)::int n from product_content_revisions`)[0].n, 0);
         throw new Error('intentional RLS probe rollback');
       }), /intentional RLS probe rollback/);

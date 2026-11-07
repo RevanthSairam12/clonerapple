@@ -50,12 +50,15 @@ export const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
-export function client() {
+export function client(schema = 'pg_catalog') {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler } = connectionDetails();
   return postgres(process.env.DATABASE_URL, {
     max: 1,
-    connection: { search_path: 'pg_catalog' },
+    idle_timeout: 20,
+    connect_timeout: 10,
+    max_lifetime: 1800,
+    connection: { search_path: schema },
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},
@@ -146,7 +149,7 @@ export async function closeSchema(a, schema) {
   try {
     await dropFixtureSchema(a, schema);
   } finally {
-    await a.end({ timeout: 5 });
+    await a.end({ timeout: 1 });
   }
 }
 

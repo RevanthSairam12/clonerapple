@@ -48,7 +48,14 @@ const sqlCode = code => error => error.code === code;
  */
 const UNICODE_VERSION_BOUNDARY = new Map([
   ['꟱', { js: 's', pg: '꟱', since: 'Unicode 16.0', ahead: 'Node (NFKC decomposes the scalar; PostgreSQL 15.1 does not)' }],
-  ['𜳖', { js: 'a', pg: '', since: 'Unicode 16.0', ahead: 'Node (NFKC decomposes to A→a; PostgreSQL 15.1 neither normalizes nor keeps the block)' }],
+  ...Array.from({ length: 26 }, (_, i) => [
+    String.fromCodePoint(0x1ccd6 + i),
+    { js: String.fromCodePoint(97 + i), pg: '', since: 'Unicode 16.0', ahead: 'Node (NFKC decomposes to A-Z→a-z; PostgreSQL 15.1 neither normalizes nor keeps the block)' },
+  ]),
+  ...Array.from({ length: 10 }, (_, i) => [
+    String.fromCodePoint(0x1ccf0 + i),
+    { js: String(i), pg: String.fromCodePoint(0x1ccf0 + i), since: 'Unicode 16.0', ahead: 'Node (NFKC decomposes segmented digits to 0-9; PostgreSQL 15.1 keeps the block as-is)' },
+  ]),
 ]);
 
 test('shared-list manifest is deterministic, target/code bound, bounded and secret-free (offline)', async () => {
@@ -143,6 +150,8 @@ test('PostgreSQL shared lists: actual migrations, engine parity, constraints, se
         assert.equal(rows.length, batch.length);
         for (const row of rows) assert.equal(row.key, rules.normalizeSharedName(row.value), `engine parity ${JSON.stringify(row.value)}`);
       };
+      const boundaryChecks = await sql`select value,shared_catalogue_key(value) as key from unnest(${[...UNICODE_VERSION_BOUNDARY.keys()]}::text[]) as inputs(value)`;
+      const pgBoundary = new Map(boundaryChecks.map(r => [r.value, r.key]));
       let batch = [];
       for (let point = 1; point <= 0x10ffff; point++) {
         if (point >= 0xd800 && point <= 0xdfff) continue;
@@ -153,12 +162,11 @@ test('PostgreSQL shared lists: actual migrations, engine parity, constraints, se
         // is swept again — so an exclusion cannot outlive the reason for it.
         const boundary = UNICODE_VERSION_BOUNDARY.get(scalar);
         if (boundary) {
-          const [probe] = await sql`select shared_catalogue_key(${scalar}) as key`;
           const js = rules.normalizeSharedName(scalar);
           // This scalar is a *documented divergence*: skip it only while the two
           // engines really do disagree. If they agree, the reason for the
           // exclusion is gone, so fall through and sweep it like any other scalar.
-          if (probe.key !== js) continue;
+          if (pgBoundary.get(scalar) !== js) continue;
         }
         batch.push(scalar);
         if (batch.length === 4096) { await check(batch); batch = []; }
@@ -171,13 +179,13 @@ test('PostgreSQL shared lists: actual migrations, engine parity, constraints, se
       // excluding them — so an accidental change on either side, or an exclusion
       // that has quietly become unnecessary, fails here instead of disappearing.
       for (const [scalar, expected] of UNICODE_VERSION_BOUNDARY) {
-        const [row] = await sql`select shared_catalogue_key(${scalar}) as key`;
-        assert.equal(row.key, expected.pg, `PostgreSQL key for ${JSON.stringify(scalar)} (${expected.since})`);
+        const pgKey = pgBoundary.get(scalar);
+        assert.equal(pgKey, expected.pg, `PostgreSQL key for ${JSON.stringify(scalar)} (${expected.since})`);
         assert.equal(rules.normalizeSharedName(scalar), expected.js, `JS key for ${JSON.stringify(scalar)} (${expected.since})`);
         // The divergence is real, not a stale expectation that happens to match.
         assert.notEqual(expected.pg, expected.js, `${JSON.stringify(scalar)} must be an actual divergence`);
         // The sweep-time guard must still fire: exclusion and assertion agree.
-        const swept = UNICODE_VERSION_BOUNDARY.has(scalar) && row.key !== rules.normalizeSharedName(scalar);
+        const swept = UNICODE_VERSION_BOUNDARY.has(scalar) && pgKey !== rules.normalizeSharedName(scalar);
         assert.ok(swept, `${JSON.stringify(scalar)} (${expected.ahead}) is still excluded from the exhaustive sweep`);
       }
     });

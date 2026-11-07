@@ -51,13 +51,16 @@ const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
-function client() {
+function client(schema = 'pg_catalog') {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   return postgres(process.env.DATABASE_URL, {
     max: 1,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    max_lifetime: 1800,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: false,
-    connection: { search_path: 'pg_catalog' },
+    connection: { search_path: schema },
     onnotice: () => {},
   });
 }
@@ -182,7 +185,7 @@ async function redemptionState(orderId) {
 before(async () => {
   if (skip) return;
   sql = client();
-  secondSql = client();
+  secondSql = client(SCHEMA);
   await createFixtureSchema(sql, SCHEMA, ['coupons']);
   await secondSql.unsafe(`set search_path to "${SCHEMA}"`);
 

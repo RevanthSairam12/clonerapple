@@ -233,11 +233,11 @@ test('lazy expiry: two buyers racing a stale hold produce exactly one order', { 
   const user3 = `fslazyrace2${s}`;
   const staleTxn = `FSLAZYRACEOLD${s}`;
   const a = client();
-  const b = client();
+  let b;
 
   try {
     await openSchema(a, schema);
-    await b.unsafe(`set search_path to "${schema}"`);
+    b = client(schema);
     await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 1 });
     await addUser(a, staleUser);
     await addUser(a, user2);
@@ -265,7 +265,7 @@ test('lazy expiry: two buyers racing a stale hold produce exactly one order', { 
     assert.equal(Number((await a`select count(*)::int as count from orders`)[0].count), 2);
     assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
   } finally {
-    await b.end();
+    if (b) await b.end({ timeout: 5 });
     await closeSchema(a, schema);
   }
 });
@@ -573,11 +573,11 @@ test('reconcile: two workers at once process the order exactly once', { skip }, 
   const user = `fsrecworkersuser${s}`;
   const txnid = `FSRECWORKERS${s}`;
   const a = client();
-  const b = client();
+  let b;
 
   try {
     await openSchema(a, schema);
-    await b.unsafe(`set search_path to "${schema}"`);
+    b = client(schema);
     await addProduct(a, { categoryId: `fscat${s}`, productId, stockId: `fsstk${s}`, quantity: 1 });
     await addUser(a, user);
     const created = await createOrderUsing(a, orderParams({ productId, txnid, userId: user }));
@@ -608,7 +608,7 @@ test('reconcile: two workers at once process the order exactly once', { skip }, 
     assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
     assert.equal(Number((await a`select count(*)::int as count from refund_obligations`)[0].count), 0);
   } finally {
-    await b.end();
+    if (b) await b.end({ timeout: 5 });
     await closeSchema(a, schema);
   }
 });

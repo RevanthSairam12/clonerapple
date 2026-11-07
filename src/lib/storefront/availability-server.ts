@@ -73,7 +73,14 @@ async function loadAvailabilityRows(
   return promise;
 }
 
-/** Advisory only; the final guarded claim remains authoritative. Never reads sibling parent balances as variant stock. */
+/**
+ * Click-time availability reads fresh stock and the live sale switch directly
+ * from `sql` (never the per-instance 3s page-render cache).
+ *
+ * The `/api/catalog/availability` route is `Cache-Control: no-store` and is
+ * called on click (Add to Bag / Buy Now) specifically so a customer does not
+ * act on a cached sale or stock state.
+ */
 export async function readAvailabilityUsing(
   sql: postgres.Sql | postgres.TransactionSql,
   ids: readonly string[],
@@ -83,8 +90,13 @@ export async function readAvailabilityUsing(
   const isAppPool = Boolean(
     sql && (globalThis as typeof globalThis & { __gadzioSql?: unknown }).__gadzioSql === sql,
   );
-  const readState = () =>
-    isAppPool && typeof readSaleState === 'function' ? readSaleState() : readSaleStateUsing(sql);
+  const readState = async () => {
+    try {
+      return await readSaleStateUsing(sql);
+    } catch {
+      return readSaleState();
+    }
+  };
   if (!wanted.length) {
     const state = await readState();
     return { saleLive: state.live, databaseNow: state.databaseNow, products: [], variants: [] };

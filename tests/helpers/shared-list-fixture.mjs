@@ -118,7 +118,7 @@ export async function loadSharedListServices() {
   const rules = await load('src/lib/catalog/shared-list-rules.ts', {});
   const catalog = await load('src/lib/store-admin/catalog-rules.ts', {});
   const metadataRules = await load('src/lib/catalog/product-metadata-rules.ts', { '@/lib/store-admin/catalog-rules': catalog });
-  const audit = await load('src/lib/store-admin/audit.ts', { 'node:crypto': crypto, '@/lib/platform/db': noPool, '@/lib/platform/client-ip': { clientIpFromHeaders: () => '' } });
+  const audit = await load('src/lib/store-admin/audit.ts', { 'node:crypto': crypto, '@/lib/platform/db': noPool, '@/lib/platform/client-ip': { clientIpFromHeaders: (headers) => headers?.get('x-forwarded-for') ?? '' } });
   const metadata = await load('src/lib/store-admin/product-metadata.ts', { 'node:crypto': crypto, '@/lib/platform/db': noPool, './audit': audit, './catalog-rules': catalog, '@/lib/catalog/shared-list-rules': rules, '@/lib/catalog/product-metadata-rules': metadataRules });
   const service = await load('src/lib/store-admin/shared-lists.ts', { 'node:crypto': crypto, 'next/headers': { cookies() { throw new Error('Authenticated app acceptance is separate'); } }, '@/lib/platform/db': noPool, '@/lib/catalog/shared-list-rules': rules, './product-metadata': metadata });
   return { service, rules };
@@ -134,17 +134,17 @@ export async function openSharedListFixture(env = process.env) {
   const migrations = Object.fromEntries(await Promise.all(MIGRATIONS.map(async name => [name, await readFile(path.join(ROOT,'migrations',name),'utf8')])));
   const services = await loadSharedListServices();
   const { default: postgres } = await import('postgres');
-  const sql = postgres(env.SHARED_LIST_DATABASE_URL, { max: manifest.maximumConnections, prepare: false, ssl: manifest.ssl === 'require' ? 'require' : undefined, onnotice() {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 5000, idle_in_transaction_session_timeout: 15000 } });
+  const sql = postgres(env.SHARED_LIST_DATABASE_URL, { max: manifest.maximumConnections, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, prepare: false, ssl: manifest.ssl === 'require' ? 'require' : undefined, onnotice() {}, connection: { search_path: SCHEMA, statement_timeout: 60000, lock_timeout: 5000, idle_in_transaction_session_timeout: 60000 } });
   let created = false;
   const marker = `shared-list-fixture:${randomUUID()}`;
   const done = new Set();
   const snapshot = async tx => {
-    const result = zeros();
-    for (const table of TABLES) {
-      const [exists] = await tx`select to_regclass(${`${SCHEMA}.${table}`}) as name`;
-      if (exists.name) result[table] = (await tx.unsafe(`select count(*)::int n from "${SCHEMA}"."${table}"`))[0].n;
-    }
-    return result;
+    const existing = await tx`select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = ${SCHEMA} and c.relkind = 'r'`;
+    const present = new Set(existing.map(r => r.relname));
+    const queries = TABLES.filter(t => present.has(t)).map(t => `(select count(*)::int from "${SCHEMA}"."${t}") as "${t}"`);
+    if (!queries.length) return zeros();
+    const [row] = await tx.unsafe(`select ${queries.join(', ')}`);
+    return Object.fromEntries(TABLES.map(t => [t, present.has(t) ? Number(row[t] ?? 0) : 0]));
   };
   const sequence = async () => {
     const [row] = await sql.unsafe(`select last_value::int n,is_called from "${SCHEMA}".fixture_audit_id_seq`);
@@ -187,7 +187,7 @@ export async function openSharedListFixture(env = process.env) {
           assert.equal(row?.marker, marker, 'Refuse cleanup without this run ownership marker');
           await sql.unsafe(`drop schema "${SCHEMA}" cascade`); created = false;
         }
-      } finally { await sql.end({ timeout: 5 }); }
+      } finally { await sql.end({ timeout: 1 }); }
     },
   };
   try {

@@ -41,6 +41,16 @@ test('two evaluations of the db module share one pool', async () => {
   assert.ok(a, 'DATABASE_URL is set, so a pool must exist');
   assert.equal(a, b, 'the second evaluation must reuse the process-wide pool');
   assert.equal(globalThis.__gadzioSql, a, 'the pool is stored on globalThis');
+  assert.equal(a.options.idle_timeout, 20, 'idle_timeout is 20s');
+  assert.equal(a.options.connect_timeout, 10, 'connect_timeout is 10s');
+  assert.equal(a.options.max_lifetime, 1800, 'max_lifetime is 1800s');
+
+  assert.equal(first.resolvePoolMax(undefined, 'production'), 10, 'production default max is 10');
+  assert.equal(first.resolvePoolMax(undefined, 'development'), 5, 'non-production default max is 5');
+  assert.equal(first.resolvePoolMax('15', 'production'), 15, 'DATABASE_POOL_MAX overrides default');
+  assert.equal(first.resolvePoolMax('invalid', 'production'), 10, 'invalid DATABASE_POOL_MAX falls back to default');
+  assert.equal(first.resolvePoolMax('0', 'production'), 10, 'out-of-range DATABASE_POOL_MAX falls back to default');
 
   await a.end({ timeout: 0 });
+  globalThis.__gadzioSql = null;
 });

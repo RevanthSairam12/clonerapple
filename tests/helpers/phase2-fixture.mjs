@@ -87,7 +87,7 @@ export async function openPhase2Fixture() {
   const url = new URL(process.env.DATABASE_URL);
   assert.notEqual(url.port, '6543', 'Requires a session connection, not a transaction pooler');
   const { default: postgres } = await import('postgres');
-  const options = { max: 1, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } };
+  const options = { max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, fetch_types: false, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } };
   const sql = postgres(process.env.DATABASE_URL, options);
   let created = false;
   async function pinned(client) {
@@ -104,11 +104,11 @@ export async function openPhase2Fixture() {
         const [two] = await second`select pg_backend_pid() as pid`;
         assert.notEqual(one.pid, two.pid, 'Race requires independent database sessions');
         return await callback(sql, second);
-      } finally { await second.end({ timeout: 5 }); }
+      } finally { await second.end({ timeout: 1 }); }
     },
     async close() {
       try { if (created) await sql.unsafe(`drop schema "${SCHEMA}" cascade`); }
-      finally { await sql.end({ timeout: 5 }); }
+      finally { await sql.end({ timeout: 1 }); }
     },
   };
   try {

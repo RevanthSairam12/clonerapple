@@ -42,7 +42,7 @@ export async function openPhase5Fixture() {
   assert.equal(process.env.PHASE5_APPROVED_MANIFEST, manifest.approvalSha256, 'Approve the exact Phase5 manifest first');
   const { default: postgres } = await import('postgres');
   const sql = postgres(process.env.DATABASE_URL, {
-    max: 1, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {},
+    max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {},
     connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 5000 },
   });
   let created = false;
@@ -53,7 +53,7 @@ export async function openPhase5Fixture() {
         await sql.unsafe(`drop schema "${SCHEMA}" cascade`);
         assert.equal((await sql`select count(*)::int as n from pg_namespace where nspname = ${SCHEMA}`)[0].n, 0);
       }
-    } finally { await sql.end({ timeout: 5 }); }
+    } finally { await sql.end({ timeout: 1 }); }
   };
   try {
     await sql.unsafe(`create schema "${SCHEMA}"`); created = true;

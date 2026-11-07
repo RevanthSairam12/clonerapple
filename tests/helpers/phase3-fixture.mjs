@@ -173,27 +173,20 @@ export async function openPhase3Fixture() {
   assert.ok(['postgres:', 'postgresql:'].includes(target.protocol), 'Requires a PostgreSQL target');
   assert.notEqual(target.port, '6543', 'Requires a session connection');
   const { default: postgres } = await import('postgres');
-  const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 15000, lock_timeout: 10000 } });
+  const sql = postgres(process.env.DATABASE_URL, { max: 1, idle_timeout: 20, connect_timeout: 10, max_lifetime: 1800, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: SCHEMA, statement_timeout: 120000, lock_timeout: 10000 } });
   let created = false;
   const done = new Set(), rejected = zeros();
-  const localCount = async (tx, table) => (await tx.unsafe(`select count(*)::int n from "${SCHEMA}"."${table}"`))[0].n;
   async function snapshot(tx) {
-    const result = zeros();
-    for (const table of TABLES) {
-      const [row] = await tx`select to_regclass(${`${SCHEMA}.${table}`}) as name`;
-      if (row.name) result[table] = await localCount(tx, table);
-    }
-    return result;
+    const [row] = await tx.unsafe(`
+      select ${TABLES.map(t => `(select count(*)::int from "${SCHEMA}"."${t}") as "${t}"`).join(', ')}
+    `);
+    return Object.fromEntries(TABLES.map(t => [t, Number(row[t] ?? 0)]));
   }
   async function sequenceSnapshot(tx) {
-    const result = {};
-    for (const sequence of manifest.sequences) {
-      const [exists] = await tx`select to_regclass(${sequence.name}) as name`;
-      if (!exists.name) { result[sequence.name] = 0; continue; }
-      const [row] = await tx.unsafe(`select last_value::int n,is_called from ${sequence.name}`);
-      result[sequence.name] = row.is_called ? row.n : 0;
-    }
-    return result;
+    const [row] = await tx.unsafe(`
+      select ${manifest.sequences.map((s, i) => `(select case when is_called then last_value::int else 0 end from ${s.name}) as "s${i}"`).join(', ')}
+    `);
+    return Object.fromEntries(manifest.sequences.map((s, i) => [s.name, Number(row[`s${i}`] ?? 0)]));
   }
   const fixture = {
     sql, manifest,
@@ -248,7 +241,7 @@ export async function openPhase3Fixture() {
     },
     async close() {
       try { if (created) await sql.unsafe(`drop schema "${SCHEMA}" cascade`); }
-      finally { await sql.end({ timeout: 5 }); }
+      finally { await sql.end({ timeout: 1 }); }
     },
   };
   try {
@@ -256,6 +249,13 @@ export async function openPhase3Fixture() {
     const [pin] = await sql`select current_schema() as name,current_setting('search_path') as path`;
     assert.equal(pin.name, SCHEMA); assert.equal(pin.path, SCHEMA);
     await sql.begin(tx => tx.unsafe(BASE_DDL));
+    // Apply the actual, hash-bound file, not a copied approximation.
+    const migration = await readFile(path.join(ROOT, 'migrations', MIGRATION), 'utf8');
+    await sql.begin(tx => tx.unsafe(migration));
+    // Then the reduced fixture catches up to the columns and copied tables the
+    // code under test uses, exactly as the real schema has them after 0060.
+    await sql.begin(tx => tx.unsafe(PRODUCT_COLUMNS_FROM_0060));
+    await sql.begin(tx => tx.unsafe(DUPLICATE_COPY_TABLES_FROM_0052_0060));
     await fixture.operation('base seed', async client => client.begin(async tx => {
       await tx`insert into store_admins(id) values ('phase3_owner')`;
       await tx`insert into categories(id) values ('cat_a'),('cat_b')`;
@@ -264,13 +264,6 @@ export async function openPhase3Fixture() {
       await tx`insert into products(id,slug,name,category_id) values ('legacy','legacy','Unclassified legacy','cat_a'),('source','source','Source','cat_a')`;
       await tx`insert into product_attribute_values(product_id,attribute_id,value_bool,value_number,option_value,value_text) values ('source','flag',false,null,null,null),('source','quantity',null,0,null,null),('source','colour',null,null,'red',null),('source','model',null,null,null,'Historical model')`;
     }));
-    // Apply the actual, hash-bound file, not a copied approximation.
-    const migration = await readFile(path.join(ROOT, 'migrations', MIGRATION), 'utf8');
-    await sql.begin(tx => tx.unsafe(migration));
-    // Then the reduced fixture catches up to the columns and copied tables the
-    // code under test uses, exactly as the real schema has them after 0060.
-    await sql.begin(tx => tx.unsafe(PRODUCT_COLUMNS_FROM_0060));
-    await sql.begin(tx => tx.unsafe(DUPLICATE_COPY_TABLES_FROM_0052_0060));
     return fixture;
   } catch (error) { await fixture.close(); throw error; }
 }
