@@ -9,14 +9,15 @@ import {
   type ReservationPolicy,
   type ReservationState,
 } from '@/lib/checkout/reservation-rules';
-import { planStockClaim, type StockIdentity } from '@/lib/checkout/stock-rules';
-import { readCheckoutConfigurationUsing } from '@/lib/checkout/settings';
+import { planStockClaim, stockKey, type StockIdentity } from '@/lib/checkout/stock-rules';
+import { readCheckoutConfigurationUsing, type CheckoutConfiguration } from '@/lib/checkout/settings';
 import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
 import { resolveCartItemsFromDbUsing } from './db-catalog';
 import type { CartPricingInput, PricedCart } from './db-pricing';
 import {
   formatOrderNumber,
   ORDER_NUMBER_COUNTER,
+  sanitizeOrderPrefix,
   type OrderNumberSettings,
 } from '@/lib/orders/numbering';
 import { planFulfilmentAutomation } from '@/lib/orders/fulfilment-automation';
@@ -419,6 +420,8 @@ export type WebCreateOrderParams = Omit<
 > & {
   cartItems: CartPricingInput[];
   expectedTotalPaise?: number | null;
+  /** Pre-read checkout configuration from the same request to avoid duplicate store_settings round-trips. */
+  checkoutConfiguration?: CheckoutConfiguration | null;
 };
 
 export interface LazilyExpiredReservation {
@@ -455,23 +458,32 @@ async function allocateOrderNumber(
   tx: Tx,
   settings: OrderNumberSettings,
 ): Promise<{ orderNumber: number; txnid: string }> {
-  await tx`
-    update order_number_counters
-    set next_number = greatest(next_number, ${settings.startNumber})
-    where name = ${ORDER_NUMBER_COUNTER}
-  `;
-
+  const cleanPrefix = sanitizeOrderPrefix(settings.prefix);
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const rows = await tx<Array<{ next_number: string | number }>>`
-      update order_number_counters
-      set next_number = next_number + 1
-      where name = ${ORDER_NUMBER_COUNTER}
-      returning next_number
+    const rows = await tx<Array<{ next_number: string | number; clashed?: boolean }>>`
+      with updated as (
+        update order_number_counters
+        set next_number = greatest(next_number, ${settings.startNumber}) + 1
+        where name = ${ORDER_NUMBER_COUNTER}
+        returning next_number
+      )
+      select u.next_number,
+             exists (
+               select 1 from orders o
+               where o.txnid = ${cleanPrefix}
+                 || repeat('0', greatest(0, 6 - length((u.next_number - 1)::text)))
+                 || (u.next_number - 1)::text
+             ) as clashed
+      from updated u
     `;
     if (!rows[0]) throw new Error('Order numbering is unavailable.');
 
     const orderNumber = Number(rows[0].next_number) - 1;
     const txnid = formatOrderNumber(settings.prefix, orderNumber);
+    if (rows[0].clashed !== undefined) {
+      if (!rows[0].clashed) return { orderNumber, txnid };
+      continue;
+    }
     const clash = await tx<Array<{ txnid: string }>>`
       select txnid from orders where txnid = ${txnid} limit 1
     `;
@@ -517,13 +529,14 @@ export async function releaseExpiredReservationsForProducts(
   tx: Tx,
   productIds: readonly string[],
   identities?: readonly StockIdentity[],
+  options: { alreadyLocked?: boolean } = {},
 ): Promise<LazilyExpiredReservation[]> {
   const ids = [...new Set(productIds.filter(Boolean))];
   const requested = (identities || ids.map(productId => ({productId,variantId:null}))).map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
   if (ids.length === 0) return [];
 
-  const rows = await tx<Array<{ id: string; txnid: string; status: string }>>`
-    select o.id, o.txnid, o.status
+  const rows = await tx<Array<{ id: string; txnid: string; status: string; coupon_id: string | null }>>`
+    select o.id, o.txnid, o.status, o.coupon_id
     from orders o
     where o.reservation_state = 'ACTIVE'
       and o.reservation_expires_at is not null
@@ -544,8 +557,13 @@ export async function releaseExpiredReservationsForProducts(
   for (const row of rows) {
     const orderId = String(row.id);
     const previousStatus = String(row.status) as OrderStatus;
-    const stockReleased = await releaseClaimedStock(tx, orderId);
-    await releaseCouponInTx(tx, orderId, 'reservation expired');
+    const stockReleased = await releaseClaimedStock(tx, orderId, {
+      alreadyLocked: options.alreadyLocked,
+      orderAlreadyLocked: true,
+    });
+    if (row.coupon_id) {
+      await releaseCouponInTx(tx, orderId, 'reservation expired');
+    }
 
     const grace = previousStatus === 'FAILED' || previousStatus === 'CANCELLED';
     const processing = previousStatus === 'PROCESSING';
@@ -560,33 +578,35 @@ export async function releaseExpiredReservationsForProducts(
         : 'The checkout window closed before payment was confirmed.';
 
     await tx`
-      update orders
-      set reservation_state = ${state},
-          reservation_released_at = now(),
-          reservation_released_reason = ${reason},
-          -- A closed processing window keeps its deadline so the worker can
-          -- see that the safe recovery window ended and flag the payment.
-          processing_deadline = case when ${processing} then processing_deadline else null end,
-          next_reconcile_at = case when ${processing} then now() else null end,
-          status = ${status},
-          cancelled_at = case when ${status} = 'CANCELLED' then coalesce(cancelled_at, now()) else cancelled_at end,
-          cancel_reason = case when ${status} = 'CANCELLED' then ${reason} else cancel_reason end,
-          updated_at = now()
-      where id = ${orderId} and reservation_state = 'ACTIVE'
+      with updated_order as (
+        update orders
+        set reservation_state = ${state},
+            reservation_released_at = now(),
+            reservation_released_reason = ${reason},
+            -- A closed processing window keeps its deadline so the worker can
+            -- see that the safe recovery window ended and flag the payment.
+            processing_deadline = case when ${processing} then processing_deadline else null end,
+            next_reconcile_at = case when ${processing} then now() else null end,
+            status = ${status},
+            cancelled_at = case when ${status} = 'CANCELLED' then coalesce(cancelled_at, now()) else cancelled_at end,
+            cancel_reason = case when ${status} = 'CANCELLED' then ${reason} else cancel_reason end,
+            updated_at = now()
+        where id = ${orderId} and reservation_state = 'ACTIVE'
+        returning id
+      )
+      insert into order_status_history (order_id, domain, actor, from_status, to_status)
+      select id, 'payment', 'system', ${previousStatus}, ${status}
+      from updated_order
+      where ${status !== previousStatus}
     `;
-
-    if (status !== previousStatus) {
-      await tx`
-        insert into order_status_history (order_id, domain, actor, from_status, to_status)
-        values (${orderId}, 'payment', 'system', ${previousStatus}, ${status})
-      `;
-    }
 
     expired.push({ txnid: String(row.txnid), previousStatus, status, state, stockReleased });
   }
 
   return expired;
 }
+
+const snapshotSupportBySql = new WeakMap<object, boolean>();
 
 /**
  * The real creation path on a caller-owned connection. Exposed so an
@@ -636,22 +656,29 @@ export async function createOrderUsing(
 
     // Lock affected existing orders before any inventory row. Include every line
     // of those orders in the sorted stock lock set, because expiry releases whole
-    // orders atomically. Sibling-only reservations do not match this request.
+    // orders atomically. Only expired reservations or this customer's retryable
+    // failed/cancelled holds are candidates for release.
+    const candidateUserId = params.userId ?? null;
     const affectedOrders = await tx<Array<{id:string}>>`
-      select o.id from orders o where o.reservation_state='ACTIVE' and exists(
-        select 1 from order_items oi,jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
-        where oi.order_id=o.id and oi.product_id=wanted.product_id and oi.variant_id is not distinct from wanted.variant_id)
+      select o.id from orders o where o.reservation_state='ACTIVE'
+        and (
+          (o.reservation_expires_at is not null and o.reservation_expires_at <= now() and o.status <> 'PAID')
+          or (${candidateUserId}::text is not null and o.user_id = ${candidateUserId} and o.status in ('FAILED', 'CANCELLED'))
+        )
+        and exists(
+          select 1 from order_items oi,jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
+          where oi.order_id=o.id and oi.product_id=wanted.product_id and oi.variant_id is not distinct from wanted.variant_id)
       order by o.id for update of o`;
     const affectedLines = affectedOrders.length ? await tx<Array<{product_id:string;variant_id:string|null}>>`
       select distinct product_id,variant_id from order_items where order_id=any(${affectedOrders.map(row=>row.id)}::text[])` : [];
-    await lockStockIdentities(tx,[...requestedIdentities,...affectedLines.map(row=>({productId:row.product_id,variantId:row.variant_id}))]);
+    const initialStockRows = await lockStockIdentities(tx,[...requestedIdentities,...affectedLines.map(row=>({productId:row.product_id,variantId:row.variant_id}))]);
 
     // A customer retrying after a failed payment may still have the grace hold
     // from that order. A fresh checkout claims the same stock, so give the old
     // hold back first; otherwise a one-unit product would look sold out to the
     // very customer it is being held for. Only this customer's own failed or
     // cancelled holds are touched, and only under the row lock.
-    if (params.userId && productIds.length > 0) {
+    if (affectedOrders.length > 0 && params.userId && productIds.length > 0) {
       const superseded = await tx<Array<{ id: string }>>`
         select id from orders
         where user_id = ${params.userId}
@@ -668,7 +695,7 @@ export async function createOrderUsing(
         for update
       `;
       for (const row of superseded) {
-        await releaseClaimedStock(tx, String(row.id));
+        await releaseClaimedStock(tx, String(row.id), { alreadyLocked: true, orderAlreadyLocked: true });
         await releaseCouponInTx(tx, String(row.id), 'superseded by a new checkout');
         await tx`
           update orders
@@ -683,7 +710,9 @@ export async function createOrderUsing(
     }
 
     if (web) {
-      const configuration = await readCheckoutConfigurationUsing(tx);
+      const configuration = web.checkoutConfiguration?.ok && web.checkoutConfiguration.policy
+        ? web.checkoutConfiguration
+        : await readCheckoutConfigurationUsing(tx);
       if (!configuration.ok) throw new Error('Checkout settings are temporarily unavailable.');
       if (configuration.settings.payu_enabled !== 'on') {
         throw new Error('Online payment is currently unavailable.');
@@ -691,7 +720,7 @@ export async function createOrderUsing(
       if (params.coupon?.code && configuration.settings.coupons_enabled === 'off') {
         throw new CouponRejectedError('inactive', couponRejectionMessage('inactive'));
       }
-      cart = await resolveCartItemsFromDbUsing(tx, web.cartItems);
+      cart = await resolveCartItemsFromDbUsing(tx, web.cartItems, { cacheKey: sql });
       items = cart.items;
       itemLines = buildOrderItemLines(items);
       subtotalPaise = cart.totalPaise;
@@ -705,20 +734,17 @@ export async function createOrderUsing(
     }
 
     // Expire matching holds before obtaining stock locks (never stock -> order).
-    const expiredReservations = await releaseExpiredReservationsForProducts(tx, productIds, itemLines);
-    const stockRows = await lockStockIdentities(tx, itemLines);
+    const expiredReservations = affectedOrders.length > 0
+      ? await releaseExpiredReservationsForProducts(tx, productIds, itemLines, { alreadyLocked: true })
+      : [];
+    const sameRequestedIdentities = affectedOrders.length === 0
+      && requestedIdentities.length === itemLines.length
+      && requestedIdentities.every((reqLine, idx) => stockKey(reqLine) === stockKey(itemLines[idx]));
+    const stockRows = sameRequestedIdentities
+      ? initialStockRows
+      : await lockStockIdentities(tx, itemLines);
     const plan = planStockClaim(itemLines, stockRows);
     if (!plan.ok) throw new InsufficientStockError(plan.error);
-
-    // 2. Number the order inside the same transaction.
-    let txnid = (params.txnid || '').trim();
-    let orderNumber: number | null = null;
-    if (params.numbering && params.numbering.prefix) {
-      const allocated = await allocateOrderNumber(tx, params.numbering);
-      txnid = allocated.txnid;
-      orderNumber = allocated.orderNumber;
-    }
-    if (!txnid) throw new Error('An order needs a transaction id.');
 
     // 2b. Coupon. The row is locked before its uses are counted, so two
     //     concurrent buyers cannot both take the last redemption. The code is
@@ -790,105 +816,116 @@ export async function createOrderUsing(
       );
     }
 
-    // 3. Persist the order and its snapshot.
+    // 2. Number the order inside the same transaction as late as possible so
+    //    the global counter lock is held only during final persistence.
+    let txnid = (params.txnid || '').trim();
+    let orderNumber: number | null = null;
+    if (params.numbering && params.numbering.prefix) {
+      const allocated = await allocateOrderNumber(tx, params.numbering);
+      txnid = allocated.txnid;
+      orderNumber = allocated.orderNumber;
+    }
+    if (!txnid) throw new Error('An order needs a transaction id.');
+
+    // 3. Persist the order, initial status history and shipping address in one round-trip.
     const rows = await tx<RawOrderRow[]>`
-      INSERT INTO orders (
-        id,
-        txnid,
-        order_number,
-        user_id,
-        items,
-        amount,
-        currency,
-        status,
-        channel,
-        payment_method,
-        fulfilment_status,
-        subtotal_paise,
-        discount_paise,
-        shipping_paise,
-        total_paise,
-        coupon_id,
-        coupon_code,
-        coupon_snapshot,
-        pricing_snapshot,
-        customer_name,
-        customer_email,
-        customer_phone,
-        reservation_state,
-        reservation_expires_at,
-        next_reconcile_at,
-        created_at,
-        updated_at
-      ) VALUES (
-        ${id},
-        ${txnid},
-        ${orderNumber},
-        ${params.userId ?? null},
-        ${tx.json(items as any)},
-        ${(totalPaise / 100).toFixed(2)},
-        ${currency},
-        'CREATED',
-        'web',
-        ${params.paymentMethod ?? 'payu'},
-        'PENDING',
-        ${subtotalPaise},
-        ${discountPaise},
-        ${shippingPaise},
-        ${totalPaise},
-        ${couponDefinition?.id ?? null},
-        ${couponDefinition?.code ?? null},
-        ${couponDefinition && couponEvaluation
-          ? tx.json(couponSnapshot(couponDefinition, discountPaise) as any)
-          : null},
-        ${tx.json(pricingSnapshot as any)},
-        ${params.customerName},
-        ${params.customerEmail},
-        ${params.customerPhone},
-        ${reservationSeconds > 0 ? 'ACTIVE' : 'NONE'},
-        now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
-        now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
-        now(),
-        now()
+      WITH inserted_order AS (
+        INSERT INTO orders (
+          id,
+          txnid,
+          order_number,
+          user_id,
+          items,
+          amount,
+          currency,
+          status,
+          channel,
+          payment_method,
+          fulfilment_status,
+          subtotal_paise,
+          discount_paise,
+          shipping_paise,
+          total_paise,
+          coupon_id,
+          coupon_code,
+          coupon_snapshot,
+          pricing_snapshot,
+          customer_name,
+          customer_email,
+          customer_phone,
+          reservation_state,
+          reservation_expires_at,
+          next_reconcile_at,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${id},
+          ${txnid},
+          ${orderNumber},
+          ${params.userId ?? null},
+          ${tx.json(items as any)},
+          ${(totalPaise / 100).toFixed(2)},
+          ${currency},
+          'CREATED',
+          'web',
+          ${params.paymentMethod ?? 'payu'},
+          'PENDING',
+          ${subtotalPaise},
+          ${discountPaise},
+          ${shippingPaise},
+          ${totalPaise},
+          ${couponDefinition?.id ?? null},
+          ${couponDefinition?.code ?? null},
+          ${couponDefinition && couponEvaluation
+            ? tx.json(couponSnapshot(couponDefinition, discountPaise) as any)
+            : null},
+          ${tx.json(pricingSnapshot as any)},
+          ${params.customerName},
+          ${params.customerEmail},
+          ${params.customerPhone},
+          ${reservationSeconds > 0 ? 'ACTIVE' : 'NONE'},
+          now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
+          now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
+          now(),
+          now()
+        )
+        RETURNING *
+      ), inserted_history AS (
+        INSERT INTO order_status_history (
+          order_id,
+          domain,
+          actor,
+          from_status,
+          to_status
+        )
+        SELECT id, 'payment', 'system', ${null}, 'CREATED'
+        FROM inserted_order
+      ), inserted_address AS (
+        INSERT INTO order_addresses (
+          order_id, address_type, full_name, phone, line1, line2, city, state, postal_code, country
+        )
+        SELECT
+          id, 'shipping', ${params.shippingAddress.name}, ${params.shippingAddress.phone},
+          ${params.shippingAddress.line1}, ${params.shippingAddress.line2 || null}, ${params.shippingAddress.city},
+          ${params.shippingAddress.state}, ${params.shippingAddress.pincode}, 'IN'
+        FROM inserted_order
       )
-      RETURNING *
-    `;
-
-    await tx`
-      INSERT INTO order_status_history (
-        order_id,
-        domain,
-        actor,
-        from_status,
-        to_status
-      ) VALUES (
-        ${rows[0].id},
-        'payment',
-        'system',
-        ${null},
-        'CREATED'
-      )
-    `;
-
-    await tx`
-      INSERT INTO order_addresses (
-        order_id, address_type, full_name, phone, line1, line2, city, state, postal_code, country
-      ) VALUES (
-        ${rows[0].id}, 'shipping', ${params.shippingAddress.name}, ${params.shippingAddress.phone},
-        ${params.shippingAddress.line1}, ${params.shippingAddress.line2 || null}, ${params.shippingAddress.city},
-        ${params.shippingAddress.state}, ${params.shippingAddress.pincode}, 'IN'
-      )
+      SELECT * FROM inserted_order
     `;
 
     // 0061 may not be applied yet. Write the option/photo snapshot when the
     // columns exist; an older database keeps its exact previous behaviour.
-    const [snapshotSupport] = await tx<Array<{ present: boolean }>>`
-      select exists (
-        select 1 from information_schema.columns
-        where table_name = 'order_items' and column_name = 'variant_colour_id'
-      ) as present
-    `;
-    const writeSnapshots = snapshotSupport?.present === true;
+    let writeSnapshots = snapshotSupportBySql.get(sql);
+    if (writeSnapshots === undefined) {
+      const [snapshotSupport] = await tx<Array<{ present: boolean }>>`
+        select exists (
+          select 1 from information_schema.columns
+          where table_name = 'order_items' and column_name = 'variant_colour_id'
+        ) as present
+      `;
+      writeSnapshots = snapshotSupport?.present === true;
+      snapshotSupportBySql.set(sql, writeSnapshots);
+    }
 
     // Normalised order_items rows: composite cart ids are reduced to catalog
     // base ids here, so every later lookup by product id works.

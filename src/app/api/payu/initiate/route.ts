@@ -67,9 +67,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Guest checkout is controlled by Customers → Customer settings. When it
-    // is off (the default), an account is required.
-    const customerSettings = await readCustomerSettings();
-    const userSession = await getUserSession();
+    // is off (the default), an account is required. Read customer settings and
+    // user session in parallel to save a database round-trip on every initiate call.
+    const [customerSettings, userSession] = await Promise.all([
+      readCustomerSettings(),
+      getUserSession(),
+    ]);
     if (!userSession && !isOn(customerSettings.guest_checkout)) {
       return NextResponse.json(
         { error: 'Authentication required. Please sign in or create an account to proceed with purchase.' },
@@ -77,10 +80,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const userId = userSession?.userId ?? null;
+
     // Store Admin settings decide whether PayU can be used and what shipping
     // costs. Once a database is configured a failed read fails closed here:
     // no order is created and the customer sees one clear error.
-    const checkoutConfiguration = await readCheckoutConfiguration();
+    // Read checkout configuration, active user reservation, and request body
+    // concurrently to avoid sequential round-trips before order creation.
+    const [checkoutConfiguration, activeReservation, body] = await Promise.all([
+      readCheckoutConfiguration(),
+      userId ? findActiveReservationForUser(userId) : Promise.resolve(null),
+      req.json().catch(() => null),
+    ]);
     if (!checkoutConfiguration.ok) {
       return NextResponse.json(
         { error: 'Checkout is temporarily unavailable. Please try again.' },
@@ -94,7 +105,6 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const userId = userSession?.userId ?? null;
 
     if (userId) {
       const userLimit = checkRateLimit(`payu-init-user:${userId}`, { limit: 10, windowMs: 5 * 60 * 1000 });
@@ -106,7 +116,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const body = await req.json().catch(() => null);
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
     }
@@ -116,19 +125,16 @@ export async function POST(req: NextRequest) {
     // One live checkout per account. Without this a customer could open several
     // tabs and hold several units; the reservation is never extended by a
     // repeat request, so the window stays the one shown when checkout started.
-    if (userId) {
-      const activeReservation = await findActiveReservationForUser(userId);
-      if (activeReservation) {
-        return NextResponse.json(
-          {
-            error: 'A checkout is already in progress for this account. Finish that payment or wait for its reservation to expire before starting another.',
-            code: 'reservation_active',
-            statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
-            reservationExpiresAt: activeReservation.expiresAt?.toISOString() ?? null,
-          },
-          { status: 409 },
-        );
-      }
+    if (activeReservation) {
+      return NextResponse.json(
+        {
+          error: 'A checkout is already in progress for this account. Finish that payment or wait for its reservation to expire before starting another.',
+          code: 'reservation_active',
+          statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
+          reservationExpiresAt: activeReservation.expiresAt?.toISOString() ?? null,
+        },
+        { status: 409 },
+      );
     }
 
     // 1. Resolve cart items and compute price strictly server-side
@@ -273,6 +279,7 @@ export async function POST(req: NextRequest) {
         paymentMethod: 'payu',
         shippingAddress,
         reservationSeconds: reservationPolicy.reservationSeconds,
+        checkoutConfiguration,
       });
     } catch (error: unknown) {
       if (error instanceof SelectionUnavailableError) {

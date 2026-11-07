@@ -66,8 +66,10 @@ export async function readSaleStateUsing(
 
   const row = rows[0] ?? {};
   // Checkout evaluates the sale after acquiring stock locks, not at the start
-  // of a transaction that may have waited across a sale boundary.
-  const clock = options.authoritative || !row.db_now
+  // of a transaction that may have waited across a sale boundary. When the sale
+  // switch is disabled, the window cannot be live at any timestamp, so the
+  // statement's own db_now is sufficient.
+  const clock = (options.authoritative && Boolean(row.enabled)) || !row.db_now
     ? await sql`select clock_timestamp() as db_now`
     : null;
   const databaseNow = iso(clock?.[0]?.db_now ?? row.db_now);
@@ -94,14 +96,80 @@ export async function readSaleStateUsing(
   };
 }
 
+const SALE_STATE_CACHE_TTL_MS = 2_000;
+
+interface SaleCacheSlot {
+  state: SaleState | null;
+  at: number;
+  inflight: Promise<SaleState> | null;
+}
+
+const globalForSaleState = globalThis as typeof globalThis & {
+  __gadzioSaleStateCache?: SaleCacheSlot;
+  __gadzioCatalogSnapshot?: unknown;
+};
+
+function saleCacheSlot(): SaleCacheSlot {
+  if (!globalForSaleState.__gadzioSaleStateCache) {
+    globalForSaleState.__gadzioSaleStateCache = { state: null, at: 0, inflight: null };
+  }
+  return globalForSaleState.__gadzioSaleStateCache;
+}
+
+/** Clear the short in-memory sale switch cache immediately after a Store Admin write. */
+export function clearSaleStateCache(): void {
+  const slot = saleCacheSlot();
+  slot.state = null;
+  slot.at = 0;
+  slot.inflight = null;
+  globalForSaleState.__gadzioCatalogSnapshot = null;
+}
+
+function startSaleStateRefresh(sql: postgres.Sql, slot: SaleCacheSlot): Promise<SaleState> {
+  if (slot.inflight) return slot.inflight;
+  const inflight = (async (): Promise<SaleState> => {
+    try {
+      const state = await readSaleStateUsing(sql);
+      slot.state = state;
+      slot.at = Date.now();
+      return state;
+    } catch {
+      console.warn('[storefront/sale] sale settings unavailable; using regular prices and normal mode');
+      return { ...SALE_OFF };
+    }
+  })().finally(() => {
+    if (slot.inflight === inflight) {
+      slot.inflight = null;
+    }
+  });
+  slot.inflight = inflight;
+  return inflight;
+}
+
 /** Never throws: an unreadable switch means regular prices and normal mode. */
 export async function readSaleState(): Promise<SaleState> {
   const sql = getSql();
   if (!sql) return { ...SALE_OFF };
-  try {
-    return await readSaleStateUsing(sql);
-  } catch {
-    console.warn('[storefront/sale] sale settings unavailable; using regular prices and normal mode');
-    return { ...SALE_OFF };
+
+  const slot = saleCacheSlot();
+  const now = Date.now();
+  if (slot.state && now - slot.at < SALE_STATE_CACHE_TTL_MS) {
+    return { ...slot.state };
   }
+  if (slot.state) {
+    void startSaleStateRefresh(sql, slot);
+    const baseMs = Date.parse(slot.state.databaseNow);
+    const advancedIso = Number.isFinite(baseMs)
+      ? new Date(baseMs + Math.max(0, now - slot.at)).toISOString()
+      : slot.state.databaseNow;
+    const status = saleStatusAt(slot.state, advancedIso);
+    return {
+      ...slot.state,
+      status,
+      live: status === 'live',
+      databaseNow: advancedIso,
+    };
+  }
+
+  return { ...(await startSaleStateRefresh(sql, slot)) };
 }

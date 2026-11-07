@@ -70,11 +70,58 @@ interface CatalogState {
   snapshot: StorefrontCatalogSnapshot | null;
 }
 
+const CATALOG_SNAPSHOT_TTL_MS = 30_000;
+
+const globalForCatalog = globalThis as typeof globalThis & {
+  __gadzioCatalogSnapshot?: { snapshot: StorefrontCatalogSnapshot; at: number } | null;
+};
+
+let inflightCatalogRead: Promise<StorefrontCatalogSnapshot | null> | null = null;
+let inflightCachedCatalog: Promise<StorefrontCatalogSnapshot | null> | null = null;
+
+function readCatalogSingleflight(): Promise<StorefrontCatalogSnapshot | null> {
+  if (inflightCatalogRead) return inflightCatalogRead;
+  const p = readStorefrontCatalog().finally(() => {
+    if (inflightCatalogRead === p) inflightCatalogRead = null;
+  });
+  inflightCatalogRead = p;
+  return p;
+}
+
 const readCachedCatalog = unstable_cache(
-  async (): Promise<StorefrontCatalogSnapshot | null> => readStorefrontCatalog(),
+  async (): Promise<StorefrontCatalogSnapshot | null> => readCatalogSingleflight(),
   ['storefront-catalog', 'phase-b2-option-prices-v3'],
   { tags: [CATALOG_CACHE_TAG], revalidate: 30 },
 );
+
+function startCachedCatalogRefresh(): Promise<StorefrontCatalogSnapshot | null> {
+  if (inflightCachedCatalog) return inflightCachedCatalog;
+  const p = readCachedCatalog()
+    .then((snapshot) => {
+      if (snapshot) {
+        globalForCatalog.__gadzioCatalogSnapshot = { snapshot, at: Date.now() };
+      }
+      return snapshot;
+    })
+    .finally(() => {
+      if (inflightCachedCatalog === p) inflightCachedCatalog = null;
+    });
+  inflightCachedCatalog = p;
+  return p;
+}
+
+function getCachedCatalogSingleflight(): Promise<StorefrontCatalogSnapshot | null> {
+  const slot = globalForCatalog.__gadzioCatalogSnapshot;
+  const now = Date.now();
+  if (slot && now - slot.at < CATALOG_SNAPSHOT_TTL_MS) {
+    return Promise.resolve(slot.snapshot);
+  }
+  if (slot) {
+    void startCachedCatalogRefresh();
+    return Promise.resolve(slot.snapshot);
+  }
+  return startCachedCatalogRefresh();
+}
 
 /**
  * One catalogue read per request. Connection outages fall back; missing schema
@@ -82,7 +129,7 @@ const readCachedCatalog = unstable_cache(
  */
 const getCatalogState = cache(async (): Promise<CatalogState> => {
   try {
-    const snapshot = await readCachedCatalog();
+    const snapshot = await getCachedCatalogSingleflight();
     return { ready: snapshot !== null, snapshot };
   } catch (error) {
     if (isCatalogSchemaError(error)) throw new Error('Catalogue deployment is not ready.', { cause: error });
@@ -96,31 +143,16 @@ interface ProductState {
   product: StorefrontProduct | null;
 }
 
-function readCachedProduct(id: string) {
-  const normalised = id.trim().toLowerCase();
-  return unstable_cache(
-    async (): Promise<ProductState> => {
-      const snapshot = await readStorefrontCatalog();
-      if (!snapshot) return { ready: false, product: null };
-      const product =
-        snapshot.products.find((entry) => entry.id.toLowerCase() === normalised) ?? null;
-      return { ready: true, product };
-    },
-    ['storefront-product', 'phase-b2-option-prices-v3', normalised],
-    { tags: [CATALOG_CACHE_TAG, productCacheTag(id)], revalidate: 30 },
-  );
-}
-
 /** One product read; `ready` distinguishes "not in the catalogue" from "no DB". */
 const getProductState = cache(async (id: string): Promise<ProductState> => {
-  if (!id.trim()) return { ready: false, product: null };
-  try {
-    return await readCachedProduct(id)();
-  } catch (error) {
-    if (isCatalogSchemaError(error)) throw new Error('Catalogue deployment is not ready.', { cause: error });
-    console.warn('[storefront/catalog] product database unavailable; rendering static data');
-    return { ready: false, product: null };
-  }
+  const normalised = id.trim().toLowerCase();
+  if (!normalised) return { ready: false, product: null };
+  void productCacheTag;
+  const state = await getCatalogState();
+  if (!state.ready || !state.snapshot) return { ready: false, product: null };
+  const product =
+    state.snapshot.products.find((entry) => entry.id.toLowerCase() === normalised) ?? null;
+  return { ready: true, product };
 });
 
 function findCategory(
@@ -395,3 +427,25 @@ export const getStorefrontRefs = cache(async (saleState?: SaleState): Promise<St
     source: 'db',
   };
 });
+
+/**
+ * Several products by id from the cached storefront snapshot, with the live
+ * sale switch applied per request. Used by the homepage so `/` shares the
+ * 30s catalog cache instead of running 9 uncached full-table queries per visit.
+ */
+export const getCachedStorefrontProducts = cache(
+  async (ids: readonly string[]): Promise<StorefrontProduct[]> => {
+    if (ids.length === 0) return [];
+    const [state, sale] = await Promise.all([getCatalogState(), getSaleState()]);
+    if (!state.ready || !state.snapshot) return [];
+    const byId = new Map<string, StorefrontProduct>();
+    for (const product of state.snapshot.products) {
+      byId.set(product.id, product);
+      byId.set(product.id.toLowerCase(), product);
+    }
+    return ids.flatMap((id) => {
+      const match = byId.get(id) ?? byId.get(id.toLowerCase());
+      return match ? [applySaleDisplay(match, sale.live)] : [];
+    });
+  },
+);

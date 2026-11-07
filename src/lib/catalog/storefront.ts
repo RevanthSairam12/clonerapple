@@ -344,13 +344,22 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
   }
   const colors = asColors(row.__colors);
   const inventoryMode = row.inventory_mode === 'variant' ? 'variant' : 'product';
+  const variantStockById = new Map<unknown, Row>();
+  for (const entry of aggregate.variantStock) variantStockById.set(entry.variant_id, entry);
+  const deviceModelById = new Map<unknown, Row>();
+  for (const model of deviceModels) deviceModelById.set(model.id, model);
+  const colourByVariantId = new Map<string, Row>();
+  for (const entry of variantColours) {
+    const key = text(entry.variant_id);
+    if (!colourByVariantId.has(key)) colourByVariantId.set(key, entry);
+  }
   const configured = variants.filter((variant) => !variant.retired_at && Boolean(variant.is_active) && Boolean(variant.is_purchasable) &&
     text(variant.sku).trim() && text(variant.combination_key).trim() &&
-    aggregate.variantStock.some((entry) => entry.variant_id === variant.id) &&
+    variantStockById.has(variant.id) &&
     (!row.__requires_compatibility || Boolean(variant.device_model_id)) &&
-    (!variant.device_model_id || deviceModels.some((model) => model.id === variant.device_model_id)));
+    (!variant.device_model_id || deviceModelById.has(variant.device_model_id)));
   const variantStates = configured.map((variant) => {
-    const variantStock = aggregate.variantStock.find((entry) => entry.variant_id === variant.id);
+    const variantStock = variantStockById.get(variant.id);
     // A variant row is judged on its own count. The parent gate is passed as
     // `true`: in variant mode the product-level `in_stock` flag is not a
     // customer stock pool, and an untracked option is sellable by definition.
@@ -363,9 +372,9 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
       { pricePaise: price.regularPaise, salePricePaise: price.salePaise }, saleLive,
       { pricePaise: variant.price_paise_override == null ? null : number(variant.price_paise_override),
         salePricePaise: variant.sale_price_paise == null ? null : number(variant.sale_price_paise) });
-    const modelRow = deviceModels.find((model) => model.id === variant.device_model_id);
+    const modelRow = deviceModelById.get(variant.device_model_id);
     const deviceModelName = nullableText(modelRow?.name);
-    const colourLink = variantColours.find((entry) => text(entry.variant_id) === text(variant.id));
+    const colourLink = colourByVariantId.get(text(variant.id));
     return { id: text(variant.id), sku: text(variant.sku),
       label: [deviceModelName, [text(variant.option_name), text(variant.option_value)].filter(Boolean).join(': ')].filter(Boolean).join(' • ') || text(variant.sku),
       deviceModelId: nullableText(variant.device_model_id), deviceModelName,
@@ -485,14 +494,21 @@ export interface CatalogLoad {
  * migrations 0059/0060 yet; `to_regclass` answers without throwing on a
  * missing relation. Once applied, colour links and per-colour photos load.
  */
+const sharedColoursBySql = new WeakMap<object, boolean>();
+
 async function sharedColoursAvailable(
   sql: NonNullable<ReturnType<typeof getSql>>,
 ): Promise<boolean> {
+  const key = sql as unknown as object;
+  const cached = sharedColoursBySql.get(key);
+  if (cached !== undefined) return cached;
   const rows = await sql<Array<{ available: boolean }>>`
     select (to_regclass('colours') is not null
       and to_regclass('product_variant_colours') is not null) as available
   `;
-  return rows[0]?.available === true;
+  const available = rows[0]?.available === true;
+  if (rows.length > 0) sharedColoursBySql.set(key, available);
+  return available;
 }
 
 /** The read itself, so tests can run it against a throwaway schema. */

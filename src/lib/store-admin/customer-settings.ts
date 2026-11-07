@@ -22,23 +22,75 @@ export type CustomerSettingsLoad =
   | { ok: true; settings: CustomerSettings }
   | { ok: false; reason: 'unavailable' };
 
+const CUSTOMER_SETTINGS_TTL_MS = 5_000;
+
+interface CustomerSettingsCacheSlot {
+  load: CustomerSettingsLoad | null;
+  at: number;
+  inflight: Promise<CustomerSettingsLoad> | null;
+}
+
+const globalForCustomerSettings = globalThis as typeof globalThis & {
+  __gadzioCustomerSettingsCache?: CustomerSettingsCacheSlot;
+};
+
+function customerSettingsCache(): CustomerSettingsCacheSlot {
+  if (!globalForCustomerSettings.__gadzioCustomerSettingsCache) {
+    globalForCustomerSettings.__gadzioCustomerSettingsCache = {
+      load: null,
+      at: 0,
+      inflight: null,
+    };
+  }
+  return globalForCustomerSettings.__gadzioCustomerSettingsCache;
+}
+
+export function clearCustomerSettingsCache(): void {
+  const slot = customerSettingsCache();
+  slot.load = null;
+  slot.at = 0;
+  slot.inflight = null;
+}
+
 /** Read every known customer setting, falling back to defaults. */
 export async function getCustomerSettings(): Promise<CustomerSettingsLoad> {
   const sql = getSql();
   if (!sql) return { ok: false, reason: 'unavailable' };
 
-  try {
-    const rows = (await sql`
-      select key, value from customer_settings
-    `) as Row[];
-    const settings: CustomerSettings = { ...DEFAULT_CUSTOMER_SETTINGS };
-    for (const row of rows) {
-      if (isCustomerSettingKey(row.key)) settings[row.key] = text(row.value);
+  const slot = customerSettingsCache();
+  const now = Date.now();
+  if (slot.load?.ok && now - slot.at < CUSTOMER_SETTINGS_TTL_MS) {
+    return { ok: true, settings: { ...slot.load.settings } };
+  }
+  if (slot.inflight) {
+    const res = await slot.inflight;
+    return res.ok ? { ok: true, settings: { ...res.settings } } : res;
+  }
+
+  slot.inflight = (async (): Promise<CustomerSettingsLoad> => {
+    try {
+      const rows = (await sql`
+        select key, value from customer_settings
+      `) as Row[];
+      const settings: CustomerSettings = { ...DEFAULT_CUSTOMER_SETTINGS };
+      for (const row of rows) {
+        if (isCustomerSettingKey(row.key)) settings[row.key] = text(row.value);
+      }
+      const loaded: CustomerSettingsLoad = { ok: true, settings };
+      slot.load = loaded;
+      slot.at = Date.now();
+      return loaded;
+    } catch {
+      console.warn('[store-admin/customer-settings] could not read customer settings');
+      return { ok: false, reason: 'unavailable' };
     }
-    return { ok: true, settings };
-  } catch {
-    console.warn('[store-admin/customer-settings] could not read customer settings');
-    return { ok: false, reason: 'unavailable' };
+  })();
+
+  try {
+    const res = await slot.inflight;
+    return res.ok ? { ok: true, settings: { ...res.settings } } : res;
+  } finally {
+    slot.inflight = null;
   }
 }
 
@@ -76,6 +128,7 @@ export async function updateCustomerSetting(
           updated_by = excluded.updated_by,
           updated_at = now()
       `;
+      clearCustomerSettingsCache();
       return { ok: true as const, key, before, after: validation.value };
     });
   } catch {

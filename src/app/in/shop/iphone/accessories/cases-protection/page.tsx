@@ -44,15 +44,17 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function Page() {
-  const [view, sale] = await Promise.all([getCasesCategoryView(), readSaleState()]);
-  if (!view) notFound();
-
   // Page furniture only. The product grid is never read from content_blocks:
   // products live in the `products` table and are edited in store admin.
-  const c = await getContentMany({
-    categoryLinks: ['cases.category_links', {}],
-    header: ['cases.page_header', {}],
-  });
+  const [view, sale, c] = await Promise.all([
+    getCasesCategoryView(),
+    readSaleState(),
+    getContentMany({
+      categoryLinks: ['cases.category_links', {}],
+      header: ['cases.page_header', {}],
+    }),
+  ]);
+  if (!view) notFound();
 
   const overrides: CasesProtectionOverrides = {
     categoryLinks: (c.categoryLinks as { items?: CasesProtectionOverrides['categoryLinks'] })?.items,

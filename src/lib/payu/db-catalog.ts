@@ -50,20 +50,28 @@ interface PricingRead {
   unavailable: string[];
 }
 
+const coloursSupportBySql = new WeakMap<object, boolean>();
+
 async function loadPricingRows(
   ids: string[],
   saleLive: boolean,
   sql: postgres.Sql | postgres.TransactionSql | null = getSql(),
+  cacheKey?: object | null,
 ): Promise<PricingRead> {
   if (!sql || ids.length === 0) return { rows: [], unavailable: [] };
 
   // 0059/0060 may not be applied yet: read the shared colour link only when the
   // tables exist, so checkout keeps working on an older database.
-  const [capabilities] = await sql<Array<{ colours: boolean }>>`
-    select (to_regclass('colours') is not null
-      and to_regclass('product_variant_colours') is not null) as colours
-  `;
-  const sharedColours = capabilities?.colours === true;
+  const keyObj = (cacheKey ?? sql) as unknown as object;
+  let sharedColours = coloursSupportBySql.get(keyObj);
+  if (sharedColours === undefined) {
+    const [capabilities] = await sql<Array<{ colours: boolean }>>`
+      select (to_regclass('colours') is not null
+        and to_regclass('product_variant_colours') is not null) as colours
+    `;
+    sharedColours = capabilities?.colours === true;
+    coloursSupportBySql.set(keyObj, sharedColours);
+  }
 
   // The photo this line sells: the chosen colour's own photo first, then the
   // product's unlinked (default) photos, then anything else. Hover photos are
@@ -260,9 +268,10 @@ export async function resolveCartItemsFromDb(
 export async function resolveCartItemsFromDbUsing(
   sql: postgres.Sql | postgres.TransactionSql,
   cartItems: ReadonlyArray<CartPricingInput>,
+  options?: { cacheKey?: object | null },
 ): Promise<PricedCart> {
   const sale = await readSaleStateUsing(sql, { authoritative: true });
-  const read = await loadPricingRows(knownBaseIds(cartItems), sale.live, sql);
+  const read = await loadPricingRows(knownBaseIds(cartItems), sale.live, sql, options?.cacheKey);
   const cart = priceCartLines(cartItems, read.rows);
   if (read.unavailable.length > 0) {
     throw new InsufficientStockError(

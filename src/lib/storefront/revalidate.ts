@@ -9,8 +9,10 @@
 import { revalidateTag } from 'next/cache';
 
 import { CATALOG_CACHE_TAG, productCacheTag } from './catalog-tags';
+import { clearSaleStateCache } from './sale-state';
 
 export function revalidateCatalog(productIds?: string | string[] | null): void {
+  clearSaleStateCache();
   revalidateTag(CATALOG_CACHE_TAG, { expire: 0 });
 
   const ids = Array.isArray(productIds)

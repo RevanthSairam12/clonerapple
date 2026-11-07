@@ -12,15 +12,26 @@ export class InsufficientStockError extends Error {
 export async function lockStockIdentities(tx: Tx, lines: readonly StockIdentity[]): Promise<StockRowSnapshot[]> {
   const wanted = [...new Map(lines.map(line => [stockKey(line), line])).values()]
     .sort((a,b) => stockKey(a).localeCompare(stockKey(b)));
-  const rows: StockRowSnapshot[] = [];
-  for (const line of wanted) {
-    rows.push(...await tx<StockRowSnapshot[]>`
+  if (wanted.length === 0) return [];
+  if (wanted.length === 1) {
+    const line = wanted[0];
+    return await tx<StockRowSnapshot[]>`
       select product_id, variant_id, on_hand, reserved, track_inventory from stock
       where product_id=${line.productId} and variant_id is not distinct from ${line.variantId || null}::text
       for update
-    `);
+    `;
   }
-  return rows;
+  const records = wanted.map(line => ({ product_id: line.productId, variant_id: line.variantId || null }));
+  return await tx<StockRowSnapshot[]>`
+    select s.product_id, s.variant_id, s.on_hand, s.reserved, s.track_inventory
+    from stock s
+    where exists (
+      select 1 from jsonb_to_recordset(${tx.json(records)}::jsonb) as w(product_id text, variant_id text)
+      where s.product_id = w.product_id and s.variant_id is not distinct from w.variant_id
+    )
+    order by s.product_id asc, coalesce(s.variant_id, '') asc
+    for update of s
+  `;
 }
 /** Compatibility entry point for historical product-only callers. */
 export async function lockStockRows(tx: Tx, productIds: readonly string[]): Promise<StockRowSnapshot[]> {
@@ -30,14 +41,19 @@ export async function lockStockRows(tx: Tx, productIds: readonly string[]): Prom
 export async function claimPlannedStock(tx: Tx, orderId: string, claims: readonly StockClaimPlan[]): Promise<void> {
   for (const claim of [...claims].sort((a,b) => stockKey(a).localeCompare(stockKey(b)))) {
     const updated = await tx`
-      update stock set on_hand=on_hand-${claim.quantity}, updated_at=now()
-      where product_id=${claim.productId} and variant_id is not distinct from ${claim.variantId || null}::text
-        and track_inventory and on_hand - reserved >= ${claim.quantity}
-      returning product_id
+      with claimed as (
+        update stock set on_hand=on_hand-${claim.quantity}, updated_at=now()
+        where product_id=${claim.productId} and variant_id is not distinct from ${claim.variantId || null}::text
+          and track_inventory and on_hand - reserved >= ${claim.quantity}
+        returning product_id
+      ), movement as (
+        insert into stock_movements(product_id,variant_id,delta,reason,order_id)
+        select ${claim.productId},${claim.variantId || null},${-claim.quantity},'sale',${orderId}
+        from claimed
+      )
+      select product_id from claimed
     `;
     if (!updated.length) throw new InsufficientStockError(`Out of stock: ${claim.productName || 'This variant'}. Please review your bag.`);
-    await tx`insert into stock_movements(product_id,variant_id,delta,reason,order_id)
-      values(${claim.productId},${claim.variantId || null},${-claim.quantity},'sale',${orderId})`;
   }
 }
 
@@ -45,26 +61,40 @@ export async function claimPlannedStock(tx: Tx, orderId: string, claims: readonl
 async function lockOrder(tx: Tx, orderId: string): Promise<void> {
   await tx`select id from orders where id=${orderId} for update`;
 }
-export async function releaseClaimedStock(tx: Tx, orderId: string): Promise<boolean> {
-  await lockOrder(tx, orderId);
-  const identities = await tx<Array<{product_id:string;variant_id:string|null}>>`
-    select distinct product_id,variant_id from stock_movements where order_id=${orderId} and reason='sale'
-    order by product_id,variant_id nulls first`;
-  await lockStockIdentities(tx, identities.map(row => ({productId:row.product_id,variantId:row.variant_id})));
+export async function releaseClaimedStock(
+  tx: Tx,
+  orderId: string,
+  options: { alreadyLocked?: boolean; orderAlreadyLocked?: boolean } = {},
+): Promise<boolean> {
+  if (!options.alreadyLocked && !options.orderAlreadyLocked) await lockOrder(tx, orderId);
+  const balances = await tx<Array<{product_id:string;variant_id:string|null;claimed:number;released:number}>>`
+    select product_id, variant_id,
+      coalesce(sum(case when reason='sale' then -delta else 0 end),0)::int as claimed,
+      coalesce(sum(case when reason in ('release','return') then delta else 0 end),0)::int as released
+    from stock_movements where order_id=${orderId}
+    group by product_id, variant_id
+    having coalesce(sum(case when reason='sale' then -delta else 0 end),0) > 0
+    order by product_id, variant_id nulls first`;
+  if (!balances.length) return false;
+  if (!options.alreadyLocked) {
+    await lockStockIdentities(tx, balances.map(row => ({productId:row.product_id,variantId:row.variant_id})));
+  }
   let released=false;
-  for (const line of identities) {
-    const [balance] = await tx`
-      select coalesce(sum(case when reason='sale' then -delta else 0 end),0)::int as claimed,
-        coalesce(sum(case when reason in ('release','return') then delta else 0 end),0)::int as released
-      from stock_movements where order_id=${orderId} and product_id=${line.product_id}
-        and variant_id is not distinct from ${line.variant_id}::text`;
-    const quantity=outstandingClaimQuantity(balance?.claimed ?? 0,balance?.released ?? 0);
+  for (const line of balances) {
+    const quantity=outstandingClaimQuantity(line.claimed ?? 0,line.released ?? 0);
     if (!quantity) continue;
-    const rows=await tx`update stock set on_hand=on_hand+${quantity},updated_at=now()
-      where product_id=${line.product_id} and variant_id is not distinct from ${line.variant_id}::text returning id`;
+    const rows=await tx`
+      with restored as (
+        update stock set on_hand=on_hand+${quantity},updated_at=now()
+        where product_id=${line.product_id} and variant_id is not distinct from ${line.variant_id}::text
+        returning id
+      ), movement as (
+        insert into stock_movements(product_id,variant_id,delta,reason,order_id)
+        select ${line.product_id},${line.variant_id},${quantity},'release',${orderId}
+        from restored
+      )
+      select id from restored`;
     if (!rows.length) continue;
-    await tx`insert into stock_movements(product_id,variant_id,delta,reason,order_id)
-      values(${line.product_id},${line.variant_id},${quantity},'release',${orderId})`;
     released=true;
   }
   return released;

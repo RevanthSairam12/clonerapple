@@ -1,3 +1,4 @@
+import { clearContentCache } from '@/lib/content';
 import { getSql } from '@/lib/platform/db';
 import { isThemeColorKey, isThemeHexColor } from '@/lib/website/theme-rules';
 
@@ -89,6 +90,7 @@ export async function saveContentBlock(
           updated_by = excluded.updated_by,
           archived_at = null
     `;
+    clearContentCache();
     return { ok: true, data: true };
   } catch {
     console.warn('[website] content save failed');
@@ -110,6 +112,7 @@ export async function archiveContentBlock(
       where key = ${key} and archived_at is null
       returning key
     `;
+    clearContentCache();
     return { ok: true, data: rows.length > 0 };
   } catch {
     console.warn('[website] content reset failed');
@@ -163,6 +166,7 @@ export async function saveThemeValue(
           updated_by = excluded.updated_by,
           archived_at = null
     `;
+    clearContentCache();
     return { ok: true, data: true };
   } catch {
     console.warn('[website] theme save failed');
@@ -184,6 +188,7 @@ export async function archiveThemeValue(
       where key = ${key} and archived_at is null
       returning key
     `;
+    clearContentCache();
     return { ok: true, data: rows.length > 0 };
   } catch {
     console.warn('[website] theme reset failed');

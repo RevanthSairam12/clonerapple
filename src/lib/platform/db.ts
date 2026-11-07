@@ -46,7 +46,7 @@ export function getSql(): Sql | null {
     const isPooler = url.hostname.includes('pooler') && url.port === '6543';
 
     globalForSql.__gadzioSql = postgres(process.env.DATABASE_URL, {
-      max: 5,
+      max: process.env.NODE_ENV === 'production' ? 10 : 5,
       // Supabase and most hosted Postgres require TLS.
       ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
       prepare: !isPooler,

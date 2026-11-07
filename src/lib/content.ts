@@ -34,35 +34,126 @@ function getSupabase() {
   return createServerClient(url, key, { cookies: { getAll: () => [], setAll: () => {} } });
 }
 
-/** Fetch one content block; returns null when absent (never throws). */
-export async function getContentRaw<T>(key: string): Promise<T | null> {
-  // Prefer REST (no DB connection pool, IPv4-friendly).
-  const supabase = getSupabase();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('content_blocks')
-        .select('value')
-        .eq('key', key)
-        .is('archived_at', null)
-        .maybeSingle();
-      if (!error) return ((data?.value as T) ?? null);
-    } catch {
-      // fall through to the direct connection
-    }
+const CONTENT_CACHE_TTL_MS = 15_000;
+
+interface ContentCacheState {
+  blocks: Map<string, { value: unknown; at: number }>;
+  allLoadedAt: number;
+  inflightAllBlocks: Promise<Map<string, unknown>> | null;
+  inflightBlocks: Map<string, Promise<unknown>>;
+  theme: { value: Record<string, string>; at: number } | null;
+  inflightTheme: Promise<Record<string, string>> | null;
+}
+
+const globalForContent = globalThis as typeof globalThis & {
+  __gadzioContentCache?: ContentCacheState;
+};
+
+function contentCache(): ContentCacheState {
+  if (!globalForContent.__gadzioContentCache) {
+    globalForContent.__gadzioContentCache = {
+      blocks: new Map(),
+      allLoadedAt: 0,
+      inflightAllBlocks: null,
+      inflightBlocks: new Map(),
+      theme: null,
+      inflightTheme: null,
+    };
+  }
+  return globalForContent.__gadzioContentCache;
+}
+
+/** Clear cached content blocks and theme settings immediately after an admin write. */
+export function clearContentCache(): void {
+  const cache = contentCache();
+  cache.blocks.clear();
+  cache.allLoadedAt = 0;
+  cache.inflightAllBlocks = null;
+  cache.inflightBlocks.clear();
+  cache.theme = null;
+  cache.inflightTheme = null;
+}
+
+async function ensureAllContentBlocksLoaded(): Promise<void> {
+  const cache = contentCache();
+  const now = Date.now();
+  if (cache.allLoadedAt > 0 && now - cache.allLoadedAt < CONTENT_CACHE_TTL_MS) {
+    return;
   }
 
-  const sql = getSql();
-  if (!sql) return null;
-  try {
-    const rows = await sql`
-      select value from content_blocks
-      where key = ${key} and archived_at is null
-    `;
-    return (rows[0]?.value as T) ?? null;
-  } catch {
+  if (!cache.inflightAllBlocks) {
+    cache.inflightAllBlocks = (async () => {
+      const fetched = new Map<string, unknown>();
+      let loaded = false;
+
+      const sql = getSql();
+      if (sql) {
+        try {
+          const rows = await sql<{ key: string; value: unknown }[]>`
+            select key, value from content_blocks
+            where archived_at is null
+          `;
+          for (const row of rows) fetched.set(row.key, row.value);
+          loaded = true;
+        } catch {
+          // fall through to Supabase REST fallback
+        }
+      }
+
+      if (!loaded) {
+        const supabase = getSupabase();
+        if (supabase) {
+          try {
+            const { data, error } = await supabase
+              .from('content_blocks')
+              .select('key, value')
+              .is('archived_at', null);
+            if (!error) {
+              for (const row of data ?? []) fetched.set(row.key, row.value);
+              loaded = true;
+            }
+          } catch {
+            // fall through to defaults
+          }
+        }
+      }
+
+      if (loaded) {
+        const ts = Date.now();
+        cache.blocks.clear();
+        for (const [k, v] of fetched.entries()) {
+          cache.blocks.set(k, { value: v ?? null, at: ts });
+        }
+        cache.allLoadedAt = ts;
+      }
+      return fetched;
+    })().finally(() => {
+      cache.inflightAllBlocks = null;
+    });
+  }
+
+  await cache.inflightAllBlocks;
+}
+
+/** Fetch one content block; returns null when absent (never throws). */
+export async function getContentRaw<T>(key: string): Promise<T | null> {
+  const cache = contentCache();
+  const now = Date.now();
+  const hit = cache.blocks.get(key);
+  if (hit && now - hit.at < CONTENT_CACHE_TTL_MS) {
+    return (hit.value as T) ?? null;
+  }
+  if (cache.allLoadedAt > 0 && now - cache.allLoadedAt < CONTENT_CACHE_TTL_MS) {
     return null;
   }
+  if (cache.allLoadedAt > 0) {
+    void ensureAllContentBlocksLoaded();
+    return (hit?.value as T) ?? null;
+  }
+
+  await ensureAllContentBlocksLoaded();
+  const afterLoad = cache.blocks.get(key);
+  return (afterLoad?.value as T) ?? null;
 }
 
 /**
@@ -78,46 +169,71 @@ export async function getContent<T>(key: string, fallback: T): Promise<T> {
 export async function getContentMany<T extends Record<string, unknown>>(
   entries: { [K in keyof T]: [string, T[K]] },
 ): Promise<T> {
-  const keys = Object.values(entries).map(([key]) => key);
-  const result: Record<string, unknown> = {};
+  const cache = contentCache();
+  const now = Date.now();
+  const allFresh =
+    cache.allLoadedAt > 0 && now - cache.allLoadedAt < CONTENT_CACHE_TTL_MS;
 
-  if (keys.length > 0) {
-    // Prefer REST (one batched request over IPv4).
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('content_blocks')
-          .select('key, value')
-          .in('key', keys)
-          .is('archived_at', null);
-        if (!error) for (const row of data ?? []) result[row.key] = row.value;
-      } catch {
-        // fall through to the direct connection
-      }
-    }
-
-    if (Object.keys(result).length === 0) {
-      const sql = getSql();
-      if (sql) {
-        try {
-          const rows = await sql`
-            select key, value from content_blocks
-            where key in ${sql(keys)} and archived_at is null
-          `;
-          for (const row of rows) result[row.key] = row.value;
-        } catch {
-          // fall through to defaults
-        }
-      }
+  if (!allFresh) {
+    if (cache.allLoadedAt > 0) {
+      void ensureAllContentBlocksLoaded();
+    } else {
+      await ensureAllContentBlocksLoaded();
     }
   }
 
   const out: Record<string, unknown> = {};
   for (const [name, [key, fallback]] of Object.entries(entries)) {
-    out[name] = result[key] ?? fallback;
+    const hit = cache.blocks.get(key);
+    out[name] = hit?.value ?? fallback;
   }
   return out as T;
+}
+
+function startThemeRefresh(cache: ContentCacheState): Promise<Record<string, string>> {
+  if (cache.inflightTheme) return cache.inflightTheme;
+  const inflight = (async () => {
+    const sql = getSql();
+    if (sql) {
+      try {
+        const rows = await sql<{ key: string; value: string }[]>`
+          select key, value from site_settings where archived_at is null
+        `;
+        const out: Record<string, string> = {};
+        for (const row of rows) out[row.key] = row.value;
+        cache.theme = { value: out, at: Date.now() };
+        return out;
+      } catch {
+        // fall through to Supabase REST fallback
+      }
+    }
+
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('site_settings')
+          .select('key, value')
+          .is('archived_at', null);
+        if (!error) {
+          const out: Record<string, string> = {};
+          for (const row of data ?? []) out[row.key] = row.value;
+          cache.theme = { value: out, at: Date.now() };
+          return out;
+        }
+      } catch {
+        // fall through to defaults
+      }
+    }
+
+    return {};
+  })().finally(() => {
+    if (cache.inflightTheme === inflight) {
+      cache.inflightTheme = null;
+    }
+  });
+  cache.inflightTheme = inflight;
+  return inflight;
 }
 
 /**
@@ -128,31 +244,15 @@ export async function getContentMany<T extends Record<string, unknown>>(
  * its coded default while the old value stays in the table for rollback.
  */
 export async function getThemeSettings(): Promise<Record<string, string>> {
-  const supabase = getSupabase();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('site_settings')
-        .select('key, value')
-        .is('archived_at', null);
-      if (!error) {
-        const out: Record<string, string> = {};
-        for (const row of data ?? []) out[row.key] = row.value;
-        return out;
-      }
-    } catch {
-      // fall through to the direct connection
-    }
+  const cache = contentCache();
+  const now = Date.now();
+  if (cache.theme && now - cache.theme.at < CONTENT_CACHE_TTL_MS) {
+    return { ...cache.theme.value };
+  }
+  if (cache.theme) {
+    void startThemeRefresh(cache);
+    return { ...cache.theme.value };
   }
 
-  const sql = getSql();
-  if (!sql) return {};
-  try {
-    const rows = await sql`select key, value from site_settings where archived_at is null`;
-    const out: Record<string, string> = {};
-    for (const row of rows) out[row.key] = row.value;
-    return out;
-  } catch {
-    return {};
-  }
+  return { ...(await startThemeRefresh(cache)) };
 }

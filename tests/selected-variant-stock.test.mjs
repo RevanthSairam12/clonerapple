@@ -132,6 +132,23 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
       const ids = values.find(value => Array.isArray(value)) ?? [];
       return rows.filter(row => ids.includes(row.id));
     }
+    if (text.startsWith('with inserted_order as ( insert into orders (')) {
+      assert.match(text, /inserted_history as \( insert into order_status_history \( order_id, domain, actor, from_status, to_status \) select id, 'payment', 'system', \$23, 'created' from inserted_order \)/);
+      assert.match(text, /inserted_address as \( insert into order_addresses \( order_id, address_type, full_name, phone, line1, line2, city, state, postal_code, country \) select id, 'shipping', \$24, \$25, \$26, \$27, \$28, \$29, \$30, 'in' from inserted_order \) select \* from inserted_order$/);
+      const columns = text.match(/^with inserted_order as \( insert into orders \((.*?)\) values/)[1].split(',').map(s => s.trim());
+      // These columns precede literal CREATED/web/payu status values. Remaining
+      // bindings are explicit so a changed production statement fails loudly.
+      order = Object.fromEntries(columns.slice(0, 7).map((column, i) => [column, clone(values[i])]));
+      Object.assign(order, { status: 'CREATED', fulfilment_status: 'PENDING',
+        subtotal_paise: values[8], discount_paise: values[9], shipping_paise: values[10], total_paise: values[11],
+        customer_name: values[16], customer_email: values[17], customer_phone: values[18],
+        reservation_state: values[19], reservation_expires_at: new Date(NOW.getTime() + 600_000),
+        created_at: new Date(now), updated_at: new Date(now), paid_at: null,
+        payment_review_required: false, payment_review_reason: '' });
+      assert.equal(order.reservation_state, 'ACTIVE');
+      history.push([order.id, values[22]]);
+      return [clone(order)];
+    }
     if (text.startsWith('insert into orders (')) {
       const columns = text.match(/^insert into orders \((.*?)\) values/)[1].split(',').map(s => s.trim());
       // These columns precede literal CREATED/web/payu status values. Remaining
@@ -197,6 +214,20 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
       }
       return [...released.values()].sort((a, b) => key(a.product_id, a.variant_id).localeCompare(key(b.product_id, b.variant_id)));
     }
+    if (text.startsWith("select product_id, variant_id, coalesce(sum(case when reason='sale'")) {
+      assert.match(text, /from stock_movements where order_id=\$1 group by product_id, variant_id having coalesce\(sum\(case when reason='sale' then -delta else 0 end\),0\) > 0 order by product_id, variant_id nulls first$/);
+      const grouped = new Map();
+      for (const m of movements.filter(row => row.order_id === values[0])) {
+        const identity = key(m.product_id, m.variant_id);
+        const entry = grouped.get(identity) ?? { product_id: m.product_id, variant_id: m.variant_id, claimed: 0, released: 0 };
+        if (m.reason === 'sale') entry.claimed += -m.delta;
+        else if (m.reason === 'release' || m.reason === 'return') entry.released += m.delta;
+        grouped.set(identity, entry);
+      }
+      return [...grouped.values()]
+        .filter(row => row.claimed > 0)
+        .sort((a, b) => a.product_id.localeCompare(b.product_id) || (a.variant_id ?? '').localeCompare(b.variant_id ?? ''));
+    }
     if (text.startsWith('select distinct product_id,variant_id from stock_movements')) {
       return [...new Map(movements.filter(m => m.order_id === values[0] && m.reason === 'sale')
         .map(m => [key(m.product_id, m.variant_id), { product_id: m.product_id, variant_id: m.variant_id }])).values()];
@@ -215,6 +246,49 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
     if (text.startsWith('select product_id, variant_id, on_hand, reserved, track_inventory from stock where')) {
       assert.match(text, /for update$/);
       return stockIdentityRows(text, values).map(clone);
+    }
+    if (text.startsWith('select s.product_id, s.variant_id, s.on_hand, s.reserved, s.track_inventory from stock s where exists')) {
+      assert.match(text, /jsonb_to_recordset\(\$1::jsonb\) as w\(product_id text, variant_id text\) where s\.product_id = w\.product_id and s\.variant_id is not distinct from w\.variant_id \) order by s\.product_id asc, coalesce\(s\.variant_id, ''\) asc for update of s$/);
+      const records = values[0];
+      assert.ok(Array.isArray(records) && records.length > 1, 'batched stock lock requires multiple identity records');
+      const wanted = new Set(records.map(r => {
+        assert.ok(r && typeof r.product_id === 'string' && 'variant_id' in r, 'every record must bind product_id and variant_id');
+        return key(r.product_id, r.variant_id);
+      }));
+      return stocks
+        .filter(row => wanted.has(key(row.product_id, row.variant_id)))
+        .sort((a, b) => a.product_id.localeCompare(b.product_id) || (a.variant_id ?? '').localeCompare(b.variant_id ?? ''))
+        .map(clone);
+    }
+    if (text.startsWith('with claimed as ( update stock set on_hand=on_hand-')) {
+      assert.match(text, /where product_id=\$2 and variant_id is not distinct from \$3::text and track_inventory and on_hand - reserved >= \$4 returning product_id \), movement as \( insert into stock_movements\(product_id,variant_id,delta,reason,order_id\) select \$5,\$6,\$7,'sale',\$8 from claimed \) select product_id from claimed$/);
+      const matches = stockIdentityRows(text, values);
+      const quantity = values[0];
+      assert.ok(Number.isSafeInteger(quantity) && quantity > 0);
+      assert.equal(values[3], quantity);
+      assert.equal(values[4], values[1]);
+      assert.equal(values[5], values[2]);
+      assert.equal(values[6], -quantity);
+      const changed = matches.filter(row => row.track_inventory && row.on_hand - row.reserved >= quantity);
+      for (const row of changed) {
+        row.on_hand -= quantity;
+        movements.push({ product_id: values[4], variant_id: values[5], delta: values[6], reason: 'sale', order_id: values[7] });
+      }
+      return changed.map(row => ({ product_id: row.product_id }));
+    }
+    if (text.startsWith('with restored as ( update stock set on_hand=on_hand+')) {
+      assert.match(text, /where product_id=\$2 and variant_id is not distinct from \$3::text returning id \), movement as \( insert into stock_movements\(product_id,variant_id,delta,reason,order_id\) select \$4,\$5,\$6,'release',\$7 from restored \) select id from restored$/);
+      const matches = stockIdentityRows(text, values);
+      const quantity = values[0];
+      assert.ok(Number.isSafeInteger(quantity) && quantity > 0);
+      assert.equal(values[3], values[1]);
+      assert.equal(values[4], values[2]);
+      assert.equal(values[5], quantity);
+      for (const row of matches) {
+        row.on_hand += quantity;
+        movements.push({ product_id: values[3], variant_id: values[4], delta: values[5], reason: 'release', order_id: values[6] });
+      }
+      return matches.map(row => ({ id: row.id }));
     }
     if (text.startsWith('update stock set on_hand=')) {
       const matches = stockIdentityRows(text, values);
@@ -238,11 +312,16 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
     return stocks.filter(row => key(row.product_id, row.variant_id) === key(values[Number(product[1]) - 1], values[Number(variant[1]) - 1]));
   }
   sql.json = value => value;
-  sql.begin = async fn => {
+  let txQueue = Promise.resolve();
+  sql.begin = fn => {
     // In-memory rollback is a fixture convenience, not proof of DB atomicity.
-    const snapshot = clone({ stocks, order, movements, items, history, events, obligations });
-    try { return await fn(sql); }
-    catch (error) { ({ stocks, order, movements, items, history, events, obligations } = snapshot); throw error; }
+    const next = txQueue.then(async () => {
+      const snapshot = clone({ stocks, order, movements, items, history, events, obligations });
+      try { return await fn(sql); }
+      catch (error) { ({ stocks, order, movements, items, history, events, obligations } = snapshot); throw error; }
+    });
+    txQueue = next.catch(() => {});
+    return next;
   };
   return { sql, queries, order: () => clone(order), movements: () => clone(movements),
     items: () => clone(items), history: () => clone(history), events: () => clone(events),
@@ -325,7 +404,7 @@ function assertOtherStockUnchanged(f, before, identities) {
     'replacement, siblings, other-model and retained parent stock must not substitute for original claims');
 }
 function stockWrites(f) {
-  return f.queries.filter(q => /^(update stock|insert into stock_movements)/.test(q.text));
+  return f.queries.filter(q => /^(update stock|insert into stock_movements|with (claimed|restored) as \( update stock)/.test(q.text));
 }
 async function expire(f) {
   f.advanceToExpiry();
@@ -364,13 +443,13 @@ test('actual checkout reserves selected Black stock; verified callback consumes 
   assert.equal(paid.status, 'PAID');
   assert.equal(paid.order.reservationState, 'CONSUMED');
   assertClaim(f);
-  const writesBeforeReplay = f.queries.filter(q => /^(update stock|insert into stock_movements)/.test(q.text)).length;
+  const writesBeforeReplay = stockWrites(f).length;
   const replay = await callback(f);
   assert.equal(replay.status, 'PAID');
   assert.equal(replay.order.reservationState, 'CONSUMED');
   assert.equal(f.history().length, 2, 'CREATED and PAID only; replay writes no transition');
   assert.deepEqual(f.events().map(e => e[4]), ['paid', 'unchanged']);
-  assert.equal(f.queries.filter(q => /^(update stock|insert into stock_movements)/.test(q.text)).length, writesBeforeReplay);
+  assert.equal(stockWrites(f).length, writesBeforeReplay);
   assertClaim(f);
 });
 
@@ -637,3 +716,31 @@ for (const unavailable of ['missing', 'insufficient', 'reserved']) {
     assertSnapshots(f, snapshots);
   });
 }
+
+test('multi-line rollback and last-unit concurrent reservation protect sibling and parent inventory', async () => {
+  // 1. Rollback: if the second line (Blue) lacks stock during final claim, the entire transaction rolls back.
+  const fRollback = fixture({ blackOnHand: 5 });
+  fRollback.setStock(PRODUCT, BLUE, { on_hand: 2, reserved: 0 });
+  const beforeRollback = fRollback.stocks();
+  await assert.rejects(reserve(fRollback, mixedLines()), { name: 'InsufficientStockError', code: 'insufficient_stock' });
+  assert.equal(fRollback.order(), null, 'failed multi-line reservation leaves no order');
+  assert.deepEqual(fRollback.items(), [], 'failed multi-line reservation leaves no order_items');
+  assert.deepEqual(fRollback.history(), [], 'failed multi-line reservation leaves no status history');
+  assert.deepEqual(fRollback.movements(), [], 'failed multi-line reservation leaves no stock movements');
+  assert.deepEqual(fRollback.stocks(), beforeRollback, 'all stock rows roll back cleanly');
+
+  // 2. Last-unit concurrent reservation race: only 1 of 2 buyers for the last Black unit succeeds.
+  const fRace = fixture({ blackOnHand: 1 });
+  const outcomes = await Promise.allSettled([
+    reserve(fRace, [variantLine(BLACK, 1)]),
+    reserve(fRace, [variantLine(BLACK, 1)]),
+  ]);
+  const fulfilled = outcomes.filter(r => r.status === 'fulfilled');
+  const rejected = outcomes.filter(r => r.status === 'rejected');
+  assert.equal(fulfilled.length, 1, 'exactly one reservation succeeds for the last selected variant unit');
+  assert.equal(rejected.length, 1, 'second reservation is rejected');
+  assert.equal(rejected[0].reason?.name, 'InsufficientStockError');
+  assert.equal(fRace.selected().on_hand, 0, 'last Black unit is claimed once and never goes negative');
+  assert.equal(fRace.movements().length, 1, 'exactly one sale movement recorded');
+  fRace.assertUntouched();
+});

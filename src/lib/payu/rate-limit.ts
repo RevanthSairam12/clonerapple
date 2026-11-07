@@ -29,6 +29,7 @@ interface RateLimitEntry {
 
 const store = new Map<string, RateLimitEntry>();
 const CLEANUP_INTERVAL_MS = 60 * 1000;
+const MAX_STORE_ENTRIES = 10_000;
 let lastCleanup = Date.now();
 
 function purgeExpired(windowMs: number) {
@@ -67,6 +68,10 @@ export function checkRateLimit(key: string, options: RateLimitOptions): RateLimi
 
   let entry = store.get(key);
   if (!entry) {
+    if (store.size >= MAX_STORE_ENTRIES) {
+      const oldestKey = store.keys().next().value;
+      if (oldestKey !== undefined) store.delete(oldestKey);
+    }
     entry = { timestamps: [] };
     store.set(key, entry);
   }

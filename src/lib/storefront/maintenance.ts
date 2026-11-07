@@ -233,11 +233,13 @@ interface CacheEntry {
 
 const globalForMaintenance = globalThis as typeof globalThis & {
   __gadzioMaintenance?: CacheEntry;
+  __gadzioMaintenanceInflight?: Promise<MaintenanceState>;
 };
 
 /** Test hook: forget the cached decision. */
 export function clearMaintenanceCache(): void {
   globalForMaintenance.__gadzioMaintenance = undefined;
+  globalForMaintenance.__gadzioMaintenanceInflight = undefined;
 }
 
 /**
@@ -329,6 +331,24 @@ export function stateFromRow(row: Record<string, unknown>): MaintenanceState | n
   };
 }
 
+function startMaintenanceRefresh(): Promise<MaintenanceState> {
+  if (globalForMaintenance.__gadzioMaintenanceInflight) {
+    return globalForMaintenance.__gadzioMaintenanceInflight;
+  }
+  const inflight = (async (): Promise<MaintenanceState> => {
+    const state = await readMaintenanceState();
+    // Record completion time so pool queue wait never shortens or collapses the TTL.
+    globalForMaintenance.__gadzioMaintenance = { state, at: Date.now() };
+    return state;
+  })().finally(() => {
+    if (globalForMaintenance.__gadzioMaintenanceInflight === inflight) {
+      globalForMaintenance.__gadzioMaintenanceInflight = undefined;
+    }
+  });
+  globalForMaintenance.__gadzioMaintenanceInflight = inflight;
+  return inflight;
+}
+
 /**
  * The state the storefront should act on. Cached for a few seconds; a cache
  * hit is only ever used while it is younger than MAINTENANCE_CACHE_MS.
@@ -339,15 +359,23 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   if (cached && now - cached.at < MAINTENANCE_CACHE_MS) {
     return { ...cached.state, cached: true };
   }
+  if (cached) {
+    void startMaintenanceRefresh();
+    const baseNowMs = Date.parse(cached.state.now);
+    const advancedNowMs = Number.isFinite(baseNowMs)
+      ? baseNowMs + Math.max(0, now - cached.at)
+      : now;
+    const active = evaluateMaintenance(cached.state, advancedNowMs);
+    return {
+      ...cached.state,
+      active,
+      now: new Date(advancedNowMs).toISOString(),
+      cached: true,
+    };
+  }
 
-  const state = await readMaintenanceState();
-  // Never cache a "fail open" result for long: if the settings read failed we
-  // want the next request to retry rather than pin the shop open for the full
-  // window. Failures arrive here as `enabled: false` with a fresh `now`;
-  // caching them is still correct (the store is up either way), but a short
-  // TTL is friendlier when the database recovers.
-  globalForMaintenance.__gadzioMaintenance = { state, at: now };
-  return state;
+  const state = await startMaintenanceRefresh();
+  return { ...state };
 }
 
 /** Retry-After in seconds while maintenance is active. */
