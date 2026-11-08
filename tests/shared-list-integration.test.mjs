@@ -58,6 +58,25 @@ const UNICODE_VERSION_BOUNDARY = new Map([
   ]),
 ]);
 
+test('UNICODE_VERSION_BOUNDARY pins the exact 37 Unicode 16.0 compatibility scalars and alerts if Node/ICU changes', async () => {
+  const { rules } = await loadSharedListServices();
+  const runtimeInfo = `Node ${process.versions.node}, ICU ${process.versions.icu}, Unicode ${process.versions.unicode}`;
+  assert.equal(
+    UNICODE_VERSION_BOUNDARY.size,
+    37,
+    `Expected exactly 37 boundary scalars (1 + 26 + 10) under ${runtimeInfo}`,
+  );
+  for (const [scalar, expected] of UNICODE_VERSION_BOUNDARY) {
+    const actualJs = rules.normalizeSharedName(scalar);
+    const codePoint = `U+${scalar.codePointAt(0).toString(16).toUpperCase()}`;
+    assert.equal(
+      actualJs,
+      expected.js,
+      `[UNICODE_VERSION_BOUNDARY drift on ${runtimeInfo}] Scalar ${codePoint} (${JSON.stringify(scalar)}, ${expected.since}) normalized to ${JSON.stringify(actualJs)} instead of pinned ${JSON.stringify(expected.js)}. Update UNICODE_VERSION_BOUNDARY or regenerate migration 0058 if the runtime ICU/Unicode version changed.`,
+    );
+  }
+});
+
 test('shared-list manifest is deterministic, target/code bound, bounded and secret-free (offline)', async () => {
   const one = await sharedListManifest({ databaseUrl: offlineTarget });
   const two = await sharedListManifest({ databaseUrl: offlineTarget, race: true });
