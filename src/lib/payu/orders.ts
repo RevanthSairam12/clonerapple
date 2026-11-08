@@ -741,7 +741,7 @@ export async function createOrderUsing(
     : buildOrderItemLines(legacy!.items).map((line) => line.productId);
   const reservationSeconds = Math.max(0, Math.trunc(params.reservationSeconds ?? 0));
 
-  return await sql.begin(async (tx) => {
+  const committed = await sql.begin(async (tx) => {
     await setTransactionTimeouts(tx);
     // Shared configuration fence: activation cannot race a parent-only checkout.
     await tx`select pg_advisory_xact_lock_shared(513031,3)`;
@@ -1242,6 +1242,23 @@ export async function createOrderUsing(
       expiredReservations,
     };
   });
+
+  if (
+    committed.stockClaimed
+    && !committed.resumed
+    && typeof (sql as { options?: unknown })?.options === 'object'
+  ) {
+    try {
+      const { enqueueOrderLowStockAlerts } = await import(
+        '@/lib/notifications/order-stock-alerts'
+      );
+      await enqueueOrderLowStockAlerts(committed.order.id, { sql });
+    } catch {
+      // Never fail a committed checkout order if notification queueing is unavailable.
+    }
+  }
+
+  return committed;
 }
 
 export async function getOrderShippingAddress(

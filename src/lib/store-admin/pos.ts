@@ -490,7 +490,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
   const customerPhone = input.customerPhone?.trim() || null;
 
   try {
-    return await sql.begin(async (tx) => {
+    const committed = await sql.begin(async (tx) => {
       await setTransactionTimeouts(tx);
       // Configuration activation cannot race an old parent-identity sale.
       await tx`select pg_advisory_xact_lock_shared(513031,3)`;
@@ -789,6 +789,19 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
         },
       };
     });
+
+    if (committed.ok && typeof (sql as { options?: unknown })?.options === 'object') {
+      try {
+        const { enqueueOrderLowStockAlerts } = await import(
+          '@/lib/notifications/order-stock-alerts'
+        );
+        await enqueueOrderLowStockAlerts(committed.data.orderId, { sql });
+      } catch {
+        // Never fail a committed POS sale if notification queueing is unavailable.
+      }
+    }
+
+    return committed;
   } catch (error) {
     if (error instanceof Error && error.message === 'POS_STOCK_CHANGED') {
       return { ok: false, reason: 'out-of-stock', error: 'Stock changed while the sale was being recorded. Try again.' };

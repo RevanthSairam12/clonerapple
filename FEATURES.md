@@ -21,6 +21,14 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Stage 3 — Product Options Completion & Per-Option Low-Stock Notifications — 8 November 2026
+
+- **Per-option low-stock staff notifications for checkout and POS sales (`src/lib/notifications/stock-events.ts`, `src/lib/notifications/order-stock-alerts.ts`, `src/lib/payu/orders.ts`, `src/lib/store-admin/pos.ts`):**
+  - After a web checkout (`createOrderUsing`) or POS sale (`createPosSaleUsing`) transaction commits, `enqueueOrderLowStockAlerts` reconstructs each sale movement's exact `availableBefore` and `availableAfter` from the append-only `stock_movements` ledger (`m2.id > m.id`).
+  - When an option (or product) crosses from above its `low_stock_threshold` into `1..threshold`, a `low_stock` staff notification is enqueued with the option's name (`stockAlertProductName`, e.g. `"Gadzio Armor Case — iPhone 16 · Red"`), a deep link to `/store-admin/stock/<productId>?variant=<variantId>`, and a per-crossing dedupe token (`movement:<movementId>`).
+  - Already-low options, out-of-stock (`0`) transitions, and untracked options do not re-alert.
+- **Measured (8 November 2026):** `npm test` **1,864 tests / 1,770 passed / 0 failed / 94 skipped** (plus `tests/stage3-option-low-stock-alerts.test.mjs` **2/2 passed** with `RUN_LEGACY_DB_TESTS=1` on the test database); `npm run typecheck` and `npm run build` pass; all check scripts (`check-store-admin-routes`, `check-account-routes`, `check-admin-boundary`, `check-setting-lists`, `check-security-db-state`) pass; `npm audit` **0 vulnerabilities**.
+
 ### Stage 2 — Payments, Atomic Checkout, Status Glossary, Reconcile Heartbeat & Needs-Attention — 8 November 2026
 
 - **Atomic one-active-checkout handling (`src/lib/payu/orders.ts`, `src/app/api/payu/initiate/route.ts`, `src/components/checkout/CheckoutForm.tsx`, `src/lib/storefront/availability-server.ts`):**
