@@ -20,6 +20,10 @@ export interface DocumentState {
   orderStatus: string;
   shipmentStatus: string;
   refundStatus: 'NONE' | 'INITIATED' | 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'REJECTED';
+  paymentStatusKey: CanonicalPaymentStatus;
+  paymentStatusLabel: string;
+  orderStatusKey: CanonicalOrderStatus;
+  orderStatusLabel: string;
   label: string;
   kind: 'status' | 'provisional' | 'invoice' | 'legacy' | 'receipt';
   paymentSettled: boolean;
@@ -70,6 +74,140 @@ const money = (value: unknown) => {
   const n = Number(value);
   return Number.isSafeInteger(n) && n >= 0 ? n : 0;
 };
+export type CanonicalPaymentStatus =
+  | 'PENDING'
+  | 'VERIFYING'
+  | 'PAID'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'REFUND_INITIATED'
+  | 'PARTIALLY_REFUNDED'
+  | 'REFUNDED';
+
+export type CanonicalOrderStatus =
+  | 'AWAITING_PAYMENT'
+  | 'CONFIRMED'
+  | 'PACKED'
+  | 'SHIPPED'
+  | 'DELIVERED'
+  | 'CANCELLED'
+  | 'RETURNED';
+
+export interface DerivedOrderStatuses {
+  paymentStatusKey: CanonicalPaymentStatus;
+  paymentStatusLabel: string;
+  orderStatusKey: CanonicalOrderStatus;
+  orderStatusLabel: string;
+}
+
+const PAYMENT_STATUS_GLOSSARY: Record<CanonicalPaymentStatus, string> = {
+  PENDING: 'Pending',
+  VERIFYING: 'Verifying',
+  PAID: 'Paid',
+  FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+  REFUND_INITIATED: 'Refund initiated',
+  PARTIALLY_REFUNDED: 'Partially refunded',
+  REFUNDED: 'Refunded',
+};
+
+const ORDER_STATUS_GLOSSARY: Record<CanonicalOrderStatus, string> = {
+  AWAITING_PAYMENT: 'Awaiting payment',
+  CONFIRMED: 'Confirmed',
+  PACKED: 'Packed',
+  SHIPPED: 'Shipped',
+  DELIVERED: 'Delivered',
+  CANCELLED: 'Cancelled',
+  RETURNED: 'Returned',
+};
+
+/**
+ * One shared glossary deriving independent Payment status and Order
+ * (fulfilment) status for every admin and customer surface.
+ *
+ * Rules:
+ * - Pending or cancelled payment never produces Paid.
+ * - PROCESSING is Verifying, never revenue or Confirmed.
+ * - Only a verified capture (`paymentStatus === 'PAID'`) produces Paid.
+ * - Failed and cancelled payments leave the order Awaiting payment or
+ *   Cancelled, never Confirmed.
+ */
+export function derivePaymentAndOrderStatus(input: {
+  paymentStatus?: unknown;
+  fulfilmentStatus?: unknown;
+  saleState?: unknown;
+  paymentReviewRequired?: boolean;
+  capturedPaise?: unknown;
+  refundedPaise?: unknown;
+  pendingRefundPaise?: unknown;
+  refundCount?: unknown;
+  returnStatus?: unknown;
+}): DerivedOrderStatuses {
+  const rawPayment = String(input.paymentStatus ?? '').trim().toUpperCase();
+  const rawFulfilment = String(input.fulfilmentStatus ?? '').trim().toUpperCase();
+  const rawSaleState = String(input.saleState ?? '').trim().toUpperCase();
+  const rawReturn = String(input.returnStatus ?? '').trim().toUpperCase();
+  const capturedPaise = money(input.capturedPaise);
+  const refundedPaise = money(input.refundedPaise);
+  const pendingRefundPaise = money(input.pendingRefundPaise);
+  const refundCount = money(input.refundCount);
+
+  let paymentStatusKey: CanonicalPaymentStatus = 'PENDING';
+  if (rawPayment === 'PAID') {
+    if (pendingRefundPaise > 0) {
+      paymentStatusKey = 'REFUND_INITIATED';
+    } else if (refundedPaise > 0 && capturedPaise > 0 && refundedPaise < capturedPaise) {
+      paymentStatusKey = 'PARTIALLY_REFUNDED';
+    } else if (
+      (refundedPaise > 0 && (capturedPaise === 0 || refundedPaise >= capturedPaise))
+      || refundCount > 0
+      || rawSaleState === 'REFUNDED'
+    ) {
+      paymentStatusKey = 'REFUNDED';
+    } else {
+      paymentStatusKey = 'PAID';
+    }
+  } else if (rawPayment === 'PROCESSING' || input.paymentReviewRequired === true) {
+    paymentStatusKey = 'VERIFYING';
+  } else if (rawPayment === 'FAILED') {
+    paymentStatusKey = 'FAILED';
+  } else if (rawPayment === 'CANCELLED' || rawPayment === 'CANCELED') {
+    paymentStatusKey = 'CANCELLED';
+  } else {
+    paymentStatusKey = 'PENDING';
+  }
+
+  let orderStatusKey: CanonicalOrderStatus = 'AWAITING_PAYMENT';
+  const isCancelled =
+    rawFulfilment === 'CANCELED'
+    || rawFulfilment === 'CANCELLED'
+    || rawPayment === 'CANCELLED'
+    || rawPayment === 'CANCELED';
+
+  if (rawReturn === 'RECEIVED' || rawReturn === 'REFUNDED') {
+    orderStatusKey = 'RETURNED';
+  } else if (isCancelled) {
+    orderStatusKey = 'CANCELLED';
+  } else if (rawPayment !== 'PAID') {
+    orderStatusKey = 'AWAITING_PAYMENT';
+  } else if (rawFulfilment === 'DELIVERED') {
+    orderStatusKey = 'DELIVERED';
+  } else if (rawFulfilment === 'ON_THE_WAY') {
+    orderStatusKey = 'SHIPPED';
+  } else if (rawFulfilment === 'PROCESSING') {
+    orderStatusKey = 'PACKED';
+  } else {
+    orderStatusKey = 'CONFIRMED';
+  }
+
+  return {
+    paymentStatusKey,
+    paymentStatusLabel: PAYMENT_STATUS_GLOSSARY[paymentStatusKey],
+    orderStatusKey,
+    orderStatusLabel: ORDER_STATUS_GLOSSARY[orderStatusKey],
+  };
+}
+
 export function deriveDocumentState(facts: DocumentFacts): DocumentState {
   const totalPaise = money(facts.totalPaise);
   const capturedPaise = money(facts.capturedPaise);
@@ -103,10 +241,23 @@ export function deriveDocumentState(facts: DocumentFacts): DocumentState {
   // Unpaid/review cases remain a status-only screen, never payment proof.
   const canViewBill = settled && (issued || shipped || (billRequested && (!cancelled || pendingRefundPaise > 0 || refundedPaise > 0)));
   const kind: DocumentState['kind'] = !canViewBill ? 'status' : issued ? 'invoice' : shipped ? 'legacy' : 'provisional';
+  const derivedStatuses = derivePaymentAndOrderStatus({
+    paymentStatus: payment,
+    fulfilmentStatus: fulfilment,
+    paymentReviewRequired: facts.paymentReviewRequired,
+    capturedPaise,
+    refundedPaise,
+    pendingRefundPaise,
+  });
   return {
     paymentStatus: payment, orderStatus: cancelled ? 'CANCELLED' : fulfilment,
     shipmentStatus: shipped ? (fulfilment === 'DELIVERED' ? 'DELIVERED' : 'SHIPPED') : 'NOT_SHIPPED',
-    refundStatus, label, kind, canRequestBill, canViewBill, paymentSettled: settled,
+    refundStatus,
+    paymentStatusKey: derivedStatuses.paymentStatusKey,
+    paymentStatusLabel: derivedStatuses.paymentStatusLabel,
+    orderStatusKey: derivedStatuses.orderStatusKey,
+    orderStatusLabel: derivedStatuses.orderStatusLabel,
+    label, kind, canRequestBill, canViewBill, paymentSettled: settled,
     isPaymentProof: ordinarySale && totalPaise > 0 && canViewBill,
     totalPaise, capturedPaise, refundedPaise, pendingRefundPaise, refundDuePaise,
     retainedPaise: Math.max(0, capturedPaise - refundedPaise),

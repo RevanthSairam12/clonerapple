@@ -81,10 +81,20 @@ async function loadAvailabilityRows(
  * called on click (Add to Bag / Buy Now) specifically so a customer does not
  * act on a cached sale or stock state.
  */
+export interface ReadAvailabilityOptions {
+  /**
+   * When present, units currently held by this customer's own active unpaid
+   * reservation are added back to their view of `on_hand`, so a customer's own
+   * held units never make an item look sold out to that same customer.
+   */
+  userId?: string | null;
+}
+
 export async function readAvailabilityUsing(
   sql: postgres.Sql | postgres.TransactionSql,
   ids: readonly string[],
   lines: readonly AvailabilityLine[] = [],
+  options: ReadAvailabilityOptions = {},
 ): Promise<AvailabilityRead> {
   const wanted = [...new Set([...ids, ...lines.map((line) => line.productId)].map((id) => id.trim()).filter(Boolean))];
   const isAppPool = Boolean(
@@ -101,10 +111,60 @@ export async function readAvailabilityUsing(
     const state = await readState();
     return { saleLive: state.live, databaseNow: state.databaseNow, products: [], variants: [] };
   }
-  const [state, { rows, variantRows }] = await Promise.all([
+  let effectiveUserId = options.userId ? options.userId.trim() : '';
+  if (!effectiveUserId && options.userId === undefined && isAppPool) {
+    try {
+      const { getUserSession } = await import('@/lib/user-auth');
+      const session = await getUserSession();
+      effectiveUserId = session?.userId?.trim() || '';
+    } catch {
+      effectiveUserId = '';
+    }
+  }
+  const [state, { rows: rawRows, variantRows: rawVariantRows }, ownHeldRows] = await Promise.all([
     readState(),
     loadAvailabilityRows(sql, wanted, isAppPool),
+    effectiveUserId
+      ? (sql`
+          select m.product_id, m.variant_id,
+            greatest(
+              coalesce(sum(case when m.reason='sale' then -m.delta else 0 end),0) -
+              coalesce(sum(case when m.reason in ('release','return') then m.delta else 0 end),0),
+              0
+            )::int as held
+          from orders o
+          join stock_movements m on m.order_id = o.id
+          where o.user_id = ${effectiveUserId}
+            and o.reservation_state = 'ACTIVE'
+            and o.reservation_expires_at > now()
+            and o.status in ('CREATED', 'PENDING', 'PROCESSING', 'FAILED', 'CANCELLED')
+            and m.product_id = any(${wanted}::text[])
+          group by m.product_id, m.variant_id
+        `.catch(() => []) as Promise<Row[]>)
+      : Promise.resolve([] as Row[]),
   ]);
+  const ownHeldByKey = new Map<string, number>();
+  for (const heldRow of ownHeldRows) {
+    const held = Number(heldRow.held) || 0;
+    if (held > 0) {
+      const key = availabilityKey(String(heldRow.product_id), heldRow.variant_id ? String(heldRow.variant_id) : undefined);
+      ownHeldByKey.set(key, (ownHeldByKey.get(key) ?? 0) + held);
+    }
+  }
+  const rows = ownHeldByKey.size > 0
+    ? rawRows.map((row) => {
+        const held = ownHeldByKey.get(availabilityKey(String(row.id))) ?? 0;
+        if (held <= 0 || row.on_hand === null || row.on_hand === undefined) return row;
+        return { ...row, on_hand: Number(row.on_hand) + held };
+      })
+    : rawRows;
+  const variantRows = ownHeldByKey.size > 0
+    ? rawVariantRows.map((row) => {
+        const held = ownHeldByKey.get(availabilityKey(String(row.product_id), String(row.variant_id))) ?? 0;
+        if (held <= 0 || row.on_hand === null || row.on_hand === undefined) return row;
+        return { ...row, on_hand: Number(row.on_hand) + held };
+      })
+    : rawVariantRows;
   const byId = new Map(rows.map((row) => [String(row.id), row]));
   const eligible = (id: string) => { const row = byId.get(id); return Boolean(row && row.deleted_at === null && row.is_active !== false); };
   const variants = variantRows.map((row) => eligible(String(row.product_id))

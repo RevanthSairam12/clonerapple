@@ -164,6 +164,8 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
               <h2 className="sa-card-title">Payment summary</h2>
               <dl className="sa-meta">
                 <div><dt>Sale state</dt><dd>{SALE_STATE_LABELS[order.saleState]}</dd></div>
+                <div><dt>Payment status</dt><dd>{documentState.paymentStatusLabel}</dd></div>
+                <div><dt>Order status</dt><dd>{documentState.orderStatusLabel}</dd></div>
                 <div><dt>Current status</dt><dd>{documentState.label}</dd></div>
                 <div><dt>Payment record</dt><dd>{order.paymentStatus === 'PAID' ? 'Payment captured' : order.paymentStatus}</dd></div>
                 <div><dt>Items subtotal</dt><dd>{formatAmount(totals.subtotalPaise, order.currency)}</dd></div>
@@ -671,6 +673,12 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
               </Link>
             </>
           ) : null}
+          <span className={stateClass(order.saleState)} data-status-domain="payment">
+            Payment: {documentState.paymentStatusLabel}
+          </span>
+          <span className="sa-status" data-status-domain="order">
+            Order: {documentState.orderStatusLabel}
+          </span>
           <span className={stateClass(order.saleState)}>{SALE_STATE_LABELS[order.saleState]}</span>
         </div>
       </div>

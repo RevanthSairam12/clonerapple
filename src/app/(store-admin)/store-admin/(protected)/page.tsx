@@ -7,6 +7,7 @@ import { getMaintenanceState, maintenanceStatus } from '@/lib/storefront/mainten
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { formatPaise } from '@/lib/store-admin/amount';
+import { getNeedsAttentionSummary } from '@/lib/store-admin/needs-attention';
 import { getDatabaseNow, getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import {
   getSalesAnalytics,
@@ -728,6 +729,7 @@ export default async function StoreAdminDashboard({
   const session = await getStoreSession();
   const sale = await readSaleState();
   const maintenance = await getMaintenanceState();
+  const needsAttention = await getNeedsAttentionSummary();
   const sales = tab === 'sales' ? await getSalesAnalytics(range) : null;
   const users = tab === 'users' ? await getUsersAnalytics(range) : null;
   const transactions =
@@ -783,6 +785,111 @@ export default async function StoreAdminDashboard({
           </Link>
         </div>
       </section>
+
+      <div className="sa-dash-grid" style={{ marginBottom: 20 }}>
+        <section className="sa-panel" aria-label="Needs attention">
+          <div className="sa-panel-head">
+            <div>
+              <h2 className="sa-panel-title">Needs attention</h2>
+              <p className="sa-panel-sub">
+                Flagged payments, refunds owed, stuck verifications, failed notifications and reconciliation health.
+              </p>
+            </div>
+            <Link className="sa-btn sa-btn-quiet sa-btn-small" href="/store-admin/payments">
+              Open Payments
+            </Link>
+          </div>
+          <div className="sa-panel-body">
+            <div className="sa-table-wrap">
+              <table className="sa-table">
+                <thead>
+                  <tr>
+                    <th>Queue</th>
+                    <th className="sa-num">Count</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {needsAttention.items.map((item) => (
+                    <tr key={item.key}>
+                      <td>
+                        <strong>{item.label}</strong>
+                        <span className="sa-row-sub">
+                          {item.detail}
+                          {item.amountPaise && item.amountPaise > 0
+                            ? ` (${formatPaise(item.amountPaise)})`
+                            : ''}
+                        </span>
+                      </td>
+                      <td className="sa-num">{item.count}</td>
+                      <td>
+                        <span className={item.urgent ? 'sa-status sa-status-danger' : 'sa-status sa-status-on'}>
+                          {item.urgent ? 'Needs attention' : 'OK'}
+                        </span>
+                      </td>
+                      <td>
+                        <Link className="sa-product-link" href={item.href}>
+                          Open →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section className="sa-panel" aria-label="Background jobs">
+          <div className="sa-panel-head">
+            <div>
+              <h2 className="sa-panel-title">Background jobs</h2>
+              <p className="sa-panel-sub">
+                Payment &amp; reservation reconciliation heartbeat (expected every minute).
+              </p>
+            </div>
+            <span
+              className={
+                needsAttention.reconcile.stale
+                  ? 'sa-status sa-status-danger'
+                  : 'sa-status sa-status-on'
+              }
+              data-heartbeat-status={needsAttention.reconcile.stale ? 'stale' : 'healthy'}
+            >
+              {needsAttention.reconcile.stale ? 'No run in last 5 minutes' : 'Healthy'}
+            </span>
+          </div>
+          <div className="sa-panel-body">
+            <dl className="sa-meta">
+              <div>
+                <dt>Last successful run</dt>
+                <dd>
+                  {needsAttention.reconcile.lastSuccessAt
+                    ? new Date(needsAttention.reconcile.lastSuccessAt).toLocaleString('en-IN', {
+                        timeZone,
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })
+                    : 'Never'}
+                </dd>
+              </div>
+              <div>
+                <dt>Orders processed (last run)</dt>
+                <dd>{needsAttention.reconcile.lastProcessedCount}</dd>
+              </div>
+              <div>
+                <dt>Last error</dt>
+                <dd>{needsAttention.reconcile.lastError || 'None'}</dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+      </div>
 
       <div className="sa-overview-bar">
         <nav className="sa-tabs" aria-label="Overview dashboards">
@@ -842,10 +949,6 @@ export default async function StoreAdminDashboard({
       {transactions && transactions.ok ? (
         <TransactionsTab data={transactions.data} range={range} timeZone={timeZone} />
       ) : null}
-
-      <p className="sa-readonly-foot">
-        Price editing is disabled until every payment path reads prices from the database.
-      </p>
     </div>
   );
 }

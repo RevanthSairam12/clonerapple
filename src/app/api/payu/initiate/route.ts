@@ -8,7 +8,14 @@ import {
 } from '@/lib/coupons/rules';
 import { getPayUConfig, checkPayUConfiguration, getPayUCallbackUrls } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
-import { createOrder, findActiveReservationForUser, getOrderByTxnid } from '@/lib/payu/orders';
+import {
+  createOrder,
+  findActiveReservationForUser,
+  getOrderByTxnid,
+  getOrderShippingAddress,
+  isIdenticalCheckoutAttempt,
+} from '@/lib/payu/orders';
+import { verifyExistingOrderWithPayU } from '@/lib/payu/process-response';
 import { InsufficientStockError } from '@/lib/payu/stock';
 import { isValidCheckoutVariantId, MAX_CHECKOUT_LINES, SelectionUnavailableError } from '@/lib/payu/db-pricing';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
@@ -123,21 +130,6 @@ export async function POST(req: NextRequest) {
 
     const reservationPolicy = parseReservationPolicy(settings);
 
-    // One live checkout per account. Without this a customer could open several
-    // tabs and hold several units; the reservation is never extended by a
-    // repeat request, so the window stays the one shown when checkout started.
-    if (activeReservation) {
-      return NextResponse.json(
-        {
-          error: 'A checkout is already in progress for this account. Finish that payment or wait for its reservation to expire before starting another.',
-          code: 'reservation_active',
-          statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
-          reservationExpiresAt: activeReservation.expiresAt?.toISOString() ?? null,
-        },
-        { status: 409 },
-      );
-    }
-
     // 1. Resolve cart items and compute price strictly server-side
     const rawItems = body.items;
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
@@ -244,6 +236,80 @@ export async function POST(req: NextRequest) {
     }
     const config = getPayUConfig();
     const callbackUrls = getPayUCallbackUrls(payuCheck.appBaseUrl);
+
+    // 4b. One active checkout per account:
+    //     - If an active CREATED/PENDING attempt has the identical cart,
+    //       shipping address, contact and coupon, `createOrder` resumes it
+    //       atomically under the row lock without calling PayU or creating a
+    //       second order.
+    //     - If anything changed (or the active attempt is PROCESSING), verify
+    //       the old attempt with PayU first (outside the DB transaction):
+    //       * if PAID, send the customer to its success page;
+    //       * if PayU is unreachable, fail closed with a clear retry message;
+    //       * otherwise, `createOrder` supersedes it in the same transaction.
+    if (activeReservation) {
+      const existingOrder = await getOrderByTxnid(activeReservation.txnid).catch(() => null);
+      const existingAddress = existingOrder
+        ? await getOrderShippingAddress(existingOrder.id).catch(() => null)
+        : null;
+      const canResumeWithoutVerify = Boolean(
+        existingOrder
+        && (existingOrder.status === 'CREATED' || existingOrder.status === 'PENDING')
+        && isIdenticalCheckoutAttempt(
+          {
+            items: existingOrder.items.map((it) => ({
+              productId: normalizeCartLineId(it.id).baseId || it.id,
+              variantId: it.variantId ?? null,
+              quantity: it.quantity,
+            })),
+            couponCode: existingOrder.couponCode,
+            customerEmail: existingOrder.customerEmail,
+            customerPhone: existingOrder.customerPhone,
+            shippingAddress: existingAddress,
+          },
+          {
+            items: rawItems.map((it) => ({
+              productId: normalizeCartLineId(it.id).baseId || it.id,
+              variantId: it.variantId ?? null,
+              quantity: it.quantity,
+            })),
+            couponCode,
+            customerEmail: rawEmail,
+            customerPhone: phone,
+            shippingAddress,
+          },
+        ),
+      );
+
+      if (!canResumeWithoutVerify) {
+        const verified = await verifyExistingOrderWithPayU(activeReservation.txnid, 'customer');
+        if (verified.status === 'PAID') {
+          return NextResponse.json(
+            {
+              success: false,
+              code: 'already_paid',
+              error: 'Your previous payment has already been confirmed.',
+              statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
+              redirectUrl: `/order/success?txnid=${encodeURIComponent(activeReservation.txnid)}&recovery=1`,
+            },
+            { status: 409 },
+          );
+        }
+        if (verified.retryable) {
+          return NextResponse.json(
+            {
+              success: false,
+              code: 'verification_unavailable',
+              retryable: true,
+              error: 'We could not confirm your previous payment yet. Please try again in a minute.',
+              statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
+              reservationExpiresAt: activeReservation.expiresAt?.toISOString() ?? null,
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
 
     // 5. Number the order from Order settings, or fall back to the previous
     //    random transaction id when the prefix is empty. The amount charged is
@@ -360,7 +426,10 @@ export async function POST(req: NextRequest) {
 
     // The order transaction has committed. The matrix decides whether a
     // message exists; queueNotification never waits for the provider.
-    queueOrderEvent('order_placed', created.order, { orderStatus: 'CREATED' });
+    // Resuming an identical active attempt does not send a second placement email.
+    if (!created.resumed) {
+      queueOrderEvent('order_placed', created.order, { orderStatus: 'CREATED' });
+    }
 
     // This checkout returned stock from checkout(s) whose window had already
     // closed. Tell those customers the worker would have told them, so a
@@ -400,6 +469,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      resumed: created.resumed === true,
       actionUrl: config.paymentUrl,
       reservationSeconds: reservationPolicy.reservationSeconds,
       reservationExpiresAt: created.order.reservationExpiresAt?.toISOString() ?? null,

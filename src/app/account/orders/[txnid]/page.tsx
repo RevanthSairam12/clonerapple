@@ -46,6 +46,12 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
             <p className="mt-1 text-sm text-[#6e6e73]">Placed {order.createdAt.toLocaleString('en-IN')}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <OrderStatusChip status={order.status} />
+              <span className="inline-flex items-center rounded-full bg-[#f5f5f7] px-3 py-1 text-xs font-semibold text-[#1d1d1f]" data-status-domain="payment">
+                Payment: {documentState.paymentStatusLabel}
+              </span>
+              <span className="inline-flex items-center rounded-full bg-[#f5f5f7] px-3 py-1 text-xs font-semibold text-[#1d1d1f]" data-status-domain="order">
+                Order: {documentState.orderStatusLabel}
+              </span>
               <span className="text-sm text-[#6e6e73]">{documentState.label}</span>
             </div>
             {inFlight && (

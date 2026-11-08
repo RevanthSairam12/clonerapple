@@ -1,7 +1,20 @@
 import { getSql } from '@/lib/platform/db';
+import {
+  derivePaymentAndOrderStatus,
+  type CanonicalOrderStatus,
+  type CanonicalPaymentStatus,
+  type DerivedOrderStatuses,
+} from '@/lib/orders/document-policy';
 import { hasShipmentStarted } from '@/lib/orders/fulfilment';
 import { validateHttpsTrackingUrl } from '@/lib/store-admin/delivery';
 import { isSaleState, type SaleState } from '@/lib/store-admin/orders';
+
+export {
+  derivePaymentAndOrderStatus,
+  type CanonicalOrderStatus,
+  type CanonicalPaymentStatus,
+  type DerivedOrderStatuses,
+};
 
 type Row = Record<string, unknown>;
 

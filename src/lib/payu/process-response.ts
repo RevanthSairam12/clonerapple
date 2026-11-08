@@ -199,21 +199,24 @@ export async function recordRejection(
     reason: `Payment notification rejected (${code}). The order was not marked paid. Check the gateway before fulfilling or refunding.`,
   }, options.sql).catch(() => false);
 
-  if (sideEffectsOn(options)) await writeAudit({
-    action: 'payment.callback_rejected',
-    entity: 'order',
-    entityId: txnid,
-    status: 'flagged',
-    reason: code,
-    after: {
-      source,
-      payuStatus,
-      orderStatus: order.status,
-      detail,
-    },
-    route: source === 'reconcile' ? '/api/payu/reconcile'
-      : source === 'webhook' ? '/api/payu/webhook' : '/api/payu/return',
-  }).catch(() => null);
+  if (sideEffectsOn(options)) {
+    queueOrderEvent('payment_review', order, { orderStatus: order.status });
+    await writeAudit({
+      action: 'payment.callback_rejected',
+      entity: 'order',
+      entityId: txnid,
+      status: 'flagged',
+      reason: code,
+      after: {
+        source,
+        payuStatus,
+        orderStatus: order.status,
+        detail,
+      },
+      route: source === 'reconcile' ? '/api/payu/reconcile'
+        : source === 'webhook' ? '/api/payu/webhook' : '/api/payu/return',
+    }).catch(() => null);
+  }
 
   await recordPaymentEvent({
     orderId: order.id,

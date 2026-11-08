@@ -433,16 +433,121 @@ export interface LazilyExpiredReservation {
   stockReleased: boolean;
 }
 
+export interface SupersededOrderSummary {
+  txnid: string;
+  previousStatus: OrderStatus;
+  stockReleased: boolean;
+}
+
 export interface CreateOrderResult {
   order: Order;
   /** True when at least one tracked line was decremented. */
   stockClaimed: boolean;
+  /** True when an identical active checkout for the same customer was resumed instead of creating a duplicate order. */
+  resumed?: boolean;
+  /** Earlier active checkouts for the same customer that were superseded in this transaction. */
+  supersededOrders?: SupersededOrderSummary[];
   /**
    * Reservations whose deadline had already passed and whose stock was given
    * back by this checkout when the claim did not fit. Normally empty: the
    * reconcile worker expires them first.
    */
   expiredReservations: LazilyExpiredReservation[];
+}
+
+export interface CheckoutAttemptIdentity {
+  items: ReadonlyArray<{ productId: string; variantId?: string | null; quantity: number }>;
+  couponCode?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  shippingAddress?: {
+    name: string;
+    phone: string;
+    line1: string;
+    line2?: string | null;
+    city: string;
+    state: string;
+    pincode: string;
+  } | null;
+}
+
+function canonicalAttemptItems(
+  items: ReadonlyArray<{ productId: string; variantId?: string | null; quantity: number }>,
+): Array<{ key: string; productId: string; variantId: string | null; quantity: number }> {
+  const map = new Map<string, { key: string; productId: string; variantId: string | null; quantity: number }>();
+  for (const item of items) {
+    const productId = normalizeCartLineId(item.productId).baseId || item.productId.trim();
+    const variantId = item.variantId ? String(item.variantId).trim() : null;
+    const key = stockKey({ productId, variantId });
+    const prev = map.get(key);
+    map.set(key, {
+      key,
+      productId,
+      variantId,
+      quantity: (prev?.quantity ?? 0) + Math.max(0, Math.trunc(Number(item.quantity) || 0)),
+    });
+  }
+  return [...map.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function cleanText(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Pure comparison deciding whether an active checkout attempt is identical to
+ * a new checkout request (same cart items/quantities/variants, same coupon,
+ * same customer contact and same shipping address).
+ */
+export function isIdenticalCheckoutAttempt(
+  existing: CheckoutAttemptIdentity,
+  incoming: CheckoutAttemptIdentity,
+): boolean {
+  const leftItems = canonicalAttemptItems(existing.items);
+  const rightItems = canonicalAttemptItems(incoming.items);
+  if (leftItems.length !== rightItems.length) return false;
+  for (let i = 0; i < leftItems.length; i += 1) {
+    if (
+      leftItems[i].productId !== rightItems[i].productId
+      || leftItems[i].variantId !== rightItems[i].variantId
+      || leftItems[i].quantity !== rightItems[i].quantity
+    ) {
+      return false;
+    }
+  }
+
+  const leftCoupon = normalizeCouponCode(existing.couponCode ?? '');
+  const rightCoupon = normalizeCouponCode(incoming.couponCode ?? '');
+  if (leftCoupon !== rightCoupon) return false;
+
+  if (existing.customerEmail && incoming.customerEmail) {
+    if (cleanText(existing.customerEmail).toLowerCase() !== cleanText(incoming.customerEmail).toLowerCase()) {
+      return false;
+    }
+  }
+  if (existing.customerPhone && incoming.customerPhone) {
+    if (cleanText(existing.customerPhone) !== cleanText(incoming.customerPhone)) {
+      return false;
+    }
+  }
+
+  if (existing.shippingAddress && incoming.shippingAddress) {
+    const a = existing.shippingAddress;
+    const b = incoming.shippingAddress;
+    if (
+      cleanText(a.name).toLowerCase() !== cleanText(b.name).toLowerCase()
+      || cleanText(a.phone) !== cleanText(b.phone)
+      || cleanText(a.line1).toLowerCase() !== cleanText(b.line1).toLowerCase()
+      || cleanText(a.line2).toLowerCase() !== cleanText(b.line2).toLowerCase()
+      || cleanText(a.city).toLowerCase() !== cleanText(b.city).toLowerCase()
+      || cleanText(a.state).toLowerCase() !== cleanText(b.state).toLowerCase()
+      || cleanText(a.pincode) !== cleanText(b.pincode)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 type Tx = postgres.TransactionSql;
@@ -653,61 +758,209 @@ export async function createOrderUsing(
       throw new Error('Order total does not match its money breakdown.');
     }
     const productIds = [...new Set(lockIds)].sort();
-    const requestedIdentities = (web ? web.cartItems.map(item => ({productId: normalizeCartLineId(item.id).baseId || item.id,variantId:item.variantId || null})) : itemLines);
+    const requestedIdentities = (web
+      ? web.cartItems.map(item => ({
+          productId: normalizeCartLineId(item.id).baseId || item.id,
+          variantId: item.variantId || null,
+          quantity: item.quantity,
+        }))
+      : itemLines.map(line => ({
+          productId: line.productId,
+          variantId: line.variantId || null,
+          quantity: line.quantity,
+        })));
     const requestedRecords = requestedIdentities.map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
 
     // Lock affected existing orders before any inventory row. Include every line
-    // of those orders in the sorted stock lock set, because expiry releases whole
-    // orders atomically. Only expired reservations or this customer's retryable
-    // failed/cancelled holds are candidates for release.
+    // of those orders in the sorted stock lock set, because expiry and supersede
+    // release whole orders atomically. When a signed-in user checks out, serialize
+    // concurrent attempts for that user with a transaction advisory lock so two
+    // tabs or double clicks cannot create two orders.
     const candidateUserId = params.userId ?? null;
+    if (candidateUserId) {
+      await tx`select pg_advisory_xact_lock(513032, hashtext(${candidateUserId}))`;
+    }
     const affectedOrders = await tx<Array<{id:string}>>`
       select o.id from orders o where o.reservation_state='ACTIVE'
         and (
-          (o.reservation_expires_at is not null and o.reservation_expires_at <= now() and o.status <> 'PAID')
-          or (${candidateUserId}::text is not null and o.user_id = ${candidateUserId} and o.status in ('FAILED', 'CANCELLED'))
+          (
+            o.reservation_expires_at is not null
+            and o.reservation_expires_at <= now()
+            and o.status <> 'PAID'
+            and exists(
+              select 1 from order_items oi,jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
+              where oi.order_id=o.id and oi.product_id=wanted.product_id and oi.variant_id is not distinct from wanted.variant_id
+            )
+          )
+          or (
+            ${candidateUserId}::text is not null
+            and o.user_id = ${candidateUserId}
+            and o.status <> 'PAID'
+          )
         )
-        and exists(
-          select 1 from order_items oi,jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
-          where oi.order_id=o.id and oi.product_id=wanted.product_id and oi.variant_id is not distinct from wanted.variant_id)
       order by o.id for update of o`;
     const affectedLines = affectedOrders.length ? await tx<Array<{product_id:string;variant_id:string|null}>>`
       select distinct product_id,variant_id from order_items where order_id=any(${affectedOrders.map(row=>row.id)}::text[])` : [];
     const initialStockRows = await lockStockIdentities(tx,[...requestedIdentities,...affectedLines.map(row=>({productId:row.product_id,variantId:row.variant_id}))]);
 
-    // A customer retrying after a failed payment may still have the grace hold
-    // from that order. A fresh checkout claims the same stock, so give the old
-    // hold back first; otherwise a one-unit product would look sold out to the
-    // very customer it is being held for. Only this customer's own failed or
-    // cancelled holds are touched, and only under the row lock.
+    const supersededOrders: SupersededOrderSummary[] = [];
+
+    // Handle this customer's own active unpaid reservations under the row lock:
+    // - If the latest active CREATED/PENDING order has identical cart, address,
+    //   contact and coupon, resume it atomically (no second order, no extended
+    //   timer, no duplicate stock claim).
+    // - Otherwise, supersede any active unpaid order (FAILED, CANCELLED, or a
+    //   changed CREATED/PENDING/PROCESSING attempt), releasing its stock and
+    //   coupon in this same transaction so the customer's own held units never
+    //   make an item look sold out to them.
     if (affectedOrders.length > 0 && params.userId && productIds.length > 0) {
-      const superseded = await tx<Array<{ id: string }>>`
-        select id from orders
-        where user_id = ${params.userId}
-          and reservation_state = 'ACTIVE'
-          and reservation_expires_at > now()
-          and status in ('FAILED', 'CANCELLED')
-          and exists (
-            select 1 from order_items oi
-            where oi.order_id = orders.id
-              and exists(select 1 from jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
-                where wanted.product_id=oi.product_id and wanted.variant_id is not distinct from oi.variant_id)
+      const activeUserOrders = await tx<RawOrderRow[]>`
+        select o.* from orders o
+        where o.user_id = ${params.userId}
+          and o.reservation_state = 'ACTIVE'
+          and o.reservation_expires_at > now()
+          and o.status in ('CREATED', 'PENDING', 'PROCESSING', 'FAILED', 'CANCELLED')
+          and (
+            o.status in ('CREATED', 'PENDING', 'PROCESSING')
+            or exists (
+              select 1 from order_items oi
+              where oi.order_id = o.id
+                and exists(select 1 from jsonb_to_recordset(${tx.json(requestedRecords)}::jsonb) as wanted(product_id text,variant_id text)
+                  where wanted.product_id=oi.product_id and wanted.variant_id is not distinct from oi.variant_id)
+            )
           )
-        order by id
+        order by o.created_at desc, o.id desc
         for update
       `;
-      for (const row of superseded) {
-        await releaseClaimedStock(tx, String(row.id), { alreadyLocked: true, orderAlreadyLocked: true });
-        await releaseCouponInTx(tx, String(row.id), 'superseded by a new checkout');
+
+      const latestOpen = activeUserOrders.find(
+        (row) => row.status === 'CREATED' || row.status === 'PENDING',
+      );
+      if (latestOpen) {
+        const mappedExisting = mapRowToOrder(latestOpen);
+        const [addrRow] = await tx<
+          Array<{
+            full_name: string;
+            phone: string;
+            line1: string;
+            line2: string | null;
+            city: string;
+            state: string;
+            postal_code: string;
+          }>
+        >`
+          select full_name, phone, line1, line2, city, state, postal_code
+          from order_addresses
+          where order_id = ${mappedExisting.id} and address_type = 'shipping'
+          limit 1
+        `;
+        const existingAddress = addrRow
+          ? {
+              name: String(addrRow.full_name ?? ''),
+              phone: String(addrRow.phone ?? ''),
+              line1: String(addrRow.line1 ?? ''),
+              line2: addrRow.line2 ? String(addrRow.line2) : '',
+              city: String(addrRow.city ?? ''),
+              state: String(addrRow.state ?? ''),
+              pincode: String(addrRow.postal_code ?? ''),
+            }
+          : null;
+
+        const identical = isIdenticalCheckoutAttempt(
+          {
+            items: mappedExisting.items.map((it) => ({
+              productId: normalizeCartLineId(it.id).baseId || it.id,
+              variantId: it.variantId ?? null,
+              quantity: it.quantity,
+            })),
+            couponCode: mappedExisting.couponCode,
+            customerEmail: mappedExisting.customerEmail,
+            customerPhone: mappedExisting.customerPhone,
+            shippingAddress: existingAddress,
+          },
+          {
+            items: requestedIdentities,
+            couponCode: params.coupon?.code ?? null,
+            customerEmail: params.customerEmail,
+            customerPhone: params.customerPhone,
+            shippingAddress: params.shippingAddress,
+          },
+        );
+
+        const expected = web?.expectedTotalPaise ?? params.coupon?.expectedTotalPaise;
+        const expectedMatches =
+          expected === undefined || expected === null || expected === mappedExisting.totalPaise;
+
+        if (identical && expectedMatches) {
+          // Release any other stale FAILED/CANCELLED grace holds of this user
+          // while resuming the identical active order.
+          for (const other of activeUserOrders) {
+            if (String(other.id) === mappedExisting.id) continue;
+            await releaseClaimedStock(tx, String(other.id), {
+              alreadyLocked: true,
+              orderAlreadyLocked: true,
+            });
+            await releaseCouponInTx(tx, String(other.id), 'superseded by a new checkout');
+            await tx`
+              update orders
+              set reservation_state = 'RELEASED',
+                  reservation_released_at = now(),
+                  reservation_released_reason = 'superseded by a new checkout',
+                  next_reconcile_at = null,
+                  updated_at = now()
+              where id = ${String(other.id)} and reservation_state = 'ACTIVE'
+            `;
+          }
+          return {
+            order: mappedExisting,
+            stockClaimed: false,
+            resumed: true,
+            supersededOrders: [],
+            expiredReservations: [],
+          };
+        }
+      }
+
+      for (const row of activeUserOrders) {
+        const orderId = String(row.id);
+        const previousStatus = String(row.status) as OrderStatus;
+        const stockReleased = await releaseClaimedStock(tx, orderId, {
+          alreadyLocked: true,
+          orderAlreadyLocked: true,
+        });
+        await releaseCouponInTx(tx, orderId, 'superseded by a new checkout');
+        const wasOpen =
+          previousStatus === 'CREATED'
+          || previousStatus === 'PENDING'
+          || previousStatus === 'PROCESSING';
+        const nextStatus: OrderStatus = wasOpen ? 'CANCELLED' : previousStatus;
+        const releaseReason = wasOpen
+          ? 'SUPERSEDED: replaced by a new checkout'
+          : 'superseded by a new checkout';
         await tx`
           update orders
-          set reservation_state = 'RELEASED',
+          set status = ${nextStatus},
+              reservation_state = 'RELEASED',
               reservation_released_at = now(),
-              reservation_released_reason = 'superseded by a new checkout',
+              reservation_released_reason = ${releaseReason},
+              cancelled_at = case when ${wasOpen} then coalesce(cancelled_at, now()) else cancelled_at end,
+              cancel_reason = case when ${wasOpen} then coalesce(cancel_reason, ${releaseReason}) else cancel_reason end,
+              processing_deadline = null,
               next_reconcile_at = null,
               updated_at = now()
-          where id = ${String(row.id)} and reservation_state = 'ACTIVE'
+          where id = ${orderId} and reservation_state = 'ACTIVE' and status <> 'PAID'
         `;
+        if (wasOpen) {
+          await tx`
+            insert into order_status_history (order_id, domain, actor, from_status, to_status, note)
+            values (${orderId}, 'payment', 'system', ${previousStatus}, 'CANCELLED', 'SUPERSEDED')
+          `;
+          supersededOrders.push({
+            txnid: String(row.txnid),
+            previousStatus,
+            stockReleased,
+          });
+        }
       }
     }
 
@@ -981,8 +1234,61 @@ export async function createOrderUsing(
     await claimPlannedStock(tx, rows[0].id, plan.claims);
     const stockClaimed = plan.claims.length > 0;
 
-    return { order: mapRowToOrder(rows[0]), stockClaimed, expiredReservations };
+    return {
+      order: mapRowToOrder(rows[0]),
+      stockClaimed,
+      resumed: false,
+      supersededOrders,
+      expiredReservations,
+    };
   });
+}
+
+export async function getOrderShippingAddress(
+  orderId: string,
+  sqlOverride?: postgres.Sql,
+): Promise<{
+  name: string;
+  phone: string;
+  line1: string;
+  line2: string;
+  city: string;
+  state: string;
+  pincode: string;
+} | null> {
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return null;
+  try {
+    const rows = await sql<
+      Array<{
+        full_name: string;
+        phone: string;
+        line1: string;
+        line2: string | null;
+        city: string;
+        state: string;
+        postal_code: string;
+      }>
+    >`
+      select full_name, phone, line1, line2, city, state, postal_code
+      from order_addresses
+      where order_id = ${orderId} and address_type = 'shipping'
+      limit 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      name: String(row.full_name ?? ''),
+      phone: String(row.phone ?? ''),
+      line1: String(row.line1 ?? ''),
+      line2: row.line2 ? String(row.line2) : '',
+      city: String(row.city ?? ''),
+      state: String(row.state ?? ''),
+      pincode: String(row.postal_code ?? ''),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

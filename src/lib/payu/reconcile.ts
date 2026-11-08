@@ -41,6 +41,7 @@ import {
   recordPaymentEvent,
   type PaymentEventOutcome,
 } from './payment-events';
+import { recordReconcileHeartbeat } from './reconcile-heartbeat';
 
 export const UNRESOLVED_PAYMENT_REVIEW_REASON =
   'The payment outcome could not be verified within the safe recovery window. The stock claim was released; check the gateway before fulfilling or refunding.';
@@ -155,6 +156,16 @@ export async function reconcilePendingOrders(
   } catch {
     summary.errors.push({ txnid: '', error: 'Could not claim due orders.' });
     console.error('[PayU Reconciliation] could not claim due orders.');
+    if (options.sideEffects !== false) {
+      await recordReconcileHeartbeat(
+        {
+          processedCount: 0,
+          lastError: 'Could not claim due orders.',
+          succeeded: false,
+        },
+        sql,
+      );
+    }
     return summary;
   }
 
@@ -194,6 +205,16 @@ export async function reconcilePendingOrders(
   }
 
   summary.pendingRefundObligations = (await listPendingRefundObligations(500)).length;
+  if (options.sideEffects !== false) {
+    await recordReconcileHeartbeat(
+      {
+        processedCount: summary.processed,
+        lastError: summary.errors[0]?.error ?? '',
+        succeeded: true,
+      },
+      sql,
+    );
+  }
   return summary;
 }
 
@@ -687,6 +708,9 @@ export async function reconcileOrderUsing(
       sql,
     );
     summary.flagged += 1;
+    if (sideEffects) {
+      queueOrderEvent('payment_review', order, { orderStatus: order.status });
+    }
   }
 
   await recordReconcileResult(

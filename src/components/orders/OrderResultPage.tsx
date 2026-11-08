@@ -132,6 +132,17 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
       <dl className="space-y-4 text-sm">
         <div className="flex flex-wrap justify-between gap-2"><dt className="text-[#333336]">Order reference</dt><dd className="min-w-0 break-all font-semibold">{reference}</dd></div>
         <div className="flex flex-wrap justify-between gap-2"><dt className="text-[#333336]">{state.amountLabel}</dt><dd className="text-lg font-bold">{formatPaise(amount)}</dd></div>
+        <div className="flex flex-wrap justify-between gap-2">
+          <dt className="text-[#333336]">Status</dt>
+          <dd className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1d1d1f]" data-status-domain="payment">
+              Payment: {documentState.paymentStatusLabel}
+            </span>
+            <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1d1d1f]" data-status-domain="order">
+              Order: {documentState.orderStatusLabel}
+            </span>
+          </dd>
+        </div>
         {documentState.pendingRefundPaise > 0 && <div className="flex flex-wrap justify-between gap-2"><dt>Refund initiated</dt><dd>{formatPaise(documentState.pendingRefundPaise)}</dd></div>}
         {documentState.refundedPaise > 0 && <div className="flex flex-wrap justify-between gap-2"><dt>Refund completed</dt><dd>{formatPaise(documentState.refundedPaise)}</dd></div>}
         {documentState.refundDuePaise > 0 && <div className="flex flex-wrap justify-between gap-2"><dt>Refund due — not yet initiated</dt><dd>{formatPaise(documentState.refundDuePaise)}</dd></div>}

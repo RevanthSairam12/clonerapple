@@ -419,6 +419,23 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           document.getElementById(`checkout-${Object.keys(visibleErrors)[0]}`)?.focus();
           return;
         }
+        if (res.status === 409 && data.code === 'already_paid') {
+          const redirectUrl = typeof data.redirectUrl === 'string' && /^\/order\/success\?txnid=[^&?#]+(&recovery=1)?$/.test(data.redirectUrl)
+            ? data.redirectUrl
+            : safePaymentStatusUrl(data.statusUrl);
+          setIsSubmitting(false);
+          if (redirectUrl && typeof window !== 'undefined') {
+            window.location.assign(redirectUrl);
+            return;
+          }
+          setErrorMessage('Your previous payment has already been confirmed. View your orders to see the receipt.');
+          return;
+        }
+        if (res.status === 409 && data.code === 'verification_unavailable') {
+          setIsSubmitting(false);
+          setErrorMessage(data.error || 'We could not confirm your previous payment yet. Please try again in a minute.');
+          return;
+        }
         if (res.status === 409 && data.code === 'reservation_active') {
           const expiresAt = typeof data.reservationExpiresAt === 'string' && Number.isFinite(Date.parse(data.reservationExpiresAt))
             ? new Date(data.reservationExpiresAt).toISOString() : null;

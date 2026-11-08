@@ -14,6 +14,7 @@ import {
 } from '@/lib/store-admin/orders';
 import { orderTotals } from '@/lib/store-admin/order-documents';
 import { getDocumentState } from '@/lib/orders/document-data';
+import { derivePaymentAndOrderStatus } from '@/lib/orders/document-policy';
 import { OrderDocumentStatus } from '@/components/orders/OrderDocument';
 import { canonicalViewQuery, getSavedViews } from '@/lib/store-admin/preferences';
 import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
@@ -374,9 +375,23 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                   )}
                 </td>
                 <td>
-                  <span className={stateClass(order.saleState)}>
-                    {SALE_STATE_LABELS[order.saleState]}
-                  </span>
+                  {(() => {
+                    const derived = derivePaymentAndOrderStatus({
+                      paymentStatus: order.paymentStatus,
+                      fulfilmentStatus: order.fulfilmentStatus,
+                      saleState: order.saleState,
+                    });
+                    return (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        <span className={stateClass(order.saleState)} data-status-domain="payment">
+                          Payment: {derived.paymentStatusLabel}
+                        </span>
+                        <span className="sa-status" data-status-domain="order">
+                          Order: {derived.orderStatusLabel}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td>{order.channel === 'pos' ? 'POS' : 'Web'}</td>
                 <td className="sa-num">
@@ -432,9 +447,21 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                 {quickOrder.channel === 'pos' ? 'Point of sale' : 'Online store'}
               </p>
             </div>
-            <span className={stateClass(quickOrder.saleState)}>
-              {SALE_STATE_LABELS[quickOrder.saleState]}
-            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {quickDocumentState ? (
+                <>
+                  <span className={stateClass(quickOrder.saleState)} data-status-domain="payment">
+                    Payment: {quickDocumentState.paymentStatusLabel}
+                  </span>
+                  <span className="sa-status" data-status-domain="order">
+                    Order: {quickDocumentState.orderStatusLabel}
+                  </span>
+                </>
+              ) : null}
+              <span className={stateClass(quickOrder.saleState)}>
+                {SALE_STATE_LABELS[quickOrder.saleState]}
+              </span>
+            </div>
           </header>
 
           <div className="sa-quickview-body">

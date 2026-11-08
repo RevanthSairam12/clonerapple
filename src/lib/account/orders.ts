@@ -23,6 +23,7 @@ export interface AccountOrderListItem {
   txnid: string;
   status: AccountOrderStatus;
   paymentStatus: string;
+  fulfilmentStatus: string;
   amount: number;
   currency: string;
   /** Money breakdown in paise; total matches the amount PayU charged. */
@@ -208,6 +209,7 @@ function mapListItem(row: OrderRow): AccountOrderListItem {
     txnid: row.txnid,
     status: toAccountOrderStatus(row.sale_state),
     paymentStatus: row.status,
+    fulfilmentStatus: row.fulfilment_status || 'PENDING',
     amount: Number(row.amount),
     currency: row.currency,
     ...moneyFields(row),

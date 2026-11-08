@@ -21,6 +21,21 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Stage 2 — Payments, Atomic Checkout, Status Glossary, Reconcile Heartbeat & Needs-Attention — 8 November 2026
+
+- **Atomic one-active-checkout handling (`src/lib/payu/orders.ts`, `src/app/api/payu/initiate/route.ts`, `src/components/checkout/CheckoutForm.tsx`, `src/lib/storefront/availability-server.ts`):**
+  - Signed-in checkouts serialize per account via `pg_advisory_xact_lock(513032, hashtext(userId))` before locking `orders` and `stock`.
+  - If an active `CREATED`/`PENDING` attempt has the identical cart, shipping address, contact, and coupon (`isIdenticalCheckoutAttempt`), it is resumed atomically (`resumed: true`) without creating a duplicate order, claiming stock twice, or extending the reservation timer.
+  - If anything changed (or the active attempt is `PROCESSING`), `/api/payu/initiate` verifies the old attempt with PayU first: if `PAID`, redirects to `/order/success`; if PayU is unreachable (`retryable: true`), fails closed with `"We could not confirm your previous payment yet. Please try again in a minute."`; otherwise `createOrderUsing` supersedes the old attempt in the same transaction (releasing its stock and coupon and marking it `CANCELLED` / `RELEASED` with `SUPERSEDED: replaced by a new checkout`).
+  - A customer's own held units are added back to their view of `on_hand` in `readAvailabilityUsing` so a 1-unit item never looks sold out to the customer holding it.
+- **Shared Payment & Order Status Glossary (`src/lib/orders/document-policy.ts`, `src/lib/order-status.ts`):**
+  - `derivePaymentAndOrderStatus` derives independent `paymentStatusLabel` (`Pending`, `Verifying`, `Paid`, `Failed`, `Cancelled`, `Refund initiated`, `Partially refunded`, `Refunded`) and `orderStatusLabel` (`Awaiting payment`, `Confirmed`, `Packed`, `Shipped`, `Delivered`, `Cancelled`, `Returned`) rendered as separate chips across Store Admin Orders list/detail/QuickView, Customer Orders list/detail, and Order Result pages.
+- **Reconcile GET Handler, Heartbeat & Needs-Attention Panel (`src/app/api/payu/reconcile/route.ts`, `src/lib/payu/reconcile-heartbeat.ts`, `src/lib/store-admin/needs-attention.ts`, `docs/reconcile-scheduling.md`):**
+  - Added `GET /api/payu/reconcile` guarded by constant-time `authorizeCronRequest` requiring `CRON_SECRET`, with zero side effects without the secret.
+  - Added database-backed reconciliation heartbeat (`recordReconcileHeartbeat`, `readReconcileHeartbeat`, turning red when no successful run occurred in the last 5 minutes on the database clock) and the **Needs attention** + **Background jobs** panels on `/store-admin` Overview.
+  - Wired `payment_review` staff notification alerts across all payment-flagging paths (`recordRejection`, late capture, unresolved window expiry, repeated reconcile failures).
+- **Measured (8 November 2026):** `npm test` **1,862 tests / 1,769 passed / 0 failed / 93 skipped** (plus `tests/stage2-payments-checkout.test.mjs` **8/8 passed** with `RUN_LEGACY_DB_TESTS=1` on the test database); `npm run typecheck` and `npm run build` pass; `check:store-admin-routes` **122 routes guarded**; `check:account-routes` **21 APIs and 11 pages** pass; `check:admin-boundary`, `check-setting-lists.mjs`, and `check-security-db-state.mjs` (**10/10**) pass; `npm audit` **0 vulnerabilities**.
+
 ### Phase 2 — options, price and stock — 5 November 2026
 
 **Implemented and offline-verified; the migration and database acceptance are not run.**
