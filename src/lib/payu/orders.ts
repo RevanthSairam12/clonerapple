@@ -758,17 +758,40 @@ export async function createOrderUsing(
       throw new Error('Order total does not match its money breakdown.');
     }
     const productIds = [...new Set(lockIds)].sort();
-    const requestedIdentities = (web
-      ? web.cartItems.map(item => ({
-          productId: normalizeCartLineId(item.id).baseId || item.id,
-          variantId: item.variantId || null,
-          quantity: item.quantity,
-        }))
-      : itemLines.map(line => ({
-          productId: line.productId,
-          variantId: line.variantId || null,
-          quantity: line.quantity,
-        })));
+
+    // 1. Plain reads (checkout configuration, sale state, cart price resolution)
+    //    execute BEFORE acquiring any `orders` or `stock` row locks, minimizing
+    //    lock hold duration while keeping the strict lock order:
+    //    orders -> stock -> coupons -> order_number_counters.
+    if (web) {
+      const configuration = web.checkoutConfiguration?.ok && web.checkoutConfiguration.policy
+        ? web.checkoutConfiguration
+        : await readCheckoutConfigurationUsing(tx);
+      if (!configuration.ok) throw new Error('Checkout settings are temporarily unavailable.');
+      if (configuration.settings.payu_enabled !== 'on') {
+        throw new Error('Online payment is currently unavailable.');
+      }
+      if (params.coupon?.code && configuration.settings.coupons_enabled === 'off') {
+        throw new CouponRejectedError('inactive', couponRejectionMessage('inactive'));
+      }
+      cart = await resolveCartItemsFromDbUsing(tx, web.cartItems, { cacheKey: sql });
+      items = cart.items;
+      itemLines = buildOrderItemLines(items);
+      subtotalPaise = cart.totalPaise;
+      shippingPolicy = configuration.policy;
+      const quote = quoteShipping(subtotalPaise, shippingPolicy);
+      shippingPaise = quote.shippingPaise;
+      totalPaise = subtotalPaise + shippingPaise;
+      pricingSnapshot = { shipping: { ...quote, ...shippingPolicy } };
+      // Use the database's canonical ids for subsequent claim/release queries.
+      productIds.splice(0, productIds.length, ...[...new Set(itemLines.map((line) => line.productId))].sort());
+    }
+
+    const requestedIdentities = itemLines.map((line) => ({
+      productId: line.productId,
+      variantId: line.variantId || null,
+      quantity: line.quantity,
+    }));
     const requestedRecords = requestedIdentities.map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
 
     // Lock affected existing orders before any inventory row. Include every line
@@ -962,30 +985,6 @@ export async function createOrderUsing(
           });
         }
       }
-    }
-
-    if (web) {
-      const configuration = web.checkoutConfiguration?.ok && web.checkoutConfiguration.policy
-        ? web.checkoutConfiguration
-        : await readCheckoutConfigurationUsing(tx);
-      if (!configuration.ok) throw new Error('Checkout settings are temporarily unavailable.');
-      if (configuration.settings.payu_enabled !== 'on') {
-        throw new Error('Online payment is currently unavailable.');
-      }
-      if (params.coupon?.code && configuration.settings.coupons_enabled === 'off') {
-        throw new CouponRejectedError('inactive', couponRejectionMessage('inactive'));
-      }
-      cart = await resolveCartItemsFromDbUsing(tx, web.cartItems, { cacheKey: sql });
-      items = cart.items;
-      itemLines = buildOrderItemLines(items);
-      subtotalPaise = cart.totalPaise;
-      shippingPolicy = configuration.policy;
-      const quote = quoteShipping(subtotalPaise, shippingPolicy);
-      shippingPaise = quote.shippingPaise;
-      totalPaise = subtotalPaise + shippingPaise;
-      pricingSnapshot = { shipping: { ...quote, ...shippingPolicy } };
-      // Use the database's canonical ids for subsequent claim/release queries.
-      productIds.splice(0, productIds.length, ...new Set(itemLines.map((line) => line.productId)));
     }
 
     // Expire matching holds before obtaining stock locks (never stock -> order).

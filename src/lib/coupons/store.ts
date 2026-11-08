@@ -91,9 +91,25 @@ async function loadTargets(sql: SqlLike, couponId: string): Promise<CouponTarget
   return rows.map(mapTarget);
 }
 
+function parseTargetsJson(raw: unknown): CouponTarget[] {
+  let list: unknown = raw;
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'))
+    .map(mapTarget);
+}
+
 /**
- * Load a coupon by its normalized code. `forUpdate` is used only inside the
- * order transaction; the validation endpoint uses the plain read.
+ * Load a coupon and its targets in a single database round trip. `forUpdate`
+ * is used inside the order transaction (`FOR UPDATE OF c`); the validation
+ * endpoint uses the plain read.
  */
 export async function loadCouponDefinition(
   sql: SqlLike,
@@ -105,20 +121,51 @@ export async function loadCouponDefinition(
 
   const rows = (options.forUpdate
     ? await sql`
-        select * from coupons
-        where upper(code) = ${normalized}
-        for update
+        select
+          c.*,
+          coalesce((
+            select jsonb_agg(
+              jsonb_build_object(
+                'product_id', ct.product_id,
+                'category_id', ct.category_id,
+                'brand_id', ct.brand_id
+              )
+              order by ct.id
+            )
+            from coupon_targets ct
+            where ct.coupon_id = c.id
+          ), '[]'::jsonb) as targets_json
+        from coupons c
+        where upper(c.code) = ${normalized}
+        for update of c
       `
     : await sql`
-        select * from coupons
-        where upper(code) = ${normalized}
+        select
+          c.*,
+          coalesce((
+            select jsonb_agg(
+              jsonb_build_object(
+                'product_id', ct.product_id,
+                'category_id', ct.category_id,
+                'brand_id', ct.brand_id
+              )
+              order by ct.id
+            )
+            from coupon_targets ct
+            where ct.coupon_id = c.id
+          ), '[]'::jsonb) as targets_json
+        from coupons c
+        where upper(c.code) = ${normalized}
         limit 1
       `) as Array<Record<string, unknown>>;
 
   const row = rows[0];
   if (!row) return null;
-  const id = text(row.id);
-  return mapCoupon(row, await loadTargets(sql, id));
+  const targets =
+    'targets_json' in row
+      ? parseTargetsJson(row.targets_json)
+      : await loadTargets(sql, text(row.id));
+  return mapCoupon(row, targets);
 }
 
 export interface CouponCustomerIdentity {
@@ -127,56 +174,68 @@ export interface CouponCustomerIdentity {
   group: string | null;
 }
 
+/**
+ * Read the database clock, customer group, prior paid-order flag, and total/personal
+ * redemption counts in a single database round trip.
+ */
 export async function readCouponCustomerContext(
   sql: SqlLike,
   couponId: string,
   customer: CouponCustomerIdentity,
 ): Promise<CouponContext> {
-  const nowRows = (await sql`select now() as now`) as Array<Record<string, unknown>>;
-  const now = new Date(String(nowRows[0]?.now ?? new Date().toISOString()));
-
   const userId = customer.userId || null;
   const email = normalizeEmail(customer.email);
+  const suppliedGroup = customer.group;
 
-  let group = customer.group;
-  if (userId && group === null) {
-    const groupRows = (await sql`
-      select customer_group from users where id = ${userId} limit 1
-    `) as Array<Record<string, unknown>>;
-    group = groupRows[0]?.customer_group ? text(groupRows[0].customer_group) : null;
-  }
-
-  const paidRows = (await sql`
-    select 1 as found
-    from orders
-    where status = 'PAID'
-      and (
-        (${userId}::text is not null and user_id = ${userId})
-        or (${email} <> '' and lower(customer_email) = ${email})
-      )
-    limit 1
-  `) as Array<Record<string, unknown>>;
-
-  const countRows = (await sql`
+  const rows = (await sql`
     select
-      count(*)::int as total,
-      count(*) filter (
-        where (${userId}::text is not null and customer_user_id = ${userId})
-           or (${email} <> '' and lower(customer_email) = ${email})
+      now() as now,
+      case
+        when ${userId}::text is not null and ${suppliedGroup === null} then (
+          select u.customer_group
+          from users u
+          where u.id = ${userId}
+          limit 1
+        )
+        else ${suppliedGroup}::text
+      end as resolved_group,
+      exists (
+        select 1
+        from orders o
+        where o.status = 'PAID'
+          and (
+            (${userId}::text is not null and o.user_id = ${userId})
+            or (${email} <> '' and lower(o.customer_email) = ${email})
+          )
+      ) as paid_order_exists,
+      count(cr.id)::int as total,
+      count(cr.id) filter (
+        where (${userId}::text is not null and cr.customer_user_id = ${userId})
+           or (${email} <> '' and lower(cr.customer_email) = ${email})
       )::int as mine
-    from coupon_redemptions
-    where coupon_id = ${couponId}
-      and state in ('RESERVED', 'CONSUMED')
+    from (select 1) as one
+    left join coupon_redemptions cr
+      on cr.coupon_id = ${couponId}
+     and cr.state in ('RESERVED', 'CONSUMED')
   `) as Array<Record<string, unknown>>;
+
+  const row = rows[0] ?? {};
+  const now = new Date(String(row.now ?? new Date().toISOString()));
+  const group =
+    suppliedGroup !== null
+      ? suppliedGroup
+      : row.resolved_group
+        ? text(row.resolved_group)
+        : null;
 
   return {
     now,
     subtotalPaise: 0,
     shippingPaise: 0,
     customer: { userId, email, group },
-    customerPaidOrderExists: paidRows.length > 0,
-    customerRedemptions: Number(countRows[0]?.mine ?? 0),
-    totalRedemptions: Number(countRows[0]?.total ?? 0),
+    customerPaidOrderExists: Boolean(row.paid_order_exists),
+    customerRedemptions: Number(row.mine ?? 0),
+    totalRedemptions: Number(row.total ?? 0),
   };
 }
 

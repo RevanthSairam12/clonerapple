@@ -21,6 +21,15 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Stage 4 — Checkout Lock-Time Optimization — 8 November 2026
+
+- **Plain reads moved before row locks (`src/lib/payu/orders.ts`):**
+  - `readCheckoutConfigurationUsing` and `resolveCartItemsFromDbUsing` (sale state and catalogue prices) now execute before acquiring `orders` or `stock` row locks, while preserving the strict lock order `orders -> stock -> coupons -> order_number_counters`.
+- **Coupon evaluation collapsed into 2 round trips (`src/lib/coupons/store.ts`):**
+  - `loadCouponDefinition` loads the `coupons` row (`FOR UPDATE OF c`) and its `coupon_targets` JSON in 1 round trip.
+  - `readCouponCustomerContext` reads `now()`, `customer_group`, prior paid-order flag, and total/personal `coupon_redemptions` counts in 1 round trip (down from 6 total round trips to 2).
+- **Measured (8 November 2026):** `npm test` **1,867 tests / 1,772 passed / 0 failed / 95 skipped** (plus `tests/stage4-checkout-lock-optimization.test.mjs` **3/3**, `tests/coupon-db-integration.test.mjs` **18/18**, `tests/coupon-order-integration.test.mjs` **5/5**, and `tests/shipping-order-integration.test.mjs` **6/6** passed against the real test database); `npm run typecheck` and `npm run build` pass; all check scripts pass; `npm audit` **0 vulnerabilities**.
+
 ### Stage 3 — Product Options Completion & Per-Option Low-Stock Notifications — 8 November 2026
 
 - **Per-option low-stock staff notifications for checkout and POS sales (`src/lib/notifications/stock-events.ts`, `src/lib/notifications/order-stock-alerts.ts`, `src/lib/payu/orders.ts`, `src/lib/store-admin/pos.ts`):**
