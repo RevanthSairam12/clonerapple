@@ -40,7 +40,8 @@
 }
 
 .auth-home:hover {
-  color: #0071e3;
+  color: #1d1d1f;
+  text-decoration: underline;
 }
 
 /* Inputs keep placeholder-only visuals, but every field has a real label. */

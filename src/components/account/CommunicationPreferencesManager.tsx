@@ -63,7 +63,7 @@ export function CommunicationPreferencesManager({
             type="checkbox"
             checked={optIn}
             onChange={(e) => setOptIn(e.target.checked)}
-            className="mt-1 h-5 w-5 rounded border-[#d2d2d7] text-[#0071e3] focus:ring-[#0071e3]"
+            className="mt-1 h-5 w-5 rounded border-[#d2d2d7] text-[#1d1d1f] focus:ring-[#1d1d1f]"
           />
         </label>
 
@@ -76,7 +76,7 @@ export function CommunicationPreferencesManager({
         <button
           type="submit"
           disabled={busy}
-          className="rounded-full bg-[#1d1d1f] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#333336] disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+          className="rounded-full bg-[#1d1d1f] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#333336] disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
         >
           {busy ? 'Saving...' : 'Save preferences'}
         </button>

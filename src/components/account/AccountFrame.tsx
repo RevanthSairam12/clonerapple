@@ -46,7 +46,7 @@ export async function AccountFrame({
           {active !== '/account' && (
             <Link
               href="/account"
-              className="text-sm font-semibold text-[#0071e3] hover:underline"
+              className="text-sm font-semibold text-[#1d1d1f] underline-offset-4 hover:underline"
             >
               ← Back to account overview
             </Link>
@@ -71,7 +71,7 @@ export async function AccountFrame({
                     key={href}
                     href={href}
                     aria-current={isSelected ? 'page' : undefined}
-                    className={`flex items-center justify-between shrink-0 rounded-2xl px-4 py-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-[#0071e3] ${
+                    className={`flex items-center justify-between shrink-0 rounded-2xl px-4 py-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-[#1d1d1f] ${
                       isSelected
                         ? 'bg-[#1d1d1f] text-white'
                         : 'text-[#6e6e73] hover:bg-[#f5f5f7] hover:text-[#1d1d1f]'
@@ -81,7 +81,7 @@ export async function AccountFrame({
                     {isMessages && unreadMessagesCount > 0 && (
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                          isSelected ? 'bg-white text-black' : 'bg-[#0071e3] text-white'
+                          isSelected ? 'bg-[#ffe100] text-black' : 'bg-[#ffe100] text-[#1d1d1f]'
                         }`}
                       >
                         {unreadMessagesCount}

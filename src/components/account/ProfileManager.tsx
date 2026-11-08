@@ -45,27 +45,27 @@ export function ProfileManager({ firstName, lastName, phone }: { firstName: stri
           {(['firstName', 'lastName', 'phone'] as const).map((field) => (
             <label key={field}>
               <span className="mb-1 block text-xs font-semibold uppercase text-[#6e6e73]">{field === 'phone' ? 'Phone' : field === 'firstName' ? 'First name' : 'Last name'}</span>
-              <input value={profile[field]} onChange={(event) => setProfile({ ...profile, [field]: event.target.value })} className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]" />
+              <input value={profile[field]} onChange={(event) => setProfile({ ...profile, [field]: event.target.value })} className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]" />
             </label>
           ))}
         </div>
-        <button disabled={busy} className="mt-5 rounded-full bg-[#1d1d1f] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Save profile</button>
+        <button disabled={busy} className="mt-5 rounded-full bg-[#1d1d1f] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Save profile</button>
       </form>
       <form onSubmit={changePassword} className="rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm">
         <h3 className="text-lg font-semibold">Change password</h3>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label>
             <span className="mb-1 block text-xs font-semibold uppercase text-[#6e6e73]">Current password</span>
-            <input required type="password" value={passwords.currentPassword} onChange={(event) => setPasswords({ ...passwords, currentPassword: event.target.value })} className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]" />
+            <input required type="password" value={passwords.currentPassword} onChange={(event) => setPasswords({ ...passwords, currentPassword: event.target.value })} className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]" />
           </label>
           <label>
             <span className="mb-1 block text-xs font-semibold uppercase text-[#6e6e73]">New password</span>
-            <input required minLength={8} type="password" value={passwords.newPassword} onChange={(event) => setPasswords({ ...passwords, newPassword: event.target.value })} className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]" />
+            <input required minLength={8} type="password" value={passwords.newPassword} onChange={(event) => setPasswords({ ...passwords, newPassword: event.target.value })} className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]" />
           </label>
         </div>
-        <button disabled={busy} className="mt-5 rounded-full border border-[#d2d2d7] px-5 py-2.5 text-sm font-semibold disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Change password</button>
+        <button disabled={busy} className="mt-5 rounded-full border border-[#d2d2d7] px-5 py-2.5 text-sm font-semibold disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Change password</button>
       </form>
-      <button type="button" onClick={signOut} className="rounded-full border border-[#d2d2d7] px-5 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Sign out</button>
+      <button type="button" onClick={signOut} className="rounded-full border border-[#d2d2d7] px-5 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Sign out</button>
     </div>
   );
 }

@@ -121,12 +121,12 @@ const FULFILMENT_OPTIONS: readonly SettingOption[] = [
 
 const FIELD_DEFINITIONS = [
   // ---------------------------------------------------------- business
-  { key: 'trade_name', label: 'Trade name', kind: 'text', limit: 120, default: '', section: 'business' },
-  { key: 'legal_name', label: 'Legal name', kind: 'text', limit: 160, default: '', section: 'business' },
-  { key: 'email', label: 'Support email', kind: 'email', limit: 120, default: '', section: 'business' },
-  { key: 'phone', label: 'Support phone', kind: 'text', limit: 40, default: '', section: 'business' },
-  { key: 'address', label: 'Registered address', kind: 'textarea', limit: 500, default: '', section: 'business' },
-  { key: 'country', label: 'Country', kind: 'text', limit: 80, default: 'India', section: 'business' },
+  { key: 'trade_name', label: 'Trade name', kind: 'text', limit: 120, default: '', section: 'business', help: 'Customer-facing store name shown on receipts, invoices and emails.' },
+  { key: 'legal_name', label: 'Legal name', kind: 'text', limit: 160, default: '', section: 'business', help: 'Registered business entity name shown on formal order documents.' },
+  { key: 'email', label: 'Support email', kind: 'email', limit: 120, default: '', section: 'business', help: 'Public customer support email address shown on the support page and receipts.' },
+  { key: 'phone', label: 'Support phone', kind: 'text', limit: 40, default: '', section: 'business', help: 'Public customer support phone number shown on the support page and receipts.' },
+  { key: 'address', label: 'Registered address', kind: 'textarea', limit: 500, default: '', section: 'business', help: 'Business postal address printed on invoices and payment receipts.' },
+  { key: 'country', label: 'Country', kind: 'text', limit: 80, default: 'India', section: 'business', help: 'Country of operation printed on order documents.' },
   {
     key: 'timezone',
     label: 'Timezone',
@@ -134,6 +134,7 @@ const FIELD_DEFINITIONS = [
     limit: 60,
     default: 'Asia/Kolkata',
     section: 'business',
+    help: 'Store timezone used to cut daily sales reports and schedule sale windows.',
     options: [
       { value: 'Asia/Kolkata', label: 'Asia/Kolkata (IST)' },
       { value: 'Asia/Dubai', label: 'Asia/Dubai' },
@@ -148,12 +149,13 @@ const FIELD_DEFINITIONS = [
     limit: 4,
     default: '12h',
     section: 'business',
+    help: 'Display preference (12-hour or 24-hour) for timestamps in admin views.',
     options: [
       { value: '12h', label: '12-hour' },
       { value: '24h', label: '24-hour' },
     ],
   },
-  { key: 'footer_text', label: 'Footer text', kind: 'textarea', limit: 300, default: '', section: 'business' },
+  { key: 'footer_text', label: 'Footer text', kind: 'textarea', limit: 300, default: '', section: 'business', help: 'Short copyright or statement line for the storefront footer.' },
   {
     key: 'receipt_footer',
     label: 'Receipt footer',
@@ -163,7 +165,7 @@ const FIELD_DEFINITIONS = [
     section: 'business',
     help: 'Printed at the bottom of receipts, invoices and packing slips.',
   },
-  { key: 'cookie_notice', label: 'Cookie notice', kind: 'textarea', limit: 500, default: '', section: 'business' },
+  { key: 'cookie_notice', label: 'Cookie notice', kind: 'textarea', limit: 500, default: '', section: 'business', help: 'Optional cookie or privacy notice text for the storefront.' },
   {
     key: 'logo_media_id',
     label: 'Logo media id',
@@ -184,7 +186,7 @@ const FIELD_DEFINITIONS = [
   },
 
   // ------------------------------------------------------------ orders
-  { key: 'order_prefix', label: 'Order prefix', kind: 'text', limit: 10, default: 'GDZ', section: 'orders' },
+  { key: 'order_prefix', label: 'Order prefix', kind: 'text', limit: 10, default: 'GDZ', section: 'orders', help: 'Short uppercase letters prepended to sequential online order numbers (for example GDZ).' },
   {
     key: 'order_start_number',
     label: 'Order starting number',
@@ -194,7 +196,7 @@ const FIELD_DEFINITIONS = [
     section: 'orders',
     help: 'First number used for online orders. Existing orders keep their ids.',
   },
-  { key: 'invoice_prefix', label: 'Invoice prefix', kind: 'text', limit: 10, default: 'INV', section: 'orders' },
+  { key: 'invoice_prefix', label: 'Invoice prefix', kind: 'text', limit: 10, default: 'INV', section: 'orders', help: 'Short uppercase prefix prepended to sequential invoice numbers (for example INV).' },
   {
     key: 'auto_confirm',
     label: 'Auto-confirm paid orders',
@@ -202,6 +204,7 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'on',
     section: 'orders',
+    help: 'When on, verified online payments automatically move the order to Confirmed.',
     options: TOGGLE_OPTIONS,
   },
   {
@@ -318,6 +321,7 @@ const FIELD_DEFINITIONS = [
     limit: 20,
     default: 'PENDING',
     section: 'orders',
+    help: 'Fulfilment stage assigned automatically when an online payment is confirmed.',
     options: FULFILMENT_OPTIONS,
   },
   {
@@ -327,6 +331,7 @@ const FIELD_DEFINITIONS = [
     limit: 160,
     default: 'Dispatched in 1–2 business days.',
     section: 'orders',
+    help: 'Short dispatch expectation shown on order summaries and support notes.',
   },
   {
     key: 'cutoff_text',
@@ -335,6 +340,7 @@ const FIELD_DEFINITIONS = [
     limit: 160,
     default: 'Order before 4 pm for same-day dispatch.',
     section: 'orders',
+    help: 'Daily order cut-off note for same-day or next-day dispatch.',
   },
 
   // ----------------------------------------------------------- coupons
@@ -368,6 +374,7 @@ const FIELD_DEFINITIONS = [
     // Checkout has no payment-method selector, so COD stays unwired and off.
     default: 'off',
     section: 'payments',
+    help: 'Not active yet. Cash on delivery is kept off and invisible to customers.',
     options: TOGGLE_OPTIONS,
   },
   {
@@ -377,6 +384,7 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'on',
     section: 'payments',
+    help: 'Allow online checkout payments through PayU Hosted Checkout.',
     options: TOGGLE_OPTIONS,
   },
   {
@@ -386,6 +394,7 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'on',
     section: 'payments',
+    help: 'Allow staff to record and review manual UPI or bank-transfer payments on orders.',
     options: TOGGLE_OPTIONS,
   },
   {
@@ -408,6 +417,7 @@ const FIELD_DEFINITIONS = [
     limit: 500,
     default: '',
     section: 'payments',
+    help: 'Optional neutral note shown below the Pay button at checkout (do not name payment providers).',
   },
 
   // -------------------------------------------------------------- mail
@@ -418,6 +428,7 @@ const FIELD_DEFINITIONS = [
     limit: 10,
     default: 'log',
     section: 'mail',
+    help: 'Choose SMTP to deliver real emails, or Log only to record outbox rows without sending.',
     options: [
       { value: 'log', label: 'Log only (no delivery)' },
       { value: 'smtp', label: 'SMTP' },
@@ -430,11 +441,12 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'off',
     section: 'mail',
+    help: 'Master switch for outbound email notifications.',
     options: TOGGLE_OPTIONS,
   },
-  { key: 'mail_host', label: 'SMTP host', kind: 'text', limit: 200, default: '', section: 'mail' },
-  { key: 'mail_port', label: 'SMTP port', kind: 'number', limit: 5, default: '587', section: 'mail' },
-  { key: 'mail_username', label: 'SMTP username', kind: 'text', limit: 200, default: '', section: 'mail' },
+  { key: 'mail_host', label: 'SMTP host', kind: 'text', limit: 200, default: '', section: 'mail', help: 'Hostname of your SMTP server (must match MAIL_ALLOWED_HOSTS in production).' },
+  { key: 'mail_port', label: 'SMTP port', kind: 'number', limit: 5, default: '587', section: 'mail', help: 'Port number of your SMTP server (usually 587 for STARTTLS or 465 for SSL).' },
+  { key: 'mail_username', label: 'SMTP username', kind: 'text', limit: 200, default: '', section: 'mail', help: 'Account username for authenticating with the SMTP server. Password stays in MAIL_PASSWORD.' },
   {
     key: 'mail_encryption',
     label: 'Encryption',
@@ -442,6 +454,7 @@ const FIELD_DEFINITIONS = [
     limit: 5,
     default: 'tls',
     section: 'mail',
+    help: 'Transport encryption required for SMTP connections (STARTTLS or SSL in production).',
     options: [
       { value: 'tls', label: 'STARTTLS' },
       { value: 'ssl', label: 'SSL' },
@@ -455,8 +468,9 @@ const FIELD_DEFINITIONS = [
     limit: 120,
     default: '',
     section: 'mail',
+    help: 'Sender email address shown on outbound transactional emails.',
   },
-  { key: 'mail_from_name', label: 'From name', kind: 'text', limit: 120, default: '', section: 'mail' },
+  { key: 'mail_from_name', label: 'From name', kind: 'text', limit: 120, default: '', section: 'mail', help: 'Sender display name shown on outbound transactional emails.' },
   {
     key: 'sms_gateway',
     label: 'SMS gateway',
@@ -478,9 +492,10 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'off',
     section: 'mail',
+    help: 'Master switch for outbound SMS notifications.',
     options: TOGGLE_OPTIONS,
   },
-  { key: 'sms_sender_id', label: 'SMS sender id', kind: 'text', limit: 20, default: '', section: 'mail' },
+  { key: 'sms_sender_id', label: 'SMS sender id', kind: 'text', limit: 20, default: '', section: 'mail', help: '6-character DLT sender header or Twilio sender phone number.' },
   {
     key: 'sms_dlt_template_id',
     label: 'MSG91 DLT template id',
@@ -499,6 +514,7 @@ const FIELD_DEFINITIONS = [
     limit: 120,
     default: 'Store Desk',
     section: 'storefront',
+    help: 'Not active yet. Saved for future sign-in screen heading customization.',
   },
   {
     key: 'login_subheading',
@@ -507,6 +523,7 @@ const FIELD_DEFINITIONS = [
     limit: 200,
     default: '',
     section: 'storefront',
+    help: 'Not active yet. Saved for future sign-in screen subheading customization.',
   },
   {
     key: 'login_background_media_id',
@@ -515,6 +532,7 @@ const FIELD_DEFINITIONS = [
     limit: 120,
     default: '',
     section: 'storefront',
+    help: 'Not active yet. Copy a media id from the Media library for future sign-in background use.',
   },
   {
     key: 'login_support_link',
@@ -523,7 +541,7 @@ const FIELD_DEFINITIONS = [
     limit: 300,
     default: '',
     section: 'storefront',
-    help: 'Where “forgot password” sends staff.',
+    help: 'Where “forgot password” sends staff. (Not active yet on customer sign-in.)',
   },
   {
     key: 'recaptcha_site_key',
@@ -532,6 +550,7 @@ const FIELD_DEFINITIONS = [
     limit: 200,
     default: '',
     section: 'storefront',
+    help: 'Not active yet. Public site key for bot protection; secret key stays in RECAPTCHA_SECRET_KEY.',
   },
   {
     key: 'recaptcha_status',
@@ -540,6 +559,7 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'off',
     section: 'storefront',
+    help: 'Not active yet. Bot verification is currently handled by rate limiting and same-origin guards.',
     options: TOGGLE_OPTIONS,
   },
 
@@ -551,6 +571,7 @@ const FIELD_DEFINITIONS = [
     limit: 3,
     default: 'off',
     section: 'maintenance',
+    help: 'When on (and within any schedule window), closes the public storefront and checkout while keeping Store Admin open.',
     options: TOGGLE_OPTIONS,
   },
   {
@@ -560,6 +581,7 @@ const FIELD_DEFINITIONS = [
     limit: 500,
     default: 'We are making a few improvements. Please check back shortly.',
     section: 'maintenance',
+    help: 'Message shown to visitors on the maintenance screen while the store is offline.',
   },
   {
     key: 'maintenance_starts_at',

@@ -63,12 +63,42 @@ export interface CollectionSchema {
 
 /* Helpers to build repetitive field sets concisely. */
 
-const text = (path: string, label: string, hint?: string): FieldSchema => ({ path, label, type: 'text', hint });
-const area = (path: string, label: string, hint?: string): FieldSchema => ({ path, label, type: 'textarea', hint });
-const image = (path: string, label: string, hint?: string): FieldSchema => ({ path, label, type: 'image', hint });
-const video = (path: string, label: string, hint?: string): FieldSchema => ({ path, label, type: 'video', hint });
-const url = (path: string, label: string): FieldSchema => ({ path, label, type: 'url' });
-const booleanField = (path: string, label: string, hint?: string): FieldSchema => ({ path, label, type: 'boolean', hint });
+const text = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'text',
+  hint: hint ?? `Enter ${label.toLowerCase()}. Leave blank to keep the built-in default.`,
+});
+const area = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'textarea',
+  hint: hint ?? `Enter ${label.toLowerCase()}. Leave blank to keep the built-in default.`,
+});
+const image = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'image',
+  hint: hint ?? `Choose or upload an image for ${label.toLowerCase()} from the Media library.`,
+});
+const video = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'video',
+  hint: hint ?? `Choose or upload a WebM or MP4 video for ${label.toLowerCase()}.`,
+});
+const url = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'url',
+  hint: hint ?? `Enter a relative path (such as /shop/...) or a full https:// URL for ${label.toLowerCase()}.`,
+});
+const booleanField = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'boolean',
+  hint: hint ?? `Turn on or off for ${label.toLowerCase()}.`,
+});
 
 /**
  * The art-directed image size slots, matching the site's <picture> breakpoints:

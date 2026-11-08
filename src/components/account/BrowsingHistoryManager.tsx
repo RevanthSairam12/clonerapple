@@ -116,7 +116,7 @@ export function BrowsingHistoryManager({ initialItems, initialSaveHistory }: Pro
             checked={saveHistory}
             disabled={busy}
             onChange={(e) => void handleToggle(e.target.checked)}
-            className="h-5 w-5 rounded border-[#d2d2d7] text-[#0071e3] focus:ring-[#0071e3]"
+            className="h-5 w-5 rounded border-[#d2d2d7] text-[#1d1d1f] focus:ring-[#1d1d1f]"
           />
         </label>
       </div>
@@ -126,7 +126,7 @@ export function BrowsingHistoryManager({ initialItems, initialSaveHistory }: Pro
           <p className="text-sm text-[#6e6e73]">No products in your browsing history.</p>
           <Link
             href="/shop/iphone/accessories/cases-protection"
-            className="mt-4 inline-flex rounded-full bg-[#0071e3] px-5 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="mt-4 inline-flex rounded-full bg-[#ffe100] px-5 py-2.5 text-sm font-bold text-[#1d1d1f] hover:bg-[#ffea33] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             Explore products
           </Link>
@@ -141,7 +141,7 @@ export function BrowsingHistoryManager({ initialItems, initialSaveHistory }: Pro
               <div className="flex gap-4">
                 <Link
                   href={item.href}
-                  className="h-20 w-20 shrink-0 rounded-2xl bg-[#f5f5f7] p-2 focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+                  className="h-20 w-20 shrink-0 rounded-2xl bg-[#f5f5f7] p-2 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
                 >
                   {item.image ? (
                     <img src={item.image} alt="" className="h-full w-full object-contain" />

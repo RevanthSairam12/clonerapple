@@ -76,9 +76,14 @@ export default async function OrderPackingSlipPage({ params }: Props) {
   const shipTo = order.shipTo ?? order.billTo;
   const footer = settings?.receipt_footer?.trim() || '';
   const units = order.items.reduce((sum, item) => sum + item.quantity, 0);
-  const delivery = order.delivery;
-  const methodLabel =
-    delivery?.method === 'self'
+  const isCancelledOrder =
+    order.fulfilmentStatus === 'CANCELED'
+    || documentState.orderStatus === 'CANCELED'
+    || documentState.orderStatus === 'CANCELLED';
+  const delivery = isCancelledOrder ? null : order.delivery;
+  const methodLabel = isCancelledOrder
+    ? 'Shipment cancelled'
+    : delivery?.method === 'self'
       ? 'Local delivery'
       : delivery?.method === 'courier'
       ? 'Courier'

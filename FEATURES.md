@@ -21,6 +21,22 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Stage 5, Stage 6 & Stage 7 — UX, Admin & Site Completion, Verification & Staging Runbook — 8 November 2026
+
+- **Cancelled orders hide active shipment details (`src/lib/account/order-live.ts`, `src/lib/account/orders.ts`, `src/lib/order-status.ts`, `src/lib/store-admin/orders.ts`, `src/lib/store-admin/returns.ts`):**
+  - Cancelling an order marks its `order_deliveries` row `CANCELED`, appends a `shipment_cancelled` event to `order_delivery_events`, blocks subsequent delivery edits on closed orders, and hides active courier/tracking fields across customer order detail, order status, Store Admin order detail, and packing slips.
+- **Plain-language field help on every admin field (`scripts/check-field-help.mjs`, `npm run check:field-help`):**
+  - Verified plain-language help/hint text across all **60 `store_settings` fields**, **66 fields across 13 `setting-lists`**, **218 Website content and theme fields**, and **16 core `ProductHelp` rules**.
+- **`/account/*` and `/auth` restyled to match the home page (`src/components/account/**`, `src/app/account/**`, `src/app/auth/**`):**
+  - Replaced legacy `#0071e3` blue buttons, badges, and focus rings with the home page's Gadzio tokens (`#ffe100` primary CTA, `#1d1d1f` dark buttons/links, `transducer` font) and wrapped `/auth` in the shared `GadzioHeader` and `GlobalFooter`.
+- **`/privacy`, `/terms`, and `/support` inside shared layout + link checker (`src/lib/storefront/site-pages.ts`, `scripts/check-links.mjs`):**
+  - Wrapped `/privacy`, `/terms`, and `/support` in `GadzioHeader` + `GlobalFooter`, wired published `store_pages`, business contact settings (`trade_name`, `email`, `phone`, `address`, `footer_text`, `cookie_notice`), and `seo_pages` fallback metadata, with built-in copy as fallback. `npm run check:links` verifies **118 internal links across 8 files** with 0 broken links.
+- **Live search suggestions (`GET /api/search/suggest`, `src/lib/storefront/search-suggest.ts`, `src/components/header/GadzioHeader.tsx`):**
+  - Rate-limited, same-origin guarded typeahead endpoint returning at most 6 public-safe product suggestions (respecting maintenance mode and sale mode), wired to an accessible `role="combobox"` + `role="listbox"` dropdown in `GadzioHeader` with 200 ms debounce, keyboard navigation (`ArrowDown`/`ArrowUp`/`Enter`/`Escape`), recent searches, and `"See all results"`.
+- **Stored-only settings disposition & Staging runbook (`REMAINING_NOTES.md`, `docs/staging-checklist.md`):**
+  - Wired `store_pages`, `seo_pages`, and business/footer settings; labelled unwired settings (`social_links`, `analytics_scripts`, `store_integrations`, `recaptcha_*`, `login_*`, `cod_enabled`, `delay_minutes`) as `"Not active yet"`. Wrote `docs/staging-checklist.md` for staging and production rollout.
+- **Measured (8 November 2026):** `npm test` **1,873 tests / 1,778 passed / 0 failed / 95 skipped** (plus `tests/stage2-payments-checkout.test.mjs`, `tests/stage3-option-low-stock-alerts.test.mjs`, `tests/stage4-checkout-lock-optimization.test.mjs`, `tests/stage5-ux-admin-site.test.mjs`, `tests/coupon-db-integration.test.mjs`, and `tests/coupon-order-integration.test.mjs` **42/42 passed** against the real test PostgreSQL database); `npm run typecheck` and `npm run build` pass; all 7 check scripts (`check:store-admin-routes` **122 routes**, `check:account-routes` **21 APIs / 11 pages**, `check:admin-boundary`, `check:field-help`, `check:links`, `check-setting-lists.mjs`, `check-security-db-state.mjs` **10/10**) pass; `npm audit` **0 vulnerabilities**.
+
 ### Stage 4 — Checkout Lock-Time Optimization — 8 November 2026
 
 - **Plain reads moved before row locks (`src/lib/payu/orders.ts`):**

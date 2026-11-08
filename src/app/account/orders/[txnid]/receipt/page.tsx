@@ -26,7 +26,7 @@ export default async function AccountReceiptPage({ params, searchParams }: {
   // Ownership is established first. Gate explicit invoice access before constructing
   // any address/item/totals document DTO; never substitute a receipt in this mode.
   const state = await getCustomerDocumentState(order.id, mode);
-  const back = <Link href={`/account/orders/${encodeURIComponent(order.txnid)}`} className="text-sm font-semibold text-[#0071e3]">← Back to order</Link>;
+  const back = <Link href={`/account/orders/${encodeURIComponent(order.txnid)}`} className="text-sm font-semibold text-[#1d1d1f]">← Back to order</Link>;
   if ((mode === 'invoice' && !state.canViewInvoice) || !state.canViewBill) {
     return <AccountFrame session={session} active="/account/orders">
       <div className="mx-auto max-w-4xl space-y-5">

@@ -168,8 +168,13 @@ export async function getCustomerOrderStatus(
       toStatus: text(row.to_status),
       createdAt: iso(row.created_at),
     }));
+    const isOrderCancelled =
+      text(order.fulfilment_status) === 'CANCELED'
+      || text(order.fulfilment_status) === 'CANCELLED'
+      || text(order.status) === 'CANCELLED';
     const shipmentStarted = hasShipmentStarted(order.fulfilment_status, history);
-    const deliveryRow = shipmentStarted ? (deliveryRows as Row[])[0] : undefined;
+    const activeDelivery = !isOrderCancelled && text((deliveryRows as Row[])[0]?.status) !== 'CANCELED' ? (deliveryRows as Row[])[0] : undefined;
+    const deliveryRow = shipmentStarted ? activeDelivery : undefined;
     let details: Record<string, unknown> = {};
     if (deliveryRow?.latest_details && typeof deliveryRow.latest_details === 'object') {
       details = deliveryRow.latest_details as Record<string, unknown>;

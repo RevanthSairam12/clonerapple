@@ -30,7 +30,7 @@ export function BuyAgainRow({ items, saleLive }: RowProps) {
           <h2 id="buy-again-heading" className="text-lg font-semibold">Buy again</h2>
           <p className="mt-1 text-sm text-[#6e6e73]">Items you bought before, at today&apos;s price and stock.</p>
         </div>
-        <Link href="/account/orders" className="text-sm font-semibold text-[#0071e3] hover:underline">
+        <Link href="/account/orders" className="text-sm font-semibold text-[#1d1d1f] hover:underline">
           Your orders
         </Link>
       </div>
@@ -98,13 +98,13 @@ function BuyAgainCard({ item, saleLive }: { item: BuyAgainItem; saleLive: boolea
 
   return (
     <article className="flex h-full gap-3 rounded-2xl border border-[#e5e5ea] p-3">
-      <Link href={item.href} className="shrink-0 rounded-xl bg-[#f5f5f7] p-2 focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+      <Link href={item.href} className="shrink-0 rounded-xl bg-[#f5f5f7] p-2 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
         {item.image
           ? <img src={item.image} alt="" className="h-16 w-16 object-contain" loading="lazy" />
           : <span className="block h-16 w-16" aria-hidden="true" />}
       </Link>
       <div className="min-w-0 flex-1">
-        <Link href={item.href} className="block truncate text-sm font-semibold hover:text-[#0071e3] focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+        <Link href={item.href} className="block truncate text-sm font-semibold hover:text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
           {item.name}
         </Link>
         <p className="mt-0.5 text-xs text-[#6e6e73]">
@@ -116,7 +116,7 @@ function BuyAgainCard({ item, saleLive }: { item: BuyAgainItem; saleLive: boolea
         </p>
         <div className="mt-2">
           {item.inventoryMode === 'variant' || needsOptions ? (
-            <Link href={item.href} className="text-xs font-semibold text-[#0071e3] hover:underline">Choose options</Link>
+            <Link href={item.href} className="text-xs font-semibold text-[#1d1d1f] hover:underline">Choose options</Link>
           ) : blocked ? (
             <span className="text-xs font-semibold text-[#6e6e73]">Sold out</span>
           ) : (
@@ -124,8 +124,8 @@ function BuyAgainCard({ item, saleLive }: { item: BuyAgainItem; saleLive: boolea
               type="button"
               onClick={add}
               disabled={busy}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#0071e3] disabled:opacity-50 ${
-                added ? 'bg-[#34c759] text-white' : 'bg-[#f5f5f7] text-[#1d1d1f] hover:bg-[#0071e3] hover:text-white'
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#1d1d1f] disabled:opacity-50 ${
+                added ? 'bg-[#34c759] text-white' : 'bg-[#ffe100] text-[#1d1d1f] hover:bg-[#ffea33]'
               }`}
             >
               {added ? 'Added to bag ✓' : busy ? 'Checking…' : 'Add to bag'}

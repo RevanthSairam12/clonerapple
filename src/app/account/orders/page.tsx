@@ -54,7 +54,7 @@ export default async function AccountOrdersPage({
               name="q"
               defaultValue={params.q || ''}
               placeholder="Search order ID"
-              className="min-w-0 rounded-full border border-[#d2d2d7] px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+              className="min-w-0 rounded-full border border-[#d2d2d7] px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
             />
             <input type="hidden" name="status" value={status} />
             <button className="rounded-full bg-[#1d1d1f] px-4 py-2.5 text-sm font-semibold text-white">
@@ -120,7 +120,7 @@ export default async function AccountOrdersPage({
                   </div>
                   <div className="text-left sm:text-right">
                     <p className="text-lg font-semibold">₹{order.amount.toLocaleString('en-IN')}</p>
-                    <p className="text-xs font-semibold text-[#0071e3]">View details →</p>
+                    <p className="text-xs font-semibold text-[#1d1d1f]">View details →</p>
                   </div>
                 </div>
               </Link>

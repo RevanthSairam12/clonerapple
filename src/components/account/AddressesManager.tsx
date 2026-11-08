@@ -100,9 +100,9 @@ export function AddressesManager({ initial }: { initial: AddressView[] }) {
                 {address.isDefault && <span className="rounded-full bg-[#e8f3ff] px-3 py-1 text-xs font-semibold text-[#0066cc]">Default</span>}
               </div>
               <div className="mt-4 flex flex-wrap gap-3 text-sm">
-                <button type="button" onClick={() => { setEditing(address.id); setDraft(address); }} className="font-semibold text-[#0071e3] focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Edit</button>
-                <button type="button" onClick={() => remove(address.id)} className="font-semibold text-[#b42318] focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Delete</button>
-                {!address.isDefault && <button type="button" onClick={() => makeDefault(address.id)} className="font-semibold text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Make default</button>}
+                <button type="button" onClick={() => { setEditing(address.id); setDraft(address); }} className="font-semibold text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Edit</button>
+                <button type="button" onClick={() => remove(address.id)} className="font-semibold text-[#b42318] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Delete</button>
+                {!address.isDefault && <button type="button" onClick={() => makeDefault(address.id)} className="font-semibold text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Make default</button>}
               </div>
             </article>
           ))}
@@ -118,15 +118,15 @@ export function AddressesManager({ initial }: { initial: AddressView[] }) {
                 required={field !== 'line2'}
                 value={draft[field]}
                 onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
-                className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+                className="w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
               />
             </label>
           ))}
         </div>
         <div className="mt-5 flex gap-3">
-          <button disabled={busy} className="rounded-full bg-[#1d1d1f] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Save address</button>
+          <button disabled={busy} className="rounded-full bg-[#1d1d1f] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Save address</button>
           {editing && (
-            <button type="button" onClick={() => { setEditing(null); setDraft(emptyAddress); }} className="rounded-full border border-[#d2d2d7] px-5 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#0071e3]">Cancel</button>
+            <button type="button" onClick={() => { setEditing(null); setDraft(emptyAddress); }} className="rounded-full border border-[#d2d2d7] px-5 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">Cancel</button>
           )}
         </div>
       </form>

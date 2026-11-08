@@ -318,7 +318,9 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
         <div className="sa-tab-stack">
           <section className="sa-detail-card">
             <h2 className="sa-card-title">Delivery</h2>
-            {shipmentStarted && order.delivery ? (
+            {order.fulfilmentStatus === 'CANCELED' ? (
+              <p className="sa-empty">Shipment cancelled. Original shipment details are retained in the audit log only.</p>
+            ) : shipmentStarted && order.delivery ? (
               <dl className="sa-meta">
                 <div><dt>Method</dt><dd>{order.delivery.method || '—'}</dd></div>
                 {order.delivery.method === 'self' ? (

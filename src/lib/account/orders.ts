@@ -433,7 +433,11 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
   `;
   const refundTotalRows = await sql`select coalesce(sum(amount_paise),0)::text as total from refunds where order_id=${order.id}`;
   const fulfilmentStatus = order.fulfilment_status || 'PENDING';
-  const shipmentStarted = hasShipmentStarted(fulfilmentStatus, historyRows);
+  const isCancelledOrder =
+    fulfilmentStatus === 'CANCELED'
+    || fulfilmentStatus === 'CANCELLED'
+    || order.status === 'CANCELLED';
+  const shipmentStarted = !isCancelledOrder && hasShipmentStarted(fulfilmentStatus, historyRows);
   const delivery = toDeliverySnapshot(deliveryRows[0], shipmentStarted);
   const deliveredHistory = historyRows.find((row) => row.domain === 'fulfilment' && row.to_status === 'DELIVERED');
   const deliveredAt = shipmentStarted

@@ -41,7 +41,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
         {inFlight && <LiveOrderPoller txnid={order.txnid} initialStatus={order.status} />}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <Link href="/account/orders" className="text-sm font-semibold text-[#0071e3]">← All orders</Link>
+            <Link href="/account/orders" className="text-sm font-semibold text-[#1d1d1f]">← All orders</Link>
             <h2 className="mt-3 font-mono text-2xl font-semibold">{order.txnid}</h2>
             <p className="mt-1 text-sm text-[#6e6e73]">Placed {order.createdAt.toLocaleString('en-IN')}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -60,7 +60,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
               </p>
             )}
           </div>
-          {(documentState.canViewInvoice || documentState.canViewReceipt) && <Link prefetch={false} href={`/account/orders/${encodeURIComponent(order.txnid)}/receipt${documentState.canViewInvoice ? '?document=invoice' : ''}`} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+          {(documentState.canViewInvoice || documentState.canViewReceipt) && <Link prefetch={false} href={`/account/orders/${encodeURIComponent(order.txnid)}/receipt${documentState.canViewInvoice ? '?document=invoice' : ''}`} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
             {documentState.canViewInvoice ? 'View / Print invoice' : 'View Payment receipt'}
           </Link>}
         </div>
@@ -133,7 +133,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
                   </p>
                   {order.trackingNumber && <p className="mt-2 text-sm">Tracking {order.trackingNumber}</p>}
                   {trackingUrl && (
-                    <a className="mt-3 inline-block text-sm font-semibold text-[#0071e3]" href={trackingUrl} target="_blank" rel="noreferrer">
+                    <a className="mt-3 inline-block text-sm font-semibold text-[#1d1d1f]" href={trackingUrl} target="_blank" rel="noreferrer">
                       Track delivery →
                     </a>
                   )}
@@ -141,6 +141,8 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
                   {order.deliverySlot && <p className="mt-2 text-sm">Delivery slot {order.deliverySlot}</p>}
                   {order.deliveredAt && <p className="mt-2 text-sm">Delivered {order.deliveredAt.toLocaleString('en-IN')}</p>}
                 </>
+              ) : order.fulfilmentStatus === 'CANCELED' || order.paymentStatus === 'CANCELLED' ? (
+                <p className="mt-3 text-sm text-[#6e6e73]">Shipment cancelled.</p>
               ) : (
                 <p className="mt-3 text-sm text-[#6e6e73]">Shipment details will appear after pickup.</p>
               )}
@@ -188,7 +190,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
               <ol className="mt-4 space-y-4">
                 {timeline.map((entry, index) => (
                   <li key={`${entry.createdAt.toISOString()}-${index}`} className="relative pl-6 text-sm">
-                    <span className="absolute left-0 top-1 h-3 w-3 rounded-full bg-[#0071e3]" />
+                    <span className="absolute left-0 top-1 h-3 w-3 rounded-full bg-[#1d1d1f]" />
                     <p className="font-semibold">{entry.label}</p>
                     <p className="text-xs text-[#6e6e73]">{entry.createdAt.toLocaleString('en-IN')} · {entry.domain}</p>
                   </li>
@@ -198,7 +200,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
           </aside>
         </div>
         <p className="text-sm text-[#6e6e73]">
-          Need help? <Link href="/support" className="font-semibold text-[#0071e3]">Contact Gadzio Support</Link>
+          Need help? <Link href="/support" className="font-semibold text-[#1d1d1f]">Contact Gadzio Support</Link>
         </p>
       </div>
     </AccountFrame>

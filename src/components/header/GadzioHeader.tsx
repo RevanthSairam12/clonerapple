@@ -12,6 +12,7 @@ import {
   type FlyoutMenu,
   type NavItem,
 } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
+import type { SearchSuggestionItem } from '@/lib/storefront/search-suggest';
 
 /**
  * Sticky storefront header.
@@ -235,11 +236,17 @@ export function GadzioHeader({
   const [mobileKey, setMobileKey] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<SearchSuggestionItem[]>([]);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   /** Section whose links fill the secondary bar. Falls back to the first item,
       which is what the mrbeast header does (`x-init` activates item one). */
   const [activeKey, setActiveKey] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   /** Delays closing on pointer-leave so the pointer can travel into the panel. */
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -255,7 +262,92 @@ export function GadzioHeader({
     setSearchOpen(false);
     setMobileOpen(false);
     setMobileKey(null);
+    setActiveSuggestionIndex(-1);
+    setSearchFocused(false);
   }, []);
+
+  // Read recent searches from localStorage on client
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('gadzio_recent_searches');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setRecentSearches(parsed.slice(0, 6).filter((item): item is string => typeof item === 'string'));
+        }
+      }
+    } catch {
+      // Local storage unavailable
+    }
+  }, []);
+
+  const saveRecentSearch = useCallback((term: string) => {
+    const clean = term.trim();
+    if (!clean) return;
+    setRecentSearches((prev) => {
+      const filtered = prev.filter((item) => item.toLowerCase() !== clean.toLowerCase());
+      const updated = [clean, ...filtered].slice(0, 6);
+      try {
+        localStorage.setItem('gadzio_recent_searches', JSON.stringify(updated));
+      } catch {
+        // Local storage full/blocked
+      }
+      return updated;
+    });
+  }, []);
+
+  const clearRecentSearches = useCallback(() => {
+    setRecentSearches([]);
+    try {
+      localStorage.removeItem('gadzio_recent_searches');
+    } catch {
+      // Local storage unavailable
+    }
+  }, []);
+
+  // Debounced fetch for typeahead suggestions with cancellation
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      setActiveSuggestionIndex(-1);
+      setLoadingSuggestions(false);
+      return;
+    }
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setLoadingSuggestions(true);
+    const timeout = setTimeout(() => {
+      fetch(`/api/search/suggest?q=${encodeURIComponent(trimmed)}`, {
+        signal: controller.signal,
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && Array.isArray(data.suggestions)) {
+            setSuggestions(data.suggestions);
+            setActiveSuggestionIndex(-1);
+          }
+        })
+        .catch((err) => {
+          if (err.name !== 'AbortError') {
+            setSuggestions([]);
+          }
+        })
+        .finally(() => {
+          setLoadingSuggestions(false);
+        });
+    }, 200);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [query]);
 
   /* --------------------------------------------------------- interactions */
 
@@ -302,13 +394,60 @@ export function GadzioHeader({
     };
   }, [mobileOpen]);
 
-  const submitSearch = (event: React.FormEvent) => {
-    event.preventDefault();
-    const trimmed = query.trim();
+  const submitSearch = (event?: React.FormEvent, directTerm?: string) => {
+    if (event) event.preventDefault();
+    const term = directTerm ?? query;
+    const trimmed = term.trim();
     if (!trimmed) return;
+    saveRecentSearch(trimmed);
     closeAll();
     setQuery('');
     router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+  };
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const trimmed = query.trim();
+    const hasQuery = trimmed.length >= 2;
+    const totalItems = hasQuery
+      ? suggestions.length + 1
+      : recentSearches.length;
+
+    if (event.key === 'ArrowDown') {
+      if (totalItems > 0) {
+        event.preventDefault();
+        setActiveSuggestionIndex((prev) => (prev + 1) % totalItems);
+      }
+    } else if (event.key === 'ArrowUp') {
+      if (totalItems > 0) {
+        event.preventDefault();
+        setActiveSuggestionIndex((prev) => (prev <= 0 ? totalItems - 1 : prev - 1));
+      }
+    } else if (event.key === 'Enter') {
+      if (activeSuggestionIndex >= 0) {
+        event.preventDefault();
+        if (hasQuery) {
+          if (activeSuggestionIndex < suggestions.length) {
+            const selected = suggestions[activeSuggestionIndex];
+            saveRecentSearch(selected.name);
+            closeAll();
+            setQuery('');
+            router.push(selected.href);
+            return;
+          } else {
+            submitSearch(undefined, trimmed);
+            return;
+          }
+        } else if (recentSearches[activeSuggestionIndex]) {
+          const selected = recentSearches[activeSuggestionIndex];
+          submitSearch(undefined, selected);
+          return;
+        }
+      }
+      submitSearch(event);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeAll();
+    }
   };
 
   // Dismiss the flyout once focus leaves the header entirely (keyboard users).
@@ -540,12 +679,12 @@ export function GadzioHeader({
           {searchOpen && (
             <div
               id="gz-nav-search"
-              className="gz-nav-panel absolute inset-x-2 top-(--gz-bar-bottom) z-20 rounded-b-sm bg-white shadow-[0_0_2px_0_#bbb] anav:inset-x-4"
+              className="gz-nav-panel absolute inset-x-2 top-(--gz-bar-bottom) z-20 max-h-[80vh] overflow-y-auto rounded-b-sm bg-white shadow-[0_4px_20px_0_rgba(0,0,0,0.12)] anav:inset-x-4"
             >
               <form
                 onSubmit={submitSearch}
                 role="search"
-                className="flex items-center gap-3 px-6 py-5 anav:px-10"
+                className="flex items-center gap-3 border-b border-[#e5e5ea] px-6 py-4 anav:px-10"
               >
                 <SearchIcon className="h-[18px] w-[18px] shrink-0 text-[#6e6e73]" />
                 <input
@@ -553,10 +692,38 @@ export function GadzioHeader({
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onKeyDown={handleSearchKeyDown}
                   placeholder={searchPlaceholder}
                   aria-label="Search"
+                  role="combobox"
+                  aria-expanded={
+                    query.trim().length >= 2 ||
+                    (searchFocused && recentSearches.length > 0)
+                  }
+                  aria-autocomplete="list"
+                  aria-controls="gz-search-suggestions"
+                  aria-activedescendant={
+                    activeSuggestionIndex >= 0
+                      ? `gz-search-item-${activeSuggestionIndex}`
+                      : undefined
+                  }
                   className="min-w-0 flex-1 bg-transparent text-[15px] text-black outline-none placeholder:text-[#86868b]"
                 />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      setActiveSuggestionIndex(-1);
+                      searchInputRef.current?.focus();
+                    }}
+                    aria-label="Clear query"
+                    className="cursor-pointer p-1 text-[#86868b] hover:text-black"
+                  >
+                    <CloseIcon className="h-4 w-4" />
+                  </button>
+                )}
                 <button
                   type="submit"
                   className="shrink-0 cursor-pointer rounded-full bg-black px-4 py-2 text-[13px] leading-none font-bold tracking-[-0.01em] text-white uppercase transition-opacity duration-150 hover:opacity-80"
@@ -564,6 +731,173 @@ export function GadzioHeader({
                   Search
                 </button>
               </form>
+
+              {/* Suggestions / Recent Searches Dropdown */}
+              <div
+                id="gz-search-suggestions"
+                role="listbox"
+                aria-label="Search suggestions"
+                className="px-6 py-4 anav:px-10"
+              >
+                {query.trim().length >= 2 ? (
+                  suggestions.length > 0 ? (
+                    <div className="space-y-1">
+                      <p className="mb-2 text-xs font-semibold tracking-wider text-[#6e6e73] uppercase">
+                        Matching products
+                      </p>
+                      <ul className="divide-y divide-[#f5f5f7]">
+                        {suggestions.map((item, idx) => {
+                          const isHighlighted = activeSuggestionIndex === idx;
+                          return (
+                            <li
+                              key={item.id}
+                              id={`gz-search-item-${idx}`}
+                              role="option"
+                              aria-selected={isHighlighted}
+                            >
+                              <Link
+                                href={item.href}
+                                onClick={() => {
+                                  saveRecentSearch(item.name);
+                                  closeAll();
+                                }}
+                                className={`flex items-center gap-4 rounded-xl p-2.5 transition ${
+                                  isHighlighted
+                                    ? 'bg-[#f5f5f7]'
+                                    : 'hover:bg-[#f5f5f7]'
+                                }`}
+                              >
+                                {item.image ? (
+                                  <img
+                                    src={item.image}
+                                    alt=""
+                                    width={44}
+                                    height={44}
+                                    className="h-11 w-11 shrink-0 rounded-lg border border-black/5 object-contain p-1"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="h-11 w-11 shrink-0 rounded-lg bg-[#f5f5f7]" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-semibold text-black">
+                                    {item.name}
+                                  </p>
+                                  <p className="text-xs text-[#6e6e73]">
+                                    {item.brand && `${item.brand} · `}
+                                    {item.category}
+                                  </p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-sm font-bold text-black">
+                                    {item.wasPriceDisplay ? (
+                                      <s className="mr-1.5 font-normal text-[#86868b]">
+                                        {item.wasPriceDisplay}
+                                      </s>
+                                    ) : null}
+                                    {item.priceDisplay}
+                                  </p>
+                                  {item.stockBlocked && (
+                                    <span className="text-[11px] font-semibold text-red-600">
+                                      Stock not available
+                                    </span>
+                                  )}
+                                </div>
+                              </Link>
+                            </li>
+                          );
+                        })}
+                      </ul>
+
+                      {/* "See all results for ..." row */}
+                      <div
+                        id={`gz-search-item-${suggestions.length}`}
+                        role="option"
+                        aria-selected={activeSuggestionIndex === suggestions.length}
+                        className="pt-3"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => submitSearch(undefined, query)}
+                          className={`flex w-full cursor-pointer items-center justify-between rounded-xl p-3 text-left text-sm font-semibold text-[#0071e3] transition ${
+                            activeSuggestionIndex === suggestions.length
+                              ? 'bg-[#f5f5f7]'
+                              : 'hover:bg-[#f5f5f7]'
+                          }`}
+                        >
+                          <span>See all results for &ldquo;{query.trim()}&rdquo;</span>
+                          <span aria-hidden="true">&rarr;</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : loadingSuggestions ? (
+                    <p className="py-4 text-center text-sm text-[#86868b]">
+                      Searching products&hellip;
+                    </p>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <p className="text-sm font-semibold text-black">
+                        No products found for &ldquo;{query.trim()}&rdquo;
+                      </p>
+                      <p className="mt-1 text-xs text-[#6e6e73]">
+                        Try searching for a phone model, case colour or accessory type.
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <div>
+                    {recentSearches.length > 0 ? (
+                      <div>
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-semibold tracking-wider text-[#6e6e73] uppercase">
+                            Recent searches
+                          </p>
+                          <button
+                            type="button"
+                            onClick={clearRecentSearches}
+                            className="cursor-pointer text-xs text-[#86868b] hover:text-black hover:underline"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        <ul className="space-y-1">
+                          {recentSearches.map((term, idx) => {
+                            const isHighlighted = activeSuggestionIndex === idx;
+                            return (
+                              <li
+                                key={term}
+                                id={`gz-search-item-${idx}`}
+                                role="option"
+                                aria-selected={isHighlighted}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => submitSearch(undefined, term)}
+                                  className={`flex w-full cursor-pointer items-center justify-between rounded-xl p-2.5 text-left text-sm font-medium text-black transition ${
+                                    isHighlighted
+                                      ? 'bg-[#f5f5f7]'
+                                      : 'hover:bg-[#f5f5f7]'
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span className="text-[#86868b]">&#x1F50D;</span>
+                                    <span>{term}</span>
+                                  </span>
+                                  <span className="text-xs text-[#86868b]">&rarr;</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : (
+                      <p className="py-2 text-xs text-[#86868b]">
+                        Type at least 2 characters to search for cases, chargers, cables and phone models.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

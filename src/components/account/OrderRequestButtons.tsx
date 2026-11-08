@@ -35,8 +35,8 @@ export function OrderRequestButtons({ txnid, canCancel, canReturn }: { txnid: st
   return (
     <div className="rounded-2xl border border-[#e5e5ea] bg-white p-4">
       <div className="flex flex-wrap gap-3">
-        {canCancel && <button type="button" disabled={busy} onClick={() => submit('cancel')} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold hover:bg-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#0071e3] disabled:opacity-50">Request cancellation</button>}
-        {canReturn && <button type="button" disabled={busy} onClick={() => submit('return')} className="rounded-full bg-[#1d1d1f] px-4 py-2 text-sm font-semibold text-white hover:bg-black focus:outline-none focus:ring-2 focus:ring-[#0071e3] disabled:opacity-50">Request return</button>}
+        {canCancel && <button type="button" disabled={busy} onClick={() => submit('cancel')} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold hover:bg-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f] disabled:opacity-50">Request cancellation</button>}
+        {canReturn && <button type="button" disabled={busy} onClick={() => submit('return')} className="rounded-full bg-[#1d1d1f] px-4 py-2 text-sm font-semibold text-white hover:bg-black focus:outline-none focus:ring-2 focus:ring-[#1d1d1f] disabled:opacity-50">Request return</button>}
       </div>
       {message && <p role="alert" className="mt-3 text-sm text-[#6e6e73]">{message}</p>}
     </div>

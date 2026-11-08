@@ -70,7 +70,7 @@ export function MessagesManager({ initialMessages }: { initialMessages: Customer
             type="button"
             disabled={busy}
             onClick={handleMarkAllRead}
-            className="text-sm font-semibold text-[#0071e3] hover:underline disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="text-sm font-semibold text-[#1d1d1f] hover:underline disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             Mark all as read ({unreadCount})
           </button>
@@ -82,7 +82,7 @@ export function MessagesManager({ initialMessages }: { initialMessages: Customer
           <p className="text-sm text-[#6e6e73]">You have no messages yet.</p>
           <Link
             href="/account/orders"
-            className="mt-4 inline-flex rounded-full bg-[#0071e3] px-5 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="mt-4 inline-flex rounded-full bg-[#ffe100] px-5 py-2.5 text-sm font-bold text-[#1d1d1f] hover:bg-[#ffea33] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             View orders
           </Link>
@@ -106,7 +106,7 @@ export function MessagesManager({ initialMessages }: { initialMessages: Customer
                   <div className="flex items-start gap-3 min-w-0">
                     <span
                       className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
-                        !msg.isRead ? 'bg-[#0071e3]' : 'bg-transparent'
+                        !msg.isRead ? 'bg-[#1d1d1f]' : 'bg-transparent'
                       }`}
                       aria-label={!msg.isRead ? 'Unread message' : undefined}
                     />
@@ -138,7 +138,7 @@ export function MessagesManager({ initialMessages }: { initialMessages: Customer
                       <div className="mt-4 pt-3 border-t border-[#e5e5ea]">
                         <Link
                           href={`/account/orders/${encodeURIComponent(msg.orderTxnid)}`}
-                          className="text-xs font-semibold text-[#0071e3] hover:underline"
+                          className="text-xs font-semibold text-[#1d1d1f] hover:underline"
                         >
                           View order {msg.orderTxnid} →
                         </Link>

@@ -1024,11 +1024,30 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
     `;
   }
 
-  await tx`
+  const voidedDeliveries = (await tx`
     update order_deliveries
     set status = 'CANCELED', updated_at = now()
-    where order_id = ${orderId}
-  `;
+    where order_id = ${orderId} and status <> 'CANCELED'
+    returning id, delivery_method, courier_name, carrier, tracking_number, scheduled_for
+  `) as Row[];
+
+  if (voidedDeliveries[0]) {
+    const d = voidedDeliveries[0];
+    await tx`
+      insert into order_delivery_events (delivery_id, event_type, status, details)
+      values (
+        ${number(d.id)},
+        'shipment_cancelled',
+        'CANCELED',
+        ${JSON.stringify({
+          voidReason: label,
+          method: nullableText(d.delivery_method),
+          courierName: nullableText(d.courier_name) ?? nullableText(d.carrier),
+          hasTrackingNumber: Boolean(nullableText(d.tracking_number)),
+        })}::jsonb
+      )
+    `;
+  }
 
   await tx`
     insert into order_status_history (order_id, domain, actor, from_status, to_status, note)

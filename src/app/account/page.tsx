@@ -60,12 +60,12 @@ export default async function AccountPage() {
           {/* 1. Your Orders */}
           <Link
             href="/account/orders"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">📦</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   View all →
                 </span>
               </div>
@@ -84,7 +84,7 @@ export default async function AccountPage() {
                   <OrderStatusChip status={latest.status} />
                 </div>
               ) : (
-                <span className="text-xs font-semibold text-[#0071e3]">Start shopping</span>
+                <span className="text-xs font-semibold text-[#1d1d1f]">Start shopping</span>
               )}
             </div>
           </Link>
@@ -92,12 +92,12 @@ export default async function AccountPage() {
           {/* 2. Returns and Requests */}
           <Link
             href="/account/orders"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">🔄</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   Manage →
                 </span>
               </div>
@@ -122,12 +122,12 @@ export default async function AccountPage() {
           {/* 3. Your Addresses */}
           <Link
             href="/account/addresses"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">📍</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   Edit →
                 </span>
               </div>
@@ -150,12 +150,12 @@ export default async function AccountPage() {
           {/* 4. Login and Security */}
           <Link
             href="/account/profile"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">🔒</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   Security →
                 </span>
               </div>
@@ -178,12 +178,12 @@ export default async function AccountPage() {
           {/* 5. Your Coupons */}
           <Link
             href="/account/coupons"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">🏷️</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   View coupons →
                 </span>
               </div>
@@ -202,17 +202,17 @@ export default async function AccountPage() {
           {/* 6. Message Centre */}
           <Link
             href="/account/messages"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">💬</span>
                 {summary.messages.unreadCount > 0 ? (
-                  <span className="rounded-full bg-[#0071e3] px-2 py-0.5 text-xs font-bold text-white">
+                  <span className="rounded-full bg-[#ffe100] px-2 py-0.5 text-xs font-bold text-[#1d1d1f]">
                     {summary.messages.unreadCount} new
                   </span>
                 ) : (
-                  <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                  <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                     Inbox →
                   </span>
                 )}
@@ -232,12 +232,12 @@ export default async function AccountPage() {
           {/* 7. Profile */}
           <Link
             href="/account/profile"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">👤</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   Edit profile →
                 </span>
               </div>
@@ -258,12 +258,12 @@ export default async function AccountPage() {
           {/* 8. Contact and Support */}
           <Link
             href="/support"
-            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#0071e3] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="group flex flex-col justify-between rounded-3xl border border-[#e5e5ea] bg-white p-5 shadow-sm transition hover:border-[#1d1d1f] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xl" aria-hidden="true">📞</span>
-                <span className="text-xs font-semibold text-[#0071e3] group-hover:underline">
+                <span className="text-xs font-semibold text-[#1d1d1f] group-hover:underline">
                   Support →
                 </span>
               </div>
@@ -289,22 +289,22 @@ export default async function AccountPage() {
               </h3>
               <ul className="space-y-2 text-sm font-semibold">
                 <li>
-                  <Link href="/account/orders" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/orders" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Your Orders
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/orders" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/orders" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Returns &amp; refunds
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/addresses" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/addresses" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Delivery addresses
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/history" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/history" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Browsing history
                   </Link>
                 </li>
@@ -318,17 +318,17 @@ export default async function AccountPage() {
               </h3>
               <ul className="space-y-2 text-sm font-semibold">
                 <li>
-                  <Link href="/account/messages" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/messages" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Message centre
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/coupons" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/coupons" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Your coupons
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/preferences" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/preferences" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Communication preferences
                   </Link>
                 </li>
@@ -342,17 +342,17 @@ export default async function AccountPage() {
               </h3>
               <ul className="space-y-2 text-sm font-semibold">
                 <li>
-                  <Link href="/account/profile" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/profile" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Name and phone
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/profile" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/profile" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Change password
                   </Link>
                 </li>
                 <li>
-                  <Link href="/account/profile" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/profile" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Active sessions
                   </Link>
                 </li>
@@ -366,7 +366,7 @@ export default async function AccountPage() {
               </h3>
               <ul className="space-y-2 text-sm font-semibold">
                 <li>
-                  <Link href="/account/data" className="text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                  <Link href="/account/data" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Download personal data
                   </Link>
                 </li>

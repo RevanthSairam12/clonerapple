@@ -670,7 +670,27 @@ function deliveryFromRows(
   row: Row,
   events: DeliveryEvent[],
   role: OrderAccessRole,
+  orderFulfilmentStatus?: string,
 ): OrderDelivery {
+  const deliveryStatus = isFulfilmentStatus(row.delivery_status) ? row.delivery_status : 'PENDING';
+  if (deliveryStatus === 'CANCELED' || orderFulfilmentStatus === 'CANCELED') {
+    return {
+      id: text(row.delivery_id),
+      status: 'CANCELED',
+      method: null,
+      personName: null,
+      personPhone: null,
+      personPhoneMasked: null,
+      courierName: null,
+      carrier: null,
+      trackingNumber: null,
+      trackingUrl: null,
+      scheduledFor: null,
+      deliverySlot: null,
+      deliveredAt: null,
+      events,
+    };
+  }
   const details = jsonObject(row.latest_details);
   const method = row.delivery_method === 'self' || row.delivery_method === 'courier'
     ? row.delivery_method
@@ -825,7 +845,7 @@ export async function getOrderDetail(
       details: jsonObject(row.details),
     }));
     const delivery = (deliveryRows as Row[])[0]
-       ? deliveryFromRows((deliveryRows as Row[])[0], events, role)
+       ? deliveryFromRows((deliveryRows as Row[])[0], events, role, text(order.fulfilment_status))
       : null;
 
     return {
@@ -1083,14 +1103,18 @@ export async function updateDelivery(input: {
   try {
     return await sql.begin(async (tx) => {
       const orderRows = (await tx`
-        select id, txnid, fulfilment_status
+        select id, txnid, status, fulfilment_status
         from orders
         where txnid = ${input.txnid.trim()}
         for update
       `) as Row[];
       const order = orderRows[0];
       if (!order) return mutationFailure('not-found', 'Order not found.');
-      if (order.fulfilment_status === 'DELIVERED' || order.fulfilment_status === 'CANCELED') {
+      if (
+        order.fulfilment_status === 'DELIVERED'
+        || order.fulfilment_status === 'CANCELED'
+        || order.status === 'CANCELLED'
+      ) {
         return mutationFailure('invalid-transition', 'Delivery details cannot be changed for a closed order.');
       }
 

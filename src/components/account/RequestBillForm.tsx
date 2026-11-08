@@ -50,7 +50,7 @@ export function RequestBillForm({ txnid, reasons }: { txnid: string; reasons: Ar
       </label>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {reasons.length === 0 && <p className="text-sm text-[#6e6e73]">Bill request reasons are temporarily unavailable. Please try again later.</p>}
-      <button disabled={pending || !reasonId || (isOther && !otherText.trim())} className="rounded-full bg-[#0071e3] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{pending ? 'Requesting…' : 'Request and view bill'}</button>
+      <button disabled={pending || !reasonId || (isOther && !otherText.trim())} className="rounded-full bg-[#1d1d1f] px-5 py-2.5 text-sm font-semibold text-white hover:bg-black disabled:opacity-50">{pending ? 'Requesting…' : 'Request and view bill'}</button>
     </form>
   </section>;
 }

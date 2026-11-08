@@ -37,7 +37,7 @@ export function CouponsList({ coupons }: { coupons: CustomerCouponView[] }) {
           <p className="text-sm text-[#6e6e73]">You have no available coupons right now.</p>
           <Link
             href="/shop/iphone/accessories/cases-protection"
-            className="mt-4 inline-flex rounded-full bg-[#0071e3] px-5 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="mt-4 inline-flex rounded-full bg-[#ffe100] px-5 py-2.5 text-sm font-bold text-[#1d1d1f] hover:bg-[#ffea33] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             Start shopping
           </Link>
@@ -75,7 +75,7 @@ export function CouponsList({ coupons }: { coupons: CustomerCouponView[] }) {
                     <button
                       type="button"
                       onClick={() => copyCode(coupon.code)}
-                      className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#0071e3] shadow-sm hover:bg-[#e8e8ed] focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+                      className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1d1d1f] shadow-sm hover:bg-[#e8e8ed] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
                     >
                       {isCopied ? 'Copied!' : 'Copy'}
                     </button>

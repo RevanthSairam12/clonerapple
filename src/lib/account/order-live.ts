@@ -217,6 +217,10 @@ export function toDeliverySnapshot(value: unknown, shipmentStarted = false): Acc
   const row = record(value);
   const status = row ? text(row.status) : null;
   if (!row || !status) return null;
+  const normalizedStatus = status.toUpperCase();
+  if (normalizedStatus === 'CANCELED' || normalizedStatus === 'CANCELLED' || row.is_active === false) {
+    return null;
+  }
   const nullableIso = (value: unknown): string | null => {
     if (value == null) return null;
     const time = value instanceof Date ? value.getTime() : Date.parse(String(value));

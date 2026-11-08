@@ -21,7 +21,7 @@ export function ProductRecommendationRow({ title, subtitle, items, viewAllHref }
         {viewAllHref && (
           <Link
             href={viewAllHref}
-            className="text-sm font-semibold text-[#0071e3] hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="text-sm font-semibold text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             View all
           </Link>
@@ -37,7 +37,7 @@ export function ProductRecommendationRow({ title, subtitle, items, viewAllHref }
             <div>
               <Link
                 href={item.href}
-                className="block h-36 w-full rounded-xl bg-[#f5f5f7] p-3 text-center focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+                className="block h-36 w-full rounded-xl bg-[#f5f5f7] p-3 text-center focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
               >
                 {item.image ? (
                   <img
@@ -51,7 +51,7 @@ export function ProductRecommendationRow({ title, subtitle, items, viewAllHref }
                 )}
               </Link>
               <h3 className="mt-3 font-semibold text-sm line-clamp-1">
-                <Link href={item.href} className="hover:underline focus:outline-none focus:ring-2 focus:ring-[#0071e3]">
+                <Link href={item.href} className="hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                   {item.name}
                 </Link>
               </h3>

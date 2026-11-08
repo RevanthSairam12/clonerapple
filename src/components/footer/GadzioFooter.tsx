@@ -95,6 +95,7 @@ export function GadzioFooter({ content }: { content?: FooterOverride } = {}) {
   const copyright = content?.copyright ?? FOOTER_BOTTOM.copyright;
   const localeLabel = content?.localeLabel ?? FOOTER_BOTTOM.localeLabel;
   const localeHref = content?.localeHref ?? FOOTER_BOTTOM.localeHref;
+  const cookieNotice = content?.footnotesHtml?.trim() || null;
 
   return (
     <footer className="w-full bg-black text-white border-t border-white/10 font-sans antialiased overflow-hidden pt-16 sm:pt-24 md:pt-28">
@@ -193,6 +194,9 @@ export function GadzioFooter({ content }: { content?: FooterOverride } = {}) {
                   iPhone, AirPods and MagSafe are trademarks of Apple Inc.
                 </p>
               </div>
+              {cookieNotice && (
+                <p className="text-[11px] sm:text-xs text-white/60 font-normal">{cookieNotice}</p>
+              )}
             </div>
           </div>
         </div>

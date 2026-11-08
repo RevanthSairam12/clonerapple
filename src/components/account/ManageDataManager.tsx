@@ -131,7 +131,7 @@ export function ManageDataManager({ email }: { email: string }) {
               value={exportPassword}
               onChange={(e) => setExportPassword(e.target.value)}
               placeholder="Enter current password"
-              className="mt-1 w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+              className="mt-1 w-full rounded-xl border border-[#d2d2d7] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
             />
           </label>
 
@@ -142,7 +142,7 @@ export function ManageDataManager({ email }: { email: string }) {
           <button
             type="submit"
             disabled={exportBusy || !exportPassword}
-            className="rounded-full bg-[#1d1d1f] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#333336] disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
+            className="rounded-full bg-[#1d1d1f] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#333336] disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
           >
             {exportBusy ? 'Preparing export...' : 'Download data (JSON)'}
           </button>
