@@ -129,3 +129,28 @@ Re-run the role and grant checks after any change to these variables or to the m
 node scripts/check-security-db-state.mjs
 node scripts/verify-rls-consumer-tables.mjs
 ```
+
+---
+
+## Role-level `idle_in_transaction_session_timeout` (For Owner Approval — NOT Applied)
+
+**Status:** **Not applied.** Per the database connection decisions, this setting is documented here for explicit owner approval before running in production.
+
+**Why 30 seconds.** If a serverless function or container freezes mid-transaction (after `BEGIN` and acquiring `FOR UPDATE` row locks, before `COMMIT`/`ROLLBACK` and before the TCP connection closes), PostgreSQL will otherwise hold those row locks until TCP keepalive expires. Setting `idle_in_transaction_session_timeout = '30s'` on the application role causes PostgreSQL to automatically abort any transaction that sits idle for more than 30 seconds (`25P03: terminating connection due to idle-in-transaction timeout`), releasing its locks and pooler slot.
+
+### Exact SQL to apply (after approval)
+
+```sql
+-- 1. Apply the 30-second idle-in-transaction timeout to the Supabase application role
+--    (replace `postgres` with the dedicated app role name if a separate role is used):
+ALTER ROLE postgres SET idle_in_transaction_session_timeout = '30s';
+
+-- 2. Verify the role-level configuration in pg_db_role_setting:
+SELECT rolname, rolconfig
+FROM pg_roles
+WHERE rolname = 'postgres';
+
+-- 3. (Optional) Roll back to default if ever needed:
+-- ALTER ROLE postgres RESET idle_in_transaction_session_timeout;
+```
+
