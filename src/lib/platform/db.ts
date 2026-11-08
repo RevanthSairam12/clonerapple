@@ -50,7 +50,7 @@ export const TRANSACTION_POOLER_REFUSAL_MESSAGE =
  * migrations, and schema-pinned test fixtures depend on session-level state.
  */
 export function resolveMigrationDatabaseUrl(
-  env: { DATABASE_MIGRATION_URL?: string; DATABASE_URL?: string } = process.env,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   const raw = (env.DATABASE_MIGRATION_URL || env.DATABASE_URL || '').trim();
   if (!raw) {

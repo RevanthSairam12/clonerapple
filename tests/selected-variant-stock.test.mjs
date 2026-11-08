@@ -93,6 +93,7 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
     if (text === '' || text.startsWith('(') || text.includes('as variant_device_model_id')
       || text.startsWith('left join product_variant_colours')) return text;
     queries.push({ text, values: clone(values) });
+    if (text.includes("set_config('lock_timeout'")) return [];
     if (text === 'select pg_advisory_xact_lock_shared(513031,3)') return [];
     if (text.startsWith('select o.id from orders o') || text.startsWith('select o.id, o.txnid, o.status from orders o')) return [];
     if (text === 'select now() as now') return [{ now: new Date(now) }];

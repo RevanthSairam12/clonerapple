@@ -74,6 +74,7 @@ function database(rows) {
   const tx = (strings, ...params) => {
     if (Array.isArray(strings) && !strings.raw) return strings;
     const query = strings.join('?');
+    if (query.includes("set_config('lock_timeout'")) return Promise.resolve([]);
     events.push({ query, params });
     return Promise.resolve(query.includes('select ') ? rows : []);
   };

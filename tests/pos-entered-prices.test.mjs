@@ -52,16 +52,17 @@ const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
     ? 'temporary-schema isolation needs a session connection (not port 6543)'
     : false;
 
-function client(schema = 'pg_catalog') {
+function client(schema) {
   if (process.env.RUN_LEGACY_DB_TESTS !== '1') throw new Error('Legacy database tests are disabled');
   const { isPooler, transactionPooler } = connectionDetails();
   if (transactionPooler) throw new Error('Requires a session connection, not port 6543.');
+  const base = { connection: { search_path: 'pg_catalog' } };
   return postgres(fixtureConnectionUrl(), {
     max: 1,
     idle_timeout: 20,
     connect_timeout: 10,
     max_lifetime: 1800,
-    connection: { search_path: schema },
+    connection: schema ? { search_path: schema } : base.connection,
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: !isPooler,
     onnotice: () => {},

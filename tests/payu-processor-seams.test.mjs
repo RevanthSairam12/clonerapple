@@ -58,6 +58,7 @@ function fixture({ conflict = false, lateReview = false, activeReservation = fal
   const sql = async (strings, ...values) => {
     const text = strings.join('?').replace(/\s+/g, ' ').trim().toLowerCase();
     queries.push(text);
+    if (text.includes("set_config('lock_timeout'")) return [];
     if (text === 'select now() as now') return [{ now: new Date('2026-01-01T12:00:00Z') }];
     if (text.startsWith('update orders set next_reconcile_at')) return [];
     if (text.startsWith('select * from orders where txnid')) return values[0] === row.txnid ? [{ ...row }] : [];
