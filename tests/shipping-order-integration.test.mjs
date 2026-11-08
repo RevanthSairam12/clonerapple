@@ -105,11 +105,20 @@ before(async () => {
     throw new Error('Shipping fixture requires a session connection, not port 6543.');
   }
   sql = client();
-  await createShippingFixtureSchema(sql, schema);
-  await sql`create table users (id text primary key, customer_group text)`;
-  await sql`alter table users enable row level security`;
-  await seedCheckoutConfiguration(sql, { chargePaise: 5000, thresholdPaise: 99900 });
-  product = await seedProduct(sql, { pricePaise: 49900, stock: 100 });
+  try {
+    await createShippingFixtureSchema(sql, schema);
+    await sql`create table users (id text primary key, customer_group text)`;
+    await sql`alter table users enable row level security`;
+    await seedCheckoutConfiguration(sql, { chargePaise: 5000, thresholdPaise: 99900 });
+    product = await seedProduct(sql, { pricePaise: 49900, stock: 100 });
+  } catch (error) {
+    try {
+      await dropShippingFixtureSchema(sql, schema);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    throw error;
+  }
 });
 
 beforeEach(async () => {

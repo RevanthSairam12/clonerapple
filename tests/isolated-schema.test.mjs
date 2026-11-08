@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createFixtureSchema, dropFixtureSchema, isolateCopiedTables, addFixtureInventoryColumns } from './helpers/isolated-schema.mjs';
+import { createFixtureSchema, dropFixtureSchema, withFixtureSchema, isolateCopiedTables, addFixtureInventoryColumns } from './helpers/isolated-schema.mjs';
 
 // Pure SQL recorder: deliberately no postgres import, URL or network connection.
 function recorder({ defaults = [], failOn, schema = 'itest_unit' } = {}) {
@@ -155,4 +155,18 @@ test('pinning failures never install the application pool and remain cleanable',
   assert.equal(globalThis.__gadzioSql, previous);
   await dropFixtureSchema(fake.sql, 'itest_unit');
   assert.match(fake.text(), /drop schema "itest_unit" cascade/);
+});
+
+test('withFixtureSchema drops the schema in a finally block even when the test body throws', async () => {
+  const fake = recorder({ schema: 'itest_unit' });
+  const previous = globalThis.__gadzioSql;
+  await assert.rejects(
+    withFixtureSchema(fake.sql, 'itest_unit', ['orders'], async () => {
+      assert.equal(globalThis.__gadzioSql, fake.sql);
+      throw new Error('intentional test failure inside fixture');
+    }),
+    /intentional test failure inside fixture/,
+  );
+  assert.equal(globalThis.__gadzioSql, previous);
+  assert.match(fake.text(), /set search_path to pg_catalog\ndrop schema "itest_unit" cascade/);
 });

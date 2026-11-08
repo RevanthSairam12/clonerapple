@@ -109,48 +109,63 @@ export function suffix() {
 
 export async function openSchema(a, schema) {
   await createFixtureSchema(a, schema, TABLES);
-  // Reconcile records a timeline even with sideEffects:false. Keep this local
-  // as migration 0047 may not have been deployed on the source database.
-  await a.unsafe(`create table "${schema}".payment_events (
-    id bigint generated always as identity primary key,
-    order_id text not null,
-    txnid text not null,
-    source text not null,
-    payu_status text not null default '',
-    outcome text not null,
-    reason text not null default '',
-    created_at timestamptz not null default now()
-  )`);
-  await a.unsafe(`alter table "${schema}".payment_events enable row level security`);
-  // Retired tables need not exist on the source deployment. Keep only the
-  // local contracts exercised by the one-time hold cleanup regression.
-  await a.unsafe(`create table "${schema}".waiting_list_entries (
-    id text primary key,
-    product_id text not null,
-    user_id text not null,
-    status text not null default 'ACTIVE'
-      check (status in ('ACTIVE', 'INVITED', 'PURCHASED', 'EXPIRED', 'CANCELLED')),
-    invited_at timestamptz,
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now()
-  )`);
-  await a.unsafe(`alter table "${schema}".waiting_list_entries enable row level security`);
-  await a.unsafe(`create table "${schema}".stock_reservations (
-    id text primary key,
-    product_id text not null,
-    user_id text not null,
-    waiting_list_entry_id text,
-    quantity integer not null default 1 check (quantity > 0),
-    status text not null default 'HELD'
-      check (status in ('HELD', 'CLAIMED', 'EXPIRED', 'CANCELLED')),
-    token_hash text not null unique,
-    expires_at timestamptz not null,
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now()
-  )`);
-  await a.unsafe(`alter table "${schema}".stock_reservations enable row level security`);
-  const pinned = await a`show search_path`;
-  assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
+  try {
+    // Reconcile records a timeline even with sideEffects:false. Keep this local
+    // as migration 0047 may not have been deployed on the source database.
+    await a.unsafe(`create table "${schema}".payment_events (
+      id bigint generated always as identity primary key,
+      order_id text not null,
+      txnid text not null,
+      source text not null,
+      payu_status text not null default '',
+      outcome text not null,
+      reason text not null default '',
+      created_at timestamptz not null default now()
+    )`);
+    await a.unsafe(`alter table "${schema}".payment_events enable row level security`);
+    // Retired tables need not exist on the source deployment. Keep only the
+    // local contracts exercised by the one-time hold cleanup regression.
+    await a.unsafe(`create table "${schema}".waiting_list_entries (
+      id text primary key,
+      product_id text not null,
+      user_id text not null,
+      status text not null default 'ACTIVE'
+        check (status in ('ACTIVE', 'INVITED', 'PURCHASED', 'EXPIRED', 'CANCELLED')),
+      invited_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )`);
+    await a.unsafe(`alter table "${schema}".waiting_list_entries enable row level security`);
+    await a.unsafe(`create table "${schema}".stock_reservations (
+      id text primary key,
+      product_id text not null,
+      user_id text not null,
+      waiting_list_entry_id text,
+      quantity integer not null default 1 check (quantity > 0),
+      status text not null default 'HELD'
+        check (status in ('HELD', 'CLAIMED', 'EXPIRED', 'CANCELLED')),
+      token_hash text not null unique,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )`);
+    await a.unsafe(`alter table "${schema}".stock_reservations enable row level security`);
+    const pinned = await a`show search_path`;
+    assert.ok(String(pinned[0].search_path).includes(schema), 'connection is pinned to the test schema');
+  } catch (error) {
+    await dropFixtureSchema(a, schema);
+    throw error;
+  }
+}
+
+export async function withFlashSaleSchema(schema, fn) {
+  const a = client();
+  try {
+    await openSchema(a, schema);
+    return await fn(a);
+  } finally {
+    await closeSchema(a, schema);
+  }
 }
 
 export async function closeSchema(a, schema) {

@@ -189,15 +189,24 @@ async function redemptionRows(orderId) {
 before(async () => {
   if (skip) return;
   sql = client();
-  await createFixtureSchema(sql, SCHEMA, COPIED_TABLES);
-  await sql.unsafe(`create table "${SCHEMA}".users (id text primary key, customer_group text)`);
-  await sql.unsafe(`alter table "${SCHEMA}".users enable row level security`);
+  try {
+    await createFixtureSchema(sql, SCHEMA, COPIED_TABLES);
+    await sql.unsafe(`create table "${SCHEMA}".users (id text primary key, customer_group text)`);
+    await sql.unsafe(`alter table "${SCHEMA}".users enable row level security`);
 
-  const pinned = await sql`show search_path`;
-  assert.ok(
-    String(pinned[0].search_path).includes(SCHEMA),
-    'the connection must be pinned to the throwaway schema',
-  );
+    const pinned = await sql`show search_path`;
+    assert.ok(
+      String(pinned[0].search_path).includes(SCHEMA),
+      'the connection must be pinned to the throwaway schema',
+    );
+  } catch (error) {
+    try {
+      await dropFixtureSchema(sql, SCHEMA);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    throw error;
+  }
 });
 
 beforeEach(async () => {

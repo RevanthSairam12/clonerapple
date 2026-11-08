@@ -265,8 +265,11 @@ test('lazy expiry: two buyers racing a stale hold produce exactly one order', { 
     assert.equal(Number((await a`select count(*)::int as count from orders`)[0].count), 2);
     assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
   } finally {
-    if (b) await b.end({ timeout: 5 });
-    await closeSchema(a, schema);
+    try {
+      if (b) await b.end({ timeout: 5 });
+    } finally {
+      await closeSchema(a, schema);
+    }
   }
 });
 
@@ -608,7 +611,10 @@ test('reconcile: two workers at once process the order exactly once', { skip }, 
     assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
     assert.equal(Number((await a`select count(*)::int as count from refund_obligations`)[0].count), 0);
   } finally {
-    if (b) await b.end({ timeout: 5 });
-    await closeSchema(a, schema);
+    try {
+      if (b) await b.end({ timeout: 5 });
+    } finally {
+      await closeSchema(a, schema);
+    }
   }
 });

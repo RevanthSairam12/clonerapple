@@ -205,8 +205,11 @@ test(
       assert.equal(moveCount, 0, 'no partial stock_movements row created');
       assert.deepEqual(await stockState(a, productId), { onHand: 2, reserved: 0 });
     } finally {
-      if (b) await b.end({ timeout: 1 });
-      await closeSchema(a, schema);
+      try {
+        if (b) await b.end({ timeout: 1 });
+      } finally {
+        await closeSchema(a, schema);
+      }
     }
   },
 );

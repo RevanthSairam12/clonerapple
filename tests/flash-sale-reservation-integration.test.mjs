@@ -17,6 +17,7 @@ import {
   loadModule,
   movementCount,
   openSchema,
+  withFlashSaleSchema,
   orderParams,
   orderRow,
   skip,
@@ -375,8 +376,11 @@ test('high concurrency: many buyers, one unit, exactly one order', { skip }, asy
     const count = await a`select count(*)::int as count from orders`;
     assert.equal(Number(count[0].count), 1);
   } finally {
-    for (const connection of buyers) await connection.end({ timeout: 1 });
-    await closeSchema(a, schema);
+    try {
+      await Promise.allSettled(buyers.map((connection) => connection.end({ timeout: 1 })));
+    } finally {
+      await closeSchema(a, schema);
+    }
   }
 });
 
@@ -429,5 +433,37 @@ test('removed waiting list: held units are returned once and the release is idem
     assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
   } finally {
     await closeSchema(a, schema);
+  }
+});
+
+test('forced test failure inside a fixture always drops the schema in finally', { skip }, async () => {
+  const s = suffix();
+  const schema = `fs_dropfail_${s}`;
+  const observer = client();
+
+  try {
+    await assert.rejects(
+      withFlashSaleSchema(schema, async (a) => {
+        const existsDuringTest = await observer`
+          select count(*)::int as c from pg_catalog.pg_namespace where nspname = ${schema}
+        `;
+        assert.equal(Number(existsDuringTest[0].c), 1, 'schema exists while the test runs');
+        await addProduct(a, {
+          categoryId: `fscat${s}`,
+          productId: `fsprod${s}`,
+          stockId: `fsstk${s}`,
+          quantity: 1,
+        });
+        throw new Error('forced failure inside test body');
+      }),
+      /forced failure inside test body/,
+    );
+
+    const existsAfterFailure = await observer`
+      select count(*)::int as c from pg_catalog.pg_namespace where nspname = ${schema}
+    `;
+    assert.equal(Number(existsAfterFailure[0].c), 0, 'schema is dropped even when the test throws');
+  } finally {
+    await observer.end({ timeout: 5 });
   }
 });

@@ -84,3 +84,16 @@ export async function dropFixtureSchema(sql, schema) {
     ownedSchemas.delete(sql);
   }
 }
+
+/**
+ * Run `fn` after creating `schema` on `sql`, always dropping `schema` in a
+ * `finally` block even when `fn` (or setup) throws.
+ */
+export async function withFixtureSchema(sql, schema, tables, fn) {
+  try {
+    await createFixtureSchema(sql, schema, tables);
+    return await fn(sql, schema);
+  } finally {
+    await dropFixtureSchema(sql, schema);
+  }
+}

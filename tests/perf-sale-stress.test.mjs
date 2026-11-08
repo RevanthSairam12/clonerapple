@@ -152,8 +152,11 @@ test(
       const finalStock = await stockState(a, productId);
       assert.deepEqual(finalStock, { onHand: 0, reserved: 0 }, 'stock must never go negative');
     } finally {
-      await Promise.allSettled(connections.map((c) => c.end({ timeout: 5 })));
-      await closeSchema(a, schema);
+      try {
+        await Promise.allSettled(connections.map((c) => c.end({ timeout: 5 })));
+      } finally {
+        await closeSchema(a, schema);
+      }
     }
   },
 );
@@ -265,8 +268,11 @@ test(
       );
       assert.deepEqual(await stockState(a, productId), { onHand: 0, reserved: 0 });
     } finally {
-      await Promise.allSettled(connections.map((c) => c.end({ timeout: 5 })));
-      await closeSchema(a, schema);
+      try {
+        await Promise.allSettled(connections.map((c) => c.end({ timeout: 5 })));
+      } finally {
+        await closeSchema(a, schema);
+      }
     }
   },
 );

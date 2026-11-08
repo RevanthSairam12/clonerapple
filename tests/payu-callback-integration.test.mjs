@@ -39,15 +39,24 @@ before(async () => {
   delete process.env.PAYU_RETURN_SECRET;
   sql = postgres(connUrl, { max: 1, prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require', onnotice: () => {}, connection: { search_path: 'pg_catalog' } });
   const tables = ['categories', 'products', 'stock', 'stock_movements', 'orders', 'order_items', 'order_addresses', 'order_status_history', 'store_settings', 'coupons', 'coupon_targets', 'coupon_redemptions', 'refund_obligations'];
-  await createFixtureSchema(sql, schema, tables);
-  assert.equal((await sql`select current_schema() as name`)[0].name, schema);
-  // Run the real additive migration inside the fixture: includes the gateway
-  // unique index, append-only trigger and timeline RLS. No public fallback.
-  await sql.unsafe(await readFile(path.join(root, 'migrations/0047_payment_events.sql'), 'utf8'));
-  await sql`insert into store_settings (key, value) values ('auto_confirm', 'off'), ('default_fulfilment_status', 'PENDING')`;
-  await sql`insert into categories (id, slug, name) values ('fixture-category', 'fixture-category', 'Fixture')`;
-  await sql`insert into products (id, category_id, slug, name, price_paise) values ('fixture-product', 'fixture-category', 'fixture-product', 'Fixture product', 50000)`;
-  await sql`insert into stock (id, product_id, on_hand, reserved, track_inventory) values ('fixture-stock', 'fixture-product', 100, 0, true)`;
+  try {
+    await createFixtureSchema(sql, schema, tables);
+    assert.equal((await sql`select current_schema() as name`)[0].name, schema);
+    // Run the real additive migration inside the fixture: includes the gateway
+    // unique index, append-only trigger and timeline RLS. No public fallback.
+    await sql.unsafe(await readFile(path.join(root, 'migrations/0047_payment_events.sql'), 'utf8'));
+    await sql`insert into store_settings (key, value) values ('auto_confirm', 'off'), ('default_fulfilment_status', 'PENDING')`;
+    await sql`insert into categories (id, slug, name) values ('fixture-category', 'fixture-category', 'Fixture')`;
+    await sql`insert into products (id, category_id, slug, name, price_paise) values ('fixture-product', 'fixture-category', 'fixture-product', 'Fixture product', 50000)`;
+    await sql`insert into stock (id, product_id, on_hand, reserved, track_inventory) values ('fixture-stock', 'fixture-product', 100, 0, true)`;
+  } catch (error) {
+    try {
+      await dropFixtureSchema(sql, schema);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    throw error;
+  }
 });
 after(async () => {
   try {

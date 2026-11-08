@@ -192,52 +192,61 @@ before(async () => {
   if (skip) return;
   sql = client();
   secondSql = client(SCHEMA);
-  await createFixtureSchema(sql, SCHEMA, ['coupons']);
-  await secondSql.unsafe(`set search_path to "${SCHEMA}"`);
+  try {
+    await createFixtureSchema(sql, SCHEMA, ['coupons']);
+    await secondSql.unsafe(`set search_path to "${SCHEMA}"`);
 
-  // The coupon table is copied from the real one, so its constraints and
-  // indexes are the shipped ones. The other tables keep only the columns the
-  // helpers read, with local serial sequences and no production foreign keys.
-  await sql.unsafe(`
-    create table coupon_targets (
-      id bigserial primary key,
-      coupon_id text not null,
-      product_id text,
-      category_id text,
-      brand_id text
-    );
-    alter table coupon_targets enable row level security
-  `);
-  await sql.unsafe(`
-    create table coupon_redemptions (
-      id bigserial primary key,
-      coupon_id text not null,
-      order_id text not null,
-      customer_user_id text,
-      customer_email text not null default '',
-      discount_paise bigint not null default 0,
-      state text not null default 'RESERVED',
-      created_at timestamptz not null default now(),
-      consumed_at timestamptz,
-      released_at timestamptz,
-      release_reason text,
-      unique (coupon_id, order_id)
-    );
-    alter table coupon_redemptions enable row level security
-  `);
-  await sql.unsafe(`
-    create table users (id text primary key, customer_group text);
-    alter table users enable row level security
-  `);
-  await sql.unsafe(`
-    create table orders (
-      id text primary key,
-      status text,
-      user_id text,
-      customer_email text
-    );
-    alter table orders enable row level security
-  `);
+    // The coupon table is copied from the real one, so its constraints and
+    // indexes are the shipped ones. The other tables keep only the columns the
+    // helpers read, with local serial sequences and no production foreign keys.
+    await sql.unsafe(`
+      create table coupon_targets (
+        id bigserial primary key,
+        coupon_id text not null,
+        product_id text,
+        category_id text,
+        brand_id text
+      );
+      alter table coupon_targets enable row level security
+    `);
+    await sql.unsafe(`
+      create table coupon_redemptions (
+        id bigserial primary key,
+        coupon_id text not null,
+        order_id text not null,
+        customer_user_id text,
+        customer_email text not null default '',
+        discount_paise bigint not null default 0,
+        state text not null default 'RESERVED',
+        created_at timestamptz not null default now(),
+        consumed_at timestamptz,
+        released_at timestamptz,
+        release_reason text,
+        unique (coupon_id, order_id)
+      );
+      alter table coupon_redemptions enable row level security
+    `);
+    await sql.unsafe(`
+      create table users (id text primary key, customer_group text);
+      alter table users enable row level security
+    `);
+    await sql.unsafe(`
+      create table orders (
+        id text primary key,
+        status text,
+        user_id text,
+        customer_email text
+      );
+      alter table orders enable row level security
+    `);
+  } catch (error) {
+    try {
+      await dropFixtureSchema(sql, SCHEMA);
+    } finally {
+      await Promise.all([sql?.end({ timeout: 5 }), secondSql?.end({ timeout: 5 })]);
+    }
+    throw error;
+  }
 });
 
 beforeEach(async () => {
