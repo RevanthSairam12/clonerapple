@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const nativeRequire = createRequire(import.meta.url);
-const read = file => readFileSync(path.join(root, file), 'utf8');
+const read = file => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 
 function load(file, mocks) {
   const filename = path.join(root, file);
