@@ -22,9 +22,7 @@ Education Store is not part of this rollout.
 | Checkout and stock | Exact option claimed, released once, consumed after payment; returns restock only what was sold |
 | Admin | Stock, low stock, reports, price history, orders, packing slip, invoice and POS all name the exact model and colour |
 
-Migrations involved: `0055` through `0061`. All seven were applied to the live
-database on 5 November 2026 (see `docs/migrations-pending.md`). A fresh
-environment must run every file from `0001` to `0061` in filename order.
+Migrations involved: `0055` through `0061` for the options rollout, plus `0062` (variant mode `in_stock` gate) and `0063`–`0067` (security close-out hardening). All 65 migrations (`0001` through `0067`) are applied on the test database (`ttzfovaadeyynggnypru`). **For production, a fresh Supabase project in Mumbai (`ap-south-1`) must be provisioned and all migrations (`0001` through `0067`) must be applied from scratch — never reuse the test database.**
 
 ## 2. Before the window (owner)
 
@@ -202,15 +200,27 @@ Check daily for seven days; then weekly.
 
 ## 9. Database connection scaling & Vercel / Supabase configuration (Updated 8 November 2026)
 
+### Regional topology & fresh production database mandate
+
+1. **Production Supabase project in Mumbai (`ap-south-1`)**:
+   - Create a dedicated production Supabase project in the **Mumbai (`ap-south-1`)** region (`aws-0-ap-south-1.pooler.supabase.com`).
+   - Do **not** use the Tokyo (`ap-northeast-1`) test project for production; co-locating database and compute in Mumbai reduces single-statement RTT from ~65 ms to ~1–3 ms and cuts checkout row-lock hold times by ~15×.
+2. **Vercel function region pinned to Mumbai (`bom1`)**:
+   - The repository ships `vercel.json` with `"regions": ["bom1"]`, and the Vercel project's **Settings → Functions → Function Region** must also be set to **Mumbai, India (`bom1`)**.
+3. **Fresh production database (never reuse the test database)**:
+   - Provision a clean PostgreSQL database on the `ap-south-1` production project and apply all migrations from scratch (`0001_admin_foundation.sql` through `0067_products_revoke_table_dml.sql`) using `DATABASE_MIGRATION_URL` (port `5432`) via `npm run db:migrate`.
+   - **Never reuse or clone the test database** (`ttzfovaadeyynggnypru`), which contains test accounts, synthetic staff rows, and `ITEST` / `FS` test orders and audit records.
+   - After `npm run db:migrate` completes on the fresh production database, run `node scripts/check-security-db-state.mjs` and `node scripts/verify-rls-consumer-tables.mjs` to confirm all 65 migrations, RLS flags, triggers, and privilege revocations are active before creating the initial `store_owner` account (`node scripts/create-store-admin.mjs`).
+
 ### Vercel environment variables
 
 Configure the following variables in **Vercel → Project Settings → Environment Variables** (Production & Preview):
 
 | Variable | Value / Source | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | Supabase **Transaction Pooler** URI on port **`6543`** (`postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres`) | Used by the Next.js application runtime (`getSql()`). `src/lib/platform/db.ts` detects `pooler` + port `6543` and sets `prepare: false` automatically. |
-| `DATABASE_MIGRATION_URL` | Supabase **Session Pooler** or Direct URI on port **`5432`** (`postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`) | Used by `npm run db:migrate`, CLI scripts, and schema-pinned test fixtures. Prefers `DATABASE_MIGRATION_URL`, falls back to `DATABASE_URL`, and **refuses port `6543`** with a clear error message. |
-| `DATABASE_POOL_MAX` | `10` (optional; integer `1`–`100`, defaults to `10` in production and `5` in development) | Overrides the per-instance connection pool size in `src/lib/platform/db.ts`. |
+| `DATABASE_URL` | Supabase **Transaction Pooler** URI on port **`6543`** in `ap-south-1` (`postgresql://postgres.<project-ref>:<password>@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true`) | Used by the Next.js application runtime (`getSql()`). `src/lib/platform/db.ts` detects `pooler` + port `6543` and sets `prepare: false` automatically. |
+| `DATABASE_MIGRATION_URL` | Supabase **Session Pooler** or Direct URI on port **`5432`** in `ap-south-1` (`postgresql://postgres.<project-ref>:<password>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres`) | Used by `npm run db:migrate`, CLI scripts, and schema-pinned test fixtures. Prefers `DATABASE_MIGRATION_URL`, falls back to `DATABASE_URL`, and **refuses port `6543`** with a clear error message. |
+| `DATABASE_POOL_MAX` | `1` (recommended per serverless instance on Vercel; integer `1`–`100`, defaults to `10` if unset) | Caps concurrent connections per Node instance so concurrent Vercel invocations multiplex cleanly through Supavisor on port `6543`. |
 | `DATABASE_SSL` | `require` (default when unset; only `false` disables TLS) | Enforces TLS connections to Supabase. |
 | `TRUST_PROXY` | `1` | Enables real client IP extraction from `X-Forwarded-For` behind Vercel's edge proxy for per-IP rate limiting and hashed audit logs. |
 | `MAIL_ALLOWED_HOSTS` | Comma-separated SMTP hostnames (e.g. `smtp.example.com`) | Restricts where `MAIL_PASSWORD` can be sent by the SMTP transport. |
@@ -248,12 +258,14 @@ Configure the following variables in **Vercel → Project Settings → Environme
 
 ### What to check in the Vercel dashboard
 
-1. **Project Settings → Environment Variables**:
-   - Verify `DATABASE_URL` uses port **`6543`** and `DATABASE_MIGRATION_URL` uses port **`5432`**.
-   - Verify `TRUST_PROXY=1`, `CRON_SECRET`, `PAYU_KEY`, `PAYU_SALT`, `APP_BASE_URL`, and `MAIL_ALLOWED_HOSTS` are set for Production.
-2. **Deployments → Build Logs & Runtime Logs**:
+1. **Project Settings → Functions**:
+   - Confirm **Function Region** is set to **Mumbai, India (`bom1`)** (matching `"regions": ["bom1"]` in `vercel.json`).
+2. **Project Settings → Environment Variables**:
+   - Verify `DATABASE_URL` uses port **`6543`** and `DATABASE_MIGRATION_URL` uses port **`5432`** on the **fresh `ap-south-1` Supabase project** (never the `ap-northeast-1` test project).
+   - Verify `DATABASE_POOL_MAX=1`, `TRUST_PROXY=1`, `CRON_SECRET`, `PAYU_KEY`, `PAYU_SALT`, `APP_BASE_URL`, and `MAIL_ALLOWED_HOSTS` are set for Production.
+3. **Deployments → Build Logs & Runtime Logs**:
    - Confirm the first lines of server boot logs show no `[startup]` warnings from `src/instrumentation.ts`.
    - Confirm `/api/payu/initiate` and `/api/payu/webhook` return `200`/`409` or friendly `503` (`Retry-After: 5`) under load, with zero unhandled `500` errors or `EMAXCONNSESSION` pool exhaustion errors.
-3. **Cron Jobs / Observability**:
+4. **Cron Jobs / Observability**:
    - Confirm `/api/payu/reconcile` runs on schedule with `200 OK` and `summary.errors` empty, releasing expired reservations and draining `notification_outbox`.
 
