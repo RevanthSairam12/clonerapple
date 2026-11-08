@@ -197,3 +197,63 @@ Check daily for seven days; then weekly.
 - Provider setup for email/SMS remains incomplete; `check:notifications` reports
   3 pass / 5 fail because mail and SMS are not configured.
 - Per-option low-stock notifications are not built.
+
+---
+
+## 9. Database connection scaling & Vercel / Supabase configuration (Updated 8 November 2026)
+
+### Vercel environment variables
+
+Configure the following variables in **Vercel → Project Settings → Environment Variables** (Production & Preview):
+
+| Variable | Value / Source | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Supabase **Transaction Pooler** URI on port **`6543`** (`postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres`) | Used by the Next.js application runtime (`getSql()`). `src/lib/platform/db.ts` detects `pooler` + port `6543` and sets `prepare: false` automatically. |
+| `DATABASE_MIGRATION_URL` | Supabase **Session Pooler** or Direct URI on port **`5432`** (`postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`) | Used by `npm run db:migrate`, CLI scripts, and schema-pinned test fixtures. Prefers `DATABASE_MIGRATION_URL`, falls back to `DATABASE_URL`, and **refuses port `6543`** with a clear error message. |
+| `DATABASE_POOL_MAX` | `10` (optional; integer `1`–`100`, defaults to `10` in production and `5` in development) | Overrides the per-instance connection pool size in `src/lib/platform/db.ts`. |
+| `DATABASE_SSL` | `require` (default when unset; only `false` disables TLS) | Enforces TLS connections to Supabase. |
+| `TRUST_PROXY` | `1` | Enables real client IP extraction from `X-Forwarded-For` behind Vercel's edge proxy for per-IP rate limiting and hashed audit logs. |
+| `MAIL_ALLOWED_HOSTS` | Comma-separated SMTP hostnames (e.g. `smtp.example.com`) | Restricts where `MAIL_PASSWORD` can be sent by the SMTP transport. |
+
+### Pooler & application lifecycle settings
+
+1. **Application pool (`src/lib/platform/db.ts`)**:
+   - `max`: `10` in production (`5` in dev), overridable via `DATABASE_POOL_MAX`.
+   - `idle_timeout`: `20` seconds (returns idle connections before Supavisor reclaims them).
+   - `connect_timeout`: `10` seconds (fails fast when the pooler is saturated).
+   - `max_lifetime`: `1800` seconds (rotates connections every 30 minutes).
+   - `prepare`: `false` automatically when connected to `...pooler...:6543` (Supavisor transaction mode does not support prepared statements).
+2. **Per-instance 3-second storefront caches**:
+   - `readSaleState()` (`SALE_STATE_CACHE_TTL_MS = 3_000`) and `getMaintenanceState()` (`MAINTENANCE_CACHE_MS = 3_000`) cache decisions in-memory per instance for 3 seconds, deduplicate concurrent in-flight refreshes, advance the PostgreSQL clock (`db_now + elapsedMs`) across scheduled window boundaries, and never cache fail-open / fail-safe error fallbacks.
+3. **Transaction fail-fast timeouts (`src/lib/checkout/transaction-guards.ts`)**:
+   - Checkout, POS, coupon, and reconcile transactions set transaction-local `lock_timeout = 5000ms` (5 s) and `statement_timeout = 15000ms` (15 s).
+   - On `55P03` (`lock_not_available`) or `57014` (`query_canceled`), the transaction rolls back cleanly with zero partial orders and the API returns `503 Service Unavailable` with `Retry-After: 5` and a friendly `"The store is busy right now. Please try again in a moment."` message.
+4. **Role-level `idle_in_transaction_session_timeout` (Pending Owner Approval — Not Applied)**:
+   - See `docs/production-env-20261106.md` for the exact `ALTER ROLE postgres SET idle_in_transaction_session_timeout = '30s';` SQL awaiting owner approval.
+
+### What to check in the Supabase dashboard
+
+1. **Project Settings → Database → Connection Pooling (Supavisor)**:
+   - Confirm **Connection pooling** is enabled.
+   - Copy the **Transaction mode** connection string (port **`6543`**) for `DATABASE_URL`.
+   - Copy the **Session mode** connection string (port **`5432`**) for `DATABASE_MIGRATION_URL`.
+   - Verify the **Default Pool Size** (typically 15 on Free/Small compute tiers, higher on Pro) and **Max Client Connections** (typically 200 in transaction mode).
+2. **Reports → Database → Client Connections & Pooler Connections**:
+   - Watch active `pg_stat_activity` backend connections during peak/sale traffic; ensure active connections stay below the pooler's backend slot cap.
+   - Check that idle connections drop within ~20 seconds after a traffic burst (`idle_timeout: 20`).
+   - Check that zero connections remain stuck in `idle in transaction` state.
+3. **Logs → Postgres Logs**:
+   - Watch for `55P03` (`canceling statement due to lock timeout`) or `57014` (`canceling statement due to statement timeout`) during flash sales — these indicate hot-SKU lock contention failing fast as designed rather than piling up.
+   - Confirm zero `prepared statement "..." already exists` or `prepared statement "..." does not exist` errors (proving `prepare: false` is active on port `6543`).
+
+### What to check in the Vercel dashboard
+
+1. **Project Settings → Environment Variables**:
+   - Verify `DATABASE_URL` uses port **`6543`** and `DATABASE_MIGRATION_URL` uses port **`5432`**.
+   - Verify `TRUST_PROXY=1`, `CRON_SECRET`, `PAYU_KEY`, `PAYU_SALT`, `APP_BASE_URL`, and `MAIL_ALLOWED_HOSTS` are set for Production.
+2. **Deployments → Build Logs & Runtime Logs**:
+   - Confirm the first lines of server boot logs show no `[startup]` warnings from `src/instrumentation.ts`.
+   - Confirm `/api/payu/initiate` and `/api/payu/webhook` return `200`/`409` or friendly `503` (`Retry-After: 5`) under load, with zero unhandled `500` errors or `EMAXCONNSESSION` pool exhaustion errors.
+3. **Cron Jobs / Observability**:
+   - Confirm `/api/payu/reconcile` runs on schedule with `200 OK` and `summary.errors` empty, releasing expired reservations and draining `notification_outbox`.
+
