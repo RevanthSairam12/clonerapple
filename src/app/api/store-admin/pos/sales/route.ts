@@ -6,6 +6,7 @@ import { writeAudit } from '@/lib/store-admin/audit';
 import { createPosSale } from '@/lib/store-admin/pos';
 import { isPosMethod, validatePosReference } from '@/lib/store-admin/pos-rules';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
+import { queueStockAlerts } from '@/lib/notifications/stock-events';
 import { BUSY_RETRY_AFTER } from '@/lib/checkout/transaction-guards';
 
 export const dynamic = 'force-dynamic';
@@ -125,6 +126,10 @@ export async function POST(request: Request) {
   });
 
   revalidateCatalog(result.data.lines.map((line) => line.productId));
+
+  if (result.data.stockAlerts?.length) {
+    queueStockAlerts(result.data.stockAlerts);
+  }
 
   return NextResponse.json({
     ok: true,

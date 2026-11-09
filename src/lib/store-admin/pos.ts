@@ -24,6 +24,7 @@ import {
 } from './pos-rules';
 import { DEFAULT_SETTINGS, normalizeToggle } from './settings-rules';
 import { setTransactionTimeouts } from '@/lib/checkout/transaction-guards';
+import type { StockAlertItem } from '@/lib/notifications/stock-events';
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -123,6 +124,7 @@ export interface PosSaleResultData {
   method: PosPaymentMethod;
   shiftId: number;
   customerPhoneMasked: string | null;
+  stockAlerts?: StockAlertItem[];
 }
 
 export type PosSaleResult =
@@ -744,6 +746,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
       // Stock: tracked products decrement; untracked products skip the
       // decrement but still write the movement row. The pre-check above holds
       // the row lock, so this update cannot lose a race.
+      const stockAlerts: StockAlertItem[] = [];
       for (const line of lines) {
         const updated = (await tx`
           update stock
@@ -753,7 +756,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
             and variant_id is not distinct from ${line.variantId}::text
             and track_inventory
             and on_hand-reserved >= ${line.quantity}
-          returning on_hand
+          returning on_hand, reserved, low_stock_threshold
         `) as Row[];
         if (!updated[0]) {
           const trackedRows = (await tx`
@@ -765,10 +768,28 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
             throw new Error('POS_STOCK_CHANGED');
           }
         }
-        await tx`
+        const movementRows = (await tx`
           insert into stock_movements (product_id, variant_id,delta, reason, order_id, created_by)
           values (${line.productId}, ${line.variantId},${-line.quantity}, 'sale', ${createdId}, ${input.staffId})
-        `;
+          returning id
+        `) as Row[];
+        if (updated[0]) {
+          const onHandAfter = Number(updated[0].on_hand);
+          const reserved = Number(updated[0].reserved);
+          const availableAfter = onHandAfter - reserved;
+          const availableBefore = availableAfter + line.quantity;
+          const lowStockThreshold = Number(updated[0].low_stock_threshold);
+          stockAlerts.push({
+            productId: line.productId,
+            variantId: line.variantId ?? null,
+            productName: line.productName,
+            variantLabel: line.variantLabel ?? null,
+            availableBefore,
+            availableAfter,
+            lowStockThreshold,
+            movementId: String(movementRows[0]?.id ?? ''),
+          });
+        }
       }
 
       await strictMetadataAudit(tx,{actorId:input.staffId,action:'pos.sale',entity:'order',entityId:createdId,after:{txnid,receiptNo,totalPaise:subtotalPaise,lines:lines.map(l=>({productId:l.productId,variantId:l.variantId,quantity:l.quantity,unitPricePaise:l.unitPricePaise}))}});
@@ -786,6 +807,7 @@ export async function createPosSaleUsing(sql: Sql, input: CreatePosSaleInput): P
           method: input.method,
           shiftId,
           customerPhoneMasked: customerPhone ? maskCustomerPhone(customerPhone) : null,
+          stockAlerts,
         },
       };
     });

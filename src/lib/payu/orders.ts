@@ -53,6 +53,7 @@ import {
   reclaimReleasedStock,
   releasedClaimLines,
   releaseClaimedStock,
+  type ClaimStockResult,
 } from './stock';
 import { setTransactionTimeouts } from '@/lib/checkout/transaction-guards';
 
@@ -443,6 +444,7 @@ export interface CreateOrderResult {
    * reconcile worker expires them first.
    */
   expiredReservations: LazilyExpiredReservation[];
+  stockAlerts: ClaimStockResult[];
 }
 
 type Tx = postgres.TransactionSql;
@@ -978,10 +980,10 @@ export async function createOrderUsing(
     // 4. Claim the planned units. The guarded updates write `sale` movements
     //    under the same locked stock rows, so the ledger always equals the
     //    units the order holds.
-    await claimPlannedStock(tx, rows[0].id, plan.claims);
+    const stockAlerts = await claimPlannedStock(tx, rows[0].id, plan.claims);
     const stockClaimed = plan.claims.length > 0;
 
-    return { order: mapRowToOrder(rows[0]), stockClaimed, expiredReservations };
+    return { order: mapRowToOrder(rows[0]), stockClaimed, expiredReservations, stockAlerts };
   });
 }
 

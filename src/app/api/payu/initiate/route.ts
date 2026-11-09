@@ -13,6 +13,7 @@ import { InsufficientStockError } from '@/lib/payu/stock';
 import { isValidCheckoutVariantId, MAX_CHECKOUT_LINES, SelectionUnavailableError } from '@/lib/payu/db-pricing';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
+import { queueStockAlerts } from '@/lib/notifications/stock-events';
 import { getUserSession } from '@/lib/user-auth';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
@@ -361,6 +362,9 @@ export async function POST(req: NextRequest) {
     // The order transaction has committed. The matrix decides whether a
     // message exists; queueNotification never waits for the provider.
     queueOrderEvent('order_placed', created.order, { orderStatus: 'CREATED' });
+    if (created.stockAlerts?.length) {
+      queueStockAlerts(created.stockAlerts);
+    }
 
     // This checkout returned stock from checkout(s) whose window had already
     // closed. Tell those customers the worker would have told them, so a

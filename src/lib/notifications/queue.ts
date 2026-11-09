@@ -1,4 +1,5 @@
 import { after } from 'next/server';
+import type postgres from 'postgres';
 
 import { enqueueNotification } from './enqueue';
 import { processNotificationOutbox } from './outbox';
@@ -24,11 +25,12 @@ export function queueNotification(
   event: NotificationEvent,
   entity: NotificationEntity,
   context: NotificationContext = {},
+  options: { sqlOverride?: postgres.Sql } = {},
 ): void {
   const run = async (): Promise<void> => {
-    const result = await enqueueNotification(event, entity, context);
+    const result = await enqueueNotification(event, entity, context, options.sqlOverride);
     if (result.ok && result.queued > 0) {
-      await processNotificationOutbox(Math.min(20, result.queued));
+      await processNotificationOutbox(Math.min(20, result.queued), { sql: options.sqlOverride });
     }
   };
 

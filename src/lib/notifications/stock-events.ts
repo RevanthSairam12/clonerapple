@@ -1,3 +1,6 @@
+import type postgres from 'postgres';
+import { enqueueNotification } from './enqueue';
+import { queueNotification } from './queue';
 import type { NotificationEvent } from './types';
 
 /**
@@ -36,4 +39,48 @@ export function stockAlertProductName(productName: string, optionLabel?: string 
   if (!label) return name;
   if (!name) return label;
   return `${name} — ${label}`.slice(0, 300);
+}
+
+export interface StockAlertItem {
+  productId: string;
+  variantId?: string | null;
+  productName: string;
+  variantLabel?: string | null;
+  availableBefore: number;
+  availableAfter: number;
+  lowStockThreshold: number;
+  movementId: string | number;
+}
+
+/**
+ * Queue staff stock notifications for committed stock movements that cross a threshold.
+ *
+ * Idempotent: keyed by the exact movement id so retries never duplicate alerts.
+ * Runs post-commit outside SQL transactions.
+ */
+export async function queueStockAlerts(
+  alerts: readonly StockAlertItem[],
+  options: { sqlOverride?: postgres.Sql } = {},
+): Promise<void> {
+  for (const alert of alerts) {
+    const event = stockNotificationEvent({
+      availableBefore: alert.availableBefore,
+      availableAfter: alert.availableAfter,
+      threshold: alert.lowStockThreshold,
+    });
+    if (!event) continue;
+    const context = {
+      productName: stockAlertProductName(alert.productName, alert.variantLabel),
+      stockAvailable: alert.availableAfter,
+      staffLink: alert.variantId
+        ? `/store-admin/stock/${encodeURIComponent(alert.productId)}?variant=${encodeURIComponent(alert.variantId)}`
+        : `/store-admin/stock/${encodeURIComponent(alert.productId)}`,
+      token: `movement:${alert.movementId}`,
+    };
+    if (options.sqlOverride) {
+      await enqueueNotification(event, { type: 'product', id: alert.productId }, context, options.sqlOverride);
+    } else {
+      queueNotification(event, { type: 'product', id: alert.productId }, context);
+    }
+  }
 }

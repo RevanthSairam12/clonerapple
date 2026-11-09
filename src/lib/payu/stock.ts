@@ -38,23 +38,65 @@ export async function lockStockRows(tx: Tx, productIds: readonly string[]): Prom
   return lockStockIdentities(tx, productIds.filter(Boolean).map(productId => ({productId})));
 }
 
-export async function claimPlannedStock(tx: Tx, orderId: string, claims: readonly StockClaimPlan[]): Promise<void> {
+export interface ClaimStockResult {
+  productId: string;
+  variantId: string | null;
+  productName: string;
+  variantLabel: string | null;
+  availableBefore: number;
+  availableAfter: number;
+  lowStockThreshold: number;
+  movementId: string;
+}
+
+export async function claimPlannedStock(
+  tx: Tx,
+  orderId: string,
+  claims: readonly StockClaimPlan[],
+): Promise<ClaimStockResult[]> {
+  const results: ClaimStockResult[] = [];
   for (const claim of [...claims].sort((a,b) => stockKey(a).localeCompare(stockKey(b)))) {
-    const updated = await tx`
+    const updated = await tx<Array<{
+      product_id: string;
+      variant_id: string | null;
+      on_hand: number;
+      reserved: number;
+      low_stock_threshold: number;
+      movement_id: string | number;
+    }>>`
       with claimed as (
         update stock set on_hand=on_hand-${claim.quantity}, updated_at=now()
         where product_id=${claim.productId} and variant_id is not distinct from ${claim.variantId || null}::text
           and track_inventory and on_hand - reserved >= ${claim.quantity}
-        returning product_id
+        returning product_id, variant_id, on_hand, reserved, low_stock_threshold
       ), movement as (
         insert into stock_movements(product_id,variant_id,delta,reason,order_id)
         select ${claim.productId},${claim.variantId || null},${-claim.quantity},'sale',${orderId}
         from claimed
+        returning id
       )
-      select product_id from claimed
+      select c.product_id, c.variant_id, c.on_hand, c.reserved, c.low_stock_threshold, m.id as movement_id
+      from claimed c cross join movement m
     `;
     if (!updated.length) throw new InsufficientStockError(`Out of stock: ${claim.productName || 'This variant'}. Please review your bag.`);
+    const row = updated[0];
+    const onHandAfter = Number(row.on_hand);
+    const reserved = Number(row.reserved);
+    const availableAfter = onHandAfter - reserved;
+    const availableBefore = availableAfter + claim.quantity;
+    const lowStockThreshold = Number(row.low_stock_threshold);
+    results.push({
+      productId: row.product_id,
+      variantId: row.variant_id,
+      productName: claim.productName || '',
+      variantLabel: claim.variantLabel || null,
+      availableBefore,
+      availableAfter,
+      lowStockThreshold,
+      movementId: String(row.movement_id),
+    });
   }
+  return results;
 }
 
 /** Order locking serializes ledger reads even when the stock row is absent/untracked. */

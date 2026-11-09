@@ -32,6 +32,7 @@ export interface StockRowSnapshot {
 export interface StockRequestLine {
   productId: string;
   variantId?: string | null;
+  variantLabel?: string | null;
   /** Explicit commerce variants require a configured row even if untracked. */
   requiresStockRow?: boolean;
   quantity: number;
@@ -41,6 +42,7 @@ export interface StockRequestLine {
 export interface StockClaimPlan {
   productId: string;
   variantId?: string | null;
+  variantLabel?: string | null;
   quantity: number;
   productName?: string;
 }
@@ -93,8 +95,17 @@ export function planStockClaim(
     const existing = byProduct.get(key);
     if (existing) {
       existing.quantity += quantity;
+      if (!existing.variantLabel && line.variantLabel) {
+        existing.variantLabel = line.variantLabel;
+      }
     } else {
-      byProduct.set(key, { productId, ...(line.variantId ? { variantId: line.variantId } : {}), quantity, productName: line.productName });
+      byProduct.set(key, {
+        productId,
+        ...(line.variantId ? { variantId: line.variantId } : {}),
+        ...(line.variantLabel ? { variantLabel: line.variantLabel } : {}),
+        quantity,
+        productName: line.productName,
+      });
     }
   }
 
