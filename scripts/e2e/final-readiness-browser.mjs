@@ -32,7 +32,8 @@ const fixtures = {
   customerB: `test_cust_b_${TAG}@example.invalid`,
   password: 'TestPassword123!',
   productId: `test_product_${TAG}`,
-  skuBlack: `SKU-BLK-${TAG}`,
+  variantBlackId: `test_var_blk_r2_${TAG}`,
+  skuBlack: `SKU-BLK-R2-${TAG.toUpperCase()}`,
   blackPricePaise: 199900,
 };
 
@@ -59,7 +60,7 @@ async function step(page, name, fn) {
 async function shot(page, name) {
   shotCount += 1;
   const file = path.join(SHOTS, `${String(shotCount).padStart(2, '0')}-${name}.png`);
-  await page.screenshot({ path: file, fullPage: false });
+  await page.screenshot({ path: file, fullPage: false, animations: 'disabled', timeout: 30000 });
   return path.basename(file);
 }
 
@@ -76,6 +77,14 @@ async function clickVisible(locator, timeout = 20000) {
     try {
       if (!(await candidate.isVisible())) continue;
       if (await candidate.isDisabled()) continue;
+      const interactive = await candidate.evaluate(
+        (el) =>
+          getComputedStyle(el).pointerEvents !== 'none' &&
+          getComputedStyle(el).opacity !== '0' &&
+          !el.closest('.pointer-events-none'),
+      );
+      if (!interactive) continue;
+      await candidate.scrollIntoViewIfNeeded();
       await candidate.click({ timeout });
       return index;
     } catch (error) {
@@ -85,26 +94,38 @@ async function clickVisible(locator, timeout = 20000) {
   throw lastError ?? new Error(`no visible clickable match among ${count} candidates`);
 }
 
-const sql = postgres(process.env.DATABASE_URL, { max: 2, connect_timeout: 15 });
+const sql = postgres(process.env.DATABASE_URL, { max: 2, connect_timeout: 15, prepare: false, fetch_types: false });
 
 /** Navigate and report how long the server took to answer. */
-async function gotoPage(page, url, timeout = 90000) {
+async function gotoPage(page, url, timeout = 60000) {
   const started = Date.now();
   let lastError = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      const response = await page.goto(url, { waitUntil: 'commit', timeout });
-      await page.waitForLoadState('domcontentloaded', { timeout });
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
       return { status: response?.status() ?? 0, ms: Date.now() - started };
     } catch (error) {
       lastError = error;
+      await page.waitForTimeout(1000).catch(() => {});
     }
   }
   throw lastError ?? new Error('navigation failed');
 }
 
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({
+  channel: 'chrome',
+  headless: true,
+  args: [
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+  ],
+});
 const contextOptions = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
+
+async function newTrackedContext() {
+  return browser.newContext(contextOptions);
+}
 
 await mkdir(SHOTS, { recursive: true });
 
@@ -118,6 +139,8 @@ async function guardGateway(page) {
       const body = request.postData() ?? '';
       fields = [...new URLSearchParams(body).keys()];
       const params = new URLSearchParams(body);
+      const surlRaw = params.get('surl') ?? '';
+      const furlRaw = params.get('furl') ?? '';
       gatewayPosts.push({
         url: 'https://test.payu.in/_payment',
         method: request.method(),
@@ -127,8 +150,8 @@ async function guardGateway(page) {
         productinfo: params.get('productinfo'),
         currency: params.get('currency') ?? 'INR',
         firstname: params.get('firstname'),
-        surl: params.get('surl'),
-        furl: params.get('furl'),
+        surl: surlRaw ? `<APP_BASE_URL>${new URL(surlRaw).pathname}` : null,
+        furl: furlRaw ? `<APP_BASE_URL>${new URL(furlRaw).pathname}` : null,
         hasHash: Boolean(params.get('hash')),
         hasKey: Boolean(params.get('key')),
       });
@@ -140,55 +163,59 @@ async function guardGateway(page) {
   });
 }
 
-async function signIn(page, email) {
-  await gotoPage(page, `${BASE}/auth`);
+async function signIn(page, email, redirectTo = '/account') {
+  await gotoPage(page, `${BASE}/auth?redirect=${encodeURIComponent(redirectTo)}`);
+  await page.locator('#auth-email').waitFor({ state: 'visible' });
+  await page.waitForTimeout(500);
   await page.fill('#auth-email', email);
   await page.fill('#auth-password', fixtures.password);
+  if ((await page.locator('#auth-password').inputValue()) !== fixtures.password) {
+    await page.fill('#auth-password', fixtures.password);
+  }
   const response = await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/api/auth/signin')),
+    page.waitForResponse((r) => r.url().includes('/api/auth/signin') && r.request().method() === 'POST'),
     page.getByRole('button', { name: /^Continue$/ }).click(),
   ]).then(([res]) => res);
   if (!response.ok()) throw new Error(`sign-in failed with HTTP ${response.status()}`);
-  // The form redirects on success; let that navigation finish before the next
-  // goto so the test never races an in-flight document.
-  await page.waitForURL((url) => !url.pathname.startsWith('/auth'), { timeout: 45000 }).catch(() => {});
-  await page.waitForLoadState('domcontentloaded').catch(() => {});
-  await page.waitForTimeout(500);
+  // AuthForm redirects after 900ms via window.location.href = targetUrl.
+  await page.waitForURL((url) => url.pathname === redirectTo, { timeout: 30000 });
+  await page.waitForLoadState('domcontentloaded');
 }
 
 let customerOrderTxnid = null;
 
 try {
   /* ---------------------------------------------------------- customer A */
-  const customerContext = await browser.newContext(contextOptions);
+  const customerContext = await newTrackedContext();
   const customer = await customerContext.newPage();
   customer.setDefaultTimeout(45000);
   await guardGateway(customer);
 
   await step(customer, 'customer: public storefront loads', async () => {
-    await customer.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/`);
     const title = await customer.title();
     if (!/gadzio/i.test(title)) throw new Error(`unexpected title: ${title}`);
     return `title="${title}" · ${await shot(customer, 'storefront-home')}`;
   });
 
   await step(customer, 'customer: signs in with real credentials', async () => {
-    await signIn(customer, fixtures.customerA);
-    await customer.goto(`${BASE}/account`, { waitUntil: 'domcontentloaded' });
+    await signIn(customer, fixtures.customerA, '/account');
+    await customer.getByText(/Account Overview|TestCustomerA/i).first().waitFor({ timeout: 20000 });
     const body = await customer.locator('body').innerText();
-    if (!/Asha|Sharma|test_cust_a/i.test(body)) throw new Error('signed-in account page did not show the customer identity');
+    if (!/TestCustomerA|Fixture|test_cust_a/i.test(body)) throw new Error('signed-in account page did not show the customer identity');
     return `session cookie set · ${await shot(customer, 'customer-signed-in')}`;
   });
 
   await step(customer, 'customer: browses category listing', async () => {
-    await customer.goto(`${BASE}/in/shop/iphone/accessories/mobile-cases`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/in/shop/iphone/accessories/mobile-cases`);
     const link = customer.locator(`a[href*="${fixtures.productId}"]`).first();
     await link.waitFor({ state: 'visible' });
     return `${await shot(customer, 'category-listing')}`;
   });
 
   await step(customer, 'customer: opens product and selects model + colour', async () => {
-    await customer.goto(`${BASE}/shop/product/${fixtures.productId}`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/shop/product/${fixtures.productId}`);
+    await customer.waitForTimeout(400);
     await customer.getByRole('radio', { name: /iPhone 16 Pro/i }).first().click();
     await customer.getByRole('radio', { name: /Midnight Black/i }).first().click();
     const body = await customer.locator('body').innerText();
@@ -197,29 +224,35 @@ try {
   });
 
   await step(customer, 'customer: adds the selected variant to the bag', async () => {
-    await clickVisible(customer.getByRole('button', { name: /Add to Bag|Added to Bag/i }));
-    await customer.getByText(/Added to Bag/i).first().waitFor({ timeout: 20000 });
+    const addBtn = customer.locator('main').getByRole('button', { name: /Add to Bag|Added to Bag/i }).first();
+    await addBtn.scrollIntoViewIfNeeded();
+    await addBtn.click();
+    await customer.waitForFunction(
+      (pid) => (localStorage.getItem('gadzio_cart_v1') ?? '').includes(pid),
+      fixtures.productId,
+      { timeout: 20000 },
+    );
     const stored = await customer.evaluate(() => localStorage.getItem('gadzio_cart_v1'));
     if (!stored || !stored.includes(fixtures.productId)) throw new Error('cart storage did not receive the line');
     return 'cart line persisted in gadzio_cart_v1';
   });
 
   await step(customer, 'customer: bag shows the server-priced line', async () => {
-    await customer.goto(`${BASE}/cart`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/cart`);
     await customer.getByText(/MagPulse/i).first().waitFor({ timeout: 30000 });
     return await shot(customer, 'cart');
   });
 
   await step(customer, 'customer: checkout page renders server-side pricing', async () => {
-    await customer.goto(`${BASE}/checkout`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/checkout`);
     await customer.getByText(/1,999/).first().waitFor({ timeout: 30000 });
     return await shot(customer, 'checkout');
   });
 
   await step(customer, 'customer: fills contact and shipping address', async () => {
-    await customer.fill('#checkout-firstname', 'Asha');
+    await customer.fill('#checkout-firstname', 'TestCustomerA');
     await customer.fill('#checkout-email', fixtures.customerA);
-    await customer.fill('#checkout-phone', '9876543210');
+    await customer.fill('#checkout-phone', '9000000001');
     await customer.fill('#checkout-line1', '12 Staging Test Lane');
     await customer.fill('#checkout-city', 'Mumbai');
     await customer.selectOption('#checkout-state', 'Maharashtra');
@@ -257,7 +290,7 @@ try {
     const order = orders[0];
     const items = await sql`select product_id, variant_id, variant_sku, quantity, unit_price_paise, line_total_paise from order_items where order_id = ${order.id}`;
     if (items.length !== 1) throw new Error(`expected 1 order item, found ${items.length}`);
-    if (items[0].variant_id !== `test_var_blk_${TAG}`) throw new Error(`order item variant is ${items[0].variant_id}`);
+    if (items[0].variant_id !== fixtures.variantBlackId) throw new Error(`order item variant is ${items[0].variant_id}`);
     // The authoritative charge amount is the server total, not the display hint.
     const expectedPaise = fixtures.blackPricePaise + 4000;
     if (Number(order.total_paise) !== expectedPaise) throw new Error(`total_paise ${order.total_paise}, expected ${expectedPaise}`);
@@ -267,12 +300,12 @@ try {
     if (!sale || Number(sale.delta) !== -1) {
       throw new Error(`expected one -1 'sale' movement for the order, found ${JSON.stringify(movement)}`);
     }
-    const stock = await sql`select on_hand, reserved from stock where variant_id = ${`test_var_blk_${TAG}`}`;
+    const stock = await sql`select on_hand, reserved from stock where variant_id = ${fixtures.variantBlackId}`;
     return `order ${order.status} · reservation_state=${order.reservation_state} · total=${order.total_paise} paise · item ${items[0].variant_sku} · sale movement ${sale.delta} · on_hand=${stock[0]?.on_hand} reserved=${stock[0]?.reserved}`;
   });
 
   await step(customer, 'customer: order history lists the order', async () => {
-    await customer.goto(`${BASE}/account/orders`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/account/orders`);
     const body = await customer.locator('body').innerText();
     if (customerOrderTxnid && !body.includes(customerOrderTxnid)) throw new Error('order history did not list the new order');
     return await shot(customer, 'account-orders');
@@ -280,7 +313,7 @@ try {
 
   await step(customer, 'customer: order detail shows items, totals and payment state', async () => {
     if (!customerOrderTxnid) throw new Error('no txnid');
-    await customer.goto(`${BASE}/account/orders/${customerOrderTxnid}`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(customer, `${BASE}/account/orders/${customerOrderTxnid}`);
     const body = await customer.locator('body').innerText();
     if (!body.includes('Payment:')) throw new Error('order detail did not show the payment state');
     if (!/Midnight Black/i.test(body)) throw new Error('order detail did not show the variant snapshot');
@@ -289,11 +322,11 @@ try {
 
   /* ---------------------------------------------------------- customer B */
   await step(customer, 'boundary: customer B cannot open customer A order', async () => {
-    const ctx = await browser.newContext(contextOptions);
+    const ctx = await newTrackedContext();
     const other = await ctx.newPage();
     other.setDefaultTimeout(45000);
     try {
-      await signIn(other, fixtures.customerB);
+      await signIn(other, fixtures.customerB, '/account');
       const response = await other.goto(`${BASE}/account/orders/${customerOrderTxnid}`, { waitUntil: 'domcontentloaded' });
       const body = await other.locator('body').innerText();
       if (response && response.status() !== 404) throw new Error(`expected 404 for another customer's order, got ${response.status()}`);
@@ -325,12 +358,12 @@ try {
   await customerContext.close();
 
   /* ------------------------------------------------------- store admin */
-  const adminContext = await browser.newContext(contextOptions);
+  const adminContext = await newTrackedContext();
   const admin = await adminContext.newPage();
   admin.setDefaultTimeout(45000);
 
   await step(admin, 'admin: signs in to the Store Desk', async () => {
-    await admin.goto(`${BASE}/store-admin/login`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(admin, `${BASE}/store-admin/login`);
     await admin.fill('#sa-email', fixtures.adminEmail);
     await admin.fill('#sa-password', fixtures.password);
     await Promise.all([
@@ -339,7 +372,8 @@ try {
     ]).then(([response]) => {
       if (!response.ok()) throw new Error(`store-admin sign-in failed with HTTP ${response.status()}`);
     });
-    await admin.waitForURL(/\/store-admin(\/|$)/, { timeout: 60000 });
+    await admin.waitForURL((url) => url.pathname.startsWith('/store-admin') && !url.pathname.includes('login'), { timeout: 60000 });
+    await admin.waitForLoadState('domcontentloaded');
     return `store_admin_session cookie set · ${await shot(admin, 'store-admin-dashboard')}`;
   });
 
@@ -353,8 +387,10 @@ try {
   });
 
   await step(admin, 'admin: edits variant stock and low-stock threshold', async () => {
-    const page = await gotoPage(admin, `${BASE}/store-admin/products/${fixtures.productId}`);
-    const before = await sql`select on_hand, low_stock_threshold from stock where variant_id = ${`test_var_blk_${TAG}`}`;
+    if (!admin.url().endsWith(`/store-admin/products/${fixtures.productId}`)) {
+      await gotoPage(admin, `${BASE}/store-admin/products/${fixtures.productId}`);
+    }
+    const before = await sql`select on_hand, low_stock_threshold from stock where variant_id = ${fixtures.variantBlackId}`;
     if (before.length !== 1) throw new Error('stock row missing');
     const nextCount = Number(before[0].on_hand) - 1;
     const nextThreshold = Number(before[0].low_stock_threshold) + 1;
@@ -368,33 +404,36 @@ try {
     const savedResponse = admin.waitForResponse((r) => r.url().includes('/api/store-admin/catalog/products/draft'), { timeout: 90000 });
     await admin.getByRole('button', { name: /Save changes/i }).first().click();
     const response = await savedResponse;
-    if (!response.ok()) throw new Error(`product save answered HTTP ${response.status()}`);
-    const rows = await sql`select on_hand, low_stock_threshold, reserved from stock where variant_id = ${`test_var_blk_${TAG}`}`;
+    if (!response.ok()) {
+      const errBody = await response.json().catch(() => ({}));
+      throw new Error(`product save answered HTTP ${response.status()}: ${errBody.error ?? ''}`);
+    }
+    const rows = await sql`select on_hand, low_stock_threshold, reserved from stock where variant_id = ${fixtures.variantBlackId}`;
     if (rows.length !== 1) throw new Error('stock row missing');
     if (Number(rows[0].on_hand) !== nextCount) throw new Error(`on_hand is ${rows[0].on_hand}, expected ${nextCount}`);
     if (Number(rows[0].low_stock_threshold) !== nextThreshold) throw new Error(`threshold is ${rows[0].low_stock_threshold}, expected ${nextThreshold}`);
-    return `product page loaded in ${page.ms}ms; on_hand ${before[0].on_hand} → ${nextCount} and threshold ${before[0].low_stock_threshold} → ${nextThreshold} persisted · ${await shot(admin, 'store-admin-stock-saved')}`;
+    return `on_hand ${before[0].on_hand} → ${nextCount} and threshold ${before[0].low_stock_threshold} → ${nextThreshold} persisted · ${await shot(admin, 'store-admin-stock-saved')}`;
   });
 
   await step(admin, 'admin: orders list and order detail with payment state', async () => {
-    await admin.goto(`${BASE}/store-admin/orders`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(admin, `${BASE}/store-admin/orders`);
     await shot(admin, 'store-admin-orders');
     if (!customerOrderTxnid) throw new Error('no txnid');
-    await admin.goto(`${BASE}/store-admin/orders/${customerOrderTxnid}`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(admin, `${BASE}/store-admin/orders/${customerOrderTxnid}`);
     const body = await admin.locator('body').innerText();
     if (!/payment/i.test(body)) throw new Error('order detail did not show payment information');
     return await shot(admin, 'store-admin-order-detail');
   });
 
   await step(admin, 'admin: notification matrix and delivery log', async () => {
-    await admin.goto(`${BASE}/store-admin/settings/notifications`, { waitUntil: 'domcontentloaded' });
+    await gotoPage(admin, `${BASE}/store-admin/settings/notifications`);
     const body = await admin.locator('body').innerText();
     if (!/Queued|Sending|Sent|Failed|Skipped/i.test(body)) throw new Error('delivery log statuses were not rendered');
     return await shot(admin, 'store-admin-notifications');
   });
 
   await step(admin, 'boundary: unauthenticated visitor is refused by the store admin', async () => {
-    const ctx = await browser.newContext(contextOptions);
+    const ctx = await newTrackedContext();
     const anon = await ctx.newPage();
     anon.setDefaultTimeout(45000);
     try {

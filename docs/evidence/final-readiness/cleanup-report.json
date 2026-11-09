@@ -1,0 +1,59 @@
+{
+  "cleanedAt": "2026-11-09T17:31:53.003Z",
+  "tagsIncluded": [
+    "fr20261109",
+    "e2e_test_20261108",
+    "loadtest.*@example.test"
+  ],
+  "before": {
+    "taggedUsers": 2,
+    "taggedStoreAdmins": 1,
+    "taggedUserSessions": 2,
+    "taggedStoreAdminSessions": 1,
+    "taggedBrowsingHistory": 1,
+    "taggedNotificationOutbox": 0,
+    "activeTaggedProducts": 1,
+    "activeTaggedVariants": 2,
+    "nonZeroTaggedStockRows": 2,
+    "activeTestOrderReservations": 1,
+    "unredactedTestOrders": 1,
+    "testOrderShippingAddresses": 1,
+    "retainedByImmutableTriggers": {
+      "ordersAnonymisedAndCancelled": 23,
+      "stockMovements": 40,
+      "paymentEvents": 55,
+      "orderStatusHistory": 43,
+      "storeAdminAudit": 87
+    },
+    "preExistingActiveProductsUntouched": 5
+  },
+  "after": {
+    "taggedUsers": 0,
+    "taggedStoreAdmins": 0,
+    "taggedUserSessions": 0,
+    "taggedStoreAdminSessions": 0,
+    "taggedBrowsingHistory": 0,
+    "taggedNotificationOutbox": 0,
+    "activeTaggedProducts": 0,
+    "activeTaggedVariants": 0,
+    "nonZeroTaggedStockRows": 0,
+    "activeTestOrderReservations": 0,
+    "unredactedTestOrders": 0,
+    "testOrderShippingAddresses": 0,
+    "retainedByImmutableTriggers": {
+      "ordersAnonymisedAndCancelled": 23,
+      "stockMovements": 40,
+      "paymentEvents": 55,
+      "orderStatusHistory": 43,
+      "storeAdminAudit": 87
+    },
+    "preExistingActiveProductsUntouched": 5
+  },
+  "retainedByDesignNotes": [
+    "order_status_history, payment_events, stock_movements, store_admin_audit, price_history, product_content_revisions, and product_variant_colours have BEFORE UPDATE/DELETE immutability triggers at the PostgreSQL layer.",
+    "All 19 test orders (GDZ001009..GDZ001027) have had their reservations released, fulfilment set to CANCELED, shipping addresses deleted, user_id detached, and customer PII redacted.",
+    "Both tagged test products (test_product_fr20261109, test_product_e2e_test_20261108) are soft-deleted (deleted_at set, is_active = false, in_stock = false), all 6 variants are retired (is_active = false, retired_at set), and all stock balances are zeroed.",
+    "All 4 tagged test customer accounts and both tagged store_admin accounts were hard-deleted.",
+    "All 5 pre-existing active catalog products remain untouched."
+  ]
+}

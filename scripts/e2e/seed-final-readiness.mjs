@@ -23,14 +23,15 @@ export const fixtures = {
   customerBEmail: `test_cust_b_${TAG}@example.invalid`,
   password: 'TestPassword123!',
   productId: `test_product_${TAG}`,
+  productSlug: `test-product-${TAG}`,
   brandId: `test_brand_${TAG}`,
   modelId: `test_model_${TAG}`,
   colourBlackId: `test_col_blk_${TAG}`,
   colourBlueId: `test_col_blu_${TAG}`,
-  variantBlackId: `test_var_blk_${TAG}`,
-  variantBlueId: `test_var_blu_${TAG}`,
-  skuBlack: `SKU-BLK-${TAG}`,
-  skuBlue: `SKU-BLU-${TAG}`,
+  variantBlackId: `test_var_blk_r2_${TAG}`,
+  variantBlueId: `test_var_blu_r2_${TAG}`,
+  skuBlack: `SKU-BLK-R2-${TAG.toUpperCase()}`,
+  skuBlue: `SKU-BLU-R2-${TAG.toUpperCase()}`,
   customerAId: `usr_a_${TAG}`,
   customerBId: `usr_b_${TAG}`,
   adminId: `sa_${TAG}`,
@@ -43,7 +44,7 @@ export const fixtures = {
   bluePricePaise: 219900,
 };
 
-const sql = postgres(process.env.DATABASE_URL, { max: 1, connect_timeout: 15 });
+const sql = postgres(process.env.DATABASE_URL, { max: 1, connect_timeout: 15, prepare: false, fetch_types: false });
 
 async function seed() {
   const f = fixtures;
@@ -65,8 +66,8 @@ async function seed() {
   await sql`
     insert into users (id, email, password_hash, first_name, last_name, customer_group, last_login_at)
     values
-      (${f.customerAId}, ${f.customerAEmail}, ${passwordHash}, 'Asha', 'Sharma', 'retail', now()),
-      (${f.customerBId}, ${f.customerBEmail}, ${passwordHash}, 'Rohan', 'Verma', 'retail', now())
+      (${f.customerAId}, ${f.customerAEmail}, ${passwordHash}, 'TestCustomerA', 'Fixture', 'retail', now()),
+      (${f.customerBId}, ${f.customerBEmail}, ${passwordHash}, 'TestCustomerB', 'Fixture', 'retail', now())
     on conflict (id) do update set
       email = excluded.email,
       password_hash = excluded.password_hash,
@@ -106,13 +107,14 @@ async function seed() {
       id, category_id, slug, name, subtitle, price_paise, inventory_mode, is_active, in_stock,
       brand, short_description
     ) values (
-      ${f.productId}, 'mobile-cases', ${f.productId},
+      ${f.productId}, 'mobile-cases', ${f.productSlug},
       'Gadzio MagPulse Armor Case', 'Military-grade drop defense with MagSafe',
       ${f.blackPricePaise}, 'variant', true, true,
       'Gadzio', 'Staging fixture created by scripts/e2e/seed-final-readiness.mjs.'
     )
     on conflict (id) do update set
       category_id = excluded.category_id,
+      slug = excluded.slug,
       inventory_mode = 'variant',
       is_active = true,
       in_stock = true,
@@ -122,7 +124,16 @@ async function seed() {
   await sql`
     insert into product_device_models (product_id, device_model_id)
     values (${f.productId}, ${modelId})
-    on conflict (product_id, device_model_id) do nothing
+    on conflict (product_id, device_model_id) do update set archived_at = null
+  `;
+
+  // Retire any earlier variant row whose SKU was seeded with lowercase letters
+  // (saved SKUs are immutable, and validateVariantInput normalises to UPPERCASE).
+  await sql`
+    update product_variants
+    set is_active = false,
+        retired_at = coalesce(retired_at, now())
+    where product_id = ${f.productId} and sku <> upper(sku)
   `;
 
   await sql`
@@ -145,7 +156,7 @@ async function seed() {
     values
       (${f.variantBlackId}, ${f.productId}, ${blackColourId}),
       (${f.variantBlueId}, ${f.productId}, ${blueColourId})
-    on conflict (variant_id) do update set colour_id = excluded.colour_id
+    on conflict (variant_id) do nothing
   `;
 
   await sql`
@@ -153,14 +164,14 @@ async function seed() {
     values
       (${`img_pri_${TAG}`}, ${f.productId}, '/sites/cases-protection/images/iphone17-silicone-black.jpg', 'Gadzio MagPulse Armor Case - Primary', 'primary', 0, true),
       (${`img_gal_${TAG}`}, ${f.productId}, '/sites/cases-protection/images/iphone17pro-clear-magsafe.jpg', 'Gadzio MagPulse Armor Case - Side Angle', 'gallery', 1, true)
-    on conflict (id) do update set url = excluded.url, alt = excluded.alt
+    on conflict (id) do update set url = excluded.url, alt = excluded.alt, is_active = true, deleted_at = null
   `;
 
   await sql`
     insert into stock (id, product_id, variant_id, on_hand, reserved, track_inventory, low_stock_threshold)
     values
-      (${`stk_blk_${TAG}`}, ${f.productId}, ${f.variantBlackId}, ${f.blackOnHand}, 0, true, ${f.blackLowStockThreshold}),
-      (${`stk_blu_${TAG}`}, ${f.productId}, ${f.variantBlueId}, ${f.blueOnHand}, 0, true, ${f.blueLowStockThreshold})
+      (${`stk_blk_r2_${TAG}`}, ${f.productId}, ${f.variantBlackId}, ${f.blackOnHand}, 0, true, ${f.blackLowStockThreshold}),
+      (${`stk_blu_r2_${TAG}`}, ${f.productId}, ${f.variantBlueId}, ${f.blueOnHand}, 0, true, ${f.blueLowStockThreshold})
     on conflict (id) do update set
       on_hand = excluded.on_hand,
       reserved = 0,

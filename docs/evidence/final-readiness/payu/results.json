@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-11-09T17:30:25.142Z",
+  "overallStatus": "PARTIAL",
+  "livePayUSandboxHostedPage": "BLOCKED — configured APP_BASE_URL trycloudflare tunnel is unreachable and no merchant sandbox card credentials or cloudflared/ngrok binary are present on this host.",
+  "localCallbackAndProcessorVerification": "PASS",
+  "fixtureTag": "fr20261109",
+  "ordersTested": {
+    "paidOrder": "GDZ001028",
+    "duplicateReplayOrder": "GDZ001029",
+    "cancelledRestockedOrder": "GDZ001030"
+  },
+  "checks": [
+    {
+      "name": "public_https_callback_tunnel",
+      "status": "BLOCKED",
+      "detail": "Configured APP_BASE_URL tunnel is unreachable (ENOTFOUND); no cloudflared/ngrok binary installed on host and no PayU sandbox card credentials supplied"
+    },
+    {
+      "name": "webhook_missing_txnid_rejected",
+      "status": "PASS",
+      "detail": "POST /api/payu/webhook without txnid -> HTTP 400 (Invalid payload: txnid required)"
+    },
+    {
+      "name": "callback_tampered_hash_rejected",
+      "status": "PASS",
+      "detail": "txnid=GDZ001028 -> HTTP 400 error=\"tampered_hash\" order.status=CREATED review_flagged=true event=rejected/tampered_hash"
+    },
+    {
+      "name": "callback_amount_mismatch_rejected",
+      "status": "PASS",
+      "detail": "txnid=GDZ001028 claimed=1.00 expected=2039.00 -> HTTP 400 error=\"amount_mismatch\" order.status=CREATED event=rejected/amount_mismatch"
+    },
+    {
+      "name": "callback_productinfo_mismatch_rejected",
+      "status": "PASS",
+      "detail": "txnid=GDZ001028 -> HTTP 400 error=\"productinfo_mismatch\""
+    },
+    {
+      "name": "browser_return_unverified_capture_not_marked_paid",
+      "status": "PASS",
+      "detail": "POST /api/payu/success -> HTTP 303 Location=/order/status order.status=CREATED (never PAID without S2S confirmation)"
+    },
+    {
+      "name": "s2s_verified_capture_and_idempotent_duplicate_replay",
+      "status": "PASS",
+      "detail": "txnid=GDZ001028 -> 1st=PAID (reservation=CONSUMED), 2nd replay=PAID (event=unchanged, stock_movements=1->1)"
+    },
+    {
+      "name": "cross_order_duplicate_mihpayid_rejected",
+      "status": "PASS",
+      "detail": "txnid=GDZ001029 reusing mihpayid from GDZ001028 -> rejected=true reason=\"duplicate_gateway_payment\" order.status=CREATED"
+    },
+    {
+      "name": "cancelled_callback_releases_stock_claim",
+      "status": "PASS",
+      "detail": "txnid=GDZ001030 -> order.status=CANCELLED reservation=RELEASED on_hand=13->14 redirect=/order/cancelled"
+    }
+  ]
+}

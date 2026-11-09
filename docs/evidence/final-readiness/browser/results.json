@@ -1,10 +1,37 @@
 {
- "generatedAt": "2026-11-09T08:06:17.422Z",
+ "generatedAt": "2026-11-09T17:31:48.947Z",
  "baseUrl": "http://localhost:3000",
  "fixtureTag": "fr20261109",
- "gatewayPosts": [],
- "passed": 9,
- "failed": 12,
+ "gatewayPosts": [
+  {
+   "url": "https://test.payu.in/_payment",
+   "method": "POST",
+   "fields": [
+    "key",
+    "txnid",
+    "amount",
+    "productinfo",
+    "firstname",
+    "email",
+    "phone",
+    "surl",
+    "furl",
+    "curl",
+    "hash"
+   ],
+   "txnid": "GDZ001031",
+   "amount": "2039.00",
+   "productinfo": "Gadzio MagPulse Armor Case - Military-grade drop defense with MagSafe  x1",
+   "currency": "INR",
+   "firstname": "TestCustomerA",
+   "surl": "<APP_BASE_URL>/api/payu/success",
+   "furl": "<APP_BASE_URL>/api/payu/failure",
+   "hasHash": true,
+   "hasKey": true
+  }
+ ],
+ "passed": 21,
+ "failed": 0,
  "results": [
   {
    "step": "customer: public storefront loads",
@@ -13,58 +40,58 @@
   },
   {
    "step": "customer: signs in with real credentials",
-   "status": "FAIL",
-   "detail": "page.goto: Timeout 45000ms exceeded."
+   "status": "PASS",
+   "detail": "session cookie set · 02-customer-signed-in.png"
   },
   {
    "step": "customer: browses category listing",
    "status": "PASS",
-   "detail": "02-category-listing.png"
+   "detail": "03-category-listing.png"
   },
   {
    "step": "customer: opens product and selects model + colour",
    "status": "PASS",
-   "detail": "variant price + availability rendered · 03-variant-selected.png"
+   "detail": "variant price + availability rendered · 04-variant-selected.png"
   },
   {
    "step": "customer: adds the selected variant to the bag",
-   "status": "FAIL",
-   "detail": "locator.waitFor: Timeout 20000ms exceeded."
+   "status": "PASS",
+   "detail": "cart line persisted in gadzio_cart_v1"
   },
   {
    "step": "customer: bag shows the server-priced line",
-   "status": "FAIL",
-   "detail": "locator.waitFor: Timeout 30000ms exceeded."
+   "status": "PASS",
+   "detail": "05-cart.png"
   },
   {
    "step": "customer: checkout page renders server-side pricing",
-   "status": "FAIL",
-   "detail": "locator.waitFor: Timeout 30000ms exceeded."
+   "status": "PASS",
+   "detail": "06-checkout.png"
   },
   {
    "step": "customer: fills contact and shipping address",
-   "status": "FAIL",
-   "detail": "page.fill: Timeout 45000ms exceeded."
+   "status": "PASS",
+   "detail": "07-checkout-filled.png"
   },
   {
    "step": "customer: starts a PayU test-mode checkout",
-   "status": "FAIL",
-   "detail": "no visible clickable match among 0 candidates"
+   "status": "PASS",
+   "detail": "txnid=GDZ001031 amount=2039.00 fields=11 (gateway page aborted, no payment attempted) · 08-payu-redirect.png"
   },
   {
    "step": "database: order, stock claim and ledger entry exist",
-   "status": "FAIL",
-   "detail": "no txnid to verify"
+   "status": "PASS",
+   "detail": "order CREATED · reservation_state=ACTIVE · total=203900 paise · item SKU-BLK-R2-FR20261109 · sale movement -1 · on_hand=11 reserved=0"
   },
   {
    "step": "customer: order history lists the order",
    "status": "PASS",
-   "detail": "04-account-orders.png"
+   "detail": "09-account-orders.png"
   },
   {
    "step": "customer: order detail shows items, totals and payment state",
-   "status": "FAIL",
-   "detail": "no txnid"
+   "status": "PASS",
+   "detail": "10-account-order-detail.png"
   },
   {
    "step": "boundary: customer B cannot open customer A order",
@@ -83,28 +110,28 @@
   },
   {
    "step": "admin: signs in to the Store Desk",
-   "status": "FAIL",
-   "detail": "page.screenshot: Timeout 45000ms exceeded."
+   "status": "PASS",
+   "detail": "store_admin_session cookie set · 12-store-admin-dashboard.png"
   },
   {
    "step": "admin: product list and product detail",
    "status": "PASS",
-   "detail": "products 200/5397ms, detail 200/91832ms · 08-store-admin-product-detail.png"
+   "detail": "products 200/2649ms, detail 200/1018ms · 14-store-admin-product-detail.png"
   },
   {
    "step": "admin: edits variant stock and low-stock threshold",
-   "status": "FAIL",
-   "detail": "page.goto: Timeout 90000ms exceeded."
+   "status": "PASS",
+   "detail": "on_hand 11 → 10 and threshold 3 → 4 persisted · 16-store-admin-stock-saved.png"
   },
   {
    "step": "admin: orders list and order detail with payment state",
-   "status": "FAIL",
-   "detail": "page.goto: Timeout 45000ms exceeded."
+   "status": "PASS",
+   "detail": "18-store-admin-order-detail.png"
   },
   {
    "step": "admin: notification matrix and delivery log",
-   "status": "FAIL",
-   "detail": "page.goto: Timeout 45000ms exceeded."
+   "status": "PASS",
+   "detail": "19-store-admin-notifications.png"
   },
   {
    "step": "boundary: unauthenticated visitor is refused by the store admin",

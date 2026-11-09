@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-11-09T16:09:23.581Z",
+  "environment": "LOCAL-ONLY SUPPLEMENT (http://localhost:3000 -> Supabase ap-south-1 Mumbai; NOT a Vercel bom1 staging run)",
+  "stagingStatus": "BLOCKED — No Vercel bom1 staging deployment exists",
+  "flashSaleSetup": {
+    "productId": "test_product_fr20261109",
+    "variantId": "test_var_blu_u_fr20261109",
+    "initialOnHand": 2
+  },
+  "cohorts": [
+    {
+      "cohort": "hot_50",
+      "concurrency": 50,
+      "mode": "hot_sku",
+      "p50_ms": 2858.99,
+      "p95_ms": 3664,
+      "p99_ms": 3728.26,
+      "max_ms": 3728.26,
+      "statusCounts": {
+        "200": 2,
+        "409": 48
+      },
+      "unhandled5xx": 0,
+      "errorRate5xx": 0,
+      "simulatorCallbacks": {
+        "sent": 2,
+        "p50_ms": 461.53,
+        "p95_ms": 461.53
+      }
+    },
+    {
+      "cohort": "hot_100",
+      "concurrency": 100,
+      "mode": "hot_sku",
+      "p50_ms": 2834.41,
+      "p95_ms": 4775.64,
+      "p99_ms": 4989.66,
+      "max_ms": 4989.66,
+      "statusCounts": {
+        "409": 100
+      },
+      "unhandled5xx": 0,
+      "errorRate5xx": 0,
+      "simulatorCallbacks": {
+        "sent": 0,
+        "p50_ms": null,
+        "p95_ms": null
+      }
+    }
+  ],
+  "invariantsAfterRun": {
+    "negativeStockRows": 0,
+    "hotVariantFinalStock": {
+      "on_hand": 0,
+      "reserved": 0
+    },
+    "leakedIdleInTransactionSessions": 0
+  }
+}
