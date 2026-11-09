@@ -1,0 +1,31 @@
+{
+ "capturedAt": "2026-11-09T07:42:43.195Z",
+ "posts": [
+  {
+   "url": "https://test.payu.in/_payment",
+   "method": "POST",
+   "fields": [
+    "key",
+    "txnid",
+    "amount",
+    "productinfo",
+    "firstname",
+    "email",
+    "phone",
+    "surl",
+    "furl",
+    "curl",
+    "hash"
+   ],
+   "txnid": "GDZ001009",
+   "amount": "2039.00",
+   "productinfo": "Gadzio MagPulse Armor Case - Military-grade drop defense with MagSafe  x1",
+   "currency": "INR",
+   "firstname": "Asha",
+   "surl": "https://engineers-white-eds-diy.trycloudflare.com/api/payu/success",
+   "furl": "https://engineers-white-eds-diy.trycloudflare.com/api/payu/failure",
+   "hasHash": true,
+   "hasKey": true
+  }
+ ]
+}

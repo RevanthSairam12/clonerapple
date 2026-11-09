@@ -1,0 +1,115 @@
+{
+ "generatedAt": "2026-11-09T08:06:17.422Z",
+ "baseUrl": "http://localhost:3000",
+ "fixtureTag": "fr20261109",
+ "gatewayPosts": [],
+ "passed": 9,
+ "failed": 12,
+ "results": [
+  {
+   "step": "customer: public storefront loads",
+   "status": "PASS",
+   "detail": "title=\"Gadzio\" · 01-storefront-home.png"
+  },
+  {
+   "step": "customer: signs in with real credentials",
+   "status": "FAIL",
+   "detail": "page.goto: Timeout 45000ms exceeded."
+  },
+  {
+   "step": "customer: browses category listing",
+   "status": "PASS",
+   "detail": "02-category-listing.png"
+  },
+  {
+   "step": "customer: opens product and selects model + colour",
+   "status": "PASS",
+   "detail": "variant price + availability rendered · 03-variant-selected.png"
+  },
+  {
+   "step": "customer: adds the selected variant to the bag",
+   "status": "FAIL",
+   "detail": "locator.waitFor: Timeout 20000ms exceeded."
+  },
+  {
+   "step": "customer: bag shows the server-priced line",
+   "status": "FAIL",
+   "detail": "locator.waitFor: Timeout 30000ms exceeded."
+  },
+  {
+   "step": "customer: checkout page renders server-side pricing",
+   "status": "FAIL",
+   "detail": "locator.waitFor: Timeout 30000ms exceeded."
+  },
+  {
+   "step": "customer: fills contact and shipping address",
+   "status": "FAIL",
+   "detail": "page.fill: Timeout 45000ms exceeded."
+  },
+  {
+   "step": "customer: starts a PayU test-mode checkout",
+   "status": "FAIL",
+   "detail": "no visible clickable match among 0 candidates"
+  },
+  {
+   "step": "database: order, stock claim and ledger entry exist",
+   "status": "FAIL",
+   "detail": "no txnid to verify"
+  },
+  {
+   "step": "customer: order history lists the order",
+   "status": "PASS",
+   "detail": "04-account-orders.png"
+  },
+  {
+   "step": "customer: order detail shows items, totals and payment state",
+   "status": "FAIL",
+   "detail": "no txnid"
+  },
+  {
+   "step": "boundary: customer B cannot open customer A order",
+   "status": "PASS",
+   "detail": "order page and receipt both answered 404 for a different customer"
+  },
+  {
+   "step": "boundary: customer session cannot open the store admin",
+   "status": "PASS",
+   "detail": "redirected to /store-admin/login (status 200)"
+  },
+  {
+   "step": "boundary: customer session cannot call a store-admin API",
+   "status": "PASS",
+   "detail": "GET /api/store-admin/orders → 401"
+  },
+  {
+   "step": "admin: signs in to the Store Desk",
+   "status": "FAIL",
+   "detail": "page.screenshot: Timeout 45000ms exceeded."
+  },
+  {
+   "step": "admin: product list and product detail",
+   "status": "PASS",
+   "detail": "products 200/5397ms, detail 200/91832ms · 08-store-admin-product-detail.png"
+  },
+  {
+   "step": "admin: edits variant stock and low-stock threshold",
+   "status": "FAIL",
+   "detail": "page.goto: Timeout 90000ms exceeded."
+  },
+  {
+   "step": "admin: orders list and order detail with payment state",
+   "status": "FAIL",
+   "detail": "page.goto: Timeout 45000ms exceeded."
+  },
+  {
+   "step": "admin: notification matrix and delivery log",
+   "status": "FAIL",
+   "detail": "page.goto: Timeout 45000ms exceeded."
+  },
+  {
+   "step": "boundary: unauthenticated visitor is refused by the store admin",
+   "status": "PASS",
+   "detail": "page → /store-admin/login; GET /api/store-admin/orders → 401"
+  }
+ ]
+}

@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // `postgres` keeps per-module connection state. Bundling it into several
+  // server chunks gives one process multiple copies, which can stall a pooled
+  // connection mid-query; load it from node_modules as a single instance.
+  serverExternalPackages: ['postgres'],
   // Dev tooling fetches HMR and asset requests from the tunnel host; Next 16
   // otherwise rejects them as cross-origin. The scheme-less patterns match
   // any quick tunnel of either provider.
