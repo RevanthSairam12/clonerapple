@@ -144,10 +144,25 @@ function recordTotpFailure(email: string, now: number): void {
   totpAttempts.set(key, record);
 }
 
+export function clearInMemoryAuthAttempts(): void {
+  attempts.clear();
+  totpAttempts.clear();
+}
+
 /* ------------------------------------------------------------- helpers */
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function maskEmail(value: string): string {
+  const trimmed = value.trim();
+  const at = trimmed.lastIndexOf('@');
+  if (at <= 0) return '[redacted email]';
+  const local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1);
+  if (!domain) return '[redacted email]';
+  return `${local.slice(0, 1)}***@${domain}`;
 }
 
 function toSession(row: Record<string, any>): StoreSession {
@@ -180,30 +195,113 @@ export type StoreLoginResult =
       status: 401 | 429;
     };
 
+export const MAX_PASSWORD_FAILURES = MAX_FAILURES;
+export const MAX_STORE_TOTP_FAILURES = MAX_TOTP_FAILURES;
+export const STORE_LOCKOUT_MS = LOCKOUT_MS;
+
+const AUTH_ATTEMPT_ACTION = 'store_admin.auth_attempt';
+const AUTH_ATTEMPT_ENTITY = 'store_admin_auth';
+const AUTH_ADVISORY_NAMESPACE = 41010;
+
+export interface StoreLoginOptions {
+  /** Optional database client override (used by multi-instance and concurrency tests). */
+  sql?: NonNullable<ReturnType<typeof getSql>>;
+  /** Optional client IP override. */
+  ip?: string | null;
+  /** Optional clock override (ISO string, Date, or epoch ms) for deterministic expiry tests. */
+  now?: Date | string | number;
+}
+
+interface DistributedLockoutSummary {
+  emailPasswordFailures: number;
+  ipPasswordFailures: number;
+  totpFailures: number;
+  passwordRetryAfterSec: number;
+  totpRetryAfterSec: number;
+}
+
+function summarizeAttemptRows(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  emailHash: string,
+  ipHash: string | null,
+): DistributedLockoutSummary {
+  let emailPasswordFailures = 0;
+  let ipPasswordFailures = 0;
+  let totpFailures = 0;
+  let emailResetSeen = false;
+  let ipResetSeen = false;
+  let passwordRetryAfterSec = LOCKOUT_MS / 1000;
+  let totpRetryAfterSec = LOCKOUT_MS / 1000;
+
+  for (const row of rows) {
+    const entityId = String(row.entity_id ?? '');
+    const rowIpHash = row.ip_hash ? String(row.ip_hash) : null;
+    const status = String(row.status ?? '');
+    const reason = String(row.reason ?? '');
+    const retrySec = Math.max(1, Math.min(LOCKOUT_MS / 1000, Number(row.retry_after_sec) || LOCKOUT_MS / 1000));
+
+    if (entityId === emailHash && !emailResetSeen) {
+      if (status === 'ok') {
+        emailResetSeen = true;
+      } else if (reason === 'password_failure') {
+        emailPasswordFailures += 1;
+        if (emailPasswordFailures === MAX_FAILURES) {
+          passwordRetryAfterSec = retrySec;
+        }
+      } else if (reason === 'totp_failure') {
+        totpFailures += 1;
+        if (totpFailures === MAX_TOTP_FAILURES) {
+          totpRetryAfterSec = retrySec;
+        }
+      }
+    }
+
+    if (ipHash && rowIpHash === ipHash && !ipResetSeen) {
+      if (status === 'ok') {
+        ipResetSeen = true;
+      } else if (reason === 'password_failure') {
+        ipPasswordFailures += 1;
+        if (ipPasswordFailures === MAX_FAILURES && emailPasswordFailures < MAX_FAILURES) {
+          passwordRetryAfterSec = retrySec;
+        }
+      }
+    }
+  }
+
+  return {
+    emailPasswordFailures,
+    ipPasswordFailures,
+    totpFailures,
+    passwordRetryAfterSec,
+    totpRetryAfterSec,
+  };
+}
+
 export async function login(
   email: string,
   password: string,
   totpCode?: string,
+  options: StoreLoginOptions = {},
 ): Promise<StoreLoginResult> {
-  const sql = getSql();
+  const sql = options.sql ?? getSql();
   if (!sql) {
     return { ok: false, error: 'Database is not configured.', status: 401 };
   }
 
   const normalized = email.trim().toLowerCase();
-  const ip = await clientIp();
+  const ip = (options.ip !== undefined ? options.ip ?? '' : await clientIp()).trim();
+  const emailHash = hashToken(normalized);
+  const ipHash = ip ? hashToken(ip) : null;
+  const maskedEmail = maskEmail(normalized);
 
-  const clock = await sql`select now() as now`;
+  const nowOverrideIso =
+    options.now !== undefined ? new Date(options.now).toISOString() : null;
+  const clock = nowOverrideIso
+    ? [{ now: nowOverrideIso }]
+    : await sql`select now() as now`;
   const now = new Date(clock[0].now).getTime();
   if (!Number.isFinite(now)) return { ok: false, status: 401, error: 'Sign-in is temporarily unavailable.' };
-  if (isLocked(normalized, ip, now)) {
-    return {
-      ok: false,
-      error: 'Too many failed attempts. Try again in 15 minutes.',
-      retryAfterSec: LOCKOUT_MS / 1000,
-      status: 429,
-    };
-  }
+  const effectiveNowIso = new Date(now).toISOString();
 
   const rows = await sql`
     select id, email, name, password_hash, role, is_active, must_change_password,
@@ -213,75 +311,177 @@ export async function login(
   `;
   const admin = rows[0];
 
-  // Always run bcrypt so a missing account costs the same as a wrong password.
+  // Always run bcrypt outside the transaction lock so a missing account costs
+  // the same as a wrong password and CPU hashing never holds a DB lock.
   const valid = await bcrypt.compare(password, admin?.password_hash ?? DUMMY_HASH);
-  if (!admin || !valid || !admin.is_active) {
-    recordFailure(normalized, ip, now);
-    return { ok: false, error: 'Invalid email or password.', status: 401 };
-  }
-
-  if (admin.totp_enabled && admin.totp_secret) {
-    const code = (totpCode ?? '').trim();
-
-    if (isTotpLocked(normalized, now)) {
-      return {
-        ok: false,
-        error: 'Too many incorrect verification codes. Try again in 15 minutes.',
-        codeRequired: true,
-        retryAfterSec: LOCKOUT_MS / 1000,
-        status: 429,
-      };
-    }
-
-    const codeOk = await verifySecondFactor(
-      admin.id,
-      admin.totp_secret as string,
-      (admin.recovery_hash as string | null) ?? null,
-      code,
-    );
-
-    if (!codeOk) {
-      recordTotpFailure(normalized, now);
-      recordFailure(normalized, ip, now);
-      return {
-        ok: false,
-        error: code ? 'Invalid verification code.' : 'Verification code required.',
-        codeRequired: true,
-        status: 401,
-      };
-    }
-  }
-
   const token = randomBytes(32).toString('hex');
-  // Serialize issuance against removal, deactivation and password resets.
-  const issued = await sql.begin(async (tx) => {
+
+  const outcome = await sql.begin(async (tx) => {
+    // 1. Serialize concurrent login attempts for this email and client IP across
+    //    all serverless instances using transaction-scoped advisory locks in a
+    //    deterministic sorted order.
+    const lockKeys = [`sa_auth_email:${emailHash}`];
+    if (ipHash) lockKeys.push(`sa_auth_ip:${ipHash}`);
+    lockKeys.sort();
+    for (const lockKey of lockKeys) {
+      await tx`select pg_advisory_xact_lock(${AUTH_ADVISORY_NAMESPACE}, hashtext(${lockKey}))`;
+    }
+
+    // 2. Read recent authentication attempt rows from store_admin_audit under
+    //    the advisory lock.
+    const attemptRows = (await tx`
+      select
+        entity_id,
+        ip_hash,
+        status,
+        reason,
+        ceil(extract(epoch from ((created_at + interval '15 minutes') - ${effectiveNowIso}::timestamptz)))::int as retry_after_sec
+      from store_admin_audit
+      where action = ${AUTH_ATTEMPT_ACTION}
+        and entity = ${AUTH_ATTEMPT_ENTITY}
+        and (entity_id = ${emailHash} or (${ipHash}::text is not null and ip_hash = ${ipHash}))
+        and created_at > ${effectiveNowIso}::timestamptz - interval '15 minutes'
+        and created_at <= ${effectiveNowIso}::timestamptz
+      order by created_at desc, id desc
+      limit 100
+    `) as Array<Record<string, unknown>>;
+
+    const summary = summarizeAttemptRows(attemptRows, emailHash, ipHash);
+    const dbPasswordLocked =
+      summary.emailPasswordFailures >= MAX_FAILURES ||
+      summary.ipPasswordFailures >= MAX_FAILURES;
+
+    if (dbPasswordLocked || (attemptRows.length === 0 && isLocked(normalized, ip, now))) {
+      return {
+        ok: false as const,
+        error: 'Too many failed attempts. Try again in 15 minutes.',
+        retryAfterSec: dbPasswordLocked ? summary.passwordRetryAfterSec : LOCKOUT_MS / 1000,
+        status: 429 as const,
+      };
+    }
+
+    if (!admin || !valid || !admin.is_active) {
+      await tx`
+        insert into store_admin_audit (
+          actor_id, actor_email, action, entity, entity_id,
+          route, status, reason, ip_hash, created_at
+        ) values (
+          ${admin?.id ?? null},
+          ${maskedEmail},
+          ${AUTH_ATTEMPT_ACTION},
+          ${AUTH_ATTEMPT_ENTITY},
+          ${emailHash},
+          '/api/store-admin/auth/login',
+          ${'denied'},
+          ${'password_failure'},
+          ${ipHash},
+          ${effectiveNowIso}::timestamptz
+        )
+      `;
+      recordFailure(normalized, ip, now);
+      return { ok: false as const, error: 'Invalid email or password.', status: 401 as const };
+    }
+
+    if (admin.totp_enabled && admin.totp_secret) {
+      const code = (totpCode ?? '').trim();
+      const dbTotpLocked = summary.totpFailures >= MAX_TOTP_FAILURES;
+
+      if (dbTotpLocked || (attemptRows.length === 0 && isTotpLocked(normalized, now))) {
+        return {
+          ok: false as const,
+          error: 'Too many incorrect verification codes. Try again in 15 minutes.',
+          codeRequired: true,
+          retryAfterSec: dbTotpLocked ? summary.totpRetryAfterSec : LOCKOUT_MS / 1000,
+          status: 429 as const,
+        };
+      }
+
+      const codeOk = await verifySecondFactor(
+        admin.id,
+        admin.totp_secret as string,
+        (admin.recovery_hash as string | null) ?? null,
+        code,
+        tx,
+      );
+
+      if (!codeOk) {
+        await tx`
+          insert into store_admin_audit (
+            actor_id, actor_email, action, entity, entity_id,
+            route, status, reason, ip_hash, created_at
+          ) values (
+            ${admin.id},
+            ${maskedEmail},
+            ${AUTH_ATTEMPT_ACTION},
+            ${AUTH_ATTEMPT_ENTITY},
+            ${emailHash},
+            '/api/store-admin/auth/login',
+            ${'denied'},
+            ${'totp_failure'},
+            ${ipHash},
+            ${effectiveNowIso}::timestamptz
+          )
+        `;
+        // TOTP failures are counted independently from password failures.
+        recordTotpFailure(normalized, now);
+        return {
+          ok: false as const,
+          error: code ? 'Invalid verification code.' : 'Verification code required.',
+          codeRequired: true,
+          status: 401 as const,
+        };
+      }
+    }
+
+    // Serialize session issuance against removal, deactivation and password resets.
     const live = await tx`
       select id from store_admins where id = ${admin.id}
         and is_active and removed_at is null and password_hash = ${admin.password_hash}
       for update
     `;
-    if (!live.length) return false;
+    if (!live.length) {
+      return { ok: false as const, error: 'Invalid email or password.', status: 401 as const };
+    }
     await tx`
       insert into store_admin_sessions (token_hash, admin_id, expires_at)
       values (${hashToken(token)}, ${admin.id}, now() + interval '7 days')
     `;
     await tx`update store_admins set last_login_at = now() where id = ${admin.id}`;
-    return true;
+    await tx`
+      insert into store_admin_audit (
+        actor_id, actor_email, action, entity, entity_id,
+        route, status, reason, ip_hash, created_at
+      ) values (
+        ${admin.id},
+        ${maskedEmail},
+        ${AUTH_ATTEMPT_ACTION},
+        ${AUTH_ATTEMPT_ENTITY},
+        ${emailHash},
+        '/api/store-admin/auth/login',
+        ${'ok'},
+        ${'login_ok'},
+        ${ipHash},
+        ${effectiveNowIso}::timestamptz
+      )
+    `;
+
+    recordSuccess(normalized, ip);
+    return {
+      ok: true as const,
+      token,
+      adminId: admin.id as string,
+      role: isStoreRole(admin.role) ? admin.role : ('store_viewer' as StoreRole),
+      mustChangePassword:
+        admin.must_change_password === true || String(admin.must_change_password) === 'true',
+    };
   });
-  if (!issued) return { ok: false, error: 'Invalid email or password.', status: 401 };
+
+  if (!outcome.ok) return outcome;
+
   // Opportunistic cleanup of expired rows.
   await sql`delete from store_admin_sessions where expires_at <= now()`;
 
-  recordSuccess(normalized, ip);
-
-  return {
-    ok: true,
-    token,
-    adminId: admin.id,
-    role: isStoreRole(admin.role) ? admin.role : 'store_viewer',
-    mustChangePassword:
-      admin.must_change_password === true || String(admin.must_change_password) === 'true',
-  };
+  return outcome;
 }
 
 /* ----------------------------------------------------------- session */

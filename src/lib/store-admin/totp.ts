@@ -184,8 +184,9 @@ export async function verifySecondFactor(
   secret: string,
   legacyRecoveryHash: string | null,
   rawCode: unknown,
+  sqlOverride?: NonNullable<ReturnType<typeof getSql>> | import('postgres').TransactionSql,
 ): Promise<boolean> {
-  const sql = getSql();
+  const sql = sqlOverride ?? getSql();
   if (!sql) return false;
 
   const code = typeof rawCode === 'string' ? rawCode.trim() : '';

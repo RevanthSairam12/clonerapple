@@ -26,6 +26,9 @@ export type PaymentEventOutcome =
   | 'unchanged'
   | 'rejected';
 
+/** Internal reason tag written when a verification lease is atomically claimed. */
+export const VERIFICATION_CLAIM_REASON = 'verification_claim_lease';
+
 export interface PaymentEventInput {
   orderId: string;
   txnid: string;
@@ -130,6 +133,7 @@ export async function listPaymentEvents(
     select id, txnid, source, payu_status, outcome, reason, created_at
     from payment_events
     where txnid = ${key}
+      and reason <> ${VERIFICATION_CLAIM_REASON}
     order by created_at desc, id desc
     limit ${limit}
   `) as Array<Record<string, unknown>>;
