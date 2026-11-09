@@ -81,6 +81,86 @@ export function getMigrationSql(): Sql {
   return globalForSql.__gadzioMigrationSql;
 }
 
+export const PINNED_POSTGRES_VERSION = '3.4.9';
+
+/**
+ * Environment switch to disable the port-6543 transaction-pooler pipelining
+ * workaround (`DATABASE_DISABLE_POOLER_NO_PIPELINE=1|true|on`).
+ */
+export function isPoolerPipeliningWorkaroundDisabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  const raw = (env.DATABASE_DISABLE_POOLER_NO_PIPELINE || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
+}
+
+/**
+ * Verify that the postgres.js Query prototype exposes the exact `.handle()` and
+ * `.options` shape required by `disablePoolerPipelining`. Throws if a driver
+ * upgrade alters those internals.
+ */
+export function assertPostgresPoolerInternals(client: Sql): {
+  handle: (this: { options?: { onexecute?: () => boolean } }) => Promise<unknown>;
+  __gadzioNoPipeline?: boolean;
+} {
+  const probe = client`select 1` as unknown as {
+    options?: Record<string, unknown>;
+  };
+  const proto = Object.getPrototypeOf(probe) as {
+    handle?: (this: { options?: { onexecute?: () => boolean } }) => Promise<unknown>;
+    __gadzioNoPipeline?: boolean;
+  } | null;
+  if (
+    !proto ||
+    typeof proto.handle !== 'function' ||
+    !probe ||
+    typeof probe.options !== 'object' ||
+    probe.options === null
+  ) {
+    throw new Error(
+      'postgres.js Query internals changed: disablePoolerPipelining requires Query.prototype.handle and query.options.',
+    );
+  }
+  return proto as {
+    handle: (this: { options?: { onexecute?: () => boolean } }) => Promise<unknown>;
+    __gadzioNoPipeline?: boolean;
+  };
+}
+
+/**
+ * Prevent postgres.js from pipelining a second query onto an in-flight
+ * transaction-pooler connection. When an unparameterized query (`Sync`) is
+ * pipelined with a parameterized `prepare: false` query (`Parse + Describe +
+ * Flush`), Supavisor on port 6543 detaches the backend after the first query's
+ * `ReadyForQuery`, stranding the second query in `ClientRead`. Returning
+ * `false` from `onexecute` moves the connection to `full` until `ReadyForQuery`
+ * arrives, while leaving `sql.begin`'s own `onexecute` hook untouched.
+ *
+ * Set `DATABASE_DISABLE_POOLER_NO_PIPELINE=1` to bypass this workaround.
+ */
+export function disablePoolerPipelining(
+  client: Sql,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  if (isPoolerPipeliningWorkaroundDisabled(env)) return false;
+  const proto = assertPostgresPoolerInternals(client);
+  if (!proto.__gadzioNoPipeline) {
+    const origHandle = proto.handle;
+    proto.handle = function handleWithoutPipelining() {
+      if (
+        !isPoolerPipeliningWorkaroundDisabled(process.env) &&
+        this.options &&
+        !this.options.onexecute
+      ) {
+        this.options.onexecute = () => false;
+      }
+      return origHandle.call(this);
+    };
+    proto.__gadzioNoPipeline = true;
+  }
+  return true;
+}
+
 export function getSql(): Sql | null {
   if (!process.env.DATABASE_URL) {
     if (!warned && process.env.NODE_ENV !== 'production') {
@@ -99,7 +179,7 @@ export function getSql(): Sql | null {
     const url = new URL(process.env.DATABASE_URL);
     const isPooler = url.hostname.includes('pooler') && url.port === '6543';
 
-    globalForSql.__gadzioSql = postgres(process.env.DATABASE_URL, {
+    const client = postgres(process.env.DATABASE_URL, {
       max: resolvePoolMax(),
       idle_timeout: 20,
       connect_timeout: 10,
@@ -109,6 +189,10 @@ export function getSql(): Sql | null {
       prepare: !isPooler,
       onnotice: () => {},
     });
+    if (isPooler && !isPoolerPipeliningWorkaroundDisabled(process.env)) {
+      disablePoolerPipelining(client, process.env);
+    }
+    globalForSql.__gadzioSql = client;
   }
   return globalForSql.__gadzioSql;
 }
