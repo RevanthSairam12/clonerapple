@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "traycer/**"
+      - "backup/**"
+  pull_request:
+
+jobs:
+  verify:
+    name: Typecheck, Guards, Tests & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Route, boundary, field-help, link & secret checks
+        run: |
+          npm run check:store-admin-routes
+          npm run check:account-routes
+          npm run check:admin-boundary
+          npm run check:field-help
+          npm run check:links
+          npm run check:secrets
+
+      - name: Run unit & contract test suite
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Security audit
+        run: npm audit --audit-level=high
