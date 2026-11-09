@@ -1,6 +1,7 @@
 import { SettingList } from '@/components/store-admin/SettingList';
 import { SettingsForm } from '@/components/store-admin/SettingsForm';
 import { SettingsNav } from '@/components/store-admin/SettingsNav';
+import { SiteAddressCheckCard } from '@/components/store-admin/SiteAddressCheckCard';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { secretStatus } from '@/lib/store-admin/secret-status';
 import { LIST_KINDS, listSettingRows } from '@/lib/store-admin/setting-lists';
@@ -82,6 +83,8 @@ export default async function StoreAdminPaymentSettingsPage() {
           </tbody>
         </table>
       </section>
+
+      <SiteAddressCheckCard isOwner={session?.role === 'store_owner'} />
 
       {methods.ok ? (
         <SettingList

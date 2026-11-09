@@ -33,10 +33,17 @@ export type AppBaseUrlFailureCode =
   | 'credentials'
   | 'query'
   | 'path'
-  | 'insecure';
+  | 'insecure'
+  | 'tunnel_in_production';
 
 export type AppBaseUrlResult =
-  | { ok: true; baseUrl: string; isLocalhost: boolean }
+  | {
+      ok: true;
+      baseUrl: string;
+      isLocalhost: boolean;
+      isTunnel: boolean;
+      https: boolean;
+    }
   | { ok: false; code: AppBaseUrlFailureCode; message: string };
 
 export interface PayUConfig {
@@ -51,11 +58,38 @@ export interface PayUConfig {
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
 
+const TUNNEL_HOST_SUFFIXES = [
+  '.trycloudflare.com',
+  '.ngrok-free.app',
+  '.ngrok-free.dev',
+  '.ngrok.io',
+  '.ngrok.app',
+  '.loca.lt',
+  '.localtunnel.me',
+  '.ts.net',
+] as const;
+
 let warnedAboutLocalhost = false;
 
 export function isLocalhostHostname(hostname: string): boolean {
   const normalised = hostname.trim().toLowerCase();
   return LOCAL_HOSTNAMES.has(normalised) || normalised.endsWith('.localhost');
+}
+
+export function isTunnelHostname(hostname: string): boolean {
+  const normalised = hostname.trim().toLowerCase().replace(/\.+$/, '');
+  if (!normalised) return false;
+  return TUNNEL_HOST_SUFFIXES.some(
+    (suffix) => normalised === suffix.slice(1) || normalised.endsWith(suffix),
+  );
+}
+
+/** True when `PAYU_ENV` is set to `'live'` or `'production'`. */
+export function isProductionPayUEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = (env.PAYU_ENV || '').trim().toLowerCase();
+  return raw === 'live' || raw === 'production';
 }
 
 /**
@@ -123,9 +157,12 @@ export function resolveAppBaseUrl(
   }
 
   const isLocalhost = isLocalhostHostname(parsed.hostname);
+  const isTunnel = isTunnelHostname(parsed.hostname);
+  const https = parsed.protocol === 'https:';
+  const prodPayU = isProductionPayUEnv(env);
 
-  if (env.NODE_ENV === 'production') {
-    if (parsed.protocol !== 'https:') {
+  if (env.NODE_ENV === 'production' || prodPayU) {
+    if (!https) {
       return {
         ok: false,
         code: 'insecure',
@@ -146,11 +183,22 @@ export function resolveAppBaseUrl(
     );
   }
 
+  if (prodPayU && isTunnel) {
+    return {
+      ok: false,
+      code: 'tunnel_in_production',
+      message:
+        'APP_BASE_URL points at a temporary tunnel host, which is not permitted when PAYU_ENV is in production mode. Configure the permanent HTTPS domain.',
+    };
+  }
+
   return {
     ok: true,
     // `new URL().origin` drops any trailing slash and normalises the host.
     baseUrl: parsed.origin,
     isLocalhost,
+    isTunnel,
+    https,
   };
 }
 
@@ -197,12 +245,12 @@ export function buildPayURedirectUrl(
  * Returns the active PayU configuration.
  * Validates presence of mandatory environment variables and computes proper endpoints.
  */
-export function getPayUConfig(): PayUConfig {
-  const env: PayUEnvironment = process.env.PAYU_ENV === 'live' ? 'live' : 'test';
+export function getPayUConfig(env: NodeJS.ProcessEnv = process.env): PayUConfig {
+  const mode: PayUEnvironment = isProductionPayUEnv(env) ? 'live' : 'test';
 
-  const key = process.env.PAYU_KEY?.trim() || '';
-  const salt = process.env.PAYU_SALT?.trim() || '';
-  const rawBaseUrl = process.env.PAYU_BASE_URL?.trim();
+  const key = env.PAYU_KEY?.trim() || '';
+  const salt = env.PAYU_SALT?.trim() || '';
+  const rawBaseUrl = env.PAYU_BASE_URL?.trim();
 
   // Hosted checkout URL
   let paymentUrl: string;
@@ -210,23 +258,23 @@ export function getPayUConfig(): PayUConfig {
     const cleanBase = rawBaseUrl.replace(/\/+$/, '');
     paymentUrl = cleanBase.endsWith('/_payment') ? cleanBase : `${cleanBase}/_payment`;
   } else {
-    paymentUrl = env === 'live'
+    paymentUrl = mode === 'live'
       ? 'https://secure.payu.in/_payment'
       : 'https://test.payu.in/_payment';
   }
 
   // Server-to-server Verify Payment API endpoint
-  const verifyPaymentUrl = env === 'live'
+  const verifyPaymentUrl = mode === 'live'
     ? 'https://info.payu.in/merchant/postservice.php?form=2'
     : 'https://test.payu.in/merchant/postservice.php?form=2';
 
   return {
     key,
     salt,
-    env,
+    env: mode,
     paymentUrl,
     verifyPaymentUrl,
-    appBaseUrl: getAppBaseUrl() ?? '',
+    appBaseUrl: getAppBaseUrl(env) ?? '',
   };
 }
 
@@ -315,4 +363,158 @@ export function assertPayUConfigured(
 export function getPayUReturnSecret(): string | null {
   const secret = (process.env.PAYU_RETURN_SECRET || '').trim();
   return secret.length >= 32 ? secret : null;
+}
+
+export type SiteAddressCheckCode =
+  | 'ok'
+  | 'tunnel_warning'
+  | 'unreachable'
+  | AppBaseUrlFailureCode;
+
+export interface SiteAddressHealthResult {
+  ok: boolean;
+  configured: boolean;
+  valid: boolean;
+  https: boolean;
+  isTunnel: boolean;
+  isLocalhost: boolean;
+  reachable: boolean;
+  statusCode: number | null;
+  productionReady: boolean;
+  code: SiteAddressCheckCode;
+  message: string;
+}
+
+/**
+ * Owner-only diagnostic check for `APP_BASE_URL`.
+ *
+ * Inspects protocol (`https:`), whether the host is a tunnel (`*.trycloudflare.com`,
+ * `*.ngrok-free.app`, etc.) or localhost, whether `resolveAppBaseUrl(env)`
+ * accepts it for the active `PAYU_ENV`, and probes `${origin}/` with a bounded
+ * HTTP request to report live reachability. Never echoes raw URLs with
+ * credentials or secrets.
+ */
+export async function checkSiteAddressHealth(
+  env: NodeJS.ProcessEnv = process.env,
+  fetcher: typeof fetch = fetch,
+): Promise<SiteAddressHealthResult> {
+  const raw = (env.APP_BASE_URL || '').trim();
+  if (!raw) {
+    return {
+      ok: false,
+      configured: false,
+      valid: false,
+      https: false,
+      isTunnel: false,
+      isLocalhost: false,
+      reachable: false,
+      statusCode: null,
+      productionReady: false,
+      code: 'missing',
+      message:
+        'APP_BASE_URL is not configured. Set it to the public HTTPS address of this store.',
+    };
+  }
+
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    parsed = null;
+  }
+
+  const https = parsed?.protocol === 'https:';
+  const isTunnel = parsed ? isTunnelHostname(parsed.hostname) : false;
+  const isLocalhost = parsed ? isLocalhostHostname(parsed.hostname) : false;
+  const resolved = resolveAppBaseUrl(env);
+
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      configured: true,
+      valid: false,
+      https,
+      isTunnel,
+      isLocalhost,
+      reachable: false,
+      statusCode: null,
+      productionReady: false,
+      code: resolved.code,
+      message: resolved.message,
+    };
+  }
+
+  let reachable = false;
+  let statusCode: number | null = null;
+  try {
+    const res = await fetcher(`${resolved.baseUrl}/`, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(5000),
+    });
+    statusCode = res.status;
+    // 2xx or 3xx confirms the HTTP listener at APP_BASE_URL is reachable.
+    // 401/403 on a Vercel preview indicates Deployment Protection is blocking callbacks.
+    reachable = res.status >= 200 && res.status < 400;
+    await res.body?.cancel().catch(() => {});
+  } catch {
+    reachable = false;
+    statusCode = null;
+  }
+
+  if (!reachable) {
+    const protectionNote =
+      statusCode === 401 || statusCode === 403
+        ? ` (HTTP ${statusCode} — check whether Vercel Deployment Protection or a firewall is blocking unauthenticated requests)`
+        : statusCode !== null
+          ? ` (HTTP ${statusCode})`
+          : '';
+    return {
+      ok: false,
+      configured: true,
+      valid: true,
+      https,
+      isTunnel,
+      isLocalhost,
+      reachable: false,
+      statusCode,
+      productionReady: false,
+      code: 'unreachable',
+      message: `APP_BASE_URL could not be reached${protectionNote}. PayU browser returns and webhooks will fail until the address answers publicly.`,
+    };
+  }
+
+  if (isTunnel) {
+    return {
+      ok: true,
+      configured: true,
+      valid: true,
+      https,
+      isTunnel: true,
+      isLocalhost,
+      reachable: true,
+      statusCode,
+      productionReady: false,
+      code: 'tunnel_warning',
+      message:
+        'APP_BASE_URL is reachable over HTTPS through a temporary tunnel host. Suitable for test-mode callbacks only; replace with a permanent HTTPS domain before enabling production payments.',
+    };
+  }
+
+  const productionReady = https && !isLocalhost && !isTunnel && reachable;
+  return {
+    ok: true,
+    configured: true,
+    valid: true,
+    https,
+    isTunnel: false,
+    isLocalhost,
+    reachable: true,
+    statusCode,
+    productionReady,
+    code: 'ok',
+    message: https
+      ? 'APP_BASE_URL is a reachable public HTTPS origin.'
+      : 'APP_BASE_URL is reachable over HTTP (local development only; HTTPS is required in production).',
+  };
 }

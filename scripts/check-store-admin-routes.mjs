@@ -117,6 +117,8 @@ EXPECTED_OWNER_ROUTES.push('staff/[id]/totp/reset/route.ts');
 // Website reads remain available to every role; each write is owner-only.
 EXPECTED_OWNER_ROUTES.push('website/content/[key]/route.ts');
 EXPECTED_OWNER_ROUTES.push('website/theme/route.ts');
+// Owner-only diagnostic that probes APP_BASE_URL reachability, HTTPS, and tunnel status.
+EXPECTED_OWNER_ROUTES.push('site-address-check/route.ts');
 
 const EXPECTED_MUTATING_ROUTES = [
   'orders/[txnid]/fulfilment/route.ts',

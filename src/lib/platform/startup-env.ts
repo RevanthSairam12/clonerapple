@@ -44,6 +44,54 @@ function trustProxyUnrecognised(env: NodeJS.ProcessEnv): boolean {
  * lives in `mailConfigProblem()` (`src/lib/notifications/providers.ts`), which
  * already has the settings in hand.
  */
+const TUNNEL_SUFFIXES = [
+  '.trycloudflare.com',
+  '.ngrok-free.app',
+  '.ngrok-free.dev',
+  '.ngrok.io',
+  '.ngrok.app',
+  '.loca.lt',
+  '.localtunnel.me',
+  '.ts.net',
+];
+
+function isTunnelHost(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase().replace(/\.+$/, '');
+  return TUNNEL_SUFFIXES.some((s) => h === s.slice(1) || h.endsWith(s));
+}
+
+function appBaseUrlWarning(env: NodeJS.ProcessEnv): string | null {
+  const payuMode = (env.PAYU_ENV ?? '').trim().toLowerCase();
+  const isProdPayU = payuMode === 'live' || payuMode === 'production';
+  const raw = (env.APP_BASE_URL ?? '').trim();
+
+  if (!raw) {
+    if (isProdPayU) {
+      return 'APP_BASE_URL is not set while PAYU_ENV is in production mode. Set APP_BASE_URL to the store’s public HTTPS origin so PayU callbacks can return.';
+    }
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return 'APP_BASE_URL is not a valid URL. Set APP_BASE_URL to the public HTTPS origin of this store.';
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return 'APP_BASE_URL does not use HTTPS. Production checkouts and PayU callbacks require a public HTTPS origin.';
+  }
+
+  if (isTunnelHost(parsed.hostname)) {
+    return isProdPayU
+      ? 'APP_BASE_URL points to a temporary tunnel host while PAYU_ENV is in production mode. Payments are refused until APP_BASE_URL uses a permanent HTTPS domain.'
+      : 'APP_BASE_URL points to a temporary tunnel host. Replace it with a permanent HTTPS domain before enabling production payments.';
+  }
+
+  return null;
+}
+
 export function startupWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
   const warnings: string[] = [];
   const production = env.NODE_ENV === 'production';
@@ -60,6 +108,11 @@ export function startupWarnings(env: NodeJS.ProcessEnv = process.env): string[] 
     warnings.push(
       'MAIL_ALLOWED_HOSTS is not set. With the SMTP mail driver, an owner who edits mail_host can send the SMTP password to that host. Set it to the comma-separated list of allowed SMTP hosts.',
     );
+  }
+
+  const siteWarning = appBaseUrlWarning(env);
+  if (siteWarning) {
+    warnings.push(siteWarning);
   }
 
   return warnings;
