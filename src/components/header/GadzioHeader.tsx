@@ -219,8 +219,8 @@ function MegaColumn({
 
 export function GadzioHeader({
   bannerVisible = false,
-  promoText = 'Students save more with Gadzio Education pricing — explore the Education Store',
-  promoHref = '/in-edu/store',
+  promoText = 'Free shipping across India on orders over ₹999 — explore Cases & Protection',
+  promoHref = '/in/shop/iphone/accessories/cases-protection',
   navItems = NAV_ITEMS,
   searchPlaceholder = SEARCH_PANEL.placeholder,
   accountHref = '/account',

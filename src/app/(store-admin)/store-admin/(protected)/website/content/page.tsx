@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 
 import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { getStoreSession } from '@/lib/store-admin/auth';
+import { isEducationStoreEnabled } from '@/lib/storefront/education-store';
 import { COLLECTIONS } from '@/lib/website/collections';
 import { listContentOverrides } from '@/lib/website/content-store';
 import { canEditWebsite, WEBSITE_EDIT_ROLES } from '@/lib/website/permissions';
@@ -32,6 +33,9 @@ export default async function StoreAdminWebsiteContentPage() {
     (overrides.ok ? overrides.data : []).map((row) => [row.key, row] as const),
   );
   const canEdit = canEditWebsite(session.role);
+  const visibleCollections = isEducationStoreEnabled()
+    ? COLLECTIONS
+    : COLLECTIONS.filter((collection) => !collection.key.startsWith('edu.'));
 
   return (
     <div>
@@ -71,7 +75,7 @@ export default async function StoreAdminWebsiteContentPage() {
             </tr>
           </thead>
           <tbody>
-            {COLLECTIONS.map((collection) => {
+            {visibleCollections.map((collection) => {
               const row = rows.get(collection.key);
               const edited = Boolean(row && !row.archived);
               return (

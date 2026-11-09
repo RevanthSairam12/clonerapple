@@ -51,16 +51,6 @@ export const PAGE_SEARCH_ITEMS: SearchResultItem[] = [
     keywords: ['cases', 'protection', 'iphone cases', 'covers', 'accessories', 'magsafe'],
   },
   {
-    id: 'page-edu-store',
-    type: 'page',
-    name: 'Gadzio Education Store India',
-    subtitle: 'Education pricing on Mac and iPad for students and teachers',
-    category: 'Store',
-    href: '/in-edu/store',
-    badges: ['Education', 'Offers'],
-    keywords: ['education', 'student', 'college', 'discount', 'back to school', 'mac discount'],
-  },
-  {
     id: 'page-checkout-bag',
     type: 'page',
     name: 'Review Bag & Checkout',
@@ -142,7 +132,6 @@ export const POPULAR_SEARCH_LINKS: QuickSuggestion[] = [
   { label: 'AeroWeave Textile Cases', href: '/search?q=aeroweave' },
   { label: 'Gadzio Book Air', href: '/search?q=book' },
   { label: 'Gadzio Pad Pro', href: '/search?q=pad' },
-  { label: 'Education Store Savings', href: '/in-edu/store' },
   { label: 'All Cases & Protection', href: '/shop/iphone/accessories/cases-protection' },
 ];
 

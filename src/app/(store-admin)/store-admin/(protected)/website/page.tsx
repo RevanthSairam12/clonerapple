@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getStoreTimeZone } from '@/lib/store-admin/store-clock';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { getThemeSettings } from '@/lib/content';
+import { isEducationStoreEnabled } from '@/lib/storefront/education-store';
 import { COLLECTIONS, THEME_FIELDS } from '@/lib/website/collections';
 import { listContentOverrides, listThemeOverrides } from '@/lib/website/content-store';
 import { canEditWebsite } from '@/lib/website/permissions';
@@ -53,8 +54,12 @@ export default async function StoreAdminWebsitePage() {
   const themeSaved = Object.keys(themeValues).length;
   const canEdit = canEditWebsite(session.role);
 
-  const bySite = new Map<string, typeof COLLECTIONS>();
-  for (const collection of COLLECTIONS) {
+  const visibleCollections = isEducationStoreEnabled()
+    ? COLLECTIONS
+    : COLLECTIONS.filter((collection) => !collection.key.startsWith('edu.'));
+
+  const bySite = new Map<string, typeof visibleCollections>();
+  for (const collection of visibleCollections) {
     const site = collection.sitePaths[0] ?? 'Other';
     const list = bySite.get(site) ?? [];
     list.push(collection);
@@ -101,7 +106,7 @@ export default async function StoreAdminWebsitePage() {
           <div className="sa-stat-top">
             <span className="sa-stat-label">Content sections</span>
           </div>
-          <p className="sa-stat-value">{COLLECTIONS.length}</p>
+          <p className="sa-stat-value">{visibleCollections.length}</p>
           <span className="sa-stat-meta">{editedKeys.size} edited from defaults</span>
         </div>
         <div className="sa-stat">

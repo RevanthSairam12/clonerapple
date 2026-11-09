@@ -136,15 +136,6 @@ export const FOOTER_DIRECTORY: FooterColumn[] = [
             "href": "/checkout"
           }
         ]
-      },
-      {
-        "title": "Education",
-        "links": [
-          {
-            "label": "Gadzio Education Store",
-            "href": "/in-edu/store"
-          }
-        ]
       }
     ]
   },
@@ -187,7 +178,7 @@ export const FOOTER_BOTTOM: {
   localeLabel: string;
   localeHref: string;
 } = {
-  "shopHtml": "More ways to shop: browse <a href=\"/search\" data-analytics-title=\"search all products\">all Gadzio products</a> or visit the <a href=\"/in-edu/store\" data-analytics-title=\"gadzio education store\">Gadzio Education Store</a>. <span class=\"nowrap\">Questions? <a href=\"/support\" data-analytics-title=\"gadzio support\">Gadzio Support</a> is here to help.</span>",
+  "shopHtml": "More ways to shop: browse <a href=\"/search\" data-analytics-title=\"search all products\">all Gadzio products</a>. <span class=\"nowrap\">Questions? <a href=\"/support\" data-analytics-title=\"gadzio support\">Gadzio Support</a> is here to help.</span>",
   "copyright": "Copyright © 2026 Gadzio. All rights reserved.",
   "legalLinks": [
     {

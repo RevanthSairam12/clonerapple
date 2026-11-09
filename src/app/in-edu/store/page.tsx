@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 
 import { EduStorePage } from '@/components/sites/edu-store/EduStorePage';
 import type { EduStoreOverrides } from '@/components/sites/edu-store/EduStorePage';
 import { getContent, getContentMany } from '@/lib/content';
+import { isEducationStoreEnabled } from '@/lib/storefront/education-store';
 
 import './edu-store.css';
 
@@ -38,6 +40,12 @@ const metadata: Metadata = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
+  if (!isEducationStoreEnabled()) {
+    return {
+      title: 'Page Not Found — Gadzio',
+      robots: { index: false, follow: false },
+    };
+  }
   const seo = await getContent<{ title?: string; description?: string }>('edu.seo', {});
   return {
     ...metadata,
@@ -54,6 +62,9 @@ export async function generateMetadata(): Promise<Metadata> {
 type ShelfValue = NonNullable<EduStoreOverrides['shelves']>[string];
 
 export default async function Page() {
+  if (!isEducationStoreEnabled()) {
+    notFound();
+  }
   const c = await getContentMany({
     hero: ['edu.hero', {}],
     productNav: ['edu.product_nav', {}],

@@ -338,12 +338,6 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
                 >
                   Shop Cases &amp; Protection
                 </Link>
-                <Link
-                  href="/in-edu/store"
-                  className="bg-white hover:bg-[#f5f5f7] border border-[#d2d2d7] text-[#1d1d1f] text-xs font-semibold px-6 py-3 rounded-xl transition"
-                >
-                  Gadzio Education Store
-                </Link>
               </div>
             </div>
           ) : (

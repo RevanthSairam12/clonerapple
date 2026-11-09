@@ -135,18 +135,6 @@ export function NavSearchPanel({ onClose }: Props) {
             </li>
             <li>
               <Link
-                href="/in-edu/store"
-                onClick={handleLinkClick}
-                className="gz-search-quicklink -mx-[8px] flex items-center py-1.5 px-2 rounded-lg hover:bg-black/5 transition"
-              >
-                <span className="mr-[11px] flex h-[16px] w-[9px] shrink-0 items-center text-[#6e6e73]">
-                  <SearchArrowIcon />
-                </span>
-                <span className="text-[13px] text-[#1d1d1f] font-normal">Gadzio Education Store</span>
-              </Link>
-            </li>
-            <li>
-              <Link
                 href="/search?q=silicone"
                 onClick={handleLinkClick}
                 className="gz-search-quicklink -mx-[8px] flex items-center py-1.5 px-2 rounded-lg hover:bg-black/5 transition"
