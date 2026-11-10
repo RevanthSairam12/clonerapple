@@ -315,29 +315,6 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
         </button>
       </form>
 
-      {/* App download row (sign-in only) */}
-      {mode === 'signin' && (
-        <div className="auth-app-row">
-          <div>
-            <p>To use as a customer, <strong style={{ color: '#1d1d1f', cursor: 'pointer' }}>Download the app</strong>.</p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {/* Google Play badge */}
-              <svg className="auth-app-badge" viewBox="0 0 135 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect width="135" height="40" rx="6" fill="#1d1d1f"/>
-                <text x="67" y="16" textAnchor="middle" fill="#fff" fontSize="7" fontFamily="system-ui" fontWeight="400">GET IT ON</text>
-                <text x="67" y="28" textAnchor="middle" fill="#fff" fontSize="11" fontFamily="system-ui" fontWeight="700">Google Play</text>
-              </svg>
-              {/* AppGallery badge */}
-              <svg className="auth-app-badge" viewBox="0 0 135 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect width="135" height="40" rx="6" fill="#e4002b"/>
-                <text x="67" y="16" textAnchor="middle" fill="#fff" fontSize="7" fontFamily="system-ui" fontWeight="400">EXPLORE IT ON</text>
-                <text x="67" y="28" textAnchor="middle" fill="#fff" fontSize="11" fontFamily="system-ui" fontWeight="700">AppGallery</text>
-              </svg>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="auth-switch">
         {mode === 'signin' ? (
           <>
