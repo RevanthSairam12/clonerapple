@@ -11,6 +11,7 @@ import {
 export interface AuthFormProps {
   initialMode?: 'signin' | 'signup';
   redirectTo?: string;
+  passwordResetSuccess?: boolean;
 }
 
 /**
@@ -18,7 +19,11 @@ export interface AuthFormProps {
  * Tab-based switcher between email/phone (sign-in) and sign-in/sign-up modes.
  * Matches the Labby-style clean white card aesthetic.
  */
-export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormProps) {
+export function AuthForm({
+  initialMode = 'signin',
+  redirectTo = '/',
+  passwordResetSuccess = false,
+}: AuthFormProps) {
   const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [inputMode, setInputMode] = useState<'email' | 'phone'>('email');
   const [error, setError] = useState('');
@@ -170,6 +175,12 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
       )}
       */}
 
+      {passwordResetSuccess && mode === 'signin' && (
+        <div className="auth-notice" role="status">
+          Your password has been updated. Sign in with your new password.
+        </div>
+      )}
+
       {error && (
         <div className="auth-error" role="alert">{error}</div>
       )}
@@ -303,6 +314,14 @@ export function AuthForm({ initialMode = 'signin', redirectTo = '/' }: AuthFormP
             </div>
           )}
         </div>
+
+        {mode === 'signin' && (
+          <div className="auth-forgot-row">
+            <a href="/forgot-password" className="auth-forgot-link">
+              Forgot password?
+            </a>
+          </div>
+        )}
 
         <button
           type="submit"

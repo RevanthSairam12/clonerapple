@@ -18,12 +18,12 @@ export const metadata: Metadata = {
 };
 
 interface AuthPageProps {
-  searchParams: Promise<{ redirect?: string; mode?: string }>;
+  searchParams: Promise<{ redirect?: string; mode?: string; reset?: string }>;
 }
 
 export default async function AuthPage({ searchParams }: AuthPageProps) {
   const session = await getUserSession();
-  const { redirect: redirectUrl, mode } = (await searchParams) || {};
+  const { redirect: redirectUrl, mode, reset } = (await searchParams) || {};
   // Same-origin relative paths only; anything else falls back to the home page.
   const destination = safeRedirectPath(redirectUrl, '/');
 
@@ -43,6 +43,7 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
               <AuthForm
                 initialMode={mode === 'signup' ? 'signup' : 'signin'}
                 redirectTo={destination}
+                passwordResetSuccess={reset === 'success'}
               />
             </div>
 
