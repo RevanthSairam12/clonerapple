@@ -273,23 +273,57 @@ export function renderEmail(
     ? renderText(parts.footer, values)
     : defaultFooter(values);
 
+  const storeName = values.store_name || 'Gadzio';
   const bodyHtml = escapeHtml(body).replace(/\n/g, '<br>');
   const buttonHtml = buttonUrl && buttonLabel
-    ? `<p style="margin:24px 0"><a href="${escapeHtml(buttonUrl)}" style="display:inline-block;background:#0071e3;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:980px;font-size:15px">${escapeHtml(buttonLabel)}</a></p>`
+    ? `<div style="margin:26px 0 8px"><a href="${escapeHtml(buttonUrl)}" style="display:inline-block;background:#1d1d1f;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:980px;font-size:14px;font-weight:600;letter-spacing:-0.01em">${escapeHtml(buttonLabel)}</a></div>`
     : '';
 
   const headingHtml = heading
-    ? `<h1 style="font-size:22px;line-height:1.3;margin:0 0 16px;color:#1d1d1f">${escapeHtml(heading)}</h1>`
+    ? `<h1 style="font-size:23px;line-height:1.25;letter-spacing:-0.02em;font-weight:700;margin:0 0 14px;color:#1d1d1f">${escapeHtml(heading)}</h1>`
     : '';
   const bodyBlock = body
-    ? `<p style="font-size:15px;line-height:1.6;margin:0 0 16px;color:#1d1d1f">${bodyHtml}</p>`
+    ? `<p style="font-size:15px;line-height:1.65;margin:0 0 16px;color:#3a3a3c">${bodyHtml}</p>`
+    : '';
+
+  const orderPill = values.order_number
+    ? `<span style="display:inline-block;background:#ffe100;color:#1d1d1f;font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:4px 10px;border-radius:980px">${escapeHtml(values.order_number)}</span>`
     : '';
 
   const html = `<!doctype html>
-<html><body style="margin:0;padding:24px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif">
-<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px">
-${headingHtml}${bodyBlock}${buttonHtml}<p style="font-size:12px;line-height:1.5;margin:24px 0 0;color:#6e6e73">${escapeHtml(footer)}</p>
-</div></body></html>`;
+<html><body style="margin:0;padding:28px 16px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #e5e5ea;box-shadow:0 8px 28px rgba(0,0,0,0.06)">
+        <tr>
+          <td style="background:#1d1d1f;padding:20px 32px">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td style="vertical-align:middle">
+                  <span style="display:inline-block;width:10px;height:10px;border-radius:999px;background:#ffe100;margin-right:10px;vertical-align:middle"></span>
+                  <span style="font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;vertical-align:middle">${escapeHtml(storeName)}</span>
+                </td>
+                <td align="right" style="vertical-align:middle">${orderPill}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 32px 28px">
+            ${headingHtml}${bodyBlock}${buttonHtml}
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fafafa;border-top:1px solid #ececef;padding:18px 32px">
+            <p style="font-size:12px;line-height:1.55;margin:0;color:#6e6e73">${escapeHtml(footer)}</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body></html>`;
 
   const textParts = [heading, body, buttonUrl, footer].filter(Boolean);
 

@@ -214,16 +214,51 @@ export function buildPasswordResetEmail(input: {
   const safeUrl = escapeHtml(input.resetUrl);
 
   const subject = `Reset your ${input.storeName.trim() || 'Gadzio'} password`;
-  const html = [
-    `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1d1d1f;line-height:1.5;max-width:560px;margin:0 auto;padding:24px;">`,
-    `<h1 style="font-size:20px;font-weight:600;margin:0 0 16px;">Reset your password</h1>`,
-    `<p style="margin:0 0 16px;">Hi ${safeName},</p>`,
-    `<p style="margin:0 0 16px;">We received a request to reset your ${safeStore} account password. Use the button below to choose a new password. This link expires in 30 minutes and can only be used once.</p>`,
-    `<p style="margin:24px 0;"><a href="${safeUrl}" style="display:inline-block;background:#1d1d1f;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;">Reset password</a></p>`,
-    `<p style="margin:0 0 16px;font-size:13px;color:#6e6e73;">Or copy and paste this link into your browser:<br><span style="word-break:break-all;">${safeUrl}</span></p>`,
-    `<p style="margin:0;font-size:13px;color:#6e6e73;">If you did not ask to reset your password, you can safely ignore this email. Your password will not change.</p>`,
-    `</div>`,
-  ].join('');
+  const html = `<!doctype html>
+<html><body style="margin:0;padding:28px 16px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #e5e5ea;box-shadow:0 8px 28px rgba(0,0,0,0.06)">
+        <tr>
+          <td style="background:#1d1d1f;padding:20px 32px">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td style="vertical-align:middle">
+                  <span style="display:inline-block;width:10px;height:10px;border-radius:999px;background:#ffe100;margin-right:10px;vertical-align:middle"></span>
+                  <span style="font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;vertical-align:middle">${safeStore}</span>
+                </td>
+                <td align="right" style="vertical-align:middle">
+                  <span style="display:inline-block;background:#ffe100;color:#1d1d1f;font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:4px 10px;border-radius:980px">Security</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 32px 28px">
+            <h1 style="font-size:23px;line-height:1.25;letter-spacing:-0.02em;font-weight:700;margin:0 0 14px;color:#1d1d1f">Reset your password</h1>
+            <p style="font-size:15px;line-height:1.65;margin:0 0 14px;color:#3a3a3c">Hi ${safeName},</p>
+            <p style="font-size:15px;line-height:1.65;margin:0 0 22px;color:#3a3a3c">We received a request to reset your ${safeStore} account password. Use the button below to choose a new password. This link expires in <strong>30 minutes</strong> and can only be used once.</p>
+            <div style="margin:26px 0">
+              <a href="${safeUrl}" style="display:inline-block;background:#1d1d1f;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:980px;font-size:14px;font-weight:600;letter-spacing:-0.01em">Reset password</a>
+            </div>
+            <div style="background:#f5f5f7;border-radius:12px;padding:12px 14px;margin:20px 0 0">
+              <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:#6e6e73">Or copy and paste this link into your browser:</p>
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#1d1d1f;word-break:break-all">${safeUrl}</p>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#fafafa;border-top:1px solid #ececef;padding:18px 32px">
+            <p style="font-size:12px;line-height:1.55;margin:0;color:#6e6e73">If you did not ask to reset your password, you can safely ignore this email. Your password will not change.</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body></html>`;
 
   return { subject, html };
 }
