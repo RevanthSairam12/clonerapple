@@ -39,10 +39,14 @@ export async function POST(request: Request) {
 
   try {
     after(async () => {
-      await result.deferredWork().catch(() => {});
+      await result.deferredWork().catch(() => {
+        console.warn('[auth/forgot-password] deferred reset work failed');
+      });
     });
   } catch {
-    void result.deferredWork().catch(() => {});
+    void result.deferredWork().catch(() => {
+      console.warn('[auth/forgot-password] deferred reset work failed');
+    });
   }
 
   return NextResponse.json(

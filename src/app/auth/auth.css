@@ -272,6 +272,10 @@
 /* ---------------------------------------------------------- submit */
 
 .auth-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   width: 100%;
   padding: 14px 24px;
   border-radius: 12px;
@@ -280,6 +284,8 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  text-align: center;
+  text-decoration: none;
   font-family: inherit;
   cursor: pointer;
   color: #000;
