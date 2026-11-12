@@ -40,6 +40,8 @@ const BLOCKED_PREFIXES = [
   '/account',
   '/addresses',
   '/auth',
+  '/forgot-password',
+  '/reset-password',
   '/bag',
   '/cart',
   '/checkout',

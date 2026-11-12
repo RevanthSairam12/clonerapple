@@ -119,7 +119,12 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  return applySecurityHeaders(response);
+  const finalResponse = applySecurityHeaders(response);
+  if (pathname === '/reset-password' || pathname.startsWith('/reset-password/')) {
+    finalResponse.headers.set('Referrer-Policy', 'no-referrer');
+    finalResponse.headers.set('Cache-Control', 'no-store');
+  }
+  return finalResponse;
 }
 
 export const config = {

@@ -20,9 +20,24 @@ import process from 'node:process';
 
 const API_ROOT = path.resolve(process.cwd(), 'src/app/api/account');
 const PAGE_ROOT = path.resolve(process.cwd(), 'src/app/account');
+const AUTH_API_ROOT = path.resolve(process.cwd(), 'src/app/api/auth');
 const ROUTE_FILE = /^route\.(?:ts|tsx|js|jsx|mts)$/;
 const PAGE_FILE = /^page\.(?:ts|tsx|js|jsx)$/;
 const MUTATION = /\bexport\s+(?:async\s+)?function\s+(?:POST|PUT|PATCH|DELETE)\b/;
+
+export const PUBLIC_PASSWORD_RESET_ROUTES = Object.freeze([
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
+  '/forgot-password',
+  '/reset-password',
+]);
+
+const KNOWN_CORE_AUTH_API_ROUTES = new Set([
+  '/api/auth/signin',
+  '/api/auth/signup',
+  '/api/auth/signout',
+  '/api/auth/me',
+]);
 
 const SESSION_CALL = /\brequireAccountSessionApi\s*\(/;
 const OWNERSHIP_CALL = /auth\.session\.userId/;
@@ -117,6 +132,51 @@ for (const file of pages) {
     continue;
   }
   console.log(`${relative}: OK`);
+}
+
+// Verify the 4 explicitly allowlisted public password-reset routes and ensure
+// no other unguarded public account/auth routes exist.
+const publicSet = new Set(PUBLIC_PASSWORD_RESET_ROUTES);
+const authRoutes = await collect(AUTH_API_ROOT, ROUTE_FILE);
+for (const file of authRoutes) {
+  const routePath = `/api/auth/${path.relative(AUTH_API_ROOT, path.dirname(file)).split(path.sep).join('/')}`;
+  if (!KNOWN_CORE_AUTH_API_ROUTES.has(routePath) && !publicSet.has(routePath)) {
+    console.error(`${routePath}: FAIL (unexpected public auth route not in allowlist)`);
+    failed = true;
+    continue;
+  }
+  const source = stripComments(await readFile(file, 'utf8'));
+  if (MUTATION.test(source) && !SAME_ORIGIN_CALL.test(source)) {
+    console.error(`${routePath}: FAIL (mutating auth handler without assertSameOrigin)`);
+    failed = true;
+    continue;
+  }
+  if (STAFF_IDENTITY.test(source)) {
+    console.error(`${routePath}: FAIL (auth route references a staff/admin identity)`);
+    failed = true;
+    continue;
+  }
+}
+
+for (const publicPage of ['/forgot-password', '/reset-password']) {
+  const pageFile = path.resolve(process.cwd(), 'src/app', publicPage.slice(1), 'page.tsx');
+  try {
+    const source = stripComments(await readFile(pageFile, 'utf8'));
+    if (STAFF_IDENTITY.test(source)) {
+      console.error(`${publicPage}: FAIL (page references a staff/admin identity)`);
+      failed = true;
+      continue;
+    }
+    if (publicPage === '/reset-password' && !DYNAMIC_EXPORT.test(source)) {
+      console.error(`${publicPage}: FAIL (reset page must be force-dynamic)`);
+      failed = true;
+      continue;
+    }
+    console.log(`${publicPage}: OK (allowlisted public route)`);
+  } catch {
+    console.error(`${publicPage}: FAIL (allowlisted public page file missing)`);
+    failed = true;
+  }
 }
 
 if (failed) process.exit(1);
