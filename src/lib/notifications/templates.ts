@@ -274,49 +274,63 @@ export function renderEmail(
     : defaultFooter(values);
 
   const storeName = values.store_name || 'Gadzio';
+  const logoUrl = safeEmailLink('/gadzio_logo.png', baseUrl);
+  const logoHtml = logoUrl
+    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(storeName)}" height="28" style="display:block;height:28px;width:auto;border:0" />`
+    : `<span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;color:#111111">${escapeHtml(storeName)}</span>`;
+
   const bodyHtml = escapeHtml(body).replace(/\n/g, '<br>');
   const buttonHtml = buttonUrl && buttonLabel
-    ? `<div style="margin:26px 0 8px"><a href="${escapeHtml(buttonUrl)}" style="display:inline-block;background:#1d1d1f;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:980px;font-size:14px;font-weight:600;letter-spacing:-0.01em">${escapeHtml(buttonLabel)}</a></div>`
+    ? `<div style="margin:24px 0 4px"><a href="${escapeHtml(buttonUrl)}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:980px;font-size:14px;font-weight:600;letter-spacing:-0.01em">${escapeHtml(buttonLabel)}</a></div>`
     : '';
 
   const headingHtml = heading
-    ? `<h1 style="font-size:23px;line-height:1.25;letter-spacing:-0.02em;font-weight:700;margin:0 0 14px;color:#1d1d1f">${escapeHtml(heading)}</h1>`
+    ? `<h1 style="font-size:28px;line-height:1.15;letter-spacing:-0.03em;font-weight:800;margin:24px 0 18px;color:#111111">${escapeHtml(heading)}</h1>`
     : '';
   const bodyBlock = body
-    ? `<p style="font-size:15px;line-height:1.65;margin:0 0 16px;color:#3a3a3c">${bodyHtml}</p>`
+    ? `<p style="font-size:15px;line-height:1.65;margin:0 0 22px;color:#2c2c2e">${bodyHtml}</p>`
     : '';
 
-  const orderPill = values.order_number
-    ? `<span style="display:inline-block;background:#ffe100;color:#1d1d1f;font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:4px 10px;border-radius:980px">${escapeHtml(values.order_number)}</span>`
+  const summaryRows: Array<[string, string, boolean]> = [];
+  if (values.order_number) summaryRows.push(['Order', values.order_number, false]);
+  if (values.carrier) summaryRows.push(['Carrier', values.carrier, false]);
+  if (values.tracking_number) summaryRows.push(['Tracking', values.tracking_number, false]);
+  if (values.refund_amount) summaryRows.push(['Refund', values.refund_amount, true]);
+  else if (values.order_total) summaryRows.push(['Total', values.order_total, true]);
+
+  const summaryHtml = summaryRows.length > 0
+    ? `<div style="background:#f7f7f8;border-radius:12px;padding:18px 22px;margin:0 0 24px">
+        <p style="margin:0 0 12px;font-size:14px;font-weight:700;color:#111111">Order summary</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          ${summaryRows
+            .map(([label, val, bold], idx) => {
+              const border = idx < summaryRows.length - 1 ? 'border-bottom:1px solid #e5e5ea;' : '';
+              const weight = bold ? 'font-weight:700;color:#111111;font-size:15px;' : 'font-weight:500;color:#3a3a3c;font-size:14px;';
+              const labelWeight = bold ? 'font-weight:700;color:#111111;font-size:15px;' : 'font-weight:400;color:#6e6e73;font-size:14px;';
+              return `<tr>
+                <td style="padding:10px 0;${border}${labelWeight}">${escapeHtml(label)}</td>
+                <td align="right" style="padding:10px 0;${border}${weight}">${escapeHtml(val)}</td>
+              </tr>`;
+            })
+            .join('')}
+        </table>
+      </div>`
     : '';
 
   const html = `<!doctype html>
-<html><body style="margin:0;padding:28px 16px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
+<html><body style="margin:0;padding:32px 16px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
   <tr>
     <td align="center">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #e5e5ea;box-shadow:0 8px 28px rgba(0,0,0,0.06)">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:16px;border:1px solid #ececef">
         <tr>
-          <td style="background:#1d1d1f;padding:20px 32px">
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-              <tr>
-                <td style="vertical-align:middle">
-                  <span style="display:inline-block;width:10px;height:10px;border-radius:999px;background:#ffe100;margin-right:10px;vertical-align:middle"></span>
-                  <span style="font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;vertical-align:middle">${escapeHtml(storeName)}</span>
-                </td>
-                <td align="right" style="vertical-align:middle">${orderPill}</td>
-              </tr>
-            </table>
+          <td style="padding:36px 36px 28px">
+            ${logoHtml}${headingHtml}${bodyBlock}${summaryHtml}${buttonHtml}
           </td>
         </tr>
         <tr>
-          <td style="padding:32px 32px 28px">
-            ${headingHtml}${bodyBlock}${buttonHtml}
-          </td>
-        </tr>
-        <tr>
-          <td style="background:#fafafa;border-top:1px solid #ececef;padding:18px 32px">
-            <p style="font-size:12px;line-height:1.55;margin:0;color:#6e6e73">${escapeHtml(footer)}</p>
+          <td style="padding:16px 36px 28px;border-top:1px solid #f0f0f3">
+            <p style="font-size:12px;line-height:1.55;margin:0;color:#8e8e93">${escapeHtml(footer)}</p>
           </td>
         </tr>
       </table>
