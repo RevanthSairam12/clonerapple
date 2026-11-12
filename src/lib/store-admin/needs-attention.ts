@@ -11,7 +11,7 @@ if (typeof window !== 'undefined') {
 }
 
 export interface NeedsAttentionItem {
-  key: 'flagged_payments' | 'refunds_owed' | 'stuck_verifying' | 'failed_notifications' | 'reconcile_heartbeat';
+  key: 'flagged_payments' | 'refunds_owed' | 'stuck_verifying' | 'failed_notifications' | 'password_reset_mail_failures' | 'reconcile_heartbeat';
   label: string;
   count: number;
   amountPaise?: number;
@@ -26,6 +26,7 @@ export interface NeedsAttentionSummary {
   refundsOwedPaise: number;
   stuckVerifyingCount: number;
   failedNotificationsCount: number;
+  passwordResetMailFailuresCount: number;
   reconcile: ReconcileHeartbeatState;
   items: NeedsAttentionItem[];
 }
@@ -36,6 +37,7 @@ export function buildNeedsAttentionItems(input: {
   refundsOwedPaise: number;
   stuckVerifyingCount: number;
   failedNotificationsCount: number;
+  passwordResetMailFailuresCount?: number;
   reconcile: ReconcileHeartbeatState;
 }): NeedsAttentionItem[] {
   const {
@@ -44,6 +46,7 @@ export function buildNeedsAttentionItems(input: {
     refundsOwedPaise,
     stuckVerifyingCount,
     failedNotificationsCount,
+    passwordResetMailFailuresCount = 0,
     reconcile,
   } = input;
 
@@ -93,6 +96,18 @@ export function buildNeedsAttentionItems(input: {
           ? `${failedNotificationsCount} outbox message${failedNotificationsCount === 1 ? '' : 's'} failed delivery`
           : 'Outbox healthy',
     },
+    ...(passwordResetMailFailuresCount > 0
+      ? [
+          {
+            key: 'password_reset_mail_failures' as const,
+            label: 'Password reset mail failures',
+            count: passwordResetMailFailuresCount,
+            href: '/store-admin/settings/notifications',
+            urgent: true,
+            detail: `${passwordResetMailFailuresCount} reset email${passwordResetMailFailuresCount === 1 ? '' : 's'} failed or unconfigured in last 24h`,
+          },
+        ]
+      : []),
     {
       key: 'reconcile_heartbeat',
       label: 'Last reconcile run',
@@ -119,6 +134,7 @@ export async function getNeedsAttentionSummary(
       refundsOwedPaise: 0,
       stuckVerifyingCount: 0,
       failedNotificationsCount: 0,
+      passwordResetMailFailuresCount: 0,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount: 0,
@@ -126,6 +142,7 @@ export async function getNeedsAttentionSummary(
         refundsOwedPaise: 0,
         stuckVerifyingCount: 0,
         failedNotificationsCount: 0,
+        passwordResetMailFailuresCount: 0,
         reconcile,
       }),
     };
@@ -175,12 +192,25 @@ export async function getNeedsAttentionSummary(
     const stuckVerifyingCount = Math.max(0, Math.trunc(Number(row?.stuck_verifying) || 0));
     const failedNotificationsCount = Math.max(0, Math.trunc(Number(row?.failed_notifications) || 0));
 
+    let passwordResetMailFailuresCount = 0;
+    try {
+      const [resetFailRow] = await sql<Array<{ cnt: number | string | null }>>`
+        select count(*)::int as cnt
+        from password_reset_mail_failures
+        where created_at > now() - interval '24 hours'
+      `;
+      passwordResetMailFailuresCount = Math.max(0, Math.trunc(Number(resetFailRow?.cnt) || 0));
+    } catch {
+      passwordResetMailFailuresCount = 0;
+    }
+
     return {
       flaggedPaymentsCount,
       refundsOwedCount,
       refundsOwedPaise,
       stuckVerifyingCount,
       failedNotificationsCount,
+      passwordResetMailFailuresCount,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount,
@@ -188,6 +218,7 @@ export async function getNeedsAttentionSummary(
         refundsOwedPaise,
         stuckVerifyingCount,
         failedNotificationsCount,
+        passwordResetMailFailuresCount,
         reconcile,
       }),
     };
@@ -198,6 +229,7 @@ export async function getNeedsAttentionSummary(
       refundsOwedPaise: 0,
       stuckVerifyingCount: 0,
       failedNotificationsCount: 0,
+      passwordResetMailFailuresCount: 0,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount: 0,
@@ -205,6 +237,7 @@ export async function getNeedsAttentionSummary(
         refundsOwedPaise: 0,
         stuckVerifyingCount: 0,
         failedNotificationsCount: 0,
+        passwordResetMailFailuresCount: 0,
         reconcile,
       }),
     };

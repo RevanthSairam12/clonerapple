@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pruneOldBrowsingHistory } from '@/lib/account/browsing-history';
+import { prunePasswordResetArtifacts } from '@/lib/auth/password-reset';
 import { processNotificationOutbox, scrubOldNotifications } from '@/lib/notifications/outbox';
 import { authorizeCronRequest } from '@/lib/payu/cron-auth';
 import { reconcilePendingOrders } from '@/lib/payu/reconcile';
@@ -54,6 +55,8 @@ async function runReconcileJob(req: NextRequest, options: { requireSecret: boole
     const retention = await scrubOldNotifications();
     // Prune browsing history older than 90 days. Never deletes anything else.
     const prunedHistoryCount = await pruneOldBrowsingHistory(90);
+    // Clean expired/used password reset tokens and old rate-limit buckets.
+    const prunedPasswordReset = await prunePasswordResetArtifacts();
 
     return NextResponse.json(
       {
@@ -63,6 +66,7 @@ async function runReconcileJob(req: NextRequest, options: { requireSecret: boole
         notifications,
         retention,
         prunedHistoryCount,
+        prunedPasswordReset,
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );
