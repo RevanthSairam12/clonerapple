@@ -223,3 +223,11 @@ These three additive migration files add the Spin and Win schema, cooldown contr
 | 0070 | `0070_spin_wheel_cooldown.sql` | `2026-11-13T10:26:20.591Z` | `spin_wheel_settings.reward_cooldown_mode` (`disabled` / `until_coupon_expires` / `custom_days`, default `until_coupon_expires`), `reward_cooldown_days` (`1..365`, default `7`), `show_next_spin_countdown` (`boolean`, default `true`) | `spin_wheel_settings` already has RLS enabled from `0069`. |
 | 0071 | `0071_spin_wheel_popup_controls.sql` | `2026-11-13` (post-0070 run) | `spin_wheel_settings.popup_enabled` (`boolean`, default `true`), `popup_delay_seconds` (`0..120`, default `10`), `popup_require_scroll` (`boolean`, default `true`), `popup_mobile_floating_button` (`boolean`, default `true`) | `spin_wheel_settings` already has RLS enabled from `0069`. |
 | 0072 | `0072_free_gifts_and_spin_chance.sql` | `2026-11-13` | `products.is_gift_only`, `free_gift_rules` + `free_gift_redemptions` tables, `order_items` (`is_free_gift`, `free_gift_rule_id`, `free_gift_badge`, `free_gift_source`), `coupons` `'FREE_GIFT'` type (`gift_product_id`, `gift_variant_id`), `spin_wheel_segments` / `spin_wheel_spins` `'FREE_GIFT'` type (`gift_product_id`, `gift_variant_id`, `gift_min_order_paise`, `gift_valid_days`) | **RLS enabled** with no public policies on `free_gift_rules` and `free_gift_redemptions`; `check-security-db-state.mjs` 10/10 PASS. |
+
+---
+
+# Migration 0073 — Mark Test Order (PENDING — not yet applied)
+
+| # | File | Status | Adds | Notes |
+| --- | --- | --- | --- | --- |
+| 0073 | `0073_mark_test_order.sql` | **Pending** | `orders.is_test` (`boolean not null default false`), `orders.test_marked_by`, `orders.test_marked_at`, `orders.test_note`, and `idx_orders_is_test` | Option A: keeps existing pre-launch test orders intact (nothing deleted or renumbered) and lets the store owner mark/unmark test orders so revenue, overview, customers, and reports exclude them. Queries use `coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false` so reads succeed even before applying `0073`. |

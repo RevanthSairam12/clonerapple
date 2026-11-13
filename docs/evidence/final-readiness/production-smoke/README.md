@@ -1,60 +1,60 @@
-# Task 5 — Controlled Production Payment Smoke-Test Procedure
+# Step 5 — Controlled Production Payment Smoke-Test Procedure
 
-**Execution Status:** `BLOCKED — awaiting explicit authorization for a real production payment.`
+**Execution Status:** `BLOCKED — DO NOT RUN until separately authorized for one live low-value order + refund.`
 
-> **Hard Safety Gate:** Do **NOT** execute a live payment against `https://secure.payu.in/_payment` or set `PAYU_ENV=live` until an authorized store owner explicitly approves a controlled ₹1.00 / low-value smoke transaction and provides the operator payment instrument.
-
----
-
-## 1. Pre-Conditions Before Authorization Is Granted
-
-1. **Regional Topology Active (`docs/cutover-plan.md`):**
-   - Vercel Function region is deployed to `bom1` (Mumbai, India) via `vercel.json`.
-   - Supabase PostgreSQL + Supavisor pooler is in `ap-south-1` (Mumbai, India).
-2. **Production Environment Variables Verified (Vercel Production Scope Only):**
-   - `APP_BASE_URL` = canonical production HTTPS origin (e.g. `https://gadzio.co.in`), no path or query string.
-   - `PAYU_ENV=live`, `PAYU_KEY` and `PAYU_SALT` = live merchant credentials (never committed to git or printed in logs).
-   - `PAYU_RETURN_SECRET` = 32+ character cryptographic secret for signed return links (`rt`).
-   - `CRON_SECRET` = configured for `/api/payu/reconcile`.
-3. **Storefront & Maintenance Gate:**
-   - Store Admin → Settings → Storefront: keep **Maintenance mode ON** (or use an unlisted draft/smoke SKU) while staging the smoke product so no external customer can purchase the test item.
-   - Store Admin → Settings → Payments: verify **PayU enabled = `on`** and **Shipping fee = `0`** (or explicit known paise value) for the smoke window.
+> **Hard Safety Gate:** Do **NOT** execute a live payment against `https://secure.payu.in/_payment` or run this procedure in automation right now. This checklist defines the controlled verification protocol to run **only** after the owner explicitly authorizes one small real order and subsequent refund.
 
 ---
 
-## 2. Step-by-Step Controlled Smoke-Test Procedure (Once Authorized)
+## 1. Pre-Conditions Before Running
 
-### Step A — Stage a Dedicated Smoke SKU
+1. **Deployment & Environment Verified (`docs/vercel-deploy-checklist.md` & `docs/GO_LIVE_CHECKLIST.md`):**
+   - `vercel.json` is deployed with `"regions": ["bom1"]` (Mumbai, India) matching Supabase `ap-south-1`.
+   - Vercel Production environment passes `npm run check:production-env` (`APP_ENV=production`, `PAYU_ENV=live`, `PAYU_BASE_URL=https://secure.payu.in/_payment`, `PAYU_RETURN_SECRET` >= 32 chars, `CRON_SECRET` >= 32 chars, `TRUST_PROXY=1`, `APP_BASE_URL` permanent `https://` origin, `DATABASE_URL` on `:6543`, `MAIL_ALLOWED_HOSTS` set when mail is active).
+   - Migrations `0001`–`0073` are applied (`npm run db:migrate`), including `0073_mark_test_order.sql`.
+   - External `/api/payu/reconcile` cron (`Authorization: Bearer <CRON_SECRET>`) is running every 1–2 minutes and Overview heartbeat is green.
+   - Staging TEST-mode proof, browser run, and load test have already passed.
+2. **Storefront & Owner Controls Ready:**
+   - Sign in to `/store-admin` as `store_owner` (confirm TOTP 2FA is active on owner account).
+   - Keep **Maintenance mode ON** (or limit public visibility to internal operator testing) during the smoke test if the public launch announcement has not started yet.
+   - Verify **Store Admin → Settings → Site address health check (`APP_BASE_URL`)** shows **Ready**.
+
+---
+
+## 2. Step-by-Step Procedure (Run Only When Explicitly Authorized)
+
+### Step A — Stage a Small Live Smoke SKU
 1. Sign in to `/store-admin` as `store_owner`.
-2. Create or activate a dedicated smoke-test product (e.g. `smoke-verify-item`, price `₹1.00` / `100` paise, `inventory_mode = 'variant'`, `on_hand = 1`, `low_stock_threshold = 1`).
-3. Confirm the item renders at `₹1.00` on `/shop/product/smoke-verify-item`.
+2. Create or temporarily unhide a low-value smoke SKU (e.g., `smoke-verify-item`, price **₹1.00** / `100` paise — or lowest PayU live amount allowed by merchant account, e.g. `₹1.00` or `₹10.00`, `track_inventory = true`, `on_hand = 1`).
+3. Confirm shipping settings are predictable (e.g., free shipping or exact expected fee) and the product renders cleanly at `/shop/product/smoke-verify-item`.
 
-### Step B — Initiate & Complete One Real ₹1.00 Payment
-1. Sign in as the designated operator customer account at `/auth`.
-2. Add the smoke SKU (`quantity = 1`) to the bag and open `/checkout`.
-3. Verify the displayed server-priced total is `₹1.00` (`100` paise).
-4. Submit checkout (`POST /api/payu/initiate`):
-   - Confirm the browser is redirected to `https://secure.payu.in/_payment`.
-   - Record the generated `txnid` (do not log hashes or secrets).
-5. Complete the ₹1.00 payment using the authorized operator UPI/card instrument.
+### Step B — Place One Small Real Order
+1. Sign in to the storefront as the designated operator customer account at `/auth` (or test checkout flow end-to-end).
+2. Add `quantity = 1` of the smoke SKU to bag and open `/checkout`.
+3. Submit payment (`POST /api/payu/initiate`):
+   - Verify redirect reaches `https://secure.payu.in/_payment` cleanly (zero SSL/redirect errors, zero `"Site can't be reached"`).
+   - Record only the order `txnid` and `order_number` (never log keys, salts, hashes, or card/UPI details).
+4. Complete the small real payment using an authorized operator payment method.
 
-### Step C — Verify Browser Return, Webhook & Database Invariants
+### Step C — Verify Live Callbacks, Settlement, Outbox & Heartbeat
 1. **Browser Return (`POST /api/payu/success`):**
-   - Confirm HTTP `303 See Other` redirect to `/order/success?txnid=<txnid>&rt=<token>`.
-2. **Order & Stock State (`/store-admin/orders/<txnid>`):**
-   - `orders.status = 'PAID'`
-   - `orders.reservation_state = 'CONSUMED'`
-   - `orders.payu_mihpayid` is populated and non-null
-   - `stock.on_hand` decremented from `1 → 0`, and `stock_movements` has one `delta = -1, reason = 'sale'` row.
-3. **Payment Events & Audit Trail:**
-   - `payment_events` records `outcome = 'paid'` with `source = 'redirect'` or `'webhook'`.
-   - If both browser return and webhook arrive, the second arrival is recorded as `outcome = 'unchanged'` (idempotent).
-4. **Notification Outbox (`/store-admin/settings/notifications`):**
-   - `order_placed`, `payment_received`, and `out_of_stock` (`on_hand = 0`) notifications are queued/sent in `notification_outbox`.
-5. **Customer Receipt (`/account/orders/<txnid>/receipt`):**
-   - Confirm invoice/receipt renders with the exact ₹1.00 total and item snapshot.
+   - Confirm `303 See Other` redirect to `/order/success?txnid=<txnid>&rt=<token>` with **Payment: Paid** and clean rendering (also test `/order/success?txnid=...&rt=...` in a fresh incognito window to verify signed cross-site `rt` token behavior).
+2. **Webhook Idempotency (`POST /api/payu/webhook`):**
+   - Open `/store-admin/orders/<txnid>` → **Payment events**: confirm `paid` outcome and verify any duplicate redirect/webhook delivery records `unchanged` (single stock deduction, zero double capture).
+3. **Order, Stock & Counters State:**
+   - `orders.status = 'PAID'`, `orders.reservation_state = 'CONSUMED'`, `orders.payu_mihpayid` populated, sequential `order_number` incremented properly.
+   - `stock.on_hand` decremented (`1 -> 0`) and one `stock_movements` (`sale`, `-1`) row written.
+4. **Customer Receipt & Notification Outbox:**
+   - Open `/account/orders/<txnid>/receipt` (signed in as buyer) and verify receipt matches paid total.
+   - Open `/store-admin/settings/notifications`: verify `order_placed` and `payment_received` email/SMS rows processed cleanly with SPF/DKIM/DMARC passing on delivered mail headers.
+   - Open `/store-admin` Overview: confirm `payu_reconcile` heartbeat remains green within 5 minutes.
 
-### Step D — Cancel / Refund & Deactivate Smoke SKU
-1. In `/store-admin/orders/<txnid>`, initiate the refund/cancellation workflow for the ₹1.00 smoke order (`POST /api/store-admin/orders/<txnid>/cancel` or `/refund`) and record the refund reference.
-2. In `/store-admin/products/smoke-verify-item`, set `is_active = false` (unpublish the smoke SKU) and restore normal shipping/storefront settings.
-3. Record redacted screenshots and `txnid` in `docs/evidence/final-readiness/production-smoke/`.
+### Step D — Process Live Refund & Mark Smoke Order as Test (Option A)
+1. **Issue Real Refund:**
+   - Open `/store-admin/orders/<txnid>` and trigger the refund/cancellation flow (`POST /api/store-admin/orders/<txnid>/refund` or cancel + refund, plus PayU Merchant Dashboard refund confirmation if manual bank/UPI settlement step is needed), recording the refund reference only (no raw gateway payload in docs).
+   - Verify `refunds` row / `SaleState = REFUNDED` (or `CANCELED` + refund recorded) and stock restored cleanly (`release`/`restore` movement) without touching invoice immutability.
+2. **Mark Smoke Order as Test Order (Option A Clean Books):**
+   - On `/store-admin/orders/<txnid>` as `store_owner`, use **Test order classification → Mark as test order** (`POST /api/store-admin/orders/<txnid>/test-order`) with audit reason (e.g., `"Authorized post-deploy ₹1 live payment smoke verification"`).
+   - Confirm `/store-admin` Overview, Customers, and Reports exclude the smoke order while `/store-admin/orders` keeps the full audit record (`Test order` badge, continuous `order_number` preserved).
+3. **Clean Up Storefront:**
+   - Unpublish / deactivate `smoke-verify-item` (`is_active = false`), restore normal store settings, confirm **Maintenance mode** state matches launch readiness, and archive redacted verification notes in `docs/evidence/final-readiness/production-smoke/`.

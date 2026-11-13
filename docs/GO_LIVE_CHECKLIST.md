@@ -35,7 +35,7 @@ WHERE setrole IN ('postgres'::regrole, 'authenticator'::regrole)
 
 Run against the production database before cutover:
 
-- [ ] `npm run db:migrate` — all 70 migrations (`0001`–`0072`) applied cleanly.
+- [ ] `npm run db:migrate` — all 71 migrations (`0001`–`0073`) applied cleanly (`0073_mark_test_order.sql` adds the owner-only `is_test` flag without deleting or renumbering any order).
 - [ ] `node --env-file=.env.local scripts/check-security-db-state.mjs` — all `10/10` checks pass (`MIG-1`, `PRIV-1`, `COLS-anon-allow`, `COLS-anon-deny`, `COLS-authenticated-allow`, `COLS-authenticated-deny`, `PRIV-2`, `RLS-1`, `VIEW-1`, `GUARD-1`).
 - [ ] `node --env-file=.env.local scripts/verify-rls-consumer-tables.mjs` — `users`, `user_sessions`, `orders`, `order_sale_state`, `products.cost_paise`, and `schema_migrations` return HTTP `401` to the publishable key.
 - [ ] `npm run check:db-clientread` — `stuckClientReadCount: 0` in `pg_stat_activity`.
