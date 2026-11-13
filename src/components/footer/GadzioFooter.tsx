@@ -79,71 +79,6 @@ const FOOTER_COLUMNS = [
 
 /* -------------------------------------------------------------- Component */
 
-/** Decode basic HTML entities and strip markup from legacy HTML footnote items safely. */
-function cleanFootnoteText(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&ndash;/gi, '–')
-    .replace(/&mdash;/gi, '—')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-type FootnoteBlock =
-  | { kind: 'ol' | 'ul'; items: string[] }
-  | { kind: 'text'; text: string };
-
-/** Parse legacy `footnotesHtml` (`<ul>/<ol>/<li>`) or plain-text notice into safe JSX blocks. */
-function parseFootnoteBlocks(raw: string): FootnoteBlock[] {
-  const trimmed = raw.trim();
-  if (!trimmed) return [];
-
-  if (!/<(?:ul|ol|li)\b/i.test(trimmed)) {
-    const plain = cleanFootnoteText(trimmed);
-    return plain ? [{ kind: 'text', text: plain }] : [];
-  }
-
-  const blocks: FootnoteBlock[] = [];
-  const listRegex = /<(ul|ol)\b[^>]*>([\s\S]*?)<\/\1>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = listRegex.exec(trimmed)) !== null) {
-    const kind = match[1].toLowerCase() === 'ol' ? 'ol' : 'ul';
-    const items: string[] = [];
-    const liRegex = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-    let liMatch: RegExpExecArray | null;
-    while ((liMatch = liRegex.exec(match[2])) !== null) {
-      const text = cleanFootnoteText(liMatch[1]);
-      if (text) items.push(text);
-    }
-    if (items.length > 0) {
-      blocks.push({ kind, items });
-    }
-  }
-
-  if (blocks.length > 0) return blocks;
-
-  const fallbackItems: string[] = [];
-  const liRegex = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-  let liMatch: RegExpExecArray | null;
-  while ((liMatch = liRegex.exec(trimmed)) !== null) {
-    const text = cleanFootnoteText(liMatch[1]);
-    if (text) fallbackItems.push(text);
-  }
-  if (fallbackItems.length > 0) {
-    return [{ kind: 'ul', items: fallbackItems }];
-  }
-
-  const plain = cleanFootnoteText(trimmed);
-  return plain ? [{ kind: 'text', text: plain }] : [];
-}
-
 /**
  * The site-wide storefront footer rendered by GlobalFooter on every page.
  *
@@ -154,15 +89,14 @@ function parseFootnoteBlocks(raw: string): FootnoteBlock[] {
  *   copyright   -> the bottom-row copyright line
  *   localeLabel -> the country/region link label
  *   localeHref  -> the country/region link target
- *   footnotesHtml -> optional cookie notice or legacy HTML footnotes
+ *   footnotesHtml -> plain-text cookie notice only; legacy HTML footnote lists are not rendered.
  */
 export function GadzioFooter({ content }: { content?: FooterOverride } = {}) {
   const copyright = content?.copyright ?? FOOTER_BOTTOM.copyright;
   const localeLabel = content?.localeLabel ?? FOOTER_BOTTOM.localeLabel;
   const localeHref = content?.localeHref ?? FOOTER_BOTTOM.localeHref;
-  const footnoteBlocks = content?.footnotesHtml
-    ? parseFootnoteBlocks(content.footnotesHtml)
-    : [];
+  const rawNotice = content?.footnotesHtml?.trim() || null;
+  const cookieNotice = rawNotice && !/<(?:ul|ol|li|small|p|div)\b/i.test(rawNotice) ? rawNotice : null;
 
   return (
     <footer className="w-full bg-black text-white border-t border-white/10 font-sans antialiased overflow-hidden pt-16 sm:pt-24 md:pt-28">
@@ -261,30 +195,8 @@ export function GadzioFooter({ content }: { content?: FooterOverride } = {}) {
                   iPhone, AirPods and MagSafe are trademarks of Apple Inc.
                 </p>
               </div>
-              {footnoteBlocks.length > 0 && (
-                <div className="space-y-2 pt-2 text-[11px] sm:text-xs text-white/60 font-normal leading-relaxed">
-                  {footnoteBlocks.map((block, blockIdx) => {
-                    if (block.kind === 'text') {
-                      return <p key={blockIdx}>{block.text}</p>;
-                    }
-                    if (block.kind === 'ol') {
-                      return (
-                        <ol key={blockIdx} className="list-decimal pl-4 space-y-1">
-                          {block.items.map((item, itemIdx) => (
-                            <li key={itemIdx}>{item}</li>
-                          ))}
-                        </ol>
-                      );
-                    }
-                    return (
-                      <ul key={blockIdx} className="space-y-1 list-none pl-0">
-                        {block.items.map((item, itemIdx) => (
-                          <li key={itemIdx}>{item}</li>
-                        ))}
-                      </ul>
-                    );
-                  })}
-                </div>
+              {cookieNotice && (
+                <p className="text-[11px] sm:text-xs text-white/60 font-normal">{cookieNotice}</p>
               )}
             </div>
           </div>
