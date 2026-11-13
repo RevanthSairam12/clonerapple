@@ -197,10 +197,28 @@ a recent backup; confirm the host and row counts before touching it.
 
 ## Current status
 
-- Migrations 0055–0061 are **applied**; the record is in the "Applied run"
+- Migrations 0055–0061 are **applied**; the record is in the "Applied run — 5 November 2026"
   section above.
-- No seed, backfill or fixture SQL was run.
+- Migrations **0069, 0070, and 0071** are **applied** to the test database; details below.
+- No seed, backfill or fixture SQL was run on live catalog tables.
 - `scripts/review-product-options.mjs` has only been run in its refusal paths
   (missing acknowledgement, unsafe host); it has not contacted a database.
 - No order has been placed since 0061 was applied, so no `order_items` row
   stores an option snapshot yet. That is expected, not a failure.
+
+---
+
+# Migrations 0069–0071 — Spin and Win (applied 13 November 2026)
+
+These three additive migration files add the Spin and Win schema, cooldown controls, and home popup controls. All three are **applied** to the configured test database.
+
+## Applied run — 13 November 2026
+
+- **Target host (hostname only):** `aws-0-ap-south-1.pooler.supabase.com` (`port 5432` session pooler via `DATABASE_MIGRATION_URL` for `npm run db:migrate`; runtime app uses `port 6543` transaction pooler). **Yes — this is the test project** (per `PROMO_NOTES.md`: `products`: 7, `orders`: 23, `users`: 1, `coupons`: 0, `store_admins`: 1). Credentials and project identifiers are never printed.
+- **Command:** `npm run db:migrate` (skipping `0001`–`0068`, applying `0069`, `0070`, `0071` in order).
+
+| # | File | Applied at (UTC) | Adds | RLS & safety |
+| --- | --- | --- | --- | --- |
+| 0069 | `0069_spin_wheel.sql` | `2026-11-13T08:49:26.223Z` | `spin_wheel_settings` (singleton row `'default'`), `spin_wheel_segments` (2..12 slices), `spin_wheel_segment_daily_counts` (`(segment_id, store_day)` primary key), `spin_wheel_spins` (`unique (user_id, store_day)`, `ip_hash` index), `coupons.source` (`admin` / `spin_wheel`), `spin_win` event in `notification_outbox` check + 6 `notification_channel_settings` rows | **RLS enabled** with no public policies on all four new tables (`DATABASE_URL` server-only). |
+| 0070 | `0070_spin_wheel_cooldown.sql` | `2026-11-13T10:26:20.591Z` | `spin_wheel_settings.reward_cooldown_mode` (`disabled` / `until_coupon_expires` / `custom_days`, default `until_coupon_expires`), `reward_cooldown_days` (`1..365`, default `7`), `show_next_spin_countdown` (`boolean`, default `true`) | `spin_wheel_settings` already has RLS enabled from `0069`. |
+| 0071 | `0071_spin_wheel_popup_controls.sql` | `2026-11-13` (post-0070 run) | `spin_wheel_settings.popup_enabled` (`boolean`, default `true`), `popup_delay_seconds` (`0..120`, default `10`), `popup_require_scroll` (`boolean`, default `true`), `popup_mobile_floating_button` (`boolean`, default `true`) | `spin_wheel_settings` already has RLS enabled from `0069`. |
