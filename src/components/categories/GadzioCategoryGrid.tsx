@@ -70,10 +70,10 @@ export function GadzioCategoryGrid({ heading, items, enabled = true }: GadzioCat
               </span>
             ) : null}
 
-            {/* Centered Category Heading - Bold Condensed All-Caps Typography matching the design */}
-            <div className="relative z-10 flex flex-col items-center justify-center p-3 sm:p-5 text-center max-w-full">
+            {/* Centered Category Heading - Bold All-Caps Typography scaled to fit 2-col / 4-col cards */}
+            <div className="relative z-10 flex w-full min-w-0 flex-col items-center justify-center p-3 sm:p-5 text-center max-w-full">
               <h3
-                className="text-2xl sm:text-3xl md:text-4xl lg:text-[44px] font-bold uppercase text-white tracking-widest leading-none drop-shadow-[0_2px_12px_rgba(0,0,0,0.85)] transition-transform duration-300 group-hover:scale-105"
+                className="max-w-full break-words text-[clamp(1rem,4.2vw,1.75rem)] md:text-[clamp(0.95rem,1.9vw,2.15rem)] font-bold uppercase text-white tracking-normal sm:tracking-wide leading-[1.05] drop-shadow-[0_2px_12px_rgba(0,0,0,0.85)] transition-transform duration-300 group-hover:scale-[1.02]"
                 style={{
                   fontFamily: 'transducer, sans-serif',
                   fontWeight: 700,
@@ -83,7 +83,7 @@ export function GadzioCategoryGrid({ heading, items, enabled = true }: GadzioCat
               </h3>
               {card.subtitle ? (
                 <p
-                  className="mt-2 text-[11px] sm:text-xs md:text-sm font-semibold text-white/90 drop-shadow max-w-[220px] leading-tight"
+                  className="mt-2 w-full max-w-[240px] break-words text-[11px] sm:text-xs md:text-sm font-semibold text-white/90 drop-shadow leading-snug"
                   style={{ fontFamily: 'transducer, sans-serif' }}
                 >
                   {card.subtitle}
