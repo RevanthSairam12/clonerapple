@@ -36,6 +36,10 @@ export interface SpinWheelSettings {
   maxSpinsPerIpPerDay: number;
   minAccountAgeMinutes: number;
   showOnHomePage: boolean;
+  popupEnabled: boolean;
+  popupDelaySeconds: number;
+  popupRequireScroll: boolean;
+  popupMobileFloatingButton: boolean;
   rewardCooldownMode: SpinRewardCooldownMode;
   rewardCooldownDays: number;
   showNextSpinCountdown: boolean;
@@ -117,6 +121,10 @@ export interface ValidatedSpinConfig {
     maxSpinsPerIpPerDay: number;
     minAccountAgeMinutes: number;
     showOnHomePage: boolean;
+    popupEnabled: boolean;
+    popupDelaySeconds: number;
+    popupRequireScroll: boolean;
+    popupMobileFloatingButton: boolean;
     rewardCooldownMode: SpinRewardCooldownMode;
     rewardCooldownDays: number;
     showNextSpinCountdown: boolean;
@@ -153,6 +161,10 @@ export const DEFAULT_SPIN_WHEEL_SETTINGS: SpinWheelSettings = {
   maxSpinsPerIpPerDay: 1,
   minAccountAgeMinutes: 0,
   showOnHomePage: false,
+  popupEnabled: true,
+  popupDelaySeconds: 10,
+  popupRequireScroll: true,
+  popupMobileFloatingButton: true,
   rewardCooldownMode: 'until_coupon_expires',
   rewardCooldownDays: 7,
   showNextSpinCountdown: true,
@@ -558,6 +570,29 @@ export function validateSpinWheelConfigInput(
 
   const showOnHomePage = Boolean(settingsRaw.showOnHomePage);
 
+  const popupEnabled =
+    typeof settingsRaw.popupEnabled === 'boolean'
+      ? settingsRaw.popupEnabled
+      : DEFAULT_SPIN_WHEEL_SETTINGS.popupEnabled;
+
+  const popupDelaySeconds = parseRequiredInt(
+    settingsRaw.popupDelaySeconds ?? DEFAULT_SPIN_WHEEL_SETTINGS.popupDelaySeconds,
+    0,
+    120,
+    'Popup delay (seconds)',
+  );
+  if (!popupDelaySeconds.ok) return popupDelaySeconds;
+
+  const popupRequireScroll =
+    typeof settingsRaw.popupRequireScroll === 'boolean'
+      ? settingsRaw.popupRequireScroll
+      : DEFAULT_SPIN_WHEEL_SETTINGS.popupRequireScroll;
+
+  const popupMobileFloatingButton =
+    typeof settingsRaw.popupMobileFloatingButton === 'boolean'
+      ? settingsRaw.popupMobileFloatingButton
+      : DEFAULT_SPIN_WHEEL_SETTINGS.popupMobileFloatingButton;
+
   const rawCooldownMode = settingsRaw.rewardCooldownMode;
   if (
     rawCooldownMode !== undefined
@@ -777,6 +812,10 @@ export function validateSpinWheelConfigInput(
         maxSpinsPerIpPerDay: maxPerIp.value,
         minAccountAgeMinutes: minAge.value,
         showOnHomePage,
+        popupEnabled,
+        popupDelaySeconds: popupDelaySeconds.value,
+        popupRequireScroll,
+        popupMobileFloatingButton,
         rewardCooldownMode,
         rewardCooldownDays: rewardCooldownDays.value,
         showNextSpinCountdown,

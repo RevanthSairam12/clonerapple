@@ -167,6 +167,10 @@ function auditSnapshot(settings: SpinWheelSettings, segments: readonly SpinWheel
     maxSpinsPerIpPerDay: settings.maxSpinsPerIpPerDay,
     minAccountAgeMinutes: settings.minAccountAgeMinutes,
     showOnHomePage: settings.showOnHomePage,
+    popupEnabled: settings.popupEnabled,
+    popupDelaySeconds: settings.popupDelaySeconds,
+    popupRequireScroll: settings.popupRequireScroll,
+    popupMobileFloatingButton: settings.popupMobileFloatingButton,
     rewardCooldownMode: settings.rewardCooldownMode,
     rewardCooldownDays: settings.rewardCooldownDays,
     showNextSpinCountdown: settings.showNextSpinCountdown,
@@ -209,10 +213,25 @@ export async function getSpinWheelAdminDataUsing(
     ] = await Promise.all([
       sql`select * from spin_wheel_settings where id = 'default' limit 1` as Promise<Row[]>,
       sql`
-        select s.*, coalesce(dc.awarded_count, 0)::int as daily_awarded
+        select
+          s.*,
+          greatest(s.total_awarded, coalesce(sp_all.cnt, 0))::int as total_awarded,
+          greatest(coalesce(dc.awarded_count, 0), coalesce(sp_day.cnt, 0))::int as daily_awarded
         from spin_wheel_segments s
         left join spin_wheel_segment_daily_counts dc
           on dc.segment_id = s.id and dc.store_day = ${todayStoreDay}::date
+        left join (
+          select segment_id, count(*)::int as cnt
+          from spin_wheel_spins
+          where segment_id is not null
+          group by segment_id
+        ) sp_all on sp_all.segment_id = s.id
+        left join (
+          select segment_id, count(*)::int as cnt
+          from spin_wheel_spins
+          where segment_id is not null and store_day = ${todayStoreDay}::date
+          group by segment_id
+        ) sp_day on sp_day.segment_id = s.id
         order by s.sort_order asc, s.id asc
       ` as Promise<Row[]>,
       sql`
@@ -408,6 +427,7 @@ export async function saveSpinWheelConfigUsing(
           id, enabled, title, subtitle, starts_at, ends_at,
           spins_per_customer_per_day, terms_text, max_spins_per_ip_per_day,
           min_account_age_minutes, show_on_home_page,
+          popup_enabled, popup_delay_seconds, popup_require_scroll, popup_mobile_floating_button,
           reward_cooldown_mode, reward_cooldown_days, show_next_spin_countdown,
           updated_at, updated_by
         ) values (
@@ -422,6 +442,10 @@ export async function saveSpinWheelConfigUsing(
           ${nextSettings.maxSpinsPerIpPerDay},
           ${nextSettings.minAccountAgeMinutes},
           ${nextSettings.showOnHomePage},
+          ${nextSettings.popupEnabled},
+          ${nextSettings.popupDelaySeconds},
+          ${nextSettings.popupRequireScroll},
+          ${nextSettings.popupMobileFloatingButton},
           ${nextSettings.rewardCooldownMode},
           ${nextSettings.rewardCooldownDays},
           ${nextSettings.showNextSpinCountdown},
@@ -439,12 +463,22 @@ export async function saveSpinWheelConfigUsing(
           max_spins_per_ip_per_day = excluded.max_spins_per_ip_per_day,
           min_account_age_minutes = excluded.min_account_age_minutes,
           show_on_home_page = excluded.show_on_home_page,
+          popup_enabled = excluded.popup_enabled,
+          popup_delay_seconds = excluded.popup_delay_seconds,
+          popup_require_scroll = excluded.popup_require_scroll,
+          popup_mobile_floating_button = excluded.popup_mobile_floating_button,
           reward_cooldown_mode = excluded.reward_cooldown_mode,
           reward_cooldown_days = excluded.reward_cooldown_days,
           show_next_spin_countdown = excluded.show_next_spin_countdown,
           updated_at = now(),
           updated_by = excluded.updated_by
       `;
+
+      const [clockRow] = (await tx`select now() as db_now`) as Array<{ db_now: Date | string }>;
+      const todayStoreDay = computeStoreDayInfo(
+        new Date(clockRow?.db_now ?? new Date()),
+        timeZone,
+      ).storeDay;
 
       const retainedIds: string[] = [];
       for (const seg of nextSegments) {
@@ -461,6 +495,13 @@ export async function saveSpinWheelConfigUsing(
               weight = ${seg.weight},
               daily_cap = ${seg.dailyCap},
               total_cap = ${seg.totalCap},
+              total_awarded = case
+                when ${seg.totalCap !== null}::boolean then greatest(
+                  total_awarded,
+                  coalesce((select count(*)::int from spin_wheel_spins where segment_id = ${finalId}), 0)
+                )
+                else total_awarded
+              end,
               is_active = ${seg.isActive},
               sort_order = ${seg.sortOrder},
               coupon_type = ${seg.couponType},
@@ -474,6 +515,20 @@ export async function saveSpinWheelConfigUsing(
               updated_at = now()
             where id = ${finalId}
           `;
+          if (seg.dailyCap !== null) {
+            await tx`
+              insert into spin_wheel_segment_daily_counts (segment_id, store_day, awarded_count)
+              select
+                ${finalId},
+                ${todayStoreDay}::date,
+                count(*)::int
+              from spin_wheel_spins
+              where segment_id = ${finalId} and store_day = ${todayStoreDay}::date
+              having count(*) > 0
+              on conflict (segment_id, store_day) do update set
+                awarded_count = greatest(spin_wheel_segment_daily_counts.awarded_count, excluded.awarded_count)
+            `;
+          }
         } else {
           await tx`
             insert into spin_wheel_segments (

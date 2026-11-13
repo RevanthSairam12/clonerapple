@@ -6,6 +6,7 @@ import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
 import { executeSpinDraw } from '@/lib/spin-wheel/store';
+import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,9 @@ const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 export async function POST(request: NextRequest) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
+
+  const closed = await requireStorefrontOpen();
+  if (closed) return closed;
 
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
@@ -69,7 +73,7 @@ export async function POST(request: NextRequest) {
 
   let status = 400;
   if (outcome.reason === 'unauthorized') status = 401;
-  else if (outcome.reason === 'account_too_new') status = 403;
+  else if (outcome.reason === 'account_too_new' || outcome.reason === 'bot_check_failed') status = 403;
   else if (
     outcome.reason === 'ip_limit'
     || outcome.reason === 'reward_cooldown'

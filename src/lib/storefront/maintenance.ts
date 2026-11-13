@@ -48,6 +48,7 @@ const BLOCKED_PREFIXES = [
   '/search',
   '/shop',
   '/in/shop',
+  '/spin-and-win',
   '/support',
   '/android',
 ] as const;
@@ -93,6 +94,7 @@ const BLOCKED_API_PREFIXES = [
   '/api/catalog/availability',
   '/api/account',
   '/api/auth',
+  '/api/spin-wheel',
 ] as const;
 
 function matches(pathname: string, prefix: string): boolean {

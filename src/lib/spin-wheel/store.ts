@@ -5,7 +5,9 @@
  * Security & concurrency invariants:
  * - Never runs in the browser.
  * - Configuration reads use a short (5s) per-pool TTL cache to protect the small
- *   transaction pooler; the draw itself always checks live caps under row locks.
+ *   transaction pooler; the draw reads active slices lock-free and updates any
+ *   capped counters at the end of the transaction via conditional
+ *   `UPDATE ... WHERE count < cap RETURNING`.
  * - Draw uses "insert-first" on `spin_wheel_spins(user_id, store_day)` so double
  *   taps, multiple tabs, and concurrent requests can never award two spins on
  *   the same store day.
@@ -18,13 +20,15 @@ import type postgres from 'postgres';
 import {
   BUSY_MESSAGE,
   BUSY_RETRY_AFTER,
+  DEFAULT_LOCK_TIMEOUT_MS,
+  DEFAULT_STATEMENT_TIMEOUT_MS,
   isTransactionTimeout,
-  setTransactionTimeouts,
 } from '@/lib/checkout/transaction-guards';
 import { generateCouponCode } from '@/lib/coupons/codes';
 import { normalizeEmail } from '@/lib/coupons/rules';
 import { enqueueNotification } from '@/lib/notifications/enqueue';
 import { getSql } from '@/lib/platform/db';
+import { maskEmail, maskPhone } from '@/lib/store-admin/audit';
 
 import {
   computeSpinCooldownState,
@@ -106,6 +110,10 @@ export interface CustomerSpinState {
   subtitle: string;
   termsText: string;
   showOnHomePage: boolean;
+  popupEnabled: boolean;
+  popupDelaySeconds: number;
+  popupRequireScroll: boolean;
+  popupMobileFloatingButton: boolean;
   timeZone: string;
   storeDay: string;
   nextSpinAt: string;
@@ -142,6 +150,7 @@ export type SpinDrawResponse =
         | 'ip_limit'
         | 'reward_cooldown'
         | 'exhausted'
+        | 'bot_check_failed'
         | 'busy';
       error: string;
       retryAfterSec?: number;
@@ -220,6 +229,22 @@ export function mapSettingsRow(row: Row | undefined): SpinWheelSettings {
     maxSpinsPerIpPerDay: Math.max(1, Number(row.max_spins_per_ip_per_day) || 1),
     minAccountAgeMinutes: Math.max(0, Number(row.min_account_age_minutes) || 0),
     showOnHomePage: row.show_on_home_page === true,
+    popupEnabled:
+      row.popup_enabled === undefined || row.popup_enabled === null
+        ? DEFAULT_SPIN_WHEEL_SETTINGS.popupEnabled
+        : row.popup_enabled === true,
+    popupDelaySeconds:
+      row.popup_delay_seconds === undefined || row.popup_delay_seconds === null
+        ? DEFAULT_SPIN_WHEEL_SETTINGS.popupDelaySeconds
+        : Math.min(120, Math.max(0, Number(row.popup_delay_seconds) || 0)),
+    popupRequireScroll:
+      row.popup_require_scroll === undefined || row.popup_require_scroll === null
+        ? DEFAULT_SPIN_WHEEL_SETTINGS.popupRequireScroll
+        : row.popup_require_scroll === true,
+    popupMobileFloatingButton:
+      row.popup_mobile_floating_button === undefined || row.popup_mobile_floating_button === null
+        ? DEFAULT_SPIN_WHEEL_SETTINGS.popupMobileFloatingButton
+        : row.popup_mobile_floating_button === true,
     rewardCooldownMode: mapCooldownMode(row.reward_cooldown_mode),
     rewardCooldownDays: Math.min(
       365,
@@ -366,6 +391,10 @@ function unavailableCustomerSpinState(signedIn: boolean): CustomerSpinState {
     subtitle: DEFAULT_SPIN_WHEEL_SETTINGS.subtitle,
     termsText: '',
     showOnHomePage: false,
+    popupEnabled: false,
+    popupDelaySeconds: DEFAULT_SPIN_WHEEL_SETTINGS.popupDelaySeconds,
+    popupRequireScroll: DEFAULT_SPIN_WHEEL_SETTINGS.popupRequireScroll,
+    popupMobileFloatingButton: DEFAULT_SPIN_WHEEL_SETTINGS.popupMobileFloatingButton,
     timeZone: DEFAULT_TIMEZONE,
     storeDay: dayInfo.storeDay,
     nextSpinAt: dayInfo.nextResetAt.toISOString(),
@@ -443,39 +472,118 @@ async function readCustomerProfile(
   `) as Row[];
   const row = rows[0];
   if (!row) return null;
+  const rawEmail = text(row.email).trim();
+  const rawPhone = row.phone ? text(row.phone).trim() : '';
   return {
-    email: text(row.email),
-    phone: row.phone ? text(row.phone) : null,
+    email: rawEmail ? maskEmail(rawEmail) : '',
+    phone: rawPhone ? maskPhone(rawPhone) : null,
     firstName: text(row.first_name),
+  };
+}
+
+function toPublicSegments(config: SpinWheelConfigSnapshot): PublicSpinSegment[] {
+  return config.segments
+    .filter((seg) => seg.isActive)
+    .map((seg) => ({
+      id: seg.id,
+      label: seg.label,
+      colorHex: seg.colorHex,
+      textColorHex: seg.textColorHex,
+      sortOrder: seg.sortOrder,
+    }));
+}
+
+export function buildPublicCustomerSpinState(
+  config: SpinWheelConfigSnapshot,
+  signedIn: boolean,
+  now: Date = new Date(),
+): CustomerSpinState {
+  if (config.schemaMissing) {
+    return unavailableCustomerSpinState(signedIn);
+  }
+  const dayInfo = computeStoreDayInfo(now, config.timeZone);
+  const windowState = isWheelWindowOpen(config.settings, now);
+  const cooldown = computeSpinCooldownState({
+    dbNow: now,
+    nextDailyResetAt: dayInfo.nextResetAt,
+    latestCouponWin: null,
+    rewardCooldownMode: config.settings.rewardCooldownMode,
+    rewardCooldownDays: config.settings.rewardCooldownDays,
+  });
+  const dailySpinsTotal = Math.max(1, config.settings.spinsPerCustomerPerDay);
+  return {
+    available: true,
+    signedIn,
+    isOpen: windowState.open,
+    windowReason: windowState.reason,
+    title: config.settings.title,
+    subtitle: config.settings.subtitle,
+    termsText: config.settings.termsText,
+    showOnHomePage: config.settings.showOnHomePage,
+    popupEnabled: config.settings.popupEnabled,
+    popupDelaySeconds: config.settings.popupDelaySeconds,
+    popupRequireScroll: config.settings.popupRequireScroll,
+    popupMobileFloatingButton: config.settings.popupMobileFloatingButton,
+    timeZone: config.timeZone,
+    storeDay: dayInfo.storeDay,
+    nextSpinAt: cooldown.nextSpinAt.toISOString(),
+    secondsUntilReset: cooldown.secondsUntilReset,
+    dailySpinsTotal,
+    remainingSpinsToday: dailySpinsTotal,
+    showNextSpinCountdown: config.settings.showNextSpinCountdown,
+    rewardCooldownMode: config.settings.rewardCooldownMode,
+    rewardCooldownDays: config.settings.rewardCooldownDays,
+    cooldownBlocked: false,
+    cooldownUntil: null,
+    activeReward: null,
+    customerProfile: null,
+    segments: toPublicSegments(config),
+    todaySpin: null,
   };
 }
 
 export async function getCustomerSpinStateUsing(
   sql: SqlLike,
   userId: string | null,
-  options: { bypassCache?: boolean; nowOverride?: Date } = {},
+  options: {
+    bypassCache?: boolean;
+    nowOverride?: Date;
+    preloadedConfig?: SpinWheelConfigSnapshot;
+  } = {},
 ): Promise<CustomerSpinState> {
   try {
-    const [config, clockRows] = await Promise.all([
-      getSpinWheelConfigUsing(sql, { bypassCache: options.bypassCache }),
-      sql`select now() as db_now` as Promise<Array<{ db_now: Date | string }>>,
-    ]);
+    const config =
+      options.preloadedConfig
+      ?? (await getSpinWheelConfigUsing(sql, { bypassCache: options.bypassCache }));
 
     if (config.schemaMissing) {
       return unavailableCustomerSpinState(Boolean(userId));
     }
 
-    const dbNow = options.nowOverride ?? new Date(clockRows[0]?.db_now ?? new Date());
+    if (!userId) {
+      const clockRows = options.nowOverride
+        ? null
+        : ((await sql`select now() as db_now`) as Array<{ db_now: Date | string }>);
+      const dbNow = options.nowOverride ?? new Date(clockRows?.[0]?.db_now ?? new Date());
+      return buildPublicCustomerSpinState(config, false, dbNow);
+    }
+
+    const dbNow = options.nowOverride
+      ? options.nowOverride
+      : new Date(
+          ((await sql`select now() as db_now`) as Array<{ db_now: Date | string }>)[0]?.db_now
+          ?? new Date(),
+        );
     const dayInfo = computeStoreDayInfo(dbNow, config.timeZone);
     const windowState = isWheelWindowOpen(config.settings, dbNow);
 
-    const [todaySpin, latestCouponWin, customerProfile] = userId
-      ? await Promise.all([
-          readExistingSpinForDay(sql, userId, dayInfo.storeDay),
-          readLatestCouponSpin(sql, userId),
-          readCustomerProfile(sql, userId),
-        ])
-      : [null, null, null];
+    const [todaySpin, latestCouponWin, customerProfile] = await Promise.all([
+      readExistingSpinForDay(sql, userId, dayInfo.storeDay),
+      config.settings.rewardCooldownMode !== 'disabled'
+        ? readLatestCouponSpin(sql, userId)
+        : Promise.resolve(null),
+      readCustomerProfile(sql, userId),
+    ]);
 
     const cooldown = computeSpinCooldownState({
       dbNow,
@@ -487,25 +595,19 @@ export async function getCustomerSpinStateUsing(
     const dailySpinsTotal = Math.max(1, config.settings.spinsPerCustomerPerDay);
     const remainingSpinsToday = todaySpin || cooldown.blockedByCooldown ? 0 : dailySpinsTotal;
 
-    const activeSegments: PublicSpinSegment[] = config.segments
-      .filter((seg) => seg.isActive)
-      .map((seg) => ({
-        id: seg.id,
-        label: seg.label,
-        colorHex: seg.colorHex,
-        textColorHex: seg.textColorHex,
-        sortOrder: seg.sortOrder,
-      }));
-
     return {
       available: true,
-      signedIn: Boolean(userId),
+      signedIn: true,
       isOpen: windowState.open,
       windowReason: windowState.reason,
       title: config.settings.title,
       subtitle: config.settings.subtitle,
       termsText: config.settings.termsText,
       showOnHomePage: config.settings.showOnHomePage,
+      popupEnabled: config.settings.popupEnabled,
+      popupDelaySeconds: config.settings.popupDelaySeconds,
+      popupRequireScroll: config.settings.popupRequireScroll,
+      popupMobileFloatingButton: config.settings.popupMobileFloatingButton,
       timeZone: config.timeZone,
       storeDay: dayInfo.storeDay,
       nextSpinAt: cooldown.nextSpinAt.toISOString(),
@@ -519,7 +621,7 @@ export async function getCustomerSpinStateUsing(
       cooldownUntil: cooldown.cooldownUntil ? cooldown.cooldownUntil.toISOString() : null,
       activeReward: cooldown.activeReward,
       customerProfile,
-      segments: activeSegments,
+      segments: toPublicSegments(config),
       todaySpin,
     };
   } catch (error) {
@@ -547,22 +649,90 @@ export async function getCustomerSpinState(userId: string | null): Promise<Custo
   }
 }
 
-/** Lightweight read for home page entry strip without loading full spin history. */
-export async function getHomeSpinBannerState(): Promise<{
+export interface HomeSpinBannerData {
   show: boolean;
   title: string;
   subtitle: string;
-}> {
+}
+
+export interface HomeSpinSurfaceData {
+  banner: HomeSpinBannerData;
+  spinState: CustomerSpinState;
+}
+
+/**
+ * Resolve both the home banner and popup/wheel state cleanly:
+ * - Signed-out visitors use only the 5s cached configuration (0 extra DB queries).
+ * - Signed-in visitors query their daily spin/cooldown/profile only when the
+ *   home wheel surface is open and configured to show on the home page.
+ */
+export async function getHomeSpinSurfaceUsing(
+  sql: SqlLike,
+  userId: string | null,
+  options: { bypassCache?: boolean; nowOverride?: Date } = {},
+): Promise<HomeSpinSurfaceData> {
+  const now = options.nowOverride ?? new Date();
+  const config = await getSpinWheelConfigUsing(sql, { bypassCache: options.bypassCache });
+  if (config.schemaMissing) {
+    return {
+      banner: { show: false, title: '', subtitle: '' },
+      spinState: unavailableCustomerSpinState(Boolean(userId)),
+    };
+  }
+
+  const windowState = isWheelWindowOpen(config.settings, now);
+  const hasActiveSegments = config.segments.filter((s) => s.isActive).length >= 2;
+  const showHome = config.settings.showOnHomePage && windowState.open && hasActiveSegments;
+  const banner: HomeSpinBannerData = {
+    show: showHome,
+    title: showHome ? config.settings.title : '',
+    subtitle: showHome ? config.settings.subtitle : '',
+  };
+
+  if (!userId || !showHome) {
+    return {
+      banner,
+      spinState: buildPublicCustomerSpinState(config, Boolean(userId), now),
+    };
+  }
+
+  const spinState = await getCustomerSpinStateUsing(sql, userId, {
+    preloadedConfig: config,
+    nowOverride: options.nowOverride,
+  });
+  return { banner, spinState };
+}
+
+export async function getHomeSpinSurface(userId: string | null): Promise<HomeSpinSurfaceData> {
+  const sql = getSql();
+  if (!sql) {
+    return {
+      banner: { show: false, title: '', subtitle: '' },
+      spinState: unavailableCustomerSpinState(Boolean(userId)),
+    };
+  }
+  try {
+    return await getHomeSpinSurfaceUsing(sql, userId);
+  } catch (error) {
+    if (!isUndefinedTableError(error)) {
+      console.warn('[spin-wheel] failed to read home spin surface');
+    }
+    return {
+      banner: { show: false, title: '', subtitle: '' },
+      spinState: unavailableCustomerSpinState(Boolean(userId)),
+    };
+  }
+}
+
+/** Lightweight read for home page entry strip without loading customer spin history. */
+export async function getHomeSpinBannerState(): Promise<HomeSpinBannerData> {
   const sql = getSql();
   if (!sql) return { show: false, title: '', subtitle: '' };
   try {
-    const [config, clockRows] = await Promise.all([
-      getSpinWheelConfigUsing(sql),
-      sql`select now() as db_now` as Promise<Array<{ db_now: Date | string }>>,
-    ]);
-    const dbNow = new Date(clockRows[0]?.db_now ?? new Date());
-    const windowState = isWheelWindowOpen(config.settings, dbNow);
-    const hasActiveSegments = config.segments.some((s) => s.isActive);
+    const config = await getSpinWheelConfigUsing(sql);
+    if (config.schemaMissing) return { show: false, title: '', subtitle: '' };
+    const windowState = isWheelWindowOpen(config.settings, new Date());
+    const hasActiveSegments = config.segments.filter((s) => s.isActive).length >= 2;
     return {
       show: config.settings.showOnHomePage && windowState.open && hasActiveSegments,
       title: config.settings.title,
@@ -701,6 +871,15 @@ function formatRewardCooldownError(settings: SpinWheelSettings): string {
   return `You recently won a Spin & Win reward. Your next spin unlocks after the ${days}-day cooldown.`;
 }
 
+export interface SpinBotCheckContext {
+  userId: string;
+  ipHash: string;
+}
+
+export type SpinBotCheckHook = (
+  ctx: SpinBotCheckContext,
+) => Promise<{ ok: boolean; error?: string }>;
+
 export async function executeSpinDrawUsing(
   sql: postgres.Sql,
   input: {
@@ -711,6 +890,13 @@ export async function executeSpinDrawUsing(
   options: {
     rollFn?: (totalWeight: number) => number;
     nowOverride?: Date;
+    botCheck?: SpinBotCheckHook;
+    lockTimeoutMs?: number;
+    beforeCounterHook?: (ctx: {
+      tx: postgres.TransactionSql;
+      chosen: SpinWheelSegment;
+      spinId: string;
+    }) => Promise<void>;
   } = {},
 ): Promise<SpinDrawResponse> {
   if (!input.userId) {
@@ -723,50 +909,106 @@ export async function executeSpinDrawUsing(
       error: 'Please accept the Terms & conditions before spinning.',
     };
   }
+  if (options.botCheck) {
+    const botVerdict = await options.botCheck({
+      userId: input.userId,
+      ipHash: input.ipHash,
+    });
+    if (!botVerdict.ok) {
+      return {
+        ok: false,
+        reason: 'bot_check_failed',
+        error: botVerdict.error || 'Please complete bot verification before spinning.',
+      };
+    }
+  }
+
+  const lockTimeoutMs = Math.max(1, Math.trunc(options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS));
 
   try {
     const committed = await sql.begin(async (tx) => {
-      await setTransactionTimeouts(tx);
+      // 1. Coalesced transaction timeouts + clock + timezone + user + settings (no row locks).
+      const [initRow] = (await tx`
+        select
+          set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true),
+          set_config('statement_timeout', ${`${DEFAULT_STATEMENT_TIMEOUT_MS}ms`}, true),
+          now() as db_now,
+          coalesce(
+            (
+              select p.name
+              from store_settings ss
+              join pg_timezone_names p on p.name = btrim(ss.value)
+              where ss.key = 'timezone'
+              limit 1
+            ),
+            ${DEFAULT_TIMEZONE}
+          ) as tz,
+          u.id as user_id,
+          u.email as user_email,
+          u.first_name as user_first_name,
+          u.created_at as user_created_at,
+          s.id as settings_id,
+          s.enabled,
+          s.title,
+          s.subtitle,
+          s.starts_at,
+          s.ends_at,
+          s.spins_per_customer_per_day,
+          s.terms_text,
+          s.max_spins_per_ip_per_day,
+          s.min_account_age_minutes,
+          s.show_on_home_page,
+          s.popup_enabled,
+          s.popup_delay_seconds,
+          s.popup_require_scroll,
+          s.popup_mobile_floating_button,
+          s.reward_cooldown_mode,
+          s.reward_cooldown_days,
+          s.show_next_spin_countdown
+        from (select 1) as anchor
+        left join users u on u.id = ${input.userId}
+        left join spin_wheel_settings s on s.id = 'default'
+      `) as Row[];
 
-      const timeZone = await readValidatedTimeZone(tx);
-      const [clockRow] = (await tx`select now() as db_now`) as Array<{ db_now: Date | string }>;
-      const dbNow = options.nowOverride ?? new Date(clockRow?.db_now ?? new Date());
-      const dayInfo = computeStoreDayInfo(dbNow, timeZone);
-
-      const userRows = (await tx`
-        select id, email, first_name, created_at
-        from users
-        where id = ${input.userId}
-        limit 1
-      `) as Array<{ id: string; email: string; first_name: string | null; created_at: Date | string }>;
-      const user = userRows[0];
-      if (!user) {
+      if (!initRow?.user_id) {
         throw new SpinAbortError('unauthorized', 'Please sign in to spin the wheel.');
       }
 
-      const [existingBefore, settingsRows] = await Promise.all([
+      const timeZone = text(initRow.tz) || DEFAULT_TIMEZONE;
+      const dbNow = options.nowOverride ?? new Date((initRow.db_now as Date | string | undefined) ?? new Date());
+      const dayInfo = computeStoreDayInfo(dbNow, timeZone);
+      const settings = mapSettingsRow(initRow.settings_id ? initRow : undefined);
+      const userEmail = text(initRow.user_email);
+      const userFirstName = text(initRow.user_first_name);
+      const userCreatedAt = new Date((initRow.user_created_at as Date | string) ?? dbNow);
+
+      // 2. Check existing daily spin + prior winning cooldown (pipelined, no locks).
+      const [existingBefore, latestWin] = await Promise.all([
         readExistingSpinForDay(tx, input.userId, dayInfo.storeDay),
-        tx`select * from spin_wheel_settings where id = 'default' limit 1` as Promise<Row[]>,
+        settings.rewardCooldownMode !== 'disabled'
+          ? readLatestCouponSpin(tx, input.userId)
+          : Promise.resolve(null),
       ]);
-      const settings = mapSettingsRow(settingsRows[0]);
 
       // Fast path if today's spin already exists for this customer.
       if (existingBefore) {
-        const cooldown = await resolveCooldownForSpinView(
-          tx,
-          input.userId,
-          existingBefore,
+        const latestForView = existingBefore.segmentType === 'COUPON'
+          ? spinResultToCooldownInput(existingBefore)
+          : latestWin;
+        const cooldown = computeSpinCooldownState({
           dbNow,
-          dayInfo.nextResetAt,
-          settings,
-        );
+          nextDailyResetAt: dayInfo.nextResetAt,
+          latestCouponWin: latestForView,
+          rewardCooldownMode: settings.rewardCooldownMode,
+          rewardCooldownDays: settings.rewardCooldownDays,
+        });
         return {
           alreadySpun: true as const,
           spin: existingBefore,
           nextSpinAt: cooldown.nextSpinAt.toISOString(),
           secondsUntilReset: cooldown.secondsUntilReset,
-          userEmail: user.email,
-          customerName: user.first_name ?? '',
+          userEmail,
+          customerName: userFirstName,
           wonCoupon: false,
           couponExpiresAt: existingBefore.couponExpiresAt,
           timeZone,
@@ -786,8 +1028,7 @@ export async function executeSpinDrawUsing(
       }
 
       if (settings.minAccountAgeMinutes > 0) {
-        const createdAt = new Date(user.created_at);
-        const ageMinutes = (dbNow.getTime() - createdAt.getTime()) / 60_000;
+        const ageMinutes = (dbNow.getTime() - userCreatedAt.getTime()) / 60_000;
         if (ageMinutes < settings.minAccountAgeMinutes) {
           throw new SpinAbortError(
             'account_too_new',
@@ -797,7 +1038,6 @@ export async function executeSpinDrawUsing(
       }
 
       if (settings.rewardCooldownMode !== 'disabled') {
-        const latestWin = await readLatestCouponSpin(tx, input.userId);
         const cooldown = computeSpinCooldownState({
           dbNow,
           nextDailyResetAt: dayInfo.nextResetAt,
@@ -817,9 +1057,8 @@ export async function executeSpinDrawUsing(
         }
       }
 
-      // Insert-first on (user_id, store_day). Concurrent requests block on the
-      // unique index until the first commits, then receive 0 rows and read the
-      // committed winner row.
+      // 3. Insert-first on (user_id, store_day). Only this customer's duplicate clicks
+      // contend on this per-customer unique index tuple; different customers never block.
       const spinId = `spn_${randomBytes(8).toString('hex')}`;
       const inserted = (await tx`
         insert into spin_wheel_spins (
@@ -856,125 +1095,210 @@ export async function executeSpinDrawUsing(
           spin: existingConcurrent,
           nextSpinAt: cooldown.nextSpinAt.toISOString(),
           secondsUntilReset: cooldown.secondsUntilReset,
-          userEmail: user.email,
-          customerName: user.first_name ?? '',
+          userEmail,
+          customerName: userFirstName,
           wonCoupon: false,
           couponExpiresAt: existingConcurrent.couponExpiresAt,
           timeZone,
         };
       }
 
-      if (input.ipHash) {
-        const [ipRow] = (await tx`
-          select count(*)::int as cnt
-          from spin_wheel_spins
-          where store_day = ${dayInfo.storeDay}::date
-            and ip_hash = ${input.ipHash}
-            and id <> ${spinId}
-        `) as Array<{ cnt: number }>;
-        if (Number(ipRow?.cnt ?? 0) >= settings.maxSpinsPerIpPerDay) {
-          throw new SpinAbortError(
-            'ip_limit',
-            'Daily spin limit reached for this network. Please try again tomorrow.',
-            {
-              retryAfterSec: dayInfo.secondsUntilReset,
-              nextSpinAt: dayInfo.nextResetAt.toISOString(),
-            },
-          );
-        }
+      // 4. Pipelined per-IP cap check + lock-free active segment/daily-count read.
+      const [ipRows, segmentRows] = await Promise.all([
+        input.ipHash
+          ? (tx`
+              select count(*)::int as cnt
+              from spin_wheel_spins
+              where store_day = ${dayInfo.storeDay}::date
+                and ip_hash = ${input.ipHash}
+                and id <> ${spinId}
+            ` as Promise<Array<{ cnt: number }>>)
+          : Promise.resolve([]),
+        tx`
+          select s.*, coalesce(dc.awarded_count, 0)::int as daily_awarded
+          from spin_wheel_segments s
+          left join spin_wheel_segment_daily_counts dc
+            on dc.segment_id = s.id and dc.store_day = ${dayInfo.storeDay}::date
+          where s.is_active = true
+          order by s.sort_order asc, s.id asc
+        ` as Promise<Row[]>,
+      ]);
+
+      if (input.ipHash && Number(ipRows[0]?.cnt ?? 0) >= settings.maxSpinsPerIpPerDay) {
+        throw new SpinAbortError(
+          'ip_limit',
+          'Daily spin limit reached for this network. Please try again tomorrow.',
+          {
+            retryAfterSec: dayInfo.secondsUntilReset,
+            nextSpinAt: dayInfo.nextResetAt.toISOString(),
+          },
+        );
       }
 
-      // Lock active segment rows in deterministic order to enforce caps atomically.
-      const lockedRows = (await tx`
-        select s.*, coalesce(dc.awarded_count, 0)::int as daily_awarded
-        from spin_wheel_segments s
-        left join spin_wheel_segment_daily_counts dc
-          on dc.segment_id = s.id and dc.store_day = ${dayInfo.storeDay}::date
-        where s.is_active = true
-        order by s.sort_order asc, s.id asc
-        for update of s
-      `) as Row[];
+      // 5. Weighted draw + coupon insert + own spin row update, followed at the very end
+      // by conditional counter updates (WHERE count < cap RETURNING) only when capped.
+      let remainingCandidates = segmentRows.map(mapSegmentRow);
+      let finalChosen: SpinWheelSegment | null = null;
+      let finalCouponId: string | null = null;
+      let finalCouponCode: string | null = null;
+      let finalCouponExpiresAt: Date | null = null;
 
-      const candidates = lockedRows.map(mapSegmentRow);
-      const draw = drawWeightedSegment(candidates, options.rollFn);
-      if (!draw) {
+      while (remainingCandidates.length > 0) {
+        const draw = drawWeightedSegment(remainingCandidates, options.rollFn);
+        if (!draw) break;
+
+        const chosen = draw.segment;
+        const needsTotalCap = chosen.totalCap !== null;
+        const needsDailyCap = chosen.dailyCap !== null;
+        const needsCappedCounter = needsTotalCap || needsDailyCap;
+
+        if (needsCappedCounter) {
+          await tx`savepoint sp_draw_attempt`;
+        }
+
+        let couponId: string | null = null;
+        let couponCode: string | null = null;
+        let couponExpiresAt: Date | null = null;
+
+        if (chosen.segmentType === 'COUPON') {
+          couponExpiresAt = new Date(dbNow.getTime() + chosen.couponValidDays * 86_400_000);
+          const createdCoupon = await insertPersonalSpinCouponInTx(tx, {
+            segment: chosen,
+            userEmail,
+            startsAt: dbNow,
+            endsAt: couponExpiresAt,
+          });
+          couponId = createdCoupon.couponId;
+          couponCode = createdCoupon.code;
+        }
+
+        await tx`
+          update spin_wheel_spins
+          set
+            segment_id = ${chosen.id},
+            segment_label = ${chosen.label},
+            segment_type = ${chosen.segmentType},
+            coupon_id = ${couponId},
+            coupon_code = ${couponCode},
+            roll_value = ${draw.rollValue},
+            weights_snapshot = ${tx.json(draw.weightsSnapshot as never)}
+          where id = ${spinId}
+        `;
+
+        if (options.beforeCounterHook) {
+          await options.beforeCounterHook({ tx, chosen, spinId });
+        }
+
+        if (needsTotalCap && needsDailyCap) {
+          const [counterRow] = (await tx`
+            with seg_inc as (
+              update spin_wheel_segments
+              set total_awarded = total_awarded + 1, updated_at = ${dbNow}
+              where id = ${chosen.id}
+                and is_active = true
+                and (total_cap is null or total_awarded < total_cap)
+              returning id, daily_cap
+            ),
+            day_inc as (
+              insert into spin_wheel_segment_daily_counts (segment_id, store_day, awarded_count)
+              select id, ${dayInfo.storeDay}::date, 1
+              from seg_inc
+              on conflict (segment_id, store_day) do update
+              set awarded_count = spin_wheel_segment_daily_counts.awarded_count + 1
+              where (
+                (select daily_cap from seg_inc) is null
+                or spin_wheel_segment_daily_counts.awarded_count < (select daily_cap from seg_inc)
+              )
+              returning segment_id
+            )
+            select
+              (select count(*)::int from seg_inc) as seg_ok,
+              (select count(*)::int from day_inc) as day_ok
+          `) as Array<{ seg_ok: number; day_ok: number }>;
+
+          if (Number(counterRow?.seg_ok ?? 0) !== 1 || Number(counterRow?.day_ok ?? 0) !== 1) {
+            await tx`rollback to savepoint sp_draw_attempt`;
+            remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
+            continue;
+          }
+        } else if (needsTotalCap) {
+          const updated = (await tx`
+            update spin_wheel_segments
+            set total_awarded = total_awarded + 1, updated_at = ${dbNow}
+            where id = ${chosen.id}
+              and is_active = true
+              and total_cap is not null
+              and total_awarded < total_cap
+            returning id
+          `) as Array<{ id: string }>;
+
+          if (updated.length !== 1) {
+            await tx`rollback to savepoint sp_draw_attempt`;
+            remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
+            continue;
+          }
+        } else if (needsDailyCap) {
+          const updatedDaily = (await tx`
+            insert into spin_wheel_segment_daily_counts (segment_id, store_day, awarded_count)
+            values (${chosen.id}, ${dayInfo.storeDay}::date, 1)
+            on conflict (segment_id, store_day) do update
+            set awarded_count = spin_wheel_segment_daily_counts.awarded_count + 1
+            where spin_wheel_segment_daily_counts.awarded_count < ${chosen.dailyCap!}
+            returning segment_id
+          `) as Array<{ segment_id: string }>;
+
+          if (updatedDaily.length !== 1) {
+            await tx`rollback to savepoint sp_draw_attempt`;
+            remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
+            continue;
+          }
+        }
+
+        finalChosen = chosen;
+        finalCouponId = couponId;
+        finalCouponCode = couponCode;
+        finalCouponExpiresAt = couponExpiresAt;
+        break;
+      }
+
+      if (!finalChosen) {
         throw new SpinAbortError(
           'exhausted',
           'All Spin and Win rewards have been claimed for now. Please check back later.',
         );
       }
 
-      const chosen = draw.segment;
-      let couponId: string | null = null;
-      let couponCode: string | null = null;
-      let couponExpiresAt: Date | null = null;
-
-      await tx`
-        update spin_wheel_segments
-        set total_awarded = total_awarded + 1, updated_at = ${dbNow}
-        where id = ${chosen.id}
-      `;
-      await tx`
-        insert into spin_wheel_segment_daily_counts (segment_id, store_day, awarded_count)
-        values (${chosen.id}, ${dayInfo.storeDay}::date, 1)
-        on conflict (segment_id, store_day)
-        do update set awarded_count = spin_wheel_segment_daily_counts.awarded_count + 1
-      `;
-
-      if (chosen.segmentType === 'COUPON') {
-        couponExpiresAt = new Date(dbNow.getTime() + chosen.couponValidDays * 86_400_000);
-        const createdCoupon = await insertPersonalSpinCouponInTx(tx, {
-          segment: chosen,
-          userEmail: user.email,
-          startsAt: dbNow,
-          endsAt: couponExpiresAt,
-        });
-        couponId = createdCoupon.couponId;
-        couponCode = createdCoupon.code;
-      }
-
-      await tx`
-        update spin_wheel_spins
-        set
-          segment_id = ${chosen.id},
-          segment_label = ${chosen.label},
-          segment_type = ${chosen.segmentType},
-          coupon_id = ${couponId},
-          coupon_code = ${couponCode},
-          roll_value = ${draw.rollValue},
-          weights_snapshot = ${tx.json(draw.weightsSnapshot as never)}
-        where id = ${spinId}
-      `;
-
       const spinView: CustomerSpinResultView = {
         spinId,
         storeDay: dayInfo.storeDay,
-        segmentId: chosen.id,
-        segmentLabel: chosen.label,
-        segmentType: chosen.segmentType,
-        couponCode,
-        couponSummary: chosen.segmentType === 'COUPON' ? formatPrizeSummary(chosen) : null,
-        couponExpiresAt: couponExpiresAt ? couponExpiresAt.toISOString() : null,
+        segmentId: finalChosen.id,
+        segmentLabel: finalChosen.label,
+        segmentType: finalChosen.segmentType,
+        couponCode: finalCouponCode,
+        couponSummary: finalChosen.segmentType === 'COUPON' ? formatPrizeSummary(finalChosen) : null,
+        couponExpiresAt: finalCouponExpiresAt ? finalCouponExpiresAt.toISOString() : null,
         createdAt: dbNow.toISOString(),
       };
 
-      const postSpinCooldown = await resolveCooldownForSpinView(
-        tx,
-        input.userId,
-        spinView,
+      const postCooldownInput = finalChosen.segmentType === 'COUPON'
+        ? spinResultToCooldownInput(spinView)
+        : latestWin;
+      const postSpinCooldown = computeSpinCooldownState({
         dbNow,
-        dayInfo.nextResetAt,
-        settings,
-      );
+        nextDailyResetAt: dayInfo.nextResetAt,
+        latestCouponWin: postCooldownInput,
+        rewardCooldownMode: settings.rewardCooldownMode,
+        rewardCooldownDays: settings.rewardCooldownDays,
+      });
 
       return {
         alreadySpun: false as const,
         spin: spinView,
         nextSpinAt: postSpinCooldown.nextSpinAt.toISOString(),
         secondsUntilReset: postSpinCooldown.secondsUntilReset,
-        userEmail: user.email,
-        customerName: user.first_name ?? '',
-        wonCoupon: chosen.segmentType === 'COUPON' && Boolean(couponCode),
+        userEmail,
+        customerName: userFirstName,
+        wonCoupon: finalChosen.segmentType === 'COUPON' && Boolean(finalCouponCode),
         couponExpiresAt: spinView.couponExpiresAt,
         timeZone,
       };
