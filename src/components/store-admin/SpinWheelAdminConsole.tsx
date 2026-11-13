@@ -53,6 +53,10 @@ interface SettingsDraft {
   maxSpinsPerIpPerDay: string;
   minAccountAgeMinutes: string;
   showOnHomePage: boolean;
+  popupEnabled: boolean;
+  popupDelaySeconds: string;
+  popupRequireScroll: boolean;
+  popupMobileFloatingButton: boolean;
   rewardCooldownMode: SpinRewardCooldownMode;
   rewardCooldownDays: string;
   showNextSpinCountdown: boolean;
@@ -122,6 +126,10 @@ function toSettingsDraft(
     maxSpinsPerIpPerDay: String(data.settings.maxSpinsPerIpPerDay || 1),
     minAccountAgeMinutes: String(data.settings.minAccountAgeMinutes ?? 0),
     showOnHomePage: data.settings.showOnHomePage,
+    popupEnabled: data.settings.popupEnabled ?? true,
+    popupDelaySeconds: String(data.settings.popupDelaySeconds ?? 10),
+    popupRequireScroll: data.settings.popupRequireScroll ?? true,
+    popupMobileFloatingButton: data.settings.popupMobileFloatingButton ?? true,
     rewardCooldownMode: data.settings.rewardCooldownMode ?? 'until_coupon_expires',
     rewardCooldownDays: String(data.settings.rewardCooldownDays ?? 7),
     showNextSpinCountdown: data.settings.showNextSpinCountdown ?? true,
@@ -278,6 +286,12 @@ export function SpinWheelAdminConsole({
           maxSpinsPerIpPerDay: Number.parseInt(settings.maxSpinsPerIpPerDay, 10) || 1,
           minAccountAgeMinutes: Number.parseInt(settings.minAccountAgeMinutes, 10) || 0,
           showOnHomePage: settings.showOnHomePage,
+          popupEnabled: settings.popupEnabled,
+          popupDelaySeconds: Number.isFinite(Number.parseInt(settings.popupDelaySeconds, 10))
+            ? Number.parseInt(settings.popupDelaySeconds, 10)
+            : 10,
+          popupRequireScroll: settings.popupRequireScroll,
+          popupMobileFloatingButton: settings.popupMobileFloatingButton,
           rewardCooldownMode: settings.rewardCooldownMode,
           rewardCooldownDays: Number.parseInt(settings.rewardCooldownDays, 10) || 7,
           showNextSpinCountdown: settings.showNextSpinCountdown,
@@ -332,6 +346,10 @@ export function SpinWheelAdminConsole({
         maxSpinsPerIpPerDay: String(nextData.settings.maxSpinsPerIpPerDay || 1),
         minAccountAgeMinutes: String(nextData.settings.minAccountAgeMinutes ?? 0),
         showOnHomePage: nextData.settings.showOnHomePage,
+        popupEnabled: nextData.settings.popupEnabled ?? true,
+        popupDelaySeconds: String(nextData.settings.popupDelaySeconds ?? 10),
+        popupRequireScroll: nextData.settings.popupRequireScroll ?? true,
+        popupMobileFloatingButton: nextData.settings.popupMobileFloatingButton ?? true,
         rewardCooldownMode: nextData.settings.rewardCooldownMode ?? 'until_coupon_expires',
         rewardCooldownDays: String(nextData.settings.rewardCooldownDays ?? 7),
         showNextSpinCountdown: nextData.settings.showNextSpinCountdown ?? true,
@@ -486,9 +504,83 @@ export function SpinWheelAdminConsole({
                   <span>Show compact promotional callout on the home page</span>
                 </span>
                 <span className="sa-card-note" style={{ display: 'block', marginTop: '0.25rem' }}>
-                  When on and the wheel is active, signed-in or browsing shoppers see a sleek callout linking to the dedicated Spin and Win page.
+                  When on and the wheel is active, the home page displays the compact entry strip linking to Spin and Win (never shown on checkout, payment, account, or admin pages).
                 </span>
               </label>
+
+              <div
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '10px',
+                  padding: '0.85rem 1rem',
+                  background: '#fafafa',
+                  display: 'grid',
+                  gap: '0.75rem',
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: '0.92rem' }}>Home page popup behaviour</div>
+
+                <label className="sa-field">
+                  <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.popupEnabled}
+                      onChange={(e) => updateSettings('popupEnabled', e.target.checked)}
+                    />
+                    <span>Show interactive wheel popup on the home page</span>
+                  </span>
+                  <span className="sa-card-note" style={{ display: 'block', marginTop: '0.25rem' }}>
+                    Shown at most once per browser session, and stays hidden for 7 days after a visitor dismisses it. Requires &quot;Show compact promotional callout on the home page&quot; above.
+                  </span>
+                </label>
+
+                <div className="sa-control-grid">
+                  <label className="sa-field">
+                    <span className="sa-label">Popup delay (seconds)</span>
+                    <input
+                      className="sa-input"
+                      type="number"
+                      min={0}
+                      max={120}
+                      value={settings.popupDelaySeconds}
+                      onChange={(e) => updateSettings('popupDelaySeconds', e.target.value)}
+                    />
+                    <span className="sa-card-note">
+                      Seconds to wait before opening the home popup (0–120, default 10).
+                    </span>
+                  </label>
+
+                  <div style={{ display: 'grid', gap: '0.5rem', alignContent: 'start' }}>
+                    <label className="sa-field">
+                      <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.popupRequireScroll}
+                          onChange={(e) => updateSettings('popupRequireScroll', e.target.checked)}
+                        />
+                        <span>Show only after visitor scrolls</span>
+                      </span>
+                      <span className="sa-card-note" style={{ display: 'block', marginTop: '0.2rem' }}>
+                        Recommended (default on): waits until the shopper starts scrolling before starting the delay timer.
+                      </span>
+                    </label>
+
+                    <label className="sa-field">
+                      <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.popupMobileFloatingButton}
+                          onChange={(e) => updateSettings('popupMobileFloatingButton', e.target.checked)}
+                        />
+                        <span>Use compact floating button on mobile</span>
+                      </span>
+                      <span className="sa-card-note" style={{ display: 'block', marginTop: '0.2rem' }}>
+                        Recommended (default on): screens under 768px show a subtle corner pill instead of auto-opening a full-screen dialog.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
 
               <label className="sa-field">
                 <span className="sa-label">Heading title</span>
@@ -580,10 +672,10 @@ export function SpinWheelAdminConsole({
                   >
                     <option value="until_coupon_expires">Wait until won coupon expires (Recommended)</option>
                     <option value="custom_days">Wait a fixed number of days after winning</option>
-                    <option value="disabled">Disabled — allow daily spin even after a win</option>
+                    <option value="disabled">Disabled — allow one spin every store day</option>
                   </select>
                   <span className="sa-card-note">
-                    Prevents repeat reward farming after a customer wins a coupon. Non-winning spins (&quot;Try again&quot;) still reset daily at midnight.
+                    Choose how long coupon winners wait before spinning again: wait until their won coupon expires (default), wait a fixed number of days, or allow one spin every store day (Disabled). Non-winning spins (&quot;Try again&quot;) always reset at midnight. Customers see this clearly when a cooldown applies.
                   </span>
                 </label>
 

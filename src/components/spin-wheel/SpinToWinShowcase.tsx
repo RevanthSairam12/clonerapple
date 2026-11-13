@@ -351,7 +351,7 @@ export function SpinToWinShowcase({
         type="button"
         onClick={handleDismiss}
         aria-label="Close Spin and Win"
-        className="absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full text-2xl font-light text-[#6e6e68] transition hover:bg-black/5 hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
+        className="absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full text-2xl font-light text-[#3f3f3a] transition hover:bg-black/5 hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
       >
         <span aria-hidden="true">×</span>
       </button>
@@ -448,7 +448,7 @@ export function SpinToWinShowcase({
                         {copiedCode ? 'Copied' : 'Copy code'}
                       </button>
                     </div>
-                    <p className="mt-2.5 text-xs text-[#555555]">
+                    <p className="mt-2.5 text-xs text-[#404040]">
                       Saved privately to Your Coupons
                       {wonExpiryFormatted ? ` · Valid until ${wonExpiryFormatted}` : ''}.
                     </p>
@@ -460,14 +460,14 @@ export function SpinToWinShowcase({
                     </Link>
                   </>
                 ) : (
-                  <p className="mt-2 text-xs text-[#555555]">
+                  <p className="mt-2 text-xs text-[#404040]">
                     No prize this round — thank you for playing!
                   </p>
                 )}
               </div>
 
               {/* Next spin countdown / reward cooldown note */}
-              <div className="border border-[#111111]/15 bg-white/80 px-4 py-3 text-xs text-[#333333]">
+              <div className="border border-[#111111]/15 bg-white/85 px-4 py-3 text-xs text-[#262626]">
                 {countdownReadyToSpin ? (
                   <button
                     type="button"
@@ -477,28 +477,26 @@ export function SpinToWinShowcase({
                     Next spin is ready — refresh wheel
                   </button>
                 ) : state.showNextSpinCountdown ? (
-                  <>
-                    <div>
-                      Next spin in{' '}
-                      <strong className="font-mono text-[#111111]">{countdownFormatted}</strong>
-                    </div>
-                    {state.cooldownBlocked ? (
-                      <div className="mt-1 text-[11px] text-[#666666]">
-                        {state.rewardCooldownMode === 'until_coupon_expires'
-                          ? 'Daily Spin pauses until your won coupon expires so you get maximum time to redeem it.'
-                          : `Reward cooldown active (${state.rewardCooldownDays}-day window after winning).`}
-                      </div>
-                    ) : null}
-                  </>
+                  <div>
+                    Next spin in{' '}
+                    <strong className="font-mono text-[#111111]">{countdownFormatted}</strong>
+                  </div>
                 ) : (
                   <span>You have used today&apos;s spin ({quotaLabel}).</span>
                 )}
+                {(state.cooldownBlocked || (state.rewardCooldownMode !== 'disabled' && displaySpin.segmentType === 'COUPON')) ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[#404040]">
+                    {state.rewardCooldownMode === 'until_coupon_expires'
+                      ? 'Daily Spin pauses while your won coupon is still active so you can redeem it first.'
+                      : `Reward cooldown active (${state.rewardCooldownDays}-day wait after winning a prize).`}
+                  </p>
+                ) : null}
               </div>
 
               <button
                 type="button"
                 onClick={handleDismiss}
-                className="mt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#333333] hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
+                className="mt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#262626] hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
               >
                 {variant === 'modal' ? 'NO THANKS' : 'Continue shopping'}
               </button>
@@ -513,15 +511,20 @@ export function SpinToWinShowcase({
                 <h2 className="mt-2.5 text-base font-bold text-[#111111]">
                   You already have an active Spin &amp; Win reward
                 </h2>
+                <p className="mt-1.5 text-xs text-[#404040]">
+                  {state.rewardCooldownMode === 'until_coupon_expires'
+                    ? 'Daily Spin pauses until your active reward coupon expires so you have time to redeem it.'
+                    : `Reward cooldown is set to ${state.rewardCooldownDays} day${state.rewardCooldownDays === 1 ? '' : 's'} after each prize win.`}
+                </p>
                 {state.activeReward?.couponCode ? (
-                  <p className="mt-1.5 text-xs text-[#444444]">
+                  <p className="mt-1.5 text-xs text-[#262626]">
                     Coupon <strong className="font-mono">{state.activeReward.couponCode}</strong> (
                     {state.activeReward.couponSummary || state.activeReward.segmentLabel})
                     {wonExpiryFormatted ? ` expires on ${wonExpiryFormatted}.` : '.'}
                   </p>
                 ) : null}
                 {state.showNextSpinCountdown ? (
-                  <p className="mt-2.5 text-xs text-[#333333]">
+                  <p className="mt-2.5 text-xs text-[#262626]">
                     Next spin in{' '}
                     <strong className="font-mono text-[#111111]">{countdownFormatted}</strong>
                   </p>
@@ -542,26 +545,31 @@ export function SpinToWinShowcase({
               </button>
             </div>
           ) : (
-            /* Default 1:1 Poster Entry State */
+            /* Default 1:1 Poster Entry State
+             * Privacy: Signed-in email and phone come pre-masked from the server.
+             * Neither field is sent to newsletters, third-party endpoints, or even
+             * POST /api/spin-wheel/spin (which authenticates strictly via HTTP-only cookie).
+             */
             <div className="mt-6 w-full max-w-[330px] space-y-2.5">
               {/* Boxed field 1: YOUR EMAIL (1px solid black border exact match) */}
               <div className="flex h-[46px] items-center border border-[#111111] bg-white px-3.5">
                 <input
-                  type="email"
+                  type={state.signedIn ? 'text' : 'email'}
                   aria-label="Your Email"
                   placeholder="YOUR EMAIL"
+                  autoComplete="off"
                   readOnly={state.signedIn}
                   value={
                     state.signedIn
-                      ? state.customerProfile?.email ?? 'Signed-in account'
+                      ? state.customerProfile?.email || 'Signed-in account'
                       : guestEmail
                   }
                   onChange={(e) => setGuestEmail(e.target.value)}
-                  className="w-full bg-transparent text-xs font-medium tracking-[0.06em] text-[#111111] placeholder:text-[#737373] focus:outline-none"
+                  className="w-full bg-transparent text-xs font-medium tracking-[0.06em] text-[#111111] placeholder:text-[#525252] focus:outline-none"
                 />
                 {state.signedIn ? (
-                  <span className="ml-2 shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#4b7300]">
-                    Verified
+                  <span className="ml-2 shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#3a5a00]">
+                    Signed in
                   </span>
                 ) : null}
               </div>
@@ -572,6 +580,7 @@ export function SpinToWinShowcase({
                   type="tel"
                   aria-label="Your Phone Number"
                   placeholder="YOUR PHONE NUMBER"
+                  autoComplete="off"
                   readOnly={state.signedIn}
                   value={
                     state.signedIn
@@ -579,7 +588,7 @@ export function SpinToWinShowcase({
                       : guestPhone
                   }
                   onChange={(e) => setGuestPhone(e.target.value)}
-                  className="w-full bg-transparent text-xs font-medium tracking-[0.06em] text-[#111111] placeholder:text-[#737373] focus:outline-none"
+                  className="w-full bg-transparent text-xs font-medium tracking-[0.06em] text-[#111111] placeholder:text-[#525252] focus:outline-none"
                 />
               </div>
 
@@ -616,7 +625,7 @@ export function SpinToWinShowcase({
                   </span>
                 </label>
               ) : (
-                <p className="pt-0.5 text-[11px] text-[#555555]">
+                <p className="pt-0.5 text-[11px] text-[#404040]">
                   Sign in to spin once daily &amp; save rewards:{' '}
                   <Link
                     href="/auth?redirect=/spin-and-win"
@@ -657,7 +666,7 @@ export function SpinToWinShowcase({
               <button
                 type="button"
                 onClick={handleDismiss}
-                className="inline-block pt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#333333] transition hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
+                className="inline-block pt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#262626] transition hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
               >
                 NO THANKS
               </button>
@@ -668,9 +677,9 @@ export function SpinToWinShowcase({
           {state.segments.length >= 2 ? (
             <details
               id="spin-terms-panel"
-              className="mt-5 w-full max-w-[335px] text-left text-[11px] text-[#555555]"
+              className="mt-5 w-full max-w-[335px] text-left text-[11px] text-[#404040]"
             >
-              <summary className="cursor-pointer text-center font-semibold uppercase tracking-[0.07em] text-[#555555] hover:text-[#111111]">
+              <summary className="cursor-pointer text-center font-semibold uppercase tracking-[0.07em] text-[#404040] hover:text-[#111111]">
                 Prizes &amp; official rules
               </summary>
               <div className="mt-2.5 border border-[#111111]/15 bg-white p-3.5">
@@ -682,15 +691,15 @@ export function SpinToWinShowcase({
                   {state.segments.map((seg) => (
                     <li
                       key={seg.id}
-                      className="rounded-full border border-[#111111]/15 px-2 py-0.5 text-[11px] font-semibold text-[#111111]"
-                      style={{ backgroundColor: seg.colorHex }}
+                      className="rounded-full border border-[#111111]/15 px-2 py-0.5 text-[11px] font-semibold"
+                      style={{ backgroundColor: seg.colorHex, color: seg.textColorHex }}
                     >
                       {seg.label}
                     </li>
                   ))}
                 </ul>
                 {state.termsText ? (
-                  <p className="mt-2.5 whitespace-pre-line text-[11px] leading-relaxed text-[#444444]">
+                  <p className="mt-2.5 whitespace-pre-line text-[11px] leading-relaxed text-[#333333]">
                     {state.termsText}
                   </p>
                 ) : null}
