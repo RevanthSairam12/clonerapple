@@ -132,7 +132,7 @@ test('brand wordmarks ignore stale saved names while preserving links', () => {
 });
 
 test('editor drops dead paths without exposing retired OPPO keys', () => {
-  assert.equal(COLLECTIONS.length, 31);
+  assert.equal(COLLECTIONS.length, 32);
   assert.equal(COLLECTIONS.filter(collection => collection.key.startsWith('edu.')).length, 11);
   assert.equal(LEGACY_COLLECTION_KEYS.length, 11);
   for (const key of LEGACY_COLLECTION_KEYS) {

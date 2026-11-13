@@ -389,6 +389,19 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   /* — Gadzio homepage (route: /) — */
   {
+    key: 'gadzio.hero_tiles',
+    label: 'Homepage — Hero Tiles (New UI)',
+    sitePaths: ['/'],
+    description: 'New UI homepage showcase hero tiles positioned above the Diwali campaign and Crowd Favorites.',
+    fields: [
+      booleanField('enabled', 'Show Hero Tiles section', 'Untick to hide this section from the new homepage.'),
+    ],
+    lists: [
+      { path: 'heroTiles', itemLabel: 'Hero tile', minItems: 1, maxItems: 6, itemFields: TILE_ITEM_FIELDS },
+    ],
+    disablable: true,
+  },
+  {
     key: 'apple.hero_tiles',
     label: 'Homepage — Hero Tiles (Old UI only)',
     sitePaths: ['/'],

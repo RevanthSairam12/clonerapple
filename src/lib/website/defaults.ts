@@ -29,7 +29,7 @@ import { FOOTER_BOTTOM } from '@/components/sites/www-apple-com-736d3707/root-8a
 import { TV_GALLERY_ITEMS } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/gallery';
 import { LOCALE_BANNER } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/locale-banner';
 import { NAV_ITEMS, SEARCH_PANEL } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
-import { HERO_INLINE_MEDIA, HERO_TILES, PROMO_TILES, type Tile } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
+import { HERO_INLINE_MEDIA, HERO_TILES, NEW_UI_HERO_TILES, PROMO_TILES, type Tile } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
 import {
   HERO as EDU_HERO,
   PRODUCT_NAV as EDU_PRODUCT_NAV,
@@ -303,11 +303,16 @@ export const GADZIO_REVIEWS_DEFAULTS = { enabled: true, ...REVIEWS_COPY, items: 
 export const GADZIO_IN_THE_WILD_DEFAULTS = {
   enabled: true, ...IN_THE_WILD_COPY, items: IN_THE_WILD_ITEMS,
 };
+export const GADZIO_HERO_TILES_DEFAULTS = {
+  enabled: true,
+  heroTiles: NEW_UI_HERO_TILES.map(tileOverride),
+};
 
 /* -------------------------------------------------------------- build */
 
 const DEFAULTS: Record<string, Record<string, unknown>> = {
   /* Gadzio homepage */
+  'gadzio.hero_tiles': GADZIO_HERO_TILES_DEFAULTS,
   'gadzio.reviews': GADZIO_REVIEWS_DEFAULTS,
   'gadzio.in_the_wild': GADZIO_IN_THE_WILD_DEFAULTS,
   'gadzio.brand_bar': GADZIO_BRAND_BAR_DEFAULTS,
@@ -355,6 +360,9 @@ export function getCollectionDefaults(key: string): Record<string, unknown> | nu
  * pre-fill their image paths in DEFAULTS, so no preview map is needed).
  */
 const CURRENT_ART: Record<string, Record<string, unknown>> = {
+  'gadzio.hero_tiles': {
+    heroTiles: NEW_UI_HERO_TILES.map((tile) => responsiveImageCurrentArt(tile.image)),
+  },
   'apple.hero_tiles': {
     heroTiles: HERO_TILES.map((tile) => responsiveImageCurrentArt(tile.image)),
   },

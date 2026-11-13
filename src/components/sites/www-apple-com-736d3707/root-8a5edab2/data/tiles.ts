@@ -132,6 +132,75 @@ export const HERO_TILES: Tile[] = [
   }
 ];
 
+/**
+ * Independent showcase hero tiles rendered in the New UI homepage (above the
+ * Diwali campaign and Crowd Favorites), separate from `HERO_TILES` (Old UI only).
+ */
+export const NEW_UI_HERO_TILES: Tile[] = [
+  {
+    "group": "hero",
+    "index": 1,
+    "theme": "light",
+    "href": "/in/shop/iphone/accessories/cases-protection",
+    "internal": true,
+    "headline": "MagSafe Armor",
+    "headlineLogo": null,
+    "subhead": [
+      {
+        "kind": "text",
+        "value": "Drop-tested protection crafted for everyday carry."
+      }
+    ],
+    "subheadMaxWidth": {
+      "sm": 260,
+      "md": null,
+      "lg": null
+    },
+    "ctas": [
+      {
+        "label": "Explore Cases",
+        "href": "/in/shop/iphone/accessories/cases-protection",
+        "ariaLabel": "Explore Cases, MagSafe Armor",
+        "variant": "primary",
+        "internal": true
+      },
+      {
+        "label": "Shop Collection",
+        "href": "/in/shop/iphone/accessories/mobile-cases",
+        "ariaLabel": "Shop Collection, MagSafe Armor",
+        "variant": "secondary",
+        "internal": true
+      }
+    ],
+    "image": {
+      "sources": [
+        {
+          "media": "(max-width:734px)",
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/4_iph_case__small.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/6_cases_iph_small_2x.jpg"
+        },
+        {
+          "media": "(max-width:1068px)",
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/3_iph_case_medium.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/2_iph_case__medium_2x.jpg"
+        },
+        {
+          "media": "(min-width:0px)",
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_iph_case_large.jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/5_iph_case_large_2x.jpg"
+        }
+      ],
+      "img": {
+        "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/5_iph_case_large_2x.jpg",
+        "alt": "Gadzio protective smartphone cases arranged in signature finishes",
+        "width": 3008,
+        "height": 692
+      }
+    },
+    "startFrame": null
+  }
+];
+
 export const PROMO_TILES: Tile[] = [
   {
     "group": "promo",

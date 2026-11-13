@@ -6,6 +6,7 @@ import { EndlessEntertainmentGallery } from '@/components/sites/www-apple-com-73
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { HeroSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection';
+import { NEW_UI_HERO_TILES } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
 import { GadzioHeroSection } from '@/components/hero/GadzioHeroSection';
 import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
 import { GadzioCategoryGrid } from '@/components/categories/GadzioCategoryGrid';
@@ -50,6 +51,10 @@ export interface HomePageOverrides {
   heroTiles?: TileOverride[];
   /** Back to School video stage (tile 1 motion). */
   heroVideo?: HeroVideoOverride;
+  /** Showcase Hero Tiles rendered in the New UI above Diwali & Crowd Favorites. */
+  showcaseHeroTiles?: TileOverride[];
+  /** false = New UI showcase hero tiles hidden from admin panel. */
+  showcaseHeroTilesEnabled?: boolean;
   promoHeading?: string;
   promoTiles?: TileOverride[];
   /** false = section disabled in the admin panel. */
@@ -148,6 +153,15 @@ export function GadzioHomePage({
               <GadzioBrandBar
                 items={overrides?.brandBar?.items as any}
                 enabled={overrides?.brandBar?.enabled}
+              />
+            ) : null}
+
+            {/* 4b. SHOWCASE HERO TILES (NEW UI, INDEPENDENT DATA FROM OLD UI) */}
+            {overrides?.showcaseHeroTilesEnabled !== false ? (
+              <HeroSection
+                baseTiles={NEW_UI_HERO_TILES}
+                tiles={overrides?.showcaseHeroTiles}
+                enableVideo={false}
               />
             ) : null}
 
