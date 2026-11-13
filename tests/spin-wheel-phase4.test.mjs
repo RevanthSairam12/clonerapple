@@ -16,10 +16,14 @@ const jiti = createJiti(import.meta.url, {
   alias: { '@': path.join(root, 'src') },
 });
 
-const { computeRemainingMs, formatCountdownHms, formatSpinCouponExpiry } =
-  await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'countdown.ts'));
+const {
+  computeRemainingMs,
+  formatCountdownHms,
+  formatSpinCouponExpiry,
+  formatSpinCountdown,
+} = await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'countdown.ts'));
 
-const { computeTargetWheelRotation } = await jiti.import(
+const { computeTargetWheelRotation, WHEEL_POINTER_RIGHT_ANGLE_DEG } = await jiti.import(
   path.join(root, 'src', 'lib', 'spin-wheel', 'colors.ts'),
 );
 
@@ -49,39 +53,46 @@ test('countdown helpers format HH:MM:SS and clamp midnight rollover cleanly', ()
   assert.match(formatted, /Nov/);
   assert.equal(formatSpinCouponExpiry(null), '');
   assert.equal(formatSpinCouponExpiry('invalid-iso'), '');
+
+  // Multi-day countdown formats Xd HH:MM:SS when >= 24h and HH:MM:SS when < 24h
+  assert.equal(formatSpinCountdown(3_661_000), '01:01:01');
+  assert.equal(formatSpinCountdown(2 * 86_400_000 + 3_661_000), '2d 01:01:01');
+  assert.equal(formatSpinCountdown(-10), '00:00:00');
 });
 
-test('computeTargetWheelRotation lands chosen slice centered under 12 o clock pointer across 2..12 slices', () => {
-  for (let count = 2; count <= 12; count += 1) {
-    const sliceDeg = 360 / count;
-    let cumulativeRotation = 0;
+test('computeTargetWheelRotation lands chosen slice centered under 12 o clock and right teardrop pointers across 2..12 slices', () => {
+  for (const pointerDeg of [0, WHEEL_POINTER_RIGHT_ANGLE_DEG]) {
+    for (let count = 2; count <= 12; count += 1) {
+      const sliceDeg = 360 / count;
+      let cumulativeRotation = 0;
 
-    for (let targetIdx = 0; targetIdx < count; targetIdx += 1) {
-      const nextDeg = computeTargetWheelRotation(cumulativeRotation, targetIdx, count, 5);
-      assert.ok(nextDeg > cumulativeRotation + 360 * 4, 'should spin forward multiple turns');
+      for (let targetIdx = 0; targetIdx < count; targetIdx += 1) {
+        const nextDeg = computeTargetWheelRotation(cumulativeRotation, targetIdx, count, 5, pointerDeg);
+        assert.ok(nextDeg > cumulativeRotation + 360 * 4, 'should spin forward multiple turns');
 
-      // Rotating the SVG wheel clockwise by nextDeg moves slice midpoint (targetIdx + 0.5)*sliceDeg
-      // modulo 360 to 0 deg (12 o clock top pointer).
-      const sliceMid = (targetIdx + 0.5) * sliceDeg;
-      const pointerPos = ((sliceMid + nextDeg) % 360 + 360) % 360;
-      const distFromTop = Math.min(pointerPos, 360 - pointerPos);
-      assert.ok(
-        distFromTop < 1e-6,
-        `count=${count} targetIdx=${targetIdx} landed ${pointerPos}deg from top`,
-      );
+        const sliceMid = (targetIdx + 0.5) * sliceDeg;
+        const landedPos = ((sliceMid + nextDeg) % 360 + 360) % 360;
+        const rawDiff = Math.abs(landedPos - pointerDeg);
+        const distFromPointer = Math.min(rawDiff, 360 - rawDiff);
+        assert.ok(
+          distFromPointer < 1e-6,
+          `pointer=${pointerDeg} count=${count} targetIdx=${targetIdx} landed ${landedPos}deg`,
+        );
 
-      // Verify zero-extra-turns snap (used by reduced-motion and reload restoration)
-      const snapDeg = computeTargetWheelRotation(cumulativeRotation, targetIdx, count, 0);
-      const snapPointer = ((sliceMid + snapDeg) % 360 + 360) % 360;
-      const snapDist = Math.min(snapPointer, 360 - snapPointer);
-      assert.ok(snapDist < 1e-6, `snap count=${count} targetIdx=${targetIdx}`);
+        // Verify zero-extra-turns snap (used by reduced-motion and reload restoration)
+        const snapDeg = computeTargetWheelRotation(cumulativeRotation, targetIdx, count, 0, pointerDeg);
+        const snapPos = ((sliceMid + snapDeg) % 360 + 360) % 360;
+        const snapRawDiff = Math.abs(snapPos - pointerDeg);
+        const snapDist = Math.min(snapRawDiff, 360 - snapRawDiff);
+        assert.ok(snapDist < 1e-6, `snap pointer=${pointerDeg} count=${count} targetIdx=${targetIdx}`);
 
-      cumulativeRotation = nextDeg;
+        cumulativeRotation = nextDeg;
+      }
     }
   }
 });
 
-test('storefront spin API routes enforce dynamic rendering, same-origin, auth, rate limits, and hashed IP', async () => {
+test('storefront spin API routes enforce dynamic rendering, same-origin, auth, rate limits, cooldown 429, and 42P01 guards', async () => {
   const statusSrc = await readRel('src/app/api/spin-wheel/route.ts');
   assert.match(statusSrc, /dynamic = 'force-dynamic'/);
   assert.match(statusSrc, /'Cache-Control': 'no-store'/);
@@ -100,12 +111,18 @@ test('storefront spin API routes enforce dynamic rendering, same-origin, auth, r
   assert.match(spinSrc, /executeSpinDraw/);
   assert.match(spinSrc, /outcome\.reason === 'unauthorized'.*401/);
   assert.match(spinSrc, /outcome\.reason === 'account_too_new'.*403/);
-  assert.match(spinSrc, /outcome\.reason === 'ip_limit'.*429/);
+  assert.match(spinSrc, /reward_cooldown[\s\S]*429/);
   assert.match(spinSrc, /outcome\.reason === 'unavailable'.*503/);
+
+  const storeSrc = await readRel('src/lib/spin-wheel/store.ts');
+  assert.match(storeSrc, /42P01/);
+  assert.match(storeSrc, /isUndefinedTableError/);
 });
 
-test('customer spin UI covers signed-out redirect, terms check, reduced motion, a11y live region, result actions, and countdown', async () => {
+test('customer spin UI covers 1:1 poster design, 1/1 quota, popup dismissal, signed-out redirect, terms check, reduced motion, a11y, and countdown', async () => {
   const clientSrc = await readRel('src/components/spin-wheel/CustomerSpinWheelClient.tsx');
+  const showcaseSrc = await readRel('src/components/spin-wheel/SpinToWinShowcase.tsx');
+  const popupSrc = await readRel('src/components/spin-wheel/HomeSpinPopup.tsx');
   const svgSrc = await readRel('src/components/spin-wheel/SpinWheelSvg.tsx');
   const pageSrc = await readRel('src/app/spin-and-win/page.tsx');
 
@@ -115,33 +132,50 @@ test('customer spin UI covers signed-out redirect, terms check, reduced motion, 
   assert.match(pageSrc, /GlobalFooter/);
   assert.match(pageSrc, /getCustomerSpinState/);
   assert.match(pageSrc, /CustomerSpinWheelClient/);
+  assert.match(clientSrc, /SpinToWinShowcase/);
+
+  // 1:1 Cream/Coral/Lilac/Lime visual palette, boxed fields, 1/1 quota & controls
+  assert.match(showcaseSrc, /#fbf8ef/);
+  assert.match(showcaseSrc, /#e8c6ff/);
+  assert.match(showcaseSrc, /#d8f561/);
+  assert.match(showcaseSrc, /#f25c3b/);
+  assert.match(showcaseSrc, /YOUR EMAIL/);
+  assert.match(showcaseSrc, /YOUR PHONE NUMBER/);
+  assert.match(showcaseSrc, /SPIN TO WIN/);
+  assert.match(showcaseSrc, /NO THANKS/);
+  assert.match(showcaseSrc, /Daily Spin/);
+  assert.match(showcaseSrc, /effectiveRemainingSpins\}\/\$\{state\.dailySpinsTotal\}/);
+  assert.match(popupSrc, /role="dialog"/);
+  assert.match(popupSrc, /Escape/);
+  assert.match(popupSrc, /sessionStorage/);
 
   // Screen reader status region, alert role, prize list, focus styles
-  assert.match(clientSrc, /role="status" aria-live="polite"/);
-  assert.match(clientSrc, /role="alert"/);
-  assert.match(clientSrc, /aria-label="Prizes on the wheel"/);
-  assert.match(clientSrc, /focus-visible:ring-2/);
+  assert.match(showcaseSrc, /role="status" aria-live="polite"/);
+  assert.match(showcaseSrc, /role="alert"/);
+  assert.match(showcaseSrc, /aria-label="Prizes on the wheel"/);
+  assert.match(showcaseSrc, /focus-visible:ring-2/);
 
-  // Reduced motion handling in both wheel client and SVG renderer
-  assert.match(clientSrc, /prefers-reduced-motion: reduce/);
-  assert.match(clientSrc, /computeTargetWheelRotation\(prev, targetIndex, state\.segments\.length, 0\)/);
+  // Reduced motion handling in both wheel showcase and SVG renderer
+  assert.match(showcaseSrc, /prefers-reduced-motion: reduce/);
+  assert.match(showcaseSrc, /computeTargetWheelRotation\(prev, targetIndex, state\.segments\.length, 0/);
   assert.match(svgSrc, /prefers-reduced-motion: reduce/);
   assert.match(svgSrc, /transition:\s*reducedMotion\s*\?\s*'none'/);
+  assert.match(svgSrc, /WHEEL_POINTER_RIGHT_ANGLE_DEG/);
 
   // Signed-out redirects back to /spin-and-win
-  assert.match(clientSrc, /\/auth\?redirect=\/spin-and-win/);
-  assert.match(clientSrc, /\/auth\?redirect=\/spin-and-win&mode=signup/);
+  assert.match(showcaseSrc, /\/auth\?redirect=\/spin-and-win/);
+  assert.match(showcaseSrc, /\/auth\?redirect=\/spin-and-win&mode=signup/);
 
-  // Terms checkbox gating, copy code, coupon link, continue shopping, midnight countdown
-  assert.match(clientSrc, /id="spin-terms"/);
-  assert.match(clientSrc, /href="#spin-terms"/);
-  assert.match(clientSrc, /termsAccepted/);
-  assert.match(clientSrc, /navigator\.clipboard\.writeText/);
-  assert.match(clientSrc, /href="\/account\/coupons"/);
-  assert.match(clientSrc, /Next spin in/);
+  // Terms checkbox gating, copy code, coupon link, continue shopping, next-spin countdown
+  assert.match(showcaseSrc, /id="spin-terms"/);
+  assert.match(showcaseSrc, /href="#spin-terms"/);
+  assert.match(showcaseSrc, /termsAccepted/);
+  assert.match(showcaseSrc, /navigator\.clipboard\.writeText/);
+  assert.match(showcaseSrc, /href="\/account\/coupons"/);
+  assert.match(showcaseSrc, /Next spin in/);
 });
 
-test('home, account dashboard, and account coupons entry points honor active/banner gating and label spin coupons', async () => {
+test('home, account dashboard, and account coupons entry points honor active/banner/popup gating and label spin coupons', async () => {
   const homePageSrc = await readRel('src/app/page.tsx');
   const homeClientSrc = await readRel(
     'src/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage.tsx',
@@ -152,18 +186,21 @@ test('home, account dashboard, and account coupons entry points honor active/ban
   const couponsPageSrc = await readRel('src/app/account/coupons/page.tsx');
   const couponsListSrc = await readRel('src/components/account/CouponsList.tsx');
 
-  // Home strip hidden unless banner.show is true
+  // Home strip & popup wired on /
   assert.match(homePageSrc, /getHomeSpinBannerState/);
+  assert.match(homePageSrc, /getCustomerSpinState/);
   assert.match(homeClientSrc, /HomeSpinStrip/);
+  assert.match(homeClientSrc, /HomeSpinPopup/);
   assert.match(stripSrc, /if \(!banner\?\.show\) return null/);
   assert.match(stripSrc, /href="\/spin-and-win"/);
 
-  // Account dashboard card hidden unless open or todaySpin exists
+  // Account dashboard card hidden unless open or todaySpin/cooldownBlocked
   assert.match(accountPageSrc, /getCustomerSpinState/);
   assert.match(accountPageSrc, /spinState\.available && spinState\.isOpen && spinState\.segments\.length >= 2/);
   assert.match(accountPageSrc, /spinOpen \|\| spinState\.todaySpin !== null/);
   assert.match(accountPageSrc, /AccountSpinCard/);
   assert.match(accountCardSrc, /Next spin in/);
+  assert.match(accountCardSrc, /formatSpinCountdown/);
   assert.match(accountCardSrc, /href="\/spin-and-win"/);
 
   // Coupons list shows Spin and Win source badge and conditional CTA

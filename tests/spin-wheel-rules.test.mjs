@@ -21,6 +21,7 @@ const jiti = createJiti(import.meta.url, {
 
 const {
   computeSegmentOdds,
+  computeSpinCooldownState,
   computeStoreDayInfo,
   contrastTextForHex,
   drawWeightedSegment,
@@ -243,4 +244,143 @@ test('window and summary helpers behave consistently', () => {
     formatPrizeSummary(makeSegment({ couponType: 'FIXED', couponValue: 15000 })),
     /150/,
   );
+});
+
+test('computeSpinCooldownState enforces until_coupon_expires and custom_days while exempting NO_PRIZE', () => {
+  const day1 = new Date('2026-11-13T10:00:00.000Z');
+  const midnight = new Date('2026-11-13T18:30:00.000Z');
+  const couponEnds = new Date('2026-11-20T10:00:00.000Z');
+  const latestWin = {
+    createdAt: day1,
+    couponEndsAt: couponEnds,
+    couponCode: 'SPINABCD1234',
+    couponSummary: '15% off',
+    segmentLabel: '15% off',
+  };
+
+  // Disabled mode never blocks after daily reset
+  const disabledRes = computeSpinCooldownState({
+    dbNow: new Date('2026-11-14T10:00:00.000Z'),
+    nextDailyResetAt: new Date('2026-11-14T18:30:00.000Z'),
+    latestCouponWin: latestWin,
+    rewardCooldownMode: 'disabled',
+    rewardCooldownDays: 7,
+  });
+  assert.equal(disabledRes.blockedByCooldown, false);
+
+  // NO_PRIZE customer (null latestCouponWin) is never blocked even in strict mode
+  const noPrizeRes = computeSpinCooldownState({
+    dbNow: day1,
+    nextDailyResetAt: midnight,
+    latestCouponWin: null,
+    rewardCooldownMode: 'until_coupon_expires',
+    rewardCooldownDays: 7,
+  });
+  assert.equal(noPrizeRes.blockedByCooldown, false);
+
+  // until_coupon_expires blocks while coupon is still active, unblocks on/after couponEnds
+  const blockedUntilExpiry = computeSpinCooldownState({
+    dbNow: new Date('2026-11-16T10:00:00.000Z'),
+    nextDailyResetAt: new Date('2026-11-16T18:30:00.000Z'),
+    latestCouponWin: latestWin,
+    rewardCooldownMode: 'until_coupon_expires',
+    rewardCooldownDays: 7,
+  });
+  assert.equal(blockedUntilExpiry.blockedByCooldown, true);
+  assert.equal(blockedUntilExpiry.nextSpinAt.getTime(), couponEnds.getTime());
+  assert.equal(blockedUntilExpiry.activeReward?.couponCode, 'SPINABCD1234');
+
+  const unblockedAtExpiry = computeSpinCooldownState({
+    dbNow: couponEnds,
+    nextDailyResetAt: new Date('2026-11-20T18:30:00.000Z'),
+    latestCouponWin: latestWin,
+    rewardCooldownMode: 'until_coupon_expires',
+    rewardCooldownDays: 7,
+  });
+  assert.equal(unblockedAtExpiry.blockedByCooldown, false);
+
+  // custom_days blocks for exactly N days after spin creation
+  const customBlocked = computeSpinCooldownState({
+    dbNow: new Date('2026-11-15T09:59:59.000Z'),
+    nextDailyResetAt: new Date('2026-11-15T18:30:00.000Z'),
+    latestCouponWin: latestWin,
+    rewardCooldownMode: 'custom_days',
+    rewardCooldownDays: 3,
+  });
+  assert.equal(customBlocked.blockedByCooldown, true);
+  assert.equal(customBlocked.nextSpinAt.getTime(), new Date('2026-11-16T10:00:00.000Z').getTime());
+
+  const customUnblocked = computeSpinCooldownState({
+    dbNow: new Date('2026-11-16T10:00:00.000Z'),
+    nextDailyResetAt: new Date('2026-11-16T18:30:00.000Z'),
+    latestCouponWin: latestWin,
+    rewardCooldownMode: 'custom_days',
+    rewardCooldownDays: 3,
+  });
+  assert.equal(customUnblocked.blockedByCooldown, false);
+});
+
+test('validateSpinWheelConfigInput validates cooldown mode, custom days, and countdown flag', () => {
+  const twoSegments = [
+    {
+      id: 's1',
+      label: '10% off',
+      colorHex: '#f25c3b',
+      segmentType: 'COUPON',
+      weight: 20,
+      dailyCap: null,
+      totalCap: null,
+      isActive: true,
+      sortOrder: 0,
+      couponType: 'PERCENT',
+      couponValueInput: '10',
+      couponMaxDiscountRupees: null,
+      couponMinOrderRupees: null,
+      couponScope: 'ORDER',
+      couponTargetIds: [],
+      couponValidDays: 7,
+      couponAllowWithSalePrice: false,
+    },
+    {
+      id: 's2',
+      label: 'Try again',
+      colorHex: '#e8c6ff',
+      segmentType: 'NO_PRIZE',
+      weight: 80,
+      dailyCap: null,
+      totalCap: null,
+      isActive: true,
+      sortOrder: 1,
+      couponType: null,
+      couponValueInput: '0',
+      couponMaxDiscountRupees: null,
+      couponMinOrderRupees: null,
+      couponScope: 'ORDER',
+      couponTargetIds: [],
+      couponValidDays: 7,
+      couponAllowWithSalePrice: false,
+    },
+  ];
+
+  const badMode = validateSpinWheelConfigInput({
+    settings: { enabled: false, title: 'Spin to Win', termsText: 'Terms', rewardCooldownMode: 'forever' },
+    segments: twoSegments,
+  });
+  assert.equal(badMode.ok, false);
+
+  const customValid = validateSpinWheelConfigInput({
+    settings: {
+      enabled: true,
+      title: 'Spin to Win',
+      termsText: 'Terms',
+      rewardCooldownMode: 'custom_days',
+      rewardCooldownDays: 14,
+      showNextSpinCountdown: false,
+    },
+    segments: twoSegments,
+  });
+  assert.equal(customValid.ok, true);
+  assert.equal(customValid.value.settings.rewardCooldownMode, 'custom_days');
+  assert.equal(customValid.value.settings.rewardCooldownDays, 14);
+  assert.equal(customValid.value.settings.showNextSpinCountdown, false);
 });

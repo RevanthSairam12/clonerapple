@@ -23,7 +23,7 @@ export default async function SpinAndWinPage() {
 
   return (
     <div
-      className="gz-storefront-page min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#ffe100] selection:text-black"
+      className="gz-storefront-page min-h-screen bg-[#fbf8ef] text-[#111111] selection:bg-[#e8c6ff] selection:text-[#111111]"
       style={{ fontFamily: 'transducer, sans-serif' }}
     >
       <GadzioHeader

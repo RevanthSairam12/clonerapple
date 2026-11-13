@@ -70,8 +70,13 @@ export async function POST(request: NextRequest) {
   let status = 400;
   if (outcome.reason === 'unauthorized') status = 401;
   else if (outcome.reason === 'account_too_new') status = 403;
-  else if (outcome.reason === 'ip_limit' || outcome.reason === 'busy') status = 429;
-  else if (outcome.reason === 'unavailable') status = 503;
+  else if (
+    outcome.reason === 'ip_limit'
+    || outcome.reason === 'reward_cooldown'
+    || outcome.reason === 'busy'
+  ) {
+    status = 429;
+  } else if (outcome.reason === 'unavailable') status = 503;
 
   return NextResponse.json(outcome, { status, headers });
 }

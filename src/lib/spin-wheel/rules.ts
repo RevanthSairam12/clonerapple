@@ -17,6 +17,13 @@ export { contrastTextForHex, sanitizeHexColor };
 export type SpinSegmentType = 'COUPON' | 'NO_PRIZE';
 export type SpinCouponType = 'PERCENT' | 'FIXED' | 'FREE_SHIPPING';
 export type SpinCouponScope = 'ORDER' | 'PRODUCTS' | 'CATEGORIES';
+export type SpinRewardCooldownMode = 'disabled' | 'until_coupon_expires' | 'custom_days';
+
+export const REWARD_COOLDOWN_MODES: readonly SpinRewardCooldownMode[] = [
+  'disabled',
+  'until_coupon_expires',
+  'custom_days',
+];
 
 export interface SpinWheelSettings {
   enabled: boolean;
@@ -29,6 +36,9 @@ export interface SpinWheelSettings {
   maxSpinsPerIpPerDay: number;
   minAccountAgeMinutes: number;
   showOnHomePage: boolean;
+  rewardCooldownMode: SpinRewardCooldownMode;
+  rewardCooldownDays: number;
+  showNextSpinCountdown: boolean;
 }
 
 export interface SpinWheelSegment {
@@ -107,6 +117,9 @@ export interface ValidatedSpinConfig {
     maxSpinsPerIpPerDay: number;
     minAccountAgeMinutes: number;
     showOnHomePage: boolean;
+    rewardCooldownMode: SpinRewardCooldownMode;
+    rewardCooldownDays: number;
+    showNextSpinCountdown: boolean;
   };
   segments: ValidatedSpinSegment[];
 }
@@ -131,8 +144,8 @@ export interface SpinDrawResult<T extends SpinWheelSegment = SpinWheelSegment> {
 
 export const DEFAULT_SPIN_WHEEL_SETTINGS: SpinWheelSettings = {
   enabled: false,
-  title: 'Spin and Win',
-  subtitle: 'Spin once a day for a chance to win an instant coupon.',
+  title: 'Spin to Win',
+  subtitle: 'Love a sneaky surprise? Spin the wheel to reveal your exclusive discount!',
   startsAt: null,
   endsAt: null,
   spinsPerCustomerPerDay: 1,
@@ -140,7 +153,91 @@ export const DEFAULT_SPIN_WHEEL_SETTINGS: SpinWheelSettings = {
   maxSpinsPerIpPerDay: 1,
   minAccountAgeMinutes: 0,
   showOnHomePage: false,
+  rewardCooldownMode: 'until_coupon_expires',
+  rewardCooldownDays: 7,
+  showNextSpinCountdown: true,
 };
+
+export interface SpinCooldownWinInput {
+  createdAt: Date;
+  couponEndsAt: Date | null;
+  couponCode: string | null;
+  couponSummary: string | null;
+  segmentLabel: string;
+}
+
+export interface SpinCooldownEvaluation {
+  blockedByCooldown: boolean;
+  cooldownMode: SpinRewardCooldownMode;
+  cooldownUntil: Date | null;
+  nextSpinAt: Date;
+  secondsUntilReset: number;
+  activeReward: {
+    couponCode: string | null;
+    couponSummary: string | null;
+    couponExpiresAt: string | null;
+    segmentLabel: string;
+  } | null;
+}
+
+/**
+ * Determine whether a customer who previously won a coupon must wait before spinning again.
+ *
+ * When the customer did not win a coupon (`latestCouponWin` is null) or mode is `'disabled'`,
+ * normal daily midnight reset applies cleanly.
+ */
+export function computeSpinCooldownState(input: {
+  dbNow: Date;
+  nextDailyResetAt: Date;
+  latestCouponWin: SpinCooldownWinInput | null;
+  rewardCooldownMode: SpinRewardCooldownMode;
+  rewardCooldownDays: number;
+}): SpinCooldownEvaluation {
+  const { dbNow, nextDailyResetAt, latestCouponWin, rewardCooldownMode, rewardCooldownDays } = input;
+  const dailySecs = Math.max(0, Math.floor((nextDailyResetAt.getTime() - dbNow.getTime()) / 1000));
+
+  if (rewardCooldownMode === 'disabled' || !latestCouponWin) {
+    return {
+      blockedByCooldown: false,
+      cooldownMode: rewardCooldownMode,
+      cooldownUntil: null,
+      nextSpinAt: nextDailyResetAt,
+      secondsUntilReset: dailySecs,
+      activeReward: null,
+    };
+  }
+
+  const cooldownUntil =
+    rewardCooldownMode === 'until_coupon_expires'
+      ? (latestCouponWin.couponEndsAt ?? new Date(latestCouponWin.createdAt.getTime() + 7 * 86_400_000))
+      : new Date(latestCouponWin.createdAt.getTime() + Math.max(1, rewardCooldownDays) * 86_400_000);
+
+  if (dbNow.getTime() < cooldownUntil.getTime()) {
+    const unlockAt = new Date(Math.max(nextDailyResetAt.getTime(), cooldownUntil.getTime()));
+    return {
+      blockedByCooldown: true,
+      cooldownMode: rewardCooldownMode,
+      cooldownUntil,
+      nextSpinAt: unlockAt,
+      secondsUntilReset: Math.max(0, Math.floor((unlockAt.getTime() - dbNow.getTime()) / 1000)),
+      activeReward: {
+        couponCode: latestCouponWin.couponCode,
+        couponSummary: latestCouponWin.couponSummary,
+        couponExpiresAt: latestCouponWin.couponEndsAt ? latestCouponWin.couponEndsAt.toISOString() : null,
+        segmentLabel: latestCouponWin.segmentLabel,
+      },
+    };
+  }
+
+  return {
+    blockedByCooldown: false,
+    cooldownMode: rewardCooldownMode,
+    cooldownUntil,
+    nextSpinAt: nextDailyResetAt,
+    secondsUntilReset: dailySecs,
+    activeReward: null,
+  };
+}
 
 export const MIN_SEGMENTS = 2;
 export const MAX_SEGMENTS = 12;
@@ -461,6 +558,28 @@ export function validateSpinWheelConfigInput(
 
   const showOnHomePage = Boolean(settingsRaw.showOnHomePage);
 
+  const rawCooldownMode = settingsRaw.rewardCooldownMode;
+  if (
+    rawCooldownMode !== undefined
+    && rawCooldownMode !== 'disabled'
+    && rawCooldownMode !== 'until_coupon_expires'
+    && rawCooldownMode !== 'custom_days'
+  ) {
+    return { ok: false, error: 'Choose a valid reward cooldown mode.' };
+  }
+  const rewardCooldownMode: SpinRewardCooldownMode = rawCooldownMode ?? 'until_coupon_expires';
+
+  const rewardCooldownDays = parseRequiredInt(
+    settingsRaw.rewardCooldownDays ?? 7,
+    1,
+    365,
+    'Custom reward cooldown days',
+  );
+  if (!rewardCooldownDays.ok) return rewardCooldownDays;
+
+  const showNextSpinCountdown =
+    typeof settingsRaw.showNextSpinCountdown === 'boolean' ? settingsRaw.showNextSpinCountdown : true;
+
   if (!Array.isArray(segmentsRaw) || segmentsRaw.length < MIN_SEGMENTS || segmentsRaw.length > MAX_SEGMENTS) {
     return {
       ok: false,
@@ -658,6 +777,9 @@ export function validateSpinWheelConfigInput(
         maxSpinsPerIpPerDay: maxPerIp.value,
         minAccountAgeMinutes: minAge.value,
         showOnHomePage,
+        rewardCooldownMode,
+        rewardCooldownDays: rewardCooldownDays.value,
+        showNextSpinCountdown,
       },
       segments: validatedSegments,
     },

@@ -6,7 +6,9 @@ import { EndlessEntertainmentGallery } from '@/components/sites/www-apple-com-73
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { HeroSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection';
+import { HomeSpinPopup } from '@/components/spin-wheel/HomeSpinPopup';
 import { HomeSpinStrip, type HomeSpinBannerData } from '@/components/spin-wheel/HomeSpinStrip';
+import type { CustomerSpinState } from '@/lib/spin-wheel/store';
 import { NEW_UI_HERO_TILES } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
 import { GadzioHeroSection } from '@/components/hero/GadzioHeroSection';
 import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
@@ -95,15 +97,18 @@ export function GadzioHomePage({
   overrides,
   uiMode = 'new',
   spinBanner,
+  spinState,
 }: {
   overrides?: HomePageOverrides;
   uiMode?: 'new' | 'old';
   spinBanner?: HomeSpinBannerData;
+  spinState?: CustomerSpinState;
 } = {}) {
   const [bannerVisible, setBannerVisible] = useState(false);
 
   return (
     <div className="gz-root" style={{ fontFamily: 'transducer, sans-serif' }}>
+      <HomeSpinPopup spinState={spinState} />
       {bannerVisible && overrides?.localeBannerEnabled !== false ? (
         <LocaleBanner onDismiss={() => setBannerVisible(false)} content={overrides?.localeBanner} />
       ) : null}

@@ -167,6 +167,9 @@ async function restoreWheelState(snap) {
           max_spins_per_ip_per_day = excluded.max_spins_per_ip_per_day,
           min_account_age_minutes = excluded.min_account_age_minutes,
           show_on_home_page = excluded.show_on_home_page,
+          reward_cooldown_mode = excluded.reward_cooldown_mode,
+          reward_cooldown_days = excluded.reward_cooldown_days,
+          show_next_spin_countdown = excluded.show_next_spin_countdown,
           updated_at = excluded.updated_at,
           updated_by = excluded.updated_by
       `;
@@ -301,28 +304,88 @@ try {
       body: JSON.stringify({
         settings: {
           enabled: true,
-          title: 'Spin and Win',
-          subtitle: 'One free spin every day for an instant personal coupon.',
+          title: 'Spin to Win',
+          subtitle: 'Love a sneaky surprise? Spin the wheel to reveal your exclusive discount!',
           startsAt: null,
           endsAt: null,
           spinsPerCustomerPerDay: 1,
           maxSpinsPerIpPerDay: 50,
           minAccountAgeMinutes: 0,
           showOnHomePage: true,
+          rewardCooldownMode: 'until_coupon_expires',
+          rewardCooldownDays: 7,
+          showNextSpinCountdown: true,
           termsText:
             'No purchase required to spin. One spin per signed-in customer per calendar day (IST). Won coupons are single-use and valid only for your account.',
         },
         segments: [
           {
-            id: '__phase5_seg_15off',
-            label: '15% off accessories',
-            colorHex: '#FFE100',
+            id: '__phase5_seg_5off',
+            label: '5% OFF',
+            colorHex: '#f25c3b',
             segmentType: 'COUPON',
-            weight: 6000,
+            weight: 3000,
             dailyCap: null,
             totalCap: null,
             isActive: true,
             sortOrder: 0,
+            couponType: 'PERCENT',
+            couponValueInput: '5',
+            couponMaxDiscountRupees: '300',
+            couponMinOrderRupees: '500',
+            couponScope: 'ORDER',
+            couponTargetIds: [],
+            couponValidDays: 7,
+            couponAllowWithSalePrice: true,
+          },
+          {
+            id: '__phase5_seg_25off',
+            label: '25% OFF',
+            colorHex: '#e8c6ff',
+            segmentType: 'COUPON',
+            weight: 2500,
+            dailyCap: null,
+            totalCap: null,
+            isActive: true,
+            sortOrder: 1,
+            couponType: 'PERCENT',
+            couponValueInput: '25',
+            couponMaxDiscountRupees: '500',
+            couponMinOrderRupees: '500',
+            couponScope: 'ORDER',
+            couponTargetIds: [],
+            couponValidDays: 7,
+            couponAllowWithSalePrice: true,
+          },
+          {
+            id: '__phase5_seg_10off',
+            label: '10% OFF',
+            colorHex: '#d8f561',
+            segmentType: 'COUPON',
+            weight: 2500,
+            dailyCap: null,
+            totalCap: null,
+            isActive: true,
+            sortOrder: 2,
+            couponType: 'PERCENT',
+            couponValueInput: '10',
+            couponMaxDiscountRupees: '300',
+            couponMinOrderRupees: '500',
+            couponScope: 'ORDER',
+            couponTargetIds: [],
+            couponValidDays: 7,
+            couponAllowWithSalePrice: true,
+          },
+          {
+            id: '__phase5_seg_15off',
+            label: '15% OFF',
+            colorHex: '#e8c6ff',
+            segmentType: 'COUPON',
+            weight: 1000,
+            dailyCap: null,
+            totalCap: null,
+            isActive: true,
+            sortOrder: 3,
             couponType: 'PERCENT',
             couponValueInput: '15',
             couponMaxDiscountRupees: '300',
@@ -334,14 +397,14 @@ try {
           },
           {
             id: '__phase5_seg_100off',
-            label: 'Flat ₹100 off',
-            colorHex: '#1D1D1F',
+            label: 'Flat ₹100 OFF',
+            colorHex: '#f25c3b',
             segmentType: 'COUPON',
-            weight: 3999,
+            weight: 999,
             dailyCap: null,
             totalCap: null,
             isActive: true,
-            sortOrder: 1,
+            sortOrder: 4,
             couponType: 'FIXED',
             couponValueInput: '100',
             couponMaxDiscountRupees: null,
@@ -353,14 +416,14 @@ try {
           },
           {
             id: '__phase5_seg_miss',
-            label: 'Better luck tomorrow',
-            colorHex: '#6E6E73',
+            label: '5% NEXT TIME',
+            colorHex: '#d8f561',
             segmentType: 'NO_PRIZE',
             weight: 1,
             dailyCap: null,
             totalCap: null,
             isActive: true,
-            sortOrder: 2,
+            sortOrder: 5,
             couponType: null,
             couponValueInput: '0',
             couponMaxDiscountRupees: null,
@@ -399,15 +462,17 @@ try {
   const guestCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const guestPage = await guestCtx.newPage();
   await guestPage.goto(`${ORIGIN}/spin-and-win`, { waitUntil: 'networkidle' });
-  const signInHref = await guestPage.getByRole('link', { name: 'Sign in to spin' }).getAttribute('href');
+  const signInLink = guestPage.getByRole('link', { name: 'Sign in', exact: true });
+  const signInHref = await signInLink.getAttribute('href');
   assert.equal(signInHref, '/auth?redirect=/spin-and-win');
+  await guestPage.getByText('1/1').first().waitFor({ timeout: 10000 });
   await guestPage.screenshot({
     path: path.join(OUT_DIR, '02-signed-out-1440.png'),
     fullPage: false,
   });
 
   // Sign in via real /auth UI flow
-  await guestPage.getByRole('link', { name: 'Sign in to spin' }).click();
+  await signInLink.click();
   await guestPage.waitForURL((u) => u.pathname === '/auth', { timeout: 10000 });
   await guestPage.locator('input[type="email"]').fill(CUST_EMAIL);
   await guestPage.locator('input[type="password"]').fill(PASS);
@@ -415,8 +480,17 @@ try {
   await guestPage.waitForURL((u) => u.pathname === '/spin-and-win', { timeout: 15000 });
   await guestPage.waitForLoadState('networkidle');
 
-  // Home page strip at 1440px and 390px
+  // Home page dismissible modal popup + strip at 1440px and 390px
   await guestPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+  const popupDialog = guestPage.getByRole('dialog', { name: /Spin to Win/i });
+  await popupDialog.waitFor({ timeout: 10000 });
+  await guestPage.screenshot({
+    path: path.join(OUT_DIR, '03-home-popup-1440.png'),
+    fullPage: false,
+  });
+  await popupDialog.getByRole('button', { name: 'NO THANKS' }).click();
+  await popupDialog.waitFor({ state: 'detached', timeout: 5000 });
+
   const homeStrip = guestPage.getByText('Daily Spin').first();
   await homeStrip.waitFor({ timeout: 10000 });
   await homeStrip.scrollIntoViewIfNeeded();
@@ -434,7 +508,7 @@ try {
   // Account overview card at 1440px
   await guestPage.setViewportSize({ width: 1440, height: 900 });
   await guestPage.goto(`${ORIGIN}/account`, { waitUntil: 'networkidle' });
-  const acctSpinCard = guestPage.getByText('Spin now — 1 free spin ready today');
+  const acctSpinCard = guestPage.getByText(/1\/1 daily free spin ready/);
   await acctSpinCard.waitFor({ timeout: 10000 });
   await acctSpinCard.scrollIntoViewIfNeeded();
   await guestPage.screenshot({
@@ -444,10 +518,15 @@ try {
 
   // Spin the wheel on /spin-and-win
   await guestPage.goto(`${ORIGIN}/spin-and-win`, { waitUntil: 'networkidle' });
-  await guestPage.locator('input[type="checkbox"]').check();
-  await guestPage.getByRole('button', { name: 'Spin the Wheel' }).click();
-  await guestPage.waitForSelector('text=Winner!', { timeout: 12000 });
-  const wonCode = (await guestPage.locator('p.font-mono').first().innerText()).trim();
+  await guestPage.getByText('1/1').first().waitFor({ timeout: 10000 });
+  await guestPage.screenshot({
+    path: path.join(OUT_DIR, '02b-signed-in-ready-1440.png'),
+    fullPage: false,
+  });
+  await guestPage.locator('#spin-terms').check();
+  await guestPage.getByRole('button', { name: 'SPIN TO WIN' }).click();
+  await guestPage.waitForSelector('text=Reward unlocked', { timeout: 12000 });
+  const wonCode = (await guestPage.locator('code').first().innerText()).trim();
   assert.match(wonCode, /^SPIN-/);
 
   // Capture result at 1440, 768, 390
@@ -467,12 +546,13 @@ try {
     fullPage: false,
   });
 
-  // Reload /spin-and-win -> must show countdown & refuse second spin
+  // Reload /spin-and-win -> must show 0/1 quota, countdown & refuse second spin
   await guestPage.setViewportSize({ width: 1440, height: 900 });
   await guestPage.reload({ waitUntil: 'networkidle' });
-  const spinButtonCount = await guestPage.getByRole('button', { name: 'Spin the Wheel' }).count();
+  const spinButtonCount = await guestPage.getByRole('button', { name: 'SPIN TO WIN' }).count();
   assert.equal(spinButtonCount, 0);
-  await guestPage.getByText(/Next spin in \d{2}:\d{2}:\d{2}/).first().waitFor({ timeout: 10000 });
+  await guestPage.getByText('0/1').first().waitFor({ timeout: 10000 });
+  await guestPage.getByText(/Next spin in (\d+d )?\d{2}:\d{2}:\d{2}/).first().waitFor({ timeout: 10000 });
 
   // Account coupons page -> shows "From Spin and Win" badge + won code + copy button
   await guestPage.goto(`${ORIGIN}/account/coupons`, { waitUntil: 'networkidle' });
@@ -582,17 +662,17 @@ try {
     tab1.goto(`${ORIGIN}/spin-and-win`, { waitUntil: 'networkidle' }),
     tab2.goto(`${ORIGIN}/spin-and-win`, { waitUntil: 'networkidle' }),
   ]);
-  await tab1.locator('input[type="checkbox"]').check();
-  await tab2.locator('input[type="checkbox"]').check();
+  await tab1.locator('#spin-terms').check();
+  await tab2.locator('#spin-terms').check();
 
   const [tab1Click, tab2Click] = await Promise.all([
     Promise.all([
       tab1.waitForResponse((r) => r.url().includes('/api/spin-wheel/spin')),
-      tab1.getByRole('button', { name: 'Spin the Wheel' }).click(),
+      tab1.getByRole('button', { name: 'SPIN TO WIN' }).click(),
     ]),
     Promise.all([
       tab2.waitForResponse((r) => r.url().includes('/api/spin-wheel/spin')),
-      tab2.getByRole('button', { name: 'Spin the Wheel' }).click(),
+      tab2.getByRole('button', { name: 'SPIN TO WIN' }).click(),
     ]),
   ]);
 

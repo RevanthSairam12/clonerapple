@@ -4,15 +4,17 @@
 
 import { safeThemeColor } from '@/lib/website/theme-rules';
 
+export const WHEEL_POINTER_RIGHT_ANGLE_DEG = 68;
+
 export const WHEEL_SEGMENT_PALETTE = [
+  '#f25c3b',
+  '#e8c6ff',
+  '#d8f561',
   '#ffe100',
   '#111111',
   '#f3f4f6',
-  '#fef3c7',
-  '#e0f2fe',
-  '#dcfce7',
   '#fce7f3',
-  '#ede9fe',
+  '#e0f2fe',
 ] as const;
 
 /** Parse #rgb, #rrggbb, or #rrggbbaa to sRGB [0..255] channels. */
@@ -55,25 +57,27 @@ export function contrastTextForHex(hex: string): '#111111' | '#ffffff' {
   return contrastWithBlack >= contrastWithWhite ? '#111111' : '#ffffff';
 }
 
-export function sanitizeHexColor(value: unknown, fallback = '#ffe100'): string {
+export function sanitizeHexColor(value: unknown, fallback = '#f25c3b'): string {
   return safeThemeColor(value) ?? fallback;
 }
 
 /**
  * Compute target clockwise wheel rotation (degrees) so `segmentIndex` stops
- * centered under the 12 o'clock pointer after `extraTurns` full revolutions.
+ * centered under the wheel pointer (`pointerAngleDeg` clockwise from 12 o'clock)
+ * after `extraTurns` full revolutions.
  */
 export function computeTargetWheelRotation(
   currentDeg: number,
   segmentIndex: number,
   totalSegments: number,
   extraTurns = 5,
+  pointerAngleDeg = 0,
 ): number {
   if (totalSegments <= 0 || segmentIndex < 0 || segmentIndex >= totalSegments) {
     return currentDeg;
   }
   const sliceDeg = 360 / totalSegments;
-  const targetMod = (360 - ((segmentIndex + 0.5) * sliceDeg)) % 360;
+  const targetMod = (pointerAngleDeg - ((segmentIndex + 0.5) * sliceDeg)) % 360;
   const desiredMod = targetMod < 0 ? targetMod + 360 : targetMod;
   const currentMod = ((currentDeg % 360) + 360) % 360;
   const deltaMod = (desiredMod - currentMod + 360) % 360;

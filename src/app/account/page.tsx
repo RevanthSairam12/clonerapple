@@ -32,7 +32,7 @@ export default async function AccountPage() {
   if (!summary) notFound();
 
   const spinOpen = spinState.available && spinState.isOpen && spinState.segments.length >= 2;
-  const showSpinCard = spinOpen || spinState.todaySpin !== null;
+  const showSpinCard = spinOpen || spinState.todaySpin !== null || spinState.cooldownBlocked;
 
   const latest = summary.orders.latestOrder;
   const latestInFlight = latest ? isInFlightAccountOrderStatus(latest.status) : false;
@@ -288,6 +288,11 @@ export default async function AccountPage() {
               title={spinState.title}
               todaySpin={spinState.todaySpin}
               secondsUntilReset={spinState.secondsUntilReset}
+              dailySpinsTotal={spinState.dailySpinsTotal}
+              remainingSpinsToday={spinState.remainingSpinsToday}
+              cooldownBlocked={spinState.cooldownBlocked}
+              showNextSpinCountdown={spinState.showNextSpinCountdown}
+              activeReward={spinState.activeReward}
             />
           ) : null}
         </section>

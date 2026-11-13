@@ -19,6 +19,15 @@ export function formatCountdownHms(remainingMs: number): string {
     .join(':');
 }
 
+/** Format `Xd HH:MM:SS` when >= 24 hours remain (e.g. coupon-expiry cooldown), else `HH:MM:SS`. */
+export function formatSpinCountdown(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+  const days = Math.floor(totalSeconds / 86_400);
+  const remainderSec = totalSeconds % 86_400;
+  const hms = formatCountdownHms(remainderSec * 1000);
+  return days > 0 ? `${days}d ${hms}` : hms;
+}
+
 export function formatSpinCouponExpiry(
   isoString: string | null | undefined,
   timeZone = 'Asia/Kolkata',

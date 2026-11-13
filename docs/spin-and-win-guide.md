@@ -12,10 +12,10 @@ By default after migration `0069`, the wheel is **disabled** (`enabled = false`,
 
 Once enabled in **Store Desk → Marketing → Spin wheel** (`/store-admin/marketing/spin-wheel`):
 
-1. **Store Admin** (`/store-admin/marketing/spin-wheel`): settings, 2–12 wheel segments, live odds & WCAG contrast checker, warnings panel, **Test spin** preview, daily summary & recent spins table, CSV export (`/api/store-admin/spin-wheel/export`), and **Needs attention** alerts on Store Desk Overview (`/store-admin`) when a prize hits its daily cap.
-2. **Home page banner** (`/`): compact black-and-yellow **Daily Spin — Spin and Win** strip linking to `/spin-and-win` (only shown when **"Show compact promotional callout on the home page"** is checked AND the wheel is open).
-3. **Dedicated wheel page** (`/spin-and-win`): responsive interactive wheel for customers with Terms & Conditions acceptance, instant personal coupon code reward, copy button, and `Next spin in hh:mm:ss` countdown resetting at midnight (`Asia/Kolkata`).
-4. **Account overview** (`/account`): a **Spin and Win** dashboard card showing either `"Spin now — 1 free spin ready today"` or `"Next spin in hh:mm:ss"`, plus a link under Quick Navigation → **Messages & Offers**.
+1. **Store Admin** (`/store-admin/marketing/spin-wheel`): settings (including **Cooldown after winning a reward**: wait until won coupon expires / custom `N` days / disabled, plus **Show exact next-spin countdown** toggle), 2–12 wheel segments, live odds & WCAG contrast checker, warnings panel, **Test spin** preview wheel, daily summary & recent spins table, CSV export (`/api/store-admin/spin-wheel/export`), and **Needs attention** alerts on Store Desk Overview (`/store-admin`) when a prize hits its daily cap.
+2. **Home page popup & strip** (`/`): when **Show compact promotional callout on the home page** is checked and the customer still has an eligible `1/1` daily spin, shoppers see a dismissible Cream/Coral/Lilac/Lime Spin to Win popup dialog (`×`, `NO THANKS`, backdrop click, Escape — remembered per browser session) plus the Home **Daily Spin** strip linking to `/spin-and-win`.
+3. **Dedicated wheel page** (`/spin-and-win`): full Spin to Win showcase (`1/1` → `0/1` daily spin quota indicator, Terms & Conditions acceptance, boxed email & phone fields for signed-in shoppers or `/auth?redirect=/spin-and-win` links for guests, instant `SPIN-...` personal coupon reward, Copy button, and `Next spin in Xd HH:MM:SS` / `HH:MM:SS` countdown when enabled).
+4. **Account overview** (`/account`): a **Spin to Win** dashboard card showing live `1/1` / `0/1` quota and either `"Spin now — 1/1 daily free spin ready"` or `"Next spin in Xd HH:MM:SS"`, plus a link under Quick Navigation → **Messages & Offers**.
 5. **Account coupons** (`/account/coupons`) & **Messages** (`/account/messages`): won coupons appear immediately with a `"From Spin and Win"` badge, personal usage limit (`1 use remaining`), expiry date, and copy button, alongside an in-app `"spin_win"` message.
 
 ---
@@ -30,7 +30,9 @@ Open **Store Desk → Marketing → Spin wheel** (`/store-admin/marketing/spin-w
    - Optional **Start / End date & time** in store timezone (`Asia/Kolkata`).
    - **Max spins per IP address per day** (default `1`; raise carefully only if many real customers share mobile/office NAT).
    - **Minimum account age (minutes)** (default `0`; increase to slow newly created spam accounts).
-   - **Terms & conditions** (shown directly below the wheel; customers must tick acceptance before spinning).
+   - **Cooldown after winning a reward**: defaults to **Wait until won coupon expires** (prevents repeat reward farming while the customer still has an active won coupon, while `NO_PRIZE` spins still reset daily at midnight); can also be set to a custom number of days (`1–365`) or **Disabled** for normal midnight daily resets.
+   - **Show exact next-spin countdown and cooldown note to customers**: toggles the `Xd HH:MM:SS` / `HH:MM:SS` timer shown alongside `1/1` → `0/1` daily spin quota.
+   - **Terms & conditions** (shown directly in the wheel panel; customers must tick acceptance before spinning).
 2. Add or edit **2 to 12 wheel segments**:
    - Each slice has a **Label**, hex **Colour** (with automatic high-contrast text colour and WCAG contrast indicator), **Weight** (live win % displayed beside it), **Prize type** (`Coupon` or `No prize`), optional **Daily cap** / **Total cap**, and coupon rules (`PERCENT` with optional max discount cap, `FIXED`, or `FREE_SHIPPING`, min order spend, scope, expiry days, and sale-price stacking toggle).
    - Add at least one `NO_PRIZE` slice if you want affordable win rates. Check the **Checks & warnings** box above the settings for high-odds or high-budget alerts.

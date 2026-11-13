@@ -8,6 +8,7 @@ import {
   computeTargetWheelRotation,
   contrastTextForHex,
   sanitizeHexColor,
+  WHEEL_POINTER_RIGHT_ANGLE_DEG,
   WHEEL_SEGMENT_PALETTE,
 } from '@/lib/spin-wheel/colors';
 import type {
@@ -17,6 +18,7 @@ import type {
 import type {
   SpinCouponScope,
   SpinCouponType,
+  SpinRewardCooldownMode,
   SpinSegmentType,
 } from '@/lib/spin-wheel/rules';
 
@@ -51,6 +53,9 @@ interface SettingsDraft {
   maxSpinsPerIpPerDay: string;
   minAccountAgeMinutes: string;
   showOnHomePage: boolean;
+  rewardCooldownMode: SpinRewardCooldownMode;
+  rewardCooldownDays: string;
+  showNextSpinCountdown: boolean;
   termsText: string;
 }
 
@@ -117,6 +122,9 @@ function toSettingsDraft(
     maxSpinsPerIpPerDay: String(data.settings.maxSpinsPerIpPerDay || 1),
     minAccountAgeMinutes: String(data.settings.minAccountAgeMinutes ?? 0),
     showOnHomePage: data.settings.showOnHomePage,
+    rewardCooldownMode: data.settings.rewardCooldownMode ?? 'until_coupon_expires',
+    rewardCooldownDays: String(data.settings.rewardCooldownDays ?? 7),
+    showNextSpinCountdown: data.settings.showNextSpinCountdown ?? true,
     termsText: data.settings.termsText,
   };
 }
@@ -270,6 +278,9 @@ export function SpinWheelAdminConsole({
           maxSpinsPerIpPerDay: Number.parseInt(settings.maxSpinsPerIpPerDay, 10) || 1,
           minAccountAgeMinutes: Number.parseInt(settings.minAccountAgeMinutes, 10) || 0,
           showOnHomePage: settings.showOnHomePage,
+          rewardCooldownMode: settings.rewardCooldownMode,
+          rewardCooldownDays: Number.parseInt(settings.rewardCooldownDays, 10) || 7,
+          showNextSpinCountdown: settings.showNextSpinCountdown,
           termsText: settings.termsText,
         },
         segments: segments.map((seg, sortOrder) => ({
@@ -321,6 +332,9 @@ export function SpinWheelAdminConsole({
         maxSpinsPerIpPerDay: String(nextData.settings.maxSpinsPerIpPerDay || 1),
         minAccountAgeMinutes: String(nextData.settings.minAccountAgeMinutes ?? 0),
         showOnHomePage: nextData.settings.showOnHomePage,
+        rewardCooldownMode: nextData.settings.rewardCooldownMode ?? 'until_coupon_expires',
+        rewardCooldownDays: String(nextData.settings.rewardCooldownDays ?? 7),
+        showNextSpinCountdown: nextData.settings.showNextSpinCountdown ?? true,
         termsText: nextData.settings.termsText,
       }));
       setDirty(false);
@@ -356,7 +370,13 @@ export function SpinWheelAdminConsole({
 
       setSpinning(true);
       setRotationDeg((prev) =>
-        computeTargetWheelRotation(prev, indexToUse, Math.max(2, slicesForRotation.length), 5),
+        computeTargetWheelRotation(
+          prev,
+          indexToUse,
+          Math.max(2, slicesForRotation.length),
+          5,
+          WHEEL_POINTER_RIGHT_ANGLE_DEG,
+        ),
       );
       window.setTimeout(() => {
         setSpinning(false);
@@ -550,6 +570,55 @@ export function SpinWheelAdminConsole({
                 </label>
               </div>
 
+              <div className="sa-control-grid">
+                <label className="sa-field">
+                  <span className="sa-label">Cooldown after winning a reward</span>
+                  <select
+                    className="sa-input"
+                    value={settings.rewardCooldownMode}
+                    onChange={(e) => updateSettings('rewardCooldownMode', e.target.value as SpinRewardCooldownMode)}
+                  >
+                    <option value="until_coupon_expires">Wait until won coupon expires (Recommended)</option>
+                    <option value="custom_days">Wait a fixed number of days after winning</option>
+                    <option value="disabled">Disabled — allow daily spin even after a win</option>
+                  </select>
+                  <span className="sa-card-note">
+                    Prevents repeat reward farming after a customer wins a coupon. Non-winning spins (&quot;Try again&quot;) still reset daily at midnight.
+                  </span>
+                </label>
+
+                {settings.rewardCooldownMode === 'custom_days' ? (
+                  <label className="sa-field">
+                    <span className="sa-label">Custom reward cooldown (days)</span>
+                    <input
+                      className="sa-input"
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={settings.rewardCooldownDays}
+                      onChange={(e) => updateSettings('rewardCooldownDays', e.target.value)}
+                    />
+                    <span className="sa-card-note">
+                      Number of days a coupon winner must wait before their next Spin &amp; Win attempt (1–365).
+                    </span>
+                  </label>
+                ) : null}
+              </div>
+
+              <label className="sa-field">
+                <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={settings.showNextSpinCountdown}
+                    onChange={(e) => updateSettings('showNextSpinCountdown', e.target.checked)}
+                  />
+                  <span>Show exact next-spin countdown and cooldown note to customers</span>
+                </span>
+                <span className="sa-card-note" style={{ display: 'block', marginTop: '0.25rem' }}>
+                  Displays how long until the next eligible spin (`Xd HH:MM:SS` or `HH:MM:SS`) plus daily quota `1/1` → `0/1`.
+                </span>
+              </label>
+
               <label className="sa-field">
                 <span className="sa-label">Terms &amp; conditions (shown before spinning)</span>
                 <textarea
@@ -579,6 +648,7 @@ export function SpinWheelAdminConsole({
                 rotationDeg={rotationDeg}
                 spinning={spinning}
                 size={310}
+                pointerAngleDeg={WHEEL_POINTER_RIGHT_ANGLE_DEG}
                 ariaLabel="Store admin wheel preview"
               />
 

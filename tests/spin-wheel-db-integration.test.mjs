@@ -79,6 +79,7 @@ const jiti = createJiti(import.meta.url, {
 const {
   executeSpinDrawUsing,
   getCustomerSpinStateUsing,
+  getSpinWheelConfigUsing,
   invalidateSpinWheelCache,
 } = await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'store.ts'));
 
@@ -221,10 +222,12 @@ beforeEach(async () => {
   await sql`
     insert into spin_wheel_settings (
       id, enabled, title, subtitle, spins_per_customer_per_day,
-      terms_text, max_spins_per_ip_per_day, min_account_age_minutes, show_on_home_page
+      terms_text, max_spins_per_ip_per_day, min_account_age_minutes, show_on_home_page,
+      reward_cooldown_mode, reward_cooldown_days, show_next_spin_countdown
     ) values (
       'default', true, 'Spin and Win', 'Win a personal reward today.', 1,
-      'One spin per customer per day.', 1, 0, true
+      'One spin per customer per day.', 1, 0, true,
+      'disabled', 7, true
     )
   `;
 
@@ -685,4 +688,125 @@ test('winner redeems personal spin coupon through checkout order, single-use blo
   assert.equal(nextDayWin.ok, true);
   assert.equal(nextDayWin.alreadySpun, false);
   assert.notEqual(nextDayWin.spin.couponCode, couponCode);
+});
+
+test('reward cooldown blocks coupon winners until expiry or custom days while allowing NO_PRIZE next day', async () => {
+  await sql`
+    update spin_wheel_settings
+    set reward_cooldown_mode = 'until_coupon_expires', reward_cooldown_days = 7, show_next_spin_countdown = true
+    where id = 'default'
+  `;
+  invalidateSpinWheelCache(sql);
+
+  const day1 = new Date('2026-11-13T08:00:00.000Z');
+  const day2 = new Date('2026-11-14T08:00:00.000Z');
+  const day9 = new Date('2026-11-21T08:00:00.000Z');
+
+  // Before spinning: 1/1 quota available
+  const beforeState = await getCustomerSpinStateUsing(sql, 'usr_a', { nowOverride: day1, bypassCache: true });
+  assert.equal(beforeState.dailySpinsTotal, 1);
+  assert.equal(beforeState.remainingSpinsToday, 1);
+  assert.equal(beforeState.cooldownBlocked, false);
+  assert.equal(beforeState.customerProfile?.email, 'winner.one@example.com');
+
+  // Day 1: usr_a wins a 7-day coupon, usr_b lands on NO_PRIZE
+  const win = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_cd_1', termsAccepted: true },
+    { nowOverride: day1, rollFn: () => 0 },
+  );
+  assert.equal(win.ok, true);
+  assert.equal(win.spin.segmentType, 'COUPON');
+
+  const noPrize = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_b', ipHash: 'ip_cd_2', termsAccepted: true },
+    { nowOverride: day1, rollFn: () => 99 },
+  );
+  assert.equal(noPrize.ok, true);
+  assert.equal(noPrize.spin.segmentType, 'NO_PRIZE');
+
+  // Day 2: usr_a still has an active 7-day coupon -> 0/1 quota left & blocked by reward_cooldown
+  const day2State = await getCustomerSpinStateUsing(sql, 'usr_a', { nowOverride: day2, bypassCache: true });
+  assert.equal(day2State.remainingSpinsToday, 0);
+  assert.equal(day2State.cooldownBlocked, true);
+  assert.equal(day2State.activeReward?.couponCode, win.spin.couponCode);
+
+  const blockedDraw = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_cd_1b', termsAccepted: true },
+    { nowOverride: day2, rollFn: () => 0 },
+  );
+  assert.equal(blockedDraw.ok, false);
+  assert.equal(blockedDraw.reason, 'reward_cooldown');
+
+  // Day 2: usr_b did not win a coupon on Day 1 -> 1/1 quota & draw succeeds
+  const loserDay2State = await getCustomerSpinStateUsing(sql, 'usr_b', { nowOverride: day2, bypassCache: true });
+  assert.equal(loserDay2State.remainingSpinsToday, 1);
+  const loserDay2Draw = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_b', ipHash: 'ip_cd_2b', termsAccepted: true },
+    { nowOverride: day2, rollFn: () => 0 },
+  );
+  assert.equal(loserDay2Draw.ok, true);
+
+  // Day 9 (past 7-day coupon expiry): usr_a unblocks -> 1/1 & spin succeeds
+  const day9State = await getCustomerSpinStateUsing(sql, 'usr_a', { nowOverride: day9, bypassCache: true });
+  assert.equal(day9State.remainingSpinsToday, 1);
+  assert.equal(day9State.cooldownBlocked, false);
+  const day9Draw = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_cd_1c', termsAccepted: true },
+    { nowOverride: day9, rollFn: () => 99 },
+  );
+  assert.equal(day9Draw.ok, true);
+
+  // Switch to custom_days = 3 and test usr_b who won on Day 2 (day2 + 3 days = day5)
+  await sql`
+    update spin_wheel_settings
+    set reward_cooldown_mode = 'custom_days', reward_cooldown_days = 3
+    where id = 'default'
+  `;
+  invalidateSpinWheelCache(sql);
+
+  const day4CustomBlocked = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_b', ipHash: 'ip_cd_2c', termsAccepted: true },
+    { nowOverride: new Date('2026-11-16T08:00:00.000Z'), rollFn: () => 0 },
+  );
+  assert.equal(day4CustomBlocked.ok, false);
+  assert.equal(day4CustomBlocked.reason, 'reward_cooldown');
+
+  const day5CustomOpen = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_b', ipHash: 'ip_cd_2d', termsAccepted: true },
+    { nowOverride: new Date('2026-11-17T08:01:00.000Z'), rollFn: () => 99 },
+  );
+  assert.equal(day5CustomOpen.ok, true);
+});
+
+test('missing spin_wheel_settings relation (Postgres 42P01) fails closed without crashing callers', async () => {
+  const fakeMissingSchemaSql = (strings) => {
+    const queryText = strings.join(' ');
+    if (queryText.includes('spin_wheel_settings') || queryText.includes('spin_wheel_segments')) {
+      const err = new Error('relation "spin_wheel_settings" does not exist');
+      err.code = '42P01';
+      return Promise.reject(err);
+    }
+    if (queryText.includes('db_now')) {
+      return Promise.resolve([{ db_now: new Date().toISOString() }]);
+    }
+    return Promise.resolve([{ tz: 'Asia/Kolkata' }]);
+  };
+
+  const cfg = await getSpinWheelConfigUsing(fakeMissingSchemaSql, { bypassCache: true });
+  assert.equal(cfg.settings.enabled, false);
+  assert.deepEqual(cfg.segments, []);
+  assert.equal(cfg.schemaMissing, true);
+
+  const state = await getCustomerSpinStateUsing(fakeMissingSchemaSql, 'usr_a', { bypassCache: true });
+  assert.equal(state.available, false);
+  assert.equal(state.isOpen, false);
+  assert.equal(state.remainingSpinsToday, 0);
+  assert.deepEqual(state.segments, []);
 });

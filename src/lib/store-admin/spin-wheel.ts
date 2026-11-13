@@ -167,6 +167,9 @@ function auditSnapshot(settings: SpinWheelSettings, segments: readonly SpinWheel
     maxSpinsPerIpPerDay: settings.maxSpinsPerIpPerDay,
     minAccountAgeMinutes: settings.minAccountAgeMinutes,
     showOnHomePage: settings.showOnHomePage,
+    rewardCooldownMode: settings.rewardCooldownMode,
+    rewardCooldownDays: settings.rewardCooldownDays,
+    showNextSpinCountdown: settings.showNextSpinCountdown,
     hasTerms: settings.termsText.trim().length > 0,
     segments: segments.map((s) => ({
       id: s.id,
@@ -404,7 +407,9 @@ export async function saveSpinWheelConfigUsing(
         insert into spin_wheel_settings (
           id, enabled, title, subtitle, starts_at, ends_at,
           spins_per_customer_per_day, terms_text, max_spins_per_ip_per_day,
-          min_account_age_minutes, show_on_home_page, updated_at, updated_by
+          min_account_age_minutes, show_on_home_page,
+          reward_cooldown_mode, reward_cooldown_days, show_next_spin_countdown,
+          updated_at, updated_by
         ) values (
           'default',
           ${nextSettings.enabled},
@@ -417,6 +422,9 @@ export async function saveSpinWheelConfigUsing(
           ${nextSettings.maxSpinsPerIpPerDay},
           ${nextSettings.minAccountAgeMinutes},
           ${nextSettings.showOnHomePage},
+          ${nextSettings.rewardCooldownMode},
+          ${nextSettings.rewardCooldownDays},
+          ${nextSettings.showNextSpinCountdown},
           now(),
           ${actor.actorId}
         )
@@ -431,6 +439,9 @@ export async function saveSpinWheelConfigUsing(
           max_spins_per_ip_per_day = excluded.max_spins_per_ip_per_day,
           min_account_age_minutes = excluded.min_account_age_minutes,
           show_on_home_page = excluded.show_on_home_page,
+          reward_cooldown_mode = excluded.reward_cooldown_mode,
+          reward_cooldown_days = excluded.reward_cooldown_days,
+          show_next_spin_countdown = excluded.show_next_spin_countdown,
           updated_at = now(),
           updated_by = excluded.updated_by
       `;
