@@ -19,7 +19,7 @@ const metadata: Metadata = {
   openGraph: {
     title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
     description: 'Shop Gadzio drop-tested protective cases for iPhone.',
-    url: 'https://gadzio.in/in/shop/iphone/accessories/cases-protection',
+    url: 'https://gadzio.co.in/in/shop/iphone/accessories/cases-protection',
     siteName: 'Gadzio',
     locale: 'en_IN',
     type: 'website',

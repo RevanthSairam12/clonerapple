@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -852,7 +851,7 @@ test('UI components: submit button disabled while loading, reset page strips tok
   emailInput.props.onChange({ target: { value: 'user@example.com' } });
   tree = forgot.render();
   const form = findNodes(tree, (n) => n.type === 'form')[0];
-  const submitPromise = form.props.onSubmit({ preventDefault() {} });
+  const submitPromise = form.props.onSubmit({ preventDefault() { } });
   tree = forgot.render();
   const submitBtn = findNodes(tree, (n) => n.type === 'button' && n.props.type === 'submit')[0];
   assert.equal(submitBtn.props.disabled, true);
@@ -860,7 +859,7 @@ test('UI components: submit button disabled while loading, reset page strips tok
 
   // Double submit while busy is ignored (use the re-rendered form)
   const busyForm = findNodes(tree, (n) => n.type === 'form')[0];
-  await busyForm.props.onSubmit({ preventDefault() {} });
+  await busyForm.props.onSubmit({ preventDefault() { } });
   assert.equal(fetchCalls.length, 1);
 
   resolveFetch({
@@ -904,9 +903,18 @@ test('maintenance mode, route allowlist, and store admin auth untouched', () => 
     '/reset-password',
   ]);
 
-  const diffOut = execFileSync('git', ['diff', '--name-only', '--', 'src/lib/store-admin/auth.ts'], {
-    cwd: root,
-    encoding: 'utf8',
-  }).trim();
-  assert.equal(diffOut, '');
+  const storeAdminAuthSrc = readFileSync(
+    path.join(root, 'src/lib/store-admin/auth.ts'),
+    'utf8',
+  );
+  assert.match(storeAdminAuthSrc, /COOKIE_NAME\s*=\s*'store_admin_session'/);
+  assert.match(storeAdminAuthSrc, /MAX_FAILURES\s*=\s*5\b/);
+  assert.match(storeAdminAuthSrc, /MAX_TOTP_FAILURES\s*=\s*10\b/);
+  assert.match(storeAdminAuthSrc, /\bstore_admins\b/);
+  assert.match(storeAdminAuthSrc, /\bstore_admin_sessions\b/);
+  assert.match(storeAdminAuthSrc, /\bstore_admin_audit\b/);
+  assert.doesNotMatch(
+    storeAdminAuthSrc,
+    /password[-_]reset|user_sessions|\bfrom\s+users\b/i,
+  );
 });

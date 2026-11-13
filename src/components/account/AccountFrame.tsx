@@ -52,7 +52,7 @@ export async function AccountFrame({
             </Link>
           )}
         </div>
-        <div className="grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
           {/* Sticky on `lg` only: below that the nav is a horizontal strip above
               the content and sticking it would eat the viewport. The offset is
               the sticky header's own height, measured in gadzio.css as
@@ -60,7 +60,7 @@ export async function AccountFrame({
               accessory pages pin their sticky sidebars to. */}
           <nav
             aria-label="Account"
-            className="rounded-3xl border border-[#e5e5ea] bg-white p-2 shadow-sm lg:sticky lg:top-[calc(var(--gz-nav-height,56px)_+_1.5rem)] lg:max-h-[calc(100dvh_-_var(--gz-nav-height,56px)_-_3rem)] lg:overflow-y-auto"
+            className="min-w-0 rounded-3xl border border-[#e5e5ea] bg-white p-2 shadow-sm lg:sticky lg:top-[calc(var(--gz-nav-height,56px)_+_1.5rem)] lg:max-h-[calc(100dvh_-_var(--gz-nav-height,56px)_-_3rem)] lg:overflow-y-auto"
           >
             <div className="flex gap-2 overflow-x-auto lg:block lg:space-y-1">
               {links.map(([href, label]) => {
@@ -71,18 +71,16 @@ export async function AccountFrame({
                     key={href}
                     href={href}
                     aria-current={isSelected ? 'page' : undefined}
-                    className={`flex items-center justify-between shrink-0 rounded-2xl px-4 py-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-[#1d1d1f] ${
-                      isSelected
+                    className={`flex items-center justify-between shrink-0 rounded-2xl px-4 py-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-[#1d1d1f] ${isSelected
                         ? 'bg-[#1d1d1f] text-white'
                         : 'text-[#6e6e73] hover:bg-[#f5f5f7] hover:text-[#1d1d1f]'
-                    }`}
+                      }`}
                   >
                     <span>{label}</span>
                     {isMessages && unreadMessagesCount > 0 && (
                       <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                          isSelected ? 'bg-[#ffe100] text-black' : 'bg-[#ffe100] text-[#1d1d1f]'
-                        }`}
+                        className={`rounded-full px-2 py-0.5 text-xs font-bold ${isSelected ? 'bg-[#ffe100] text-black' : 'bg-[#ffe100] text-[#1d1d1f]'
+                          }`}
                       >
                         {unreadMessagesCount}
                       </span>

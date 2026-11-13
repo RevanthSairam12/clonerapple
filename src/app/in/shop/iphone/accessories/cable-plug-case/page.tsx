@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: CONFIG.seo.title,
     description: CONFIG.seo.description,
-    url: 'https://gadzio.in/in/shop/iphone/accessories/cable-plug-case',
+    url: 'https://gadzio.co.in/in/shop/iphone/accessories/cable-plug-case',
     siteName: 'Gadzio',
     locale: 'en_IN',
     type: 'website',

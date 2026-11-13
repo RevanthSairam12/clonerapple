@@ -341,7 +341,7 @@ export async function login(
         and entity = ${AUTH_ATTEMPT_ENTITY}
         and (entity_id = ${emailHash} or (${ipHash}::text is not null and ip_hash = ${ipHash}))
         and created_at > ${effectiveNowIso}::timestamptz - interval '15 minutes'
-        and created_at <= ${effectiveNowIso}::timestamptz
+        and (${nowOverrideIso}::timestamptz is null or created_at <= ${effectiveNowIso}::timestamptz)
       order by created_at desc, id desc
       limit 100
     `) as Array<Record<string, unknown>>;
@@ -375,7 +375,7 @@ export async function login(
           ${'denied'},
           ${'password_failure'},
           ${ipHash},
-          ${effectiveNowIso}::timestamptz
+          coalesce(${nowOverrideIso}::timestamptz, clock_timestamp())
         )
       `;
       recordFailure(normalized, ip, now);
@@ -419,7 +419,7 @@ export async function login(
             ${'denied'},
             ${'totp_failure'},
             ${ipHash},
-            ${effectiveNowIso}::timestamptz
+            coalesce(${nowOverrideIso}::timestamptz, clock_timestamp())
           )
         `;
         // TOTP failures are counted independently from password failures.
@@ -461,7 +461,7 @@ export async function login(
         ${'ok'},
         ${'login_ok'},
         ${ipHash},
-        ${effectiveNowIso}::timestamptz
+        coalesce(${nowOverrideIso}::timestamptz, clock_timestamp())
       )
     `;
 

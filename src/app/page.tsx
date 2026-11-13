@@ -15,13 +15,13 @@ const DESCRIPTION =
   'Shop Gadzio mobile accessories, cases, chargers, cables, audio accessories and everyday tech essentials.';
 
 const metadata: Metadata = {
-  metadataBase: new URL('https://gadzio.in'),
+  metadataBase: new URL('https://gadzio.co.in'),
   title: 'Gadzio',
   description: DESCRIPTION,
   openGraph: {
     title: 'Gadzio',
     description: DESCRIPTION,
-    url: 'https://gadzio.in/',
+    url: 'https://gadzio.co.in/',
     siteName: 'Gadzio',
     locale: 'en_US',
     type: 'website',

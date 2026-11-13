@@ -96,10 +96,10 @@ test('PAYU_ENV production or live refuses non-https and tunnel hosts in resolveA
     const validRes = resolveAppBaseUrl({
       NODE_ENV: 'production',
       PAYU_ENV: payuEnv,
-      APP_BASE_URL: 'https://gadzio.in',
+      APP_BASE_URL: 'https://gadzio.co.in',
     });
     assert.equal(validRes.ok, true);
-    assert.equal(validRes.baseUrl, 'https://gadzio.in');
+    assert.equal(validRes.baseUrl, 'https://gadzio.co.in');
     assert.equal(validRes.https, true);
     assert.equal(validRes.isTunnel, false);
     assert.equal(validRes.isLocalhost, false);
@@ -109,7 +109,7 @@ test('PAYU_ENV production or live refuses non-https and tunnel hosts in resolveA
       PAYU_ENV: payuEnv,
       PAYU_KEY: 'k',
       PAYU_SALT: 's',
-      APP_BASE_URL: 'https://gadzio.in',
+      APP_BASE_URL: 'https://gadzio.co.in',
     });
     assert.equal(cfg.env, 'live');
     assert.equal(cfg.paymentUrl, 'https://secure.payu.in/_payment');
@@ -136,7 +136,7 @@ test('checkSiteAddressHealth reports reachability, https, tunnel status, and pro
 
   // 2. Reachable permanent HTTPS domain
   const healthy = await checkSiteAddressHealth(
-    { NODE_ENV: 'production', PAYU_ENV: 'production', APP_BASE_URL: 'https://gadzio.in' },
+    { NODE_ENV: 'production', PAYU_ENV: 'production', APP_BASE_URL: 'https://gadzio.co.in' },
     async () => new Response('ok', { status: 200 }),
   );
   assert.equal(healthy.ok, true);

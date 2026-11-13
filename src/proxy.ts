@@ -68,6 +68,15 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
   return applySecurityHeadersTo(response);
 }
 
+function finalizeResponse(pathname: string, response: NextResponse): NextResponse {
+  const finalResponse = applySecurityHeaders(response);
+  if (pathname === '/reset-password' || pathname.startsWith('/reset-password/')) {
+    finalResponse.headers.set('Referrer-Policy', 'no-referrer');
+    finalResponse.headers.set('Cache-Control', 'no-store');
+  }
+  return finalResponse;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -77,7 +86,7 @@ export async function proxy(request: NextRequest) {
   if (isStorefrontPath(pathname) || isBlockedPurchaseApi(pathname)) {
     const state = await getMaintenanceState();
     if (shouldBlockPath(pathname, state.active)) {
-      return applySecurityHeaders(maintenanceResponse(pathname, state));
+      return finalizeResponse(pathname, maintenanceResponse(pathname, state));
     }
   }
 
@@ -119,12 +128,7 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  const finalResponse = applySecurityHeaders(response);
-  if (pathname === '/reset-password' || pathname.startsWith('/reset-password/')) {
-    finalResponse.headers.set('Referrer-Policy', 'no-referrer');
-    finalResponse.headers.set('Cache-Control', 'no-store');
-  }
-  return finalResponse;
+  return finalizeResponse(pathname, response);
 }
 
 export const config = {

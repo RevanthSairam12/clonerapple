@@ -98,14 +98,13 @@ async function checkAndRecordForgotRateLimit(
       select
         count(*)::int as cnt,
         coalesce(
-          ceil(extract(epoch from ((min(created_at) + interval '1 hour') - now())))::int,
+          ceil(extract(epoch from ((min(created_at) + interval '1 hour') - clock_timestamp())))::int,
           3600
         ) as retry_after_sec
       from auth_rate_limits
       where scope = 'forgot_ip'
         and bucket_key = ${ipKey}
-        and created_at > now() - interval '1 hour'
-        and created_at <= now()
+        and created_at > clock_timestamp() - interval '1 hour'
     `) as Array<{ cnt: number; retry_after_sec: number }>;
 
     if ((ipStats?.cnt ?? 0) >= FORGOT_IP_LIMIT) {
@@ -118,7 +117,7 @@ async function checkAndRecordForgotRateLimit(
 
     await tx`
       insert into auth_rate_limits (scope, bucket_key, created_at)
-      values ('forgot_ip', ${ipKey}, now())
+      values ('forgot_ip', ${ipKey}, clock_timestamp())
     `;
 
     if (!emailKey) {
@@ -130,15 +129,14 @@ async function checkAndRecordForgotRateLimit(
       from auth_rate_limits
       where scope = 'forgot_email'
         and bucket_key = ${emailKey}
-        and created_at > now() - interval '1 hour'
-        and created_at <= now()
+        and created_at > clock_timestamp() - interval '1 hour'
     `) as Array<{ cnt: number }>;
 
     const emailLimited = (emailStats?.cnt ?? 0) >= FORGOT_EMAIL_LIMIT;
     if (!emailLimited) {
       await tx`
         insert into auth_rate_limits (scope, bucket_key, created_at)
-        values ('forgot_email', ${emailKey}, now())
+        values ('forgot_email', ${emailKey}, clock_timestamp())
       `;
     }
 
@@ -164,14 +162,13 @@ async function checkAndRecordResetIpLimit(
       select
         count(*)::int as cnt,
         coalesce(
-          ceil(extract(epoch from ((min(created_at) + interval '1 hour') - now())))::int,
+          ceil(extract(epoch from ((min(created_at) + interval '1 hour') - clock_timestamp())))::int,
           3600
         ) as retry_after_sec
       from auth_rate_limits
       where scope = 'reset_ip'
         and bucket_key = ${ipKey}
-        and created_at > now() - interval '1 hour'
-        and created_at <= now()
+        and created_at > clock_timestamp() - interval '1 hour'
     `) as Array<{ cnt: number; retry_after_sec: number }>;
 
     if ((stats?.cnt ?? 0) >= RESET_IP_LIMIT) {
@@ -183,7 +180,7 @@ async function checkAndRecordResetIpLimit(
 
     await tx`
       insert into auth_rate_limits (scope, bucket_key, created_at)
-      values ('reset_ip', ${ipKey}, now())
+      values ('reset_ip', ${ipKey}, clock_timestamp())
     `;
 
     return { limited: false, retryAfterSec: 0 };

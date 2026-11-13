@@ -25,17 +25,24 @@ export async function POST(
   if (!guard.ok) return guard.response;
 
   const { txnid } = await context.params;
-  const result = await checkAdminPayment(
-    { adminId: guard.session.adminId, email: guard.session.email },
-    txnid,
-    request,
-  );
+  try {
+    const result = await checkAdminPayment(
+      { adminId: guard.session.adminId, email: guard.session.email },
+      txnid,
+      request,
+    );
 
-  return NextResponse.json(result.body, {
-    status: result.status,
-    headers: {
-      'Cache-Control': 'no-store',
-      ...(result.retryAfter ? { 'Retry-After': String(result.retryAfter) } : {}),
-    },
-  });
+    return NextResponse.json(result.body, {
+      status: result.status,
+      headers: {
+        'Cache-Control': 'no-store',
+        ...(result.retryAfter ? { 'Retry-After': String(result.retryAfter) } : {}),
+      },
+    });
+  } catch {
+    return NextResponse.json(
+      { error: 'Payment verification is temporarily unavailable. Please try again shortly.' },
+      { status: 503, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
 }

@@ -29,7 +29,7 @@ function siteOrigin(): URL {
       // Malformed value — fall through to the production origin.
     }
   }
-  return new URL('https://gadzio.in');
+  return new URL('https://gadzio.co.in');
 }
 
 export const metadata: Metadata = {

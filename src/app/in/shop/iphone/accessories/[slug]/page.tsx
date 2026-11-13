@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     openGraph: {
       title: seoTitle,
       description: seoDescription,
-      url: `https://gadzio.in/in/shop/iphone/accessories/${view.config.slug}`,
+      url: `https://gadzio.co.in/in/shop/iphone/accessories/${view.config.slug}`,
       siteName: 'Gadzio',
       locale: 'en_IN',
       type: 'website',

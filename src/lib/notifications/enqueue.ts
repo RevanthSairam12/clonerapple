@@ -90,7 +90,7 @@ function firstNonEmpty(...values: (string | undefined)[]): string {
 
 function appBaseUrl(): string {
   return (process.env.APP_BASE_URL || (
-    process.env.NODE_ENV === 'production' ? 'https://gadzio.in' : 'http://localhost:3000'
+    process.env.NODE_ENV === 'production' ? 'https://gadzio.co.in' : 'http://localhost:3000'
   )).replace(/\/+$/, '');
 }
 
@@ -382,13 +382,13 @@ export async function enqueueNotification(
           try {
             const ordRows = (await sql`select user_id from orders where txnid = ${context.txnid} limit 1`) as Row[];
             if (ordRows[0]?.user_id) customerUserId = text(ordRows[0].user_id);
-          } catch {}
+          } catch { }
         }
         if (!customerUserId && context.customerEmail) {
           try {
             const usrRows = (await sql`select id from users where lower(email) = ${context.customerEmail.trim().toLowerCase()} limit 1`) as Row[];
             if (usrRows[0]?.id) customerUserId = text(usrRows[0].id);
-          } catch {}
+          } catch { }
         }
 
         if (customerUserId) {

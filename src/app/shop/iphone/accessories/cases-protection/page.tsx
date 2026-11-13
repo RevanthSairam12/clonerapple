@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
     description: 'Shop Gadzio drop-tested protective cases for iPhone.',
-    url: 'https://gadzio.in/shop/iphone/accessories/cases-protection',
+    url: 'https://gadzio.co.in/shop/iphone/accessories/cases-protection',
     siteName: 'Gadzio',
     type: 'website',
   },
