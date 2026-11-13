@@ -114,11 +114,21 @@ export function AuthForm({
           </svg>
         </div>
         <h2 className="auth-success-title">
-          {mode === 'signin' ? 'Welcome back!' : 'Account created!'}
+          {mode === 'signin' ? 'Welcome back!' : 'Request received'}
         </h2>
         <p className="auth-success-text">
-          {isForCheckout ? 'Taking you to checkout…' : 'Redirecting you now…'}
+          {mode === 'signin'
+            ? (isForCheckout ? 'Taking you to checkout…' : 'Redirecting you now…')
+            : 'If this email is new, your account is ready. If you already have an account, please sign in with your password.'}
         </p>
+        {mode === 'signup' && (
+          <div className="auth-switch" style={{ marginTop: 16 }}>
+            Already have an account?{' '}
+            <a href="/auth" className="auth-switch-link">
+              Sign in
+            </a>
+          </div>
+        )}
       </div>
     );
   }
