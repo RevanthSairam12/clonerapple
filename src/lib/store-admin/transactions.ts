@@ -94,6 +94,7 @@ export async function listTransactionsForExport(options: {
       from orders o
       left join order_payments p on p.order_id = o.id
       where (p.id is not null or o.status = 'PAID')
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and case when p.id is not null then coalesce(p.paid_at, p.created_at) else coalesce(o.paid_at, o.created_at) end >=
             ((((now() at time zone ${timeZone}::text)::date - ${days - 1}::int)::timestamp)
               at time zone ${timeZone}::text)

@@ -80,6 +80,7 @@ function summary(row: Row): OrderSummary {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     paidAt: nullableIso(row.paid_at),
+    isTest: row.is_test === true || text(row.is_test) === 'true',
     // The POS list is a money view: it shows totals, not item lines.
     itemSummary: [],
   };
@@ -118,6 +119,7 @@ export async function listPosOrders(options: {
         select s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
                s.amount, s.currency, s.total_paise, s.scheduled_for,
                s.delivery_slot, s.created_at, s.updated_at, s.paid_at,
+               coalesce((to_jsonb(o)->>'is_test')::boolean, false) as is_test,
                o.order_number,
                o.customer_name, o.customer_email, o.customer_phone
         from order_sale_state s

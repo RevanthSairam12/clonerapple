@@ -197,21 +197,27 @@ export async function getNeedsAttentionSummary(
           select count(*)::int
           from orders
           where payment_review_required = true
+            and coalesce((to_jsonb(orders)->>'is_test')::boolean, false) = false
         ) as flagged_payments,
         (
           select count(*)::int
-          from refund_obligations
-          where status = 'PENDING'
+          from refund_obligations r
+          join orders o on o.id = r.order_id
+          where r.status = 'PENDING'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         ) as refunds_owed_count,
         (
-          select coalesce(sum(amount_paise), 0)::bigint
-          from refund_obligations
-          where status = 'PENDING'
+          select coalesce(sum(r.amount_paise), 0)::bigint
+          from refund_obligations r
+          join orders o on o.id = r.order_id
+          where r.status = 'PENDING'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         ) as refunds_owed_paise,
         (
           select count(*)::int
           from orders
           where status = 'PROCESSING'
+            and coalesce((to_jsonb(orders)->>'is_test')::boolean, false) = false
         ) as stuck_verifying,
         (
           select count(*)::int

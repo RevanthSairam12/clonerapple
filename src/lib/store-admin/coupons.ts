@@ -401,7 +401,9 @@ async function readUsageTotals(tx: Queryable, couponId: string): Promise<CouponU
         select sum(coalesce(o.total_paise, round(o.amount * 100)::bigint))
         from coupon_redemptions r
         join orders o on o.id = r.order_id
-        where r.coupon_id = ${couponId} and r.state = 'CONSUMED'
+        where r.coupon_id = ${couponId}
+          and r.state = 'CONSUMED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
       ), 0)::bigint as revenue_paise
     from coupon_redemptions
     where coupon_id = ${couponId}
@@ -1218,6 +1220,7 @@ export async function couponUsageReport(
         where r.created_at >= (${filters.fromDay}::date)::timestamp at time zone ${timeZone}::text
           and r.created_at < ((${filters.toDay}::date + 1)::timestamp at time zone ${timeZone}::text)
           and (${code} = '' or upper(c.code) = ${code})
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         order by r.created_at desc, r.id desc
         limit ${limit + 1}
       ` as unknown as Promise<Row[]>,
@@ -1236,6 +1239,7 @@ export async function couponUsageReport(
         where r.created_at >= (${filters.fromDay}::date)::timestamp at time zone ${timeZone}::text
           and r.created_at < ((${filters.toDay}::date + 1)::timestamp at time zone ${timeZone}::text)
           and (${code} = '' or upper(c.code) = ${code})
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
       ` as unknown as Promise<Row[]>,
     ]);
 

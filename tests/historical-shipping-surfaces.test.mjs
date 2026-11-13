@@ -108,7 +108,7 @@ function mocksFor(order, settings = {}) {
       React.createElement('header', null, title, kicker) },
   };
   for (const name of ['PrintButton', 'OrderControls', 'OrderCancelForm', 'RefundForm', 'ReturnForm',
-    'CustomerRevealForm', 'OrderPaymentControls', 'OrderNoteForm', 'OrderEditForm']) {
+    'CustomerRevealForm', 'OrderPaymentControls', 'OrderNoteForm', 'OrderEditForm', 'OrderTestToggleForm']) {
     mocks[`@/components/store-admin/${name}`] = { [name]: Null };
   }
   for (const name of ['PrintButton', 'LiveOrderPoller', 'OrderRequestButtons', 'OrderStatusChip']) {
@@ -173,7 +173,10 @@ test('order CSV exports stored shipping separately without adding it to the char
     '@/lib/store-admin/auth': { requireStoreRole: async () => ({ ok: true, session }) },
     '@/lib/store-admin/audit': { writeAudit: async () => true },
     '@/lib/store-admin/delivery': { isDateOnly: () => true },
-    '@/lib/store-admin/orders': { listOrdersForExport: async () => ({ ok: true, data: rows }) },
+    '@/lib/store-admin/orders': {
+      listOrdersForExport: async () => ({ ok: true, data: rows }),
+      parseOrderTestFilter: (value) => (value === 'live' || value === 'test' ? value : 'all'),
+    },
     '@/lib/store-admin/report-rules': { storeDay: () => '2026-11-01' },
     '@/lib/store-admin/store-clock': { getDatabaseNow: async () => new Date(), getStoreTimeZone: async () => 'Asia/Kolkata' },
   });

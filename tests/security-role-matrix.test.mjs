@@ -51,6 +51,7 @@ const SENSITIVE_ROUTES = {
   'settings/route.ts': 'store_admin',
   // Money.
   'orders/[txnid]/reveal/route.ts': 'store_owner',
+  'orders/[txnid]/test-order/route.ts': 'store_owner',
   'orders/[txnid]/void/route.ts': 'store_owner',
   'orders/[txnid]/refund/route.ts': 'store_admin',
   'expenses/route.ts': 'store_admin',

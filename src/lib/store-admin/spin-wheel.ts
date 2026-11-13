@@ -290,6 +290,7 @@ export async function getSpinWheelAdminDataUsing(
         join spin_wheel_spins sp on sp.coupon_id = o.coupon_id
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
       ` as Promise<Row[]>,
       sql`
         select

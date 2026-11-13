@@ -9,7 +9,9 @@ import {
   listOrders,
   ORDER_SORTS,
   ORDERS_PAGE_SIZE,
+  parseOrderTestFilter,
   type OrderSort,
+  type OrderTestFilter,
   type SaleState,
 } from '@/lib/store-admin/orders';
 import { orderTotals } from '@/lib/store-admin/order-documents';
@@ -28,6 +30,7 @@ interface Props {
     q?: string;
     channel?: string;
     state?: string;
+    test?: string;
     sort?: string;
     from?: string;
     to?: string;
@@ -109,6 +112,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
   const state = params.state && isSaleState(params.state) ? params.state : null;
   const channel =
     params.channel === 'web' || params.channel === 'pos' ? params.channel : null;
+  const testFilter: OrderTestFilter = parseOrderTestFilter(params.test);
   const sort: OrderSort = params.sort && isOrderSort(params.sort) ? params.sort : 'newest';
   const legacyDate = params.date && isDateOnly(params.date) ? params.date : null;
   const dateFrom =
@@ -120,6 +124,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
     query,
     state,
     channel,
+    testFilter,
     dateFrom,
     dateTo,
     sort,
@@ -148,6 +153,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
       q: string;
       channel: 'web' | 'pos' | null;
       state: SaleState | null;
+      test: OrderTestFilter;
       sort: OrderSort;
       from: string | null;
       to: string | null;
@@ -159,6 +165,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
       q: query,
       channel,
       state,
+      test: testFilter,
       sort,
       from: dateFrom,
       to: dateTo,
@@ -170,6 +177,7 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
     if (next.q) search.set('q', next.q);
     if (next.channel) search.set('channel', next.channel);
     if (next.state) search.set('state', next.state);
+    if (next.test && next.test !== 'all') search.set('test', next.test);
     if (next.sort !== 'newest') search.set('sort', next.sort);
     if (next.from) search.set('from', next.from);
     if (next.to) search.set('to', next.to);
@@ -298,9 +306,22 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
             ))}
           </select>
         </div>
+        <div className="sa-filter-field">
+          <label className="sa-label" htmlFor="order-test">Scope</label>
+          <select
+            id="order-test"
+            className="sa-input"
+            name="test"
+            defaultValue={testFilter}
+          >
+            <option value="all">All orders</option>
+            <option value="live">Live orders only</option>
+            <option value="test">Test orders only</option>
+          </select>
+        </div>
         <div className="sa-filter-actions">
           <button type="submit" className="sa-btn sa-btn-quiet">Apply</button>
-          {query || state || channel || dateFrom || dateTo || sort !== 'newest' ? (
+          {query || state || channel || testFilter !== 'all' || dateFrom || dateTo || sort !== 'newest' ? (
             <Link className="sa-back sa-back-inline" href="/store-admin/orders">Clear</Link>
           ) : null}
         </div>
@@ -389,6 +410,9 @@ export default async function StoreAdminOrdersPage({ searchParams }: Props) {
                         <span className="sa-status" data-status-domain="order">
                           Order: {derived.orderStatusLabel}
                         </span>
+                        {order.isTest ? (
+                          <span className="sa-status sa-status-warn">Test order</span>
+                        ) : null}
                       </div>
                     );
                   })()}

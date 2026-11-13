@@ -91,6 +91,8 @@ const EXPECTED_OWNER_ROUTES = ['customers/[id]/reveal/route.ts'];
 for (const suffix of ['', '/preview', '/apply']) EXPECTED_OWNER_ROUTES.push(`catalog/shared/[kind]${suffix}/route.ts`);
 for (const suffix of ['export', 'template', 'uses']) EXPECTED_READ_ONLY_ROUTES.push(`catalog/shared/[kind]/${suffix}/route.ts`);
 EXPECTED_OWNER_ROUTES.push('orders/[txnid]/reveal/route.ts');
+// Marking or unmarking a test order excludes/restores it from reporting cleanly.
+EXPECTED_OWNER_ROUTES.push('orders/[txnid]/test-order/route.ts');
 // Voiding a POS sale is owner-only.
 EXPECTED_OWNER_ROUTES.push('orders/[txnid]/void/route.ts');
 // Reference data shapes every product, so it is owner-only.

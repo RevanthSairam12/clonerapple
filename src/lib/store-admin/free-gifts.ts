@@ -216,11 +216,13 @@ export async function getFreeGiftsAdminDataUsing(
             where gr.state = 'CONSUMED'
               and o.status = 'PAID'
               and o.fulfilment_status <> 'CANCELED'
+              and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           )::int as paid_orders_count,
           coalesce(sum(coalesce(o.total_paise, round(o.amount * 100)::bigint)) filter (
             where gr.state = 'CONSUMED'
               and o.status = 'PAID'
               and o.fulfilment_status <> 'CANCELED'
+              and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           ), 0)::bigint as revenue_paise,
           coalesce((
             select sum(coalesce((to_jsonb(oi)->>'reference_price_paise')::bigint, 0) * oi.quantity)
@@ -230,6 +232,7 @@ export async function getFreeGiftsAdminDataUsing(
               and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = true
               and o2.status = 'PAID'
               and o2.fulfilment_status <> 'CANCELED'
+              and coalesce((to_jsonb(o2)->>'is_test')::boolean, false) = false
           ), 0)::bigint as retail_gift_value_paise
         from free_gift_rules r
         left join free_gift_redemptions gr on gr.rule_id = r.id

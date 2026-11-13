@@ -71,3 +71,24 @@ export function validateTrackingUrl(value: string | null | undefined): string | 
     return null;
   }
 }
+
+export type OrderTestFilter = 'all' | 'live' | 'test';
+
+export function parseOrderTestFilter(value: unknown): OrderTestFilter {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'live' || normalized === 'test') return normalized;
+  return 'all';
+}
+
+export function validateTestOrderReason(
+  value: unknown,
+): { ok: true; reason: string } | { ok: false; error: string } {
+  const reason = typeof value === 'string' ? value.trim() : '';
+  if (reason.length < 3) {
+    return { ok: false, error: 'Give a reason of at least 3 characters.' };
+  }
+  if (reason.length > 200) {
+    return { ok: false, error: 'Reason must be 200 characters or fewer.' };
+  }
+  return { ok: true, reason };
+}

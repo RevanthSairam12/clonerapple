@@ -6,9 +6,16 @@ import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
 import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
 import { releaseConsumedFreeGiftInTx, releaseFreeGiftInTx } from '@/lib/free-gifts/store';
 
-import { FULFILMENT_TRANSITIONS, mapSaleState, type FulfilmentStatus } from './order-rules';
-export { mapSaleState } from './order-rules';
-export { FULFILMENT_TRANSITIONS, type FulfilmentStatus } from './order-rules';
+import {
+  FULFILMENT_TRANSITIONS,
+  mapSaleState,
+  parseOrderTestFilter,
+  validateTestOrderReason,
+  type FulfilmentStatus,
+  type OrderTestFilter,
+} from './order-rules';
+export { mapSaleState, parseOrderTestFilter, validateTestOrderReason } from './order-rules';
+export { FULFILMENT_TRANSITIONS, type FulfilmentStatus, type OrderTestFilter } from './order-rules';
 
 import { orderRevenuePaise } from './amount';
 import { maskCustomerEmail, maskCustomerPhone } from './masking';
@@ -313,6 +320,8 @@ export interface OrderSummary {
   createdAt: string;
   updatedAt: string;
   paidAt: string | null;
+  /** True when the store owner marked this row as a test order. */
+  isTest: boolean;
   /** What was bought, so the list can name the option without opening it. */
   itemSummary: OrderItemSummary[];
 }
@@ -350,6 +359,8 @@ export interface OrderDetail extends OrderSummary {
   shippingPaise: number;
   couponCode: string | null;
   paymentMethod: string | null;
+  testMarkedAt: string | null;
+  testNote: string;
 }
 
 export type OrderLoad<T> =
@@ -424,6 +435,7 @@ function summaryFromRow(row: Row): OrderSummary {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     paidAt: nullableIso(row.paid_at),
+    isTest: row.is_test === true || text(row.is_test) === 'true',
     itemSummary: itemSummaryFromRow(row.item_summary ?? row.items),
   };
 }
@@ -442,6 +454,7 @@ export async function listOrders(options: {
   query?: string;
   state?: SaleState | null;
   channel?: 'web' | 'pos' | null;
+  testFilter?: OrderTestFilter;
   dateFrom?: string | null;
   dateTo?: string | null;
   sort?: OrderSort | null;
@@ -453,6 +466,7 @@ export async function listOrders(options: {
   const query = (options.query ?? '').trim().slice(0, 100);
   const state = options.state && isSaleState(options.state) ? options.state : null;
   const channel = options.channel === 'web' || options.channel === 'pos' ? options.channel : null;
+  const testFilter = parseOrderTestFilter(options.testFilter);
   const dateFrom = options.dateFrom || null;
   const dateTo = options.dateTo || null;
   const sort = options.sort && isOrderSort(options.sort) ? options.sort : 'newest';
@@ -466,6 +480,7 @@ export async function listOrders(options: {
       from order_sale_state s
       join orders o on o.id = s.id
       where (${channel === null} or s.channel = ${channel})
+        and (${testFilter === 'all'} or coalesce((to_jsonb(o)->>'is_test')::boolean, false) = ${testFilter === 'test'})
         and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
@@ -482,6 +497,7 @@ export async function listOrders(options: {
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
         and (${channel === null} or s.channel = ${channel})
+        and (${testFilter === 'all'} or coalesce((to_jsonb(o)->>'is_test')::boolean, false) = ${testFilter === 'test'})
         and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
@@ -505,6 +521,7 @@ export async function listOrders(options: {
         s.id, s.txnid, s.status, s.fulfilment_status, s.sale_state, s.channel,
         s.amount, s.currency, s.total_paise, s.scheduled_for, s.delivery_slot,
         s.created_at, s.updated_at, s.paid_at,
+        coalesce((to_jsonb(o)->>'is_test')::boolean, false) as is_test,
         o.order_number, o.customer_name, o.customer_email, o.customer_phone,
         coalesce((
           select jsonb_agg(jsonb_build_object(
@@ -524,6 +541,7 @@ export async function listOrders(options: {
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
         and (${channel === null} or s.channel = ${channel})
+        and (${testFilter === 'all'} or coalesce((to_jsonb(o)->>'is_test')::boolean, false) = ${testFilter === 'test'})
         and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
@@ -580,6 +598,7 @@ export interface OrderExportRow {
   shippingPaise: number;
   currency: string;
   itemLines: number;
+  isTest: boolean;
 }
 
 /**
@@ -591,6 +610,7 @@ export async function listOrdersForExport(options: {
   query?: string;
   state?: SaleState | null;
   channel?: 'web' | 'pos' | null;
+  testFilter?: OrderTestFilter;
   dateFrom?: string | null;
   dateTo?: string | null;
   sort?: OrderSort | null;
@@ -602,6 +622,7 @@ export async function listOrdersForExport(options: {
   const query = (options.query ?? '').trim().slice(0, 100);
   const state = options.state && isSaleState(options.state) ? options.state : null;
   const channel = options.channel === 'web' || options.channel === 'pos' ? options.channel : null;
+  const testFilter = parseOrderTestFilter(options.testFilter);
   const dateFrom = options.dateFrom || null;
   const dateTo = options.dateTo || null;
   const sort = options.sort && isOrderSort(options.sort) ? options.sort : 'newest';
@@ -615,6 +636,7 @@ export async function listOrdersForExport(options: {
         s.txnid, s.sale_state, s.status, s.fulfilment_status, s.channel,
         s.amount, s.currency, s.total_paise, s.shipping_paise,
         to_char((s.created_at at time zone ${tz}::text), 'YYYY-MM-DD HH24:MI:SS') as created_local,
+        coalesce((to_jsonb(o)->>'is_test')::boolean, false) as is_test,
         o.order_number,
         o.customer_name, o.customer_email, o.customer_phone,
         (
@@ -624,6 +646,7 @@ export async function listOrdersForExport(options: {
       join orders o on o.id = s.id
       where (${state === null} or s.sale_state = ${state})
         and (${channel === null} or s.channel = ${channel})
+        and (${testFilter === 'all'} or coalesce((to_jsonb(o)->>'is_test')::boolean, false) = ${testFilter === 'test'})
         and (${query === ''}
           or o.txnid ilike ${pattern} escape '\\'
           or o.customer_name ilike ${pattern} escape '\\'
@@ -664,6 +687,7 @@ export async function listOrdersForExport(options: {
         currency: text(row.currency) || 'INR',
         shippingPaise: integer(row.shipping_paise),
         itemLines: integer(row.item_lines),
+        isTest: row.is_test === true || text(row.is_test) === 'true',
         };
       }),
     };
@@ -747,6 +771,9 @@ export async function getOrderDetail(
         s.subtotal_paise, s.discount_paise, s.shipping_paise, s.coupon_code,
         s.payment_method,
         s.created_at, s.updated_at, s.paid_at,
+        coalesce((to_jsonb(o)->>'is_test')::boolean, false) as is_test,
+        to_jsonb(o)->>'test_marked_at' as test_marked_at,
+        coalesce(to_jsonb(o)->>'test_note', '') as test_note,
         o.order_number,
         o.customer_name, o.customer_email, o.customer_phone, o.items
       from order_sale_state s
@@ -882,6 +909,8 @@ export async function getOrderDetail(
         shippingPaise: integer(order.shipping_paise),
         couponCode: nullableText(order.coupon_code),
         paymentMethod: nullableText(order.payment_method),
+        testMarkedAt: nullableIso(order.test_marked_at),
+        testNote: text(order.test_note),
       },
     };
   } catch {
@@ -1259,4 +1288,123 @@ export async function revealOrderField(
     console.warn('[store-admin/orders] could not reveal an order field');
     return { ok: false, reason: 'unavailable' };
   }
+}
+
+export type OrderTestFlagResult =
+  | {
+      ok: true;
+      orderId: string;
+      txnid: string;
+      orderNumber: number | null;
+      previousIsTest: boolean;
+      isTest: boolean;
+    }
+  | {
+      ok: false;
+      reason: 'unavailable' | 'not-found' | 'owner-required' | 'invalid-input' | 'migration-pending';
+      error: string;
+    };
+
+/**
+ * Mark or unmark an order as a test order inside the caller's Postgres handle.
+ * Deletes nothing and never changes `order_number`, `invoice_number`, or order status.
+ */
+export async function setOrderTestFlagUsing(
+  sql: postgres.Sql,
+  input: {
+    txnid: string;
+    isTest: boolean;
+    reason: string;
+    staffId: string;
+    role: OrderAccessRole;
+  },
+): Promise<OrderTestFlagResult> {
+  if (input.role !== 'store_owner') {
+    return {
+      ok: false,
+      reason: 'owner-required',
+      error: 'Only the store owner can mark or unmark test orders.',
+    };
+  }
+
+  const key = input.txnid.trim();
+  if (!key) {
+    return { ok: false, reason: 'not-found', error: 'Order not found.' };
+  }
+
+  const reasonCheck = validateTestOrderReason(input.reason);
+  if (!reasonCheck.ok) {
+    return { ok: false, reason: 'invalid-input', error: reasonCheck.error };
+  }
+
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = (await tx`
+        select id, txnid, order_number,
+               coalesce((to_jsonb(orders)->>'is_test')::boolean, false) as is_test
+        from orders
+        where txnid = ${key}
+        for update
+      `) as Row[];
+      const order = rows[0];
+      if (!order) {
+        return { ok: false as const, reason: 'not-found' as const, error: 'Order not found.' };
+      }
+
+      const previousIsTest = order.is_test === true || text(order.is_test) === 'true';
+      const orderId = text(order.id);
+      const orderNumberRaw = integer(order.order_number);
+      const orderNumber = orderNumberRaw > 0 ? orderNumberRaw : null;
+
+      await tx`
+        update orders
+        set is_test = ${input.isTest},
+            test_marked_by = ${input.isTest ? input.staffId : null},
+            test_marked_at = case when ${input.isTest} then now() else null end,
+            test_note = ${input.isTest ? reasonCheck.reason : ''},
+            updated_at = now()
+        where id = ${orderId}
+      `;
+
+      return {
+        ok: true as const,
+        orderId,
+        txnid: text(order.txnid),
+        orderNumber,
+        previousIsTest,
+        isTest: input.isTest,
+      };
+    });
+  } catch (error) {
+    if ((error as { code?: string })?.code === '42703') {
+      return {
+        ok: false,
+        reason: 'migration-pending',
+        error: 'Apply pending migration 0073_mark_test_order.sql before marking orders as test.',
+      };
+    }
+    console.warn('[store-admin/orders] test-order flag update failed');
+    return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  }
+}
+
+export async function setOrderTestFlag(input: {
+  txnid: string;
+  isTest: boolean;
+  reason: string;
+  staffId: string;
+  role: OrderAccessRole;
+}): Promise<OrderTestFlagResult> {
+  if (input.role !== 'store_owner') {
+    return {
+      ok: false,
+      reason: 'owner-required',
+      error: 'Only the store owner can mark or unmark test orders.',
+    };
+  }
+  const sql = getSql();
+  if (!sql) {
+    return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  }
+  return setOrderTestFlagUsing(sql, input);
 }

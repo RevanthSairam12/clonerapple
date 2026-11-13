@@ -31,6 +31,7 @@ import { VerifyWithPayUButton } from '@/components/store-admin/VerifyWithPayUBut
 import { OrderDetailTabs, type DetailTab } from '@/components/store-admin/OrderDetailTabs';
 import { OrderNoteForm } from '@/components/store-admin/OrderNoteForm';
 import { OrderEditForm } from '@/components/store-admin/OrderEditForm';
+import { OrderTestToggleForm } from '@/components/store-admin/OrderTestToggleForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,6 +151,13 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
       label: 'Overview',
       content: (
         <div className="sa-tab-stack">
+          {order.isTest ? (
+            <div className="sa-notice" role="status">
+              <strong>Marked as test order.</strong> Excluded from revenue, overview metrics,
+              customer counts, and reports. Nothing was deleted or renumbered.
+              {order.testNote ? ` Note: ${order.testNote}` : ''}
+            </div>
+          ) : null}
           <OrderDocumentStatus state={documentState} currency={order.currency} />
           {billRequest && <section className="sa-detail-card">
             <h2 className="sa-card-title">Bill request</h2>
@@ -269,6 +277,12 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                     endpoint={`/api/store-admin/orders/${encodeURIComponent(order.txnid)}/reveal`}
                   />
                 </div>
+                <OrderTestToggleForm
+                  txnid={order.txnid}
+                  isTest={order.isTest}
+                  testNote={order.testNote}
+                  testMarkedAt={order.testMarkedAt}
+                />
               </div>
             </section>
           ) : null}
@@ -686,6 +700,9 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
             Order: {documentState.orderStatusLabel}
           </span>
           <span className={stateClass(order.saleState)}>{SALE_STATE_LABELS[order.saleState]}</span>
+          {order.isTest ? (
+            <span className="sa-status sa-status-warn">Test order</span>
+          ) : null}
         </div>
       </div>
 

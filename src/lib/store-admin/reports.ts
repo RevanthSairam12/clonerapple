@@ -156,7 +156,8 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
             where o.status = 'PAID' and o.fulfilment_status <> 'CANCELED'
           ), 0)::bigint as discount
         from orders o
-        where o.created_at >= ${filters.fromIso}::timestamptz
+        where coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
+          and o.created_at >= ${filters.fromIso}::timestamptz
           and o.created_at < ${filters.toIso}::timestamptz
           and (${filters.status}::text = 'all' or o.status = ${filters.status}::text)
           and (
@@ -173,6 +174,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
         join orders uo on uo.id = oi.order_id
         where uo.status = 'PAID'
           and uo.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(uo)->>'is_test')::boolean, false) = false
           and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
           and uo.created_at >= ${filters.fromIso}::timestamptz
           and uo.created_at < ${filters.toIso}::timestamptz
@@ -193,6 +195,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           and r.created_at < ${filters.toIso}::timestamptz
           and ro.status = 'PAID'
           and ro.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(ro)->>'is_test')::boolean, false) = false
           and (${filters.status}::text = 'all' or ro.status = ${filters.status}::text)
           and (
             ${filters.channel}::text = 'all'
@@ -241,6 +244,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           join orders uo on uo.id = oi.order_id
           where uo.status = 'PAID'
             and uo.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(uo)->>'is_test')::boolean, false) = false
             and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and uo.created_at >= ${filters.fromIso}::timestamptz
             and uo.created_at < ${filters.toIso}::timestamptz
@@ -258,6 +262,7 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
             and r.created_at < ${filters.toIso}::timestamptz
             and ro.status = 'PAID'
             and ro.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(ro)->>'is_test')::boolean, false) = false
             and (${filters.status}::text = 'all' or ro.status = ${filters.status}::text)
             and (
               ${filters.channel}::text = 'all'
@@ -265,7 +270,8 @@ async function orderReport(sql: Sql, filters: ReportFilters): Promise<ReportData
             )
         ) as refunds
       from orders o
-      where o.created_at >= ${filters.fromIso}::timestamptz
+      where coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
+        and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
         and (${filters.status}::text = 'all' or o.status = ${filters.status}::text)
         and (
@@ -356,6 +362,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
         from orders o
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at >= ${filters.fromIso}::timestamptz
           and o.created_at < ${filters.toIso}::timestamptz
           and (
@@ -383,6 +390,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           and r.created_at < ${filters.toIso}::timestamptz
           and ro.status = 'PAID'
           and ro.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(ro)->>'is_test')::boolean, false) = false
           and (
             ${filters.channel}::text = 'all'
             or coalesce(nullif(ro.channel, ''), 'web') = ${filters.channel}::text
@@ -410,6 +418,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           from orders o
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and o.created_at >= ${filters.fromIso}::timestamptz
             and o.created_at < ${filters.toIso}::timestamptz
             and (
@@ -422,6 +431,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
           from orders o
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and o.created_at >= ${filters.fromIso}::timestamptz
             and o.created_at < ${filters.toIso}::timestamptz
             and (
@@ -443,6 +453,7 @@ async function dailyReport(sql: Sql, filters: ReportFilters): Promise<ReportData
             and r.created_at < ${filters.toIso}::timestamptz
             and ro.status = 'PAID'
             and ro.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(ro)->>'is_test')::boolean, false) = false
             and (
               ${filters.channel}::text = 'all'
               or coalesce(nullif(ro.channel, ''), 'web') = ${filters.channel}::text
@@ -528,6 +539,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       left join stock s on s.product_id = p.id and s.variant_id is not distinct from oi.variant_id
       where o.status = 'PAID'
         and o.fulfilment_status <> 'CANCELED'
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
         and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
@@ -551,6 +563,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       from return_items ri
       join return_requests rr on rr.id = ri.return_id
       join order_items oi on oi.id = ri.order_item_id
+      join orders o on o.id = oi.order_id
       left join products p on p.id = split_part(oi.product_id, '::', 1)
       left join categories c on c.id = p.category_id and c.deleted_at is null
       left join brands b on b.id = p.brand_id and b.deleted_at is null
@@ -558,6 +571,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       where rr.created_at >= ${filters.fromIso}::timestamptz
         and rr.created_at < ${filters.toIso}::timestamptz
         and rr.status in ('APPROVED', 'RECEIVED', 'REFUNDED')
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and (${filters.categoryId}::text is null or p.category_id = ${filters.categoryId}::text)
         and (${filters.brandId}::text is null or p.brand_id = ${filters.brandId}::text)
       group by split_part(oi.product_id, '::', 1), oi.variant_id
@@ -574,6 +588,7 @@ async function itemReport(sql: Sql, filters: ReportFilters): Promise<ReportData>
       left join products p on p.id = split_part(oi.product_id, '::', 1)
       where o.status = 'PAID'
         and o.fulfilment_status <> 'CANCELED'
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
         and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
@@ -710,7 +725,8 @@ async function statementLines(sql: Sql, filters: ReportFilters): Promise<Row[]> 
         coalesce(p.provider_ref, '') as reference
       from order_payments p
       join orders o on o.id = p.order_id
-      where coalesce(p.paid_at, p.created_at) >= ${filters.fromIso}::timestamptz
+      where coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
+        and coalesce(p.paid_at, p.created_at) >= ${filters.fromIso}::timestamptz
         and coalesce(p.paid_at, p.created_at) < ${filters.toIso}::timestamptz
       union all
       select
@@ -724,6 +740,7 @@ async function statementLines(sql: Sql, filters: ReportFilters): Promise<Row[]> 
         coalesce(o.payu_mihpayid, '')
       from orders o
       where o.status = 'PAID'
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and not exists (select 1 from order_payments p where p.order_id = o.id)
         and coalesce(o.total_paise, round(o.amount * 100)::bigint) > 0
         and coalesce(o.paid_at, o.created_at) >= ${filters.fromIso}::timestamptz
@@ -740,7 +757,8 @@ async function statementLines(sql: Sql, filters: ReportFilters): Promise<Row[]> 
         coalesce(r.provider_ref, '')
       from refunds r
       join orders o on o.id = r.order_id
-      where r.created_at >= ${filters.fromIso}::timestamptz
+      where coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
+        and r.created_at >= ${filters.fromIso}::timestamptz
         and r.created_at < ${filters.toIso}::timestamptz
     )
     select
@@ -869,7 +887,8 @@ async function reconciliationReport(sql: Sql, filters: ReportFilters): Promise<R
         from refunds
         group by order_id
       ) r on r.order_id = o.id
-      where o.created_at >= ${filters.fromIso}::timestamptz
+      where coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
+        and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
         and (o.status = 'PAID' or p.order_id is not null or o.payu_mihpayid is not null)
     ),
@@ -1329,6 +1348,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         left join users u on u.id = o.user_id
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at >= ${filters.fromIso}::timestamptz
           and o.created_at < ${filters.toIso}::timestamptz
           and (
@@ -1344,6 +1364,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         from orders o
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at < ${filters.fromIso}::timestamptz
         group by 1
       )
@@ -1367,6 +1388,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         from orders o
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at >= ${filters.fromIso}::timestamptz
           and o.created_at < ${filters.toIso}::timestamptz
           and (
@@ -1382,6 +1404,7 @@ async function customerReport(sql: Sql, filters: ReportFilters): Promise<ReportD
         from orders o
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at < ${filters.fromIso}::timestamptz
         group by 1
       )
@@ -1474,6 +1497,7 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       left join categories c on c.id = p.category_id and c.deleted_at is null
       where o.status = 'PAID'
         and o.fulfilment_status <> 'CANCELED'
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
         and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
@@ -1495,6 +1519,7 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       left join brands b on b.id = p.brand_id and b.deleted_at is null
       where o.status = 'PAID'
         and o.fulfilment_status <> 'CANCELED'
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
         and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz
@@ -1514,6 +1539,7 @@ async function categoryReport(sql: Sql, filters: ReportFilters): Promise<ReportD
       left join products p on p.id = split_part(oi.product_id, '::', 1)
       where o.status = 'PAID'
         and o.fulfilment_status <> 'CANCELED'
+        and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
         and o.created_at >= ${filters.fromIso}::timestamptz
         and o.created_at < ${filters.toIso}::timestamptz

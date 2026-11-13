@@ -104,6 +104,7 @@ export async function listAccounts(options: {
         select count(*)::int as order_count
         from orders o
         where o.user_id = u.id
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
       ) o on true
       where (
         ${search} = ''

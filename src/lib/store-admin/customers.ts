@@ -141,6 +141,7 @@ export async function listCustomers(
                     filter (where o.customer_phone <> ''))[1] as latest_phone
           from orders o
           where o.user_id = u.id
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         ) a on true
         where (
           ${filters.query} = ''
@@ -158,7 +159,9 @@ export async function listCustomers(
                (array_agg(o.customer_phone order by o.created_at desc, o.id desc)
                   filter (where o.customer_phone <> ''))[1] as latest_phone
         from orders o
-        where o.user_id is null and coalesce(o.customer_email, '') <> ''
+        where o.user_id is null
+          and coalesce(o.customer_email, '') <> ''
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         group by lower(o.customer_email)
       )
       select rows.*, count(*) over() as total from (
@@ -204,7 +207,9 @@ export async function listCustomers(
         (select count(*)::int from users where is_blocked = true) as blocked,
         (select count(distinct lower(customer_email))::int
            from orders
-          where user_id is null and coalesce(customer_email, '') <> '') as guests
+          where user_id is null
+            and coalesce(customer_email, '') <> ''
+            and coalesce((to_jsonb(orders)->>'is_test')::boolean, false) = false) as guests
     `) as Row[];
     const summaryRow = summaryRows[0] ?? {};
 
@@ -355,6 +360,7 @@ export async function getCustomerDetail(
                  o.created_at, o.paid_at
           from orders o
           where o.user_id = ${customerId}
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           order by o.created_at desc, o.id desc
           limit ${ORDER_DETAIL_LIMIT}
         `,
@@ -368,6 +374,7 @@ export async function getCustomerDetail(
                     filter (where o.customer_phone <> ''))[1] as latest_phone
           from orders o
           where o.user_id = ${customerId}
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         `,
         sql`
           select id, name, phone, line1, line2, city, state, pincode,
@@ -383,6 +390,7 @@ export async function getCustomerDetail(
           from order_payments p
           join orders o on o.id = p.order_id
           where o.user_id = ${customerId}
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           order by p.created_at desc, p.id desc
           limit ${PAYMENT_LIMIT}
         `,
@@ -390,7 +398,9 @@ export async function getCustomerDetail(
           select o.id, o.txnid, o.amount, o.status, o.payu_mode, o.payu_mihpayid,
                  o.created_at, o.paid_at
           from orders o
-          where o.user_id = ${customerId} and o.payu_mihpayid is not null
+          where o.user_id = ${customerId}
+            and o.payu_mihpayid is not null
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           order by o.created_at desc, o.id desc
           limit ${PAYMENT_LIMIT}
         `,

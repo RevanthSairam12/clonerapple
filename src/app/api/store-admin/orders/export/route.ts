@@ -1,7 +1,7 @@
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { isDateOnly } from '@/lib/store-admin/delivery';
-import { isOrderSort, isSaleState, listOrdersForExport } from '@/lib/store-admin/orders';
+import { isOrderSort, isSaleState, listOrdersForExport, parseOrderTestFilter } from '@/lib/store-admin/orders';
 import { storeDay } from '@/lib/store-admin/report-rules';
 import { getDatabaseNow, getStoreTimeZone } from '@/lib/store-admin/store-clock';
 
@@ -28,6 +28,7 @@ export async function GET(request: Request) {
   const query = (url.searchParams.get('q') ?? '').trim().slice(0, 100);
   const rawState = url.searchParams.get('state');
   const rawChannel = url.searchParams.get('channel');
+  const rawTest = url.searchParams.get('test');
   const rawSort = url.searchParams.get('sort');
   const dateFrom = url.searchParams.get('dateFrom') || null;
   const dateTo = url.searchParams.get('dateTo') || null;
@@ -38,6 +39,9 @@ export async function GET(request: Request) {
   if (rawChannel && !['all', 'web', 'pos'].includes(rawChannel)) {
     return Response.json({ error: 'Invalid order channel.' }, { status: 400 });
   }
+  if (rawTest && !['all', 'live', 'test'].includes(rawTest)) {
+    return Response.json({ error: 'Invalid test order filter.' }, { status: 400 });
+  }
   if (rawSort && !isOrderSort(rawSort)) {
     return Response.json({ error: 'Invalid order sort.' }, { status: 400 });
   }
@@ -47,12 +51,14 @@ export async function GET(request: Request) {
 
   const state = rawState && rawState !== 'ALL' && isSaleState(rawState) ? rawState : null;
   const channel = rawChannel === 'web' || rawChannel === 'pos' ? rawChannel : null;
+  const testFilter = parseOrderTestFilter(rawTest);
   const sort = rawSort && isOrderSort(rawSort) ? rawSort : null;
 
   const result = await listOrdersForExport({
     query,
     state,
     channel,
+    testFilter,
     dateFrom,
     dateTo,
     sort,
@@ -71,6 +77,7 @@ export async function GET(request: Request) {
     'Payment status',
     'Fulfilment',
     'Channel',
+    'Test order',
     'Customer',
     'Email',
     'Phone',
@@ -91,6 +98,7 @@ export async function GET(request: Request) {
         row.paymentStatus,
         row.fulfilmentStatus,
         row.channel,
+        row.isTest ? 'yes' : 'no',
         row.customerNameMasked,
         row.customerEmailMasked,
         row.customerPhoneMasked,
@@ -116,6 +124,7 @@ export async function GET(request: Request) {
         query,
         state,
         channel,
+        testFilter,
         dateFrom,
         dateTo,
         sort,

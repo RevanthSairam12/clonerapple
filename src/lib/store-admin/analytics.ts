@@ -269,6 +269,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and o.created_at >= b.prev_from_ts
             and o.created_at < b.to_ts
         `,
@@ -282,6 +283,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and r.created_at >= b.from_ts
             and r.created_at < b.to_ts
         `,
@@ -295,6 +297,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
@@ -319,6 +322,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
                 cross join bounds b
                 where o.status = 'PAID'
                   and o.fulfilment_status <> 'CANCELED'
+                  and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
                   and o.created_at >= b.from_ts
                   and o.created_at < b.to_ts
                 group by 1
@@ -346,6 +350,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
                 cross join bounds b
                 where o.status = 'PAID'
                   and o.fulfilment_status <> 'CANCELED'
+                  and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
                   and o.created_at >= b.from_ts
                   and o.created_at < b.to_ts
                 group by 1
@@ -370,6 +375,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
@@ -390,6 +396,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
@@ -407,6 +414,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
           group by coalesce(nullif(o.channel, ''), 'web')
@@ -505,6 +513,7 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
          and o.created_at < b.to_ts
          and o.status = 'PAID'
          and o.fulfilment_status <> 'CANCELED'
+         and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         group by b.from_ts, b.to_ts, b.prev_from_ts
       `,
       sql`
@@ -517,6 +526,7 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
           group by 1
@@ -591,6 +601,7 @@ export async function getUsersAnalytics(range: RangeKey): Promise<AnalyticsLoad<
         cross join bounds b
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at >= b.from_ts
           and o.created_at < b.to_ts
         group by ${sql.unsafe(BUYER_KEY)}
@@ -661,6 +672,7 @@ export async function getTransactionsAnalytics(
         cross join bounds b
         where o.created_at >= b.prev_from_ts
           and o.created_at < b.to_ts
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         group by 1
       `,
       sql`
@@ -684,6 +696,7 @@ export async function getTransactionsAnalytics(
         cross join bounds b
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at >= b.from_ts
           and o.created_at < b.to_ts
         group by 1
@@ -699,6 +712,7 @@ export async function getTransactionsAnalytics(
         cross join bounds b
         where o.status = 'PAID'
           and o.fulfilment_status <> 'CANCELED'
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
           and o.created_at >= b.from_ts
           and o.created_at < b.to_ts
         group by coalesce(nullif(o.channel, ''), 'web')
@@ -713,19 +727,22 @@ export async function getTransactionsAnalytics(
         cross join bounds b
         where o.created_at >= b.from_ts
           and o.created_at < b.to_ts
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
         order by o.created_at desc, o.id desc
         limit 8
       `,
-      // Cash view: a refund counts on the day it was recorded, for any order.
+      // Cash view: a refund counts on the day it was recorded, for any non-test order.
       sql`
         with ${bounds}
         select
           count(distinct r.order_id)::int as refunded_orders,
           coalesce(sum(r.amount_paise), 0)::bigint as refunded
         from refunds r
+        join orders o on o.id = r.order_id
         cross join bounds b
         where r.created_at >= b.from_ts
           and r.created_at < b.to_ts
+          and coalesce((to_jsonb(o)->>'is_test')::boolean, false) = false
       `,
     ]);
 
