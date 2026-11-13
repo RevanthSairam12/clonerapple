@@ -109,17 +109,17 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
             )}
             // Promo card headlines only — hero tiles keep --gz-font-display from the
             // class above. Adding this to the hero side is a one-line change (drop
-            // the isHero guard) once that's wanted.
+            // the isHero guard) once that's wanted.~
             style={
               isHero
                 ? undefined
                 : {
-                    // DEACTIVATED (previous font) — kept for easy rollback:
-                    // fontFamily: 'var(--gz-font-display)',
-                    // ACTIVE — matches the hero headlines in GadzioHeroSection.tsx
-                    fontFamily:
-                      '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-                  }
+                  // DEACTIVATED (previous font) — kept for easy rollback:
+                  // fontFamily: 'var(--gz-font-display)',
+                  // ACTIVE — matches the hero headlines in GadzioHeroSection.tsx
+                  fontFamily:
+                    '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+                }
             }
           >
             {tile.headlineLogo ? (

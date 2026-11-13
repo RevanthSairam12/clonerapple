@@ -18,7 +18,10 @@ function noStore(body: unknown, status = 200) {
 }
 
 /** The storefront route(s) this collection renders on, so a save is live. */
-function revalidateCollection(sitePaths: readonly string[]) {
+function revalidateCollection(key: string, sitePaths: readonly string[]) {
+  if (key === 'apple.nav') {
+    revalidatePath('/', 'layout');
+  }
   for (const sitePath of sitePaths) revalidatePath(sitePath);
 }
 
@@ -127,7 +130,7 @@ export async function PUT(
 
   if (!result.ok) return noStore({ error: result.error }, 503);
 
-  revalidateCollection(collection.sitePaths);
+  revalidateCollection(collection.key, collection.sitePaths);
   return noStore({ ok: true, live: true });
 }
 
@@ -168,6 +171,6 @@ export async function DELETE(
 
   if (!result.ok) return noStore({ error: result.error }, 503);
 
-  revalidateCollection(collection.sitePaths);
+  revalidateCollection(collection.key, collection.sitePaths);
   return noStore({ ok: true, archived: true });
 }

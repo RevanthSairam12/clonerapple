@@ -159,15 +159,16 @@ test('labels and view-on-site paths reflect actual consumers', () => {
   }
   assert.match(getCollection('apple.locale_banner').description, /Not currently shown/);
   assert.match(getCollection('edu.hero').description, /Not currently rendered/);
-  for (const key of ['apple.nav', 'apple.footer']) {
-    assert.deepEqual(plain(getCollection(key).sitePaths), ['/']);
-  }
+  assert.deepEqual(plain(getCollection('apple.footer').sitePaths), ['/']);
+  assert.ok(getCollection('apple.nav').sitePaths.includes('/'));
+  assert.ok(getCollection('apple.nav').sitePaths.includes('/support'));
   for (const key of ['cases.category_links', 'cases.page_header']) {
     assert.deepEqual(plain(getCollection(key).sitePaths), ['/in/shop/iphone/accessories/cases-protection', '/shop/iphone/accessories/cases-protection']);
   }
   assert.deepEqual(plain(getCollection('cases.seo').sitePaths), ['/in/shop/iphone/accessories/cases-protection']);
   assert.match(getCollection('cases.seo').description, /static metadata/);
-  assert.match(getCollection('apple.nav').lists[0].itemFields.find(field => field.path === 'href').hint, /link fixed for built-in items/);
+  assert.match(getCollection('apple.nav').lists[0].itemFields.find(field => field.path === 'href').hint, /Editable link/);
+  assert.ok(getCollection('apple.nav').lists.some(list => list.path === 'secondaryLinks'));
   assert.match(THEME_FIELDS.find(field => field.path === 'fontFamily').hint, /some homepage sections set their own face/);
   assert.match(THEME_FIELDS.find(field => field.path === 'appleCopyright').hint, /homepage only/);
 });

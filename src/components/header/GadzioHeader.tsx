@@ -6,12 +6,19 @@ import { usePathname, useRouter } from 'next/navigation';
 
 import { useCart } from '@/lib/cart/CartContext';
 import {
+  DEFAULT_HEADER_PROMO,
+  DEFAULT_SECONDARY_LINKS,
   NAV_ITEMS,
   NAV_MENUS,
   SEARCH_PANEL,
   type FlyoutMenu,
   type NavItem,
 } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
+import {
+  mergeNavItems,
+  type NavLinkOverride,
+} from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/admin-overrides';
+import { useStorefrontNav } from '@/components/header/StorefrontNavContext';
 import type { SearchSuggestionItem } from '@/lib/storefront/search-suggest';
 
 /**
@@ -45,6 +52,7 @@ export interface GadzioHeaderProps {
    * generated Gadzio nav so the header also works standalone.
    */
   navItems?: NavItem[];
+  secondaryLinks?: NavLinkOverride[];
   searchPlaceholder?: string;
   /** Route for the account button. */
   accountHref?: string;
@@ -219,10 +227,11 @@ function MegaColumn({
 
 export function GadzioHeader({
   bannerVisible = false,
-  promoText = 'Free shipping across India on orders over ₹999 — explore Cases & Protection',
-  promoHref = '/in/shop/iphone/accessories/cases-protection',
-  navItems = NAV_ITEMS,
-  searchPlaceholder = SEARCH_PANEL.placeholder,
+  promoText: promoTextProp,
+  promoHref: promoHrefProp,
+  navItems: navItemsProp,
+  secondaryLinks: secondaryLinksProp,
+  searchPlaceholder: searchPlaceholderProp,
   accountHref = '/account',
   unreadMessagesCount,
   customerFirstName,
@@ -230,6 +239,13 @@ export function GadzioHeader({
   const router = useRouter();
   const pathname = usePathname();
   const { totalCount, badgeBouncing } = useCart();
+  const navContext = useStorefrontNav();
+
+  const navItems = navItemsProp ?? (navContext ? mergeNavItems(NAV_ITEMS, navContext) : NAV_ITEMS);
+  const promoText = promoTextProp ?? (navContext?.promoText?.trim() || DEFAULT_HEADER_PROMO.text);
+  const promoHref = promoHrefProp ?? (navContext?.promoHref?.trim() || DEFAULT_HEADER_PROMO.href);
+  const searchPlaceholder =
+    searchPlaceholderProp ?? (navContext?.searchPlaceholder?.trim() || SEARCH_PANEL.placeholder);
 
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -253,8 +269,21 @@ export function GadzioHeader({
   const openMenu = openKey ? NAV_MENUS.find((menu) => menu.key === openKey) : undefined;
   const resolvedActiveKey = activeKey ?? navItems[0]?.key ?? null;
   const activeMenu = NAV_MENUS.find((menu) => menu.key === resolvedActiveKey);
-  /** The menu's showcase column — the row that lands in the secondary bar. */
-  const secondaryLinks = activeMenu?.groups[0]?.links ?? [];
+  const overrideSecondaryRaw = secondaryLinksProp ?? navContext?.secondaryLinks;
+  const overrideSecondaryLinks = Array.isArray(overrideSecondaryRaw)
+    ? overrideSecondaryRaw
+        .filter((link): link is { label: string; href: string } => Boolean(link?.label?.trim() && link?.href?.trim()))
+        .map((link) => ({
+          label: link.label.trim(),
+          href: link.href.trim(),
+          ariaLabel: link.label.trim(),
+        }))
+    : null;
+  /** Admin-configured secondary links when set; otherwise the active menu's showcase links. */
+  const secondaryLinks: { label: string; href: string; ariaLabel?: string }[] =
+    overrideSecondaryLinks !== null
+      ? overrideSecondaryLinks
+      : activeMenu?.groups[0]?.links ?? DEFAULT_SECONDARY_LINKS;
   const anyPanelOpen = openMenu !== undefined || searchOpen || mobileOpen;
 
   const closeAll = useCallback(() => {

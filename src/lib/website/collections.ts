@@ -469,14 +469,22 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'apple.nav',
-    label: 'Homepage — Navigation',
-    sitePaths: ['/'],
-    description: 'Homepage overrides only. Education and Cases do not receive these overrides. Built-in menu items use fixed links; their text is label only.',
-    fields: [text('searchPlaceholder', 'Search placeholder')],
+    label: 'Header — Navigation',
+    sitePaths: ['/', '/support', '/shipping-policy', '/return-refund', '/company-information', '/privacy', '/terms'],
+    description: 'Controls the sticky storefront header across the site: primary navigation items, secondary bar links, announcement strip, and search placeholder. Changing a built-in item link turns it into a direct link.',
+    fields: [
+      text('searchPlaceholder', 'Search placeholder'),
+      text('promoText', 'Announcement banner text'),
+      url('promoHref', 'Announcement banner link'),
+    ],
     lists: [
-      { path: 'items', itemLabel: 'Nav item', minItems: 1, maxItems: 14, itemFields: [
+      { path: 'items', itemLabel: 'Primary nav item', minItems: 1, maxItems: 14, itemFields: [
         text('label', 'Label'),
-        { ...url('href', 'Link (fixed for built-in menus)'), hint: 'Label only — link fixed for built-in items. Custom items use this link.' },
+        { ...url('href', 'Link'), hint: 'Editable link — changing a built-in item link makes it navigate directly to that URL.' },
+      ] },
+      { path: 'secondaryLinks', itemLabel: 'Secondary bar link', minItems: 0, maxItems: 12, itemFields: [
+        text('label', 'Label'),
+        url('href', 'Link'),
       ] },
     ],
   },

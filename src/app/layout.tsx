@@ -1,7 +1,9 @@
 import "./globals.css";
 
-import { getThemeSettings } from "@/lib/content";
+import { getContent, getThemeSettings } from "@/lib/content";
 import { CartProvider } from "@/lib/cart/CartContext";
+import { StorefrontNavProvider } from "@/components/header/StorefrontNavContext";
+import type { NavLabelsOverride } from "@/components/sites/www-apple-com-736d3707/root-8a5edab2/admin-overrides";
 import { FONT_FALLBACK, FONT_LOADERS } from "@/lib/fontLoaders";
 import { resolveSiteFontName } from "@/lib/fonts";
 import { safeThemeColor } from "@/lib/website/theme-rules";
@@ -11,7 +13,10 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const settings = await getThemeSettings();
+  const [settings, navOverride] = await Promise.all([
+    getThemeSettings(),
+    getContent<NavLabelsOverride | undefined>("apple.nav", undefined),
+  ]);
 
   // Font family — resolved against the allow-list in src/lib/fonts.ts and
   // loaded by next/font, which self-hosts every face. Nothing here can reach
@@ -56,7 +61,9 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <CartProvider>
-          {children}
+          <StorefrontNavProvider navOverride={navOverride}>
+            {children}
+          </StorefrontNavProvider>
         </CartProvider>
       </body>
     </html>

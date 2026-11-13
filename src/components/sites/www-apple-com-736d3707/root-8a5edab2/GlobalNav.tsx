@@ -96,6 +96,9 @@ export function GlobalNav({
       <GadzioHeader
         bannerVisible={bannerVisible}
         navItems={NAV_ITEMS_RESOLVED}
+        secondaryLinks={labels?.secondaryLinks}
+        promoText={labels?.promoText}
+        promoHref={labels?.promoHref}
         searchPlaceholder={labels?.searchPlaceholder ?? SEARCH_PANEL.placeholder}
       />
 

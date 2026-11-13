@@ -28,7 +28,12 @@
 import { FOOTER_BOTTOM } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/footer';
 import { TV_GALLERY_ITEMS } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/gallery';
 import { LOCALE_BANNER } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/locale-banner';
-import { NAV_ITEMS, SEARCH_PANEL } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
+import {
+  DEFAULT_HEADER_PROMO,
+  DEFAULT_SECONDARY_LINKS,
+  NAV_ITEMS,
+  SEARCH_PANEL,
+} from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/nav';
 import { HERO_INLINE_MEDIA, HERO_TILES, NEW_UI_HERO_TILES, PROMO_TILES, type Tile } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
 import {
   HERO as EDU_HERO,
@@ -152,8 +157,10 @@ const APPLE_LOCALE_BANNER_DEFAULTS = {
 };
 
 const APPLE_NAV_DEFAULTS = {
-  // All 11 items — a shorter list would drop nav entries when saved.
   items: NAV_ITEMS.map((item) => ({ label: item.label, href: item.href })),
+  secondaryLinks: DEFAULT_SECONDARY_LINKS.map((item) => ({ label: item.label, href: item.href })),
+  promoText: DEFAULT_HEADER_PROMO.text,
+  promoHref: DEFAULT_HEADER_PROMO.href,
   searchPlaceholder: SEARCH_PANEL.placeholder,
 };
 

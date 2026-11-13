@@ -7,6 +7,12 @@ import { getSuggestedProducts } from '@/lib/search/searchTracker';
 import { getProductFromCatalog } from '@/lib/payu/catalog';
 import { useLiveCatalog, findLiveProduct } from '@/lib/catalog/client-catalog';
 import { getCartLineBaseId } from '@/lib/cart/cart-id';
+import { readStoredCouponCode, useCartFreeGifts } from '@/lib/free-gifts/useCartFreeGifts';
+import {
+  FreeGiftConflictNotice,
+  FreeGiftLineRow,
+  FreeGiftProgressNudgeBanner,
+} from '@/components/cart/FreeGiftCartWidgets';
 import type { SelectionPrice } from '@/lib/storefront/selection';
 import type { SearchResultItem } from '@/lib/search/searchService';
 
@@ -24,6 +30,22 @@ export function BagFlyout({ isOpen, onClose }: Props) {
   const [suggestionPrices, setSuggestionPrices] = useState<Record<string, SelectionPrice>>({});
   const [suggestionNotice, setSuggestionNotice] = useState<string | null>(null);
   const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null);
+  const [storedCouponCode, setStoredCouponCode] = useState<string | null>(null);
+  useEffect(() => {
+    if (isOpen) {
+      setStoredCouponCode(readStoredCouponCode());
+    }
+  }, [isOpen]);
+  const { evaluation: giftEval } = useCartFreeGifts({
+    items: items.map((item) => ({
+      id: item.id,
+      productId: item.productId,
+      variantId: item.variantId,
+      quantity: item.quantity,
+    })),
+    couponCode: storedCouponCode,
+    enabled: isOpen,
+  });
   const suggestionRequest = React.useRef<AbortController | null>(null);
   useEffect(() => () => { suggestionRequest.current?.abort(); }, []);
   const suggestionKey = JSON.stringify([isOpen, suggestedProducts.map(({ id, price, wasPriceDisplay }) => {
@@ -196,6 +218,11 @@ export function BagFlyout({ isOpen, onClose }: Props) {
             Items added to your bag will appear here.
           </p>
           <div className="flex flex-col gap-2">
+            {giftEval?.nextNudge ? (
+              <div className="mb-1 text-left">
+                <FreeGiftProgressNudgeBanner nudge={giftEval.nextNudge} compact />
+              </div>
+            ) : null}
             <Link
               href="/cart"
               onClick={onClose}
@@ -285,7 +312,48 @@ export function BagFlyout({ isOpen, onClose }: Props) {
               </div>
               );
             })}
+            {giftEval?.unlockedGift ? (
+              <div className="py-2">
+                <FreeGiftLineRow
+                  compact
+                  badge={giftEval.unlockedGift.badgeText}
+                  productName={giftEval.unlockedGift.productName}
+                  variantLabel={giftEval.unlockedGift.variantLabel}
+                  regularPricePaise={giftEval.unlockedGift.regularPricePaise}
+                  imageUrl={giftEval.unlockedGift.imageUrl}
+                  note={giftEval.unlockedGift.unlockMessage}
+                />
+              </div>
+            ) : null}
+            {giftEval?.spinFreeGift ? (
+              <div className="py-2">
+                <FreeGiftLineRow
+                  compact
+                  badge={giftEval.spinFreeGift.badge}
+                  productName={giftEval.spinFreeGift.productName}
+                  variantLabel={giftEval.spinFreeGift.variantLabel}
+                  regularPricePaise={giftEval.spinFreeGift.regularPricePaise}
+                  imageUrl={giftEval.spinFreeGift.imageUrl}
+                  note="Included with your reward code"
+                />
+              </div>
+            ) : null}
           </div>
+
+          {giftEval?.nextNudge ? (
+            <div className="mt-2">
+              <FreeGiftProgressNudgeBanner nudge={giftEval.nextNudge} compact />
+            </div>
+          ) : null}
+
+          {(giftEval?.blockedByCouponMessage || giftEval?.conflict?.message) ? (
+            <div className="mt-2">
+              <FreeGiftConflictNotice
+                message={giftEval.blockedByCouponMessage || giftEval.conflict?.message}
+                tone={giftEval.conflict ? 'warning' : 'info'}
+              />
+            </div>
+          ) : null}
 
           {/* Subtotal & Actions */}
           <div className="pt-3 mt-1 border-t border-black/8 flex flex-col gap-2.5">

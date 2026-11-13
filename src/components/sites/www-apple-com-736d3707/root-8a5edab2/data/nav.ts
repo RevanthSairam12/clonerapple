@@ -40,6 +40,21 @@ export interface SearchPanel {
   quickLinks: { label: string; href: string }[];
 }
 
+export const DEFAULT_HEADER_PROMO = {
+  text: 'Explore Gadzio Cases, Chargers & Accessories — Shipping across India',
+  href: '/in/shop/iphone/accessories/cases-protection',
+};
+
+export const DEFAULT_SECONDARY_LINKS: { label: string; href: string; ariaLabel?: string }[] = [
+  { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
+  { label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+  { label: 'Power Adapters & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
+  { label: 'Wired Earphones', href: '/in/shop/iphone/accessories/wired-earphones' },
+  { label: 'Shipping Policy', href: '/shipping-policy' },
+  { label: 'Return & Refund Policy', href: '/return-refund' },
+  { label: 'Support', href: '/support' },
+];
+
 export const NAV_ITEMS: NavItem[] = [
   {
     key: "adapters",
@@ -125,10 +140,10 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "explore adapters",
         elevatedGroup: true,
         links: [
-          { label: "Explore All Adapters", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: true },
-          { label: "20W USB-C Power Adapter", href: "/shop/product/pa-gadzio-20w-usbc", elevated: true },
-          { label: "35W Dual USB-C Port Compact Adapter", href: "/shop/product/pa-gadzio-35w-duo", elevated: true },
-          { label: "Fast GaN Charging", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: true }
+          { label: "All Power Adapters & Cables", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: true },
+          { label: "Cable & Plug Organizers", href: "/in/shop/iphone/accessories/cable-plug-case", elevated: true },
+          { label: "Search Adapters", href: "/search?q=adapter", elevated: true },
+          { label: "Sale & Offers", href: "/sale", elevated: true }
         ]
       },
       {
@@ -136,9 +151,10 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "shop adapters",
         elevatedGroup: false,
         links: [
-          { label: "Fast Charging Adapters", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: false },
-          { label: "Cable & Plug Organizers", href: "/in/shop/iphone/accessories/cable-plug-case", elevated: false },
-          { label: "Phone Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: false }
+          { label: "Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: false },
+          { label: "Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases", elevated: false },
+          { label: "Wired Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: false },
+          { label: "AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: false }
         ]
       },
       {
@@ -147,8 +163,8 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: false,
         links: [
           { label: "Shopping Bag", href: "/cart", elevated: false },
-          { label: "Order Help", href: "/support", elevated: false },
-          { label: "All Collections", href: "/in/shop/iphone/accessories/cases-protection", elevated: false }
+          { label: "Shipping Policy", href: "/shipping-policy", elevated: false },
+          { label: "Gadzio Support", href: "/support", elevated: false }
         ]
       }
     ]
@@ -162,9 +178,9 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "explore cables",
         elevatedGroup: true,
         links: [
-          { label: "Explore All Cable Cases", href: "/in/shop/iphone/accessories/cable-plug-case", elevated: true },
-          { label: "Gadzio Silicone Cable Organizer", href: "/shop/product/cpc-gadzio-silicone-organizer", elevated: true },
-          { label: "Gadzio Hard Shell Charger Case", href: "/shop/product/cpc-gadzio-hard-shell-charger", elevated: true }
+          { label: "Explore All Cable & Plug Cases", href: "/in/shop/iphone/accessories/cable-plug-case", elevated: true },
+          { label: "Power Adapters & Cables", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: true },
+          { label: "Search Cables", href: "/search?q=cable", elevated: true }
         ]
       },
       {
@@ -172,9 +188,9 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "shop cables",
         elevatedGroup: false,
         links: [
-          { label: "Power Adapters & Charging", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: false },
-          { label: "Wired Audio Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: false },
-          { label: "AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: false }
+          { label: "Wired Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: false },
+          { label: "AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: false },
+          { label: "Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: false }
         ]
       },
       {
@@ -183,8 +199,8 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: false,
         links: [
           { label: "Shopping Bag", href: "/cart", elevated: false },
-          { label: "Fast Charging Adapters", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: false },
-          { label: "Phone Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: false }
+          { label: "Shipping Policy", href: "/shipping-policy", elevated: false },
+          { label: "Gadzio Support", href: "/support", elevated: false }
         ]
       }
     ]
@@ -198,19 +214,18 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "explore earphones",
         elevatedGroup: true,
         links: [
-          { label: "Explore All Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: true },
-          { label: "Gadzio Pulse USB-C Earphones", href: "/shop/product/we-gadzio-pulse-usbc", elevated: true },
-          { label: "Gadzio Acoustic 3.5mm Earphones", href: "/shop/product/we-gadzio-acoustic-35mm", elevated: true }
+          { label: "Explore All Wired Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: true },
+          { label: "Explore AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: true },
+          { label: "Search Audio", href: "/search?q=earphones", elevated: true }
         ]
       },
       {
-        heading: "AirPods Protection",
+        heading: "Related Categories",
         region: "audio categories",
         elevatedGroup: false,
         links: [
-          { label: "Explore AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: false },
-          { label: "Silicone Case for AirPods Pro 3", href: "/shop/product/ac-gadzio-silicone-pro3", elevated: false },
-          { label: "Crystal Clear Case for AirPods Pro 2", href: "/shop/product/ac-gadzio-clear-pro2", elevated: false }
+          { label: "Power Adapters & Cables", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: false },
+          { label: "Cable & Plug Cases", href: "/in/shop/iphone/accessories/cable-plug-case", elevated: false }
         ]
       },
       {
@@ -219,7 +234,8 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: false,
         links: [
           { label: "Shopping Bag", href: "/cart", elevated: false },
-          { label: "Power & Cables", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: false }
+          { label: "Return & Refund Policy", href: "/return-refund", elevated: false },
+          { label: "Gadzio Support", href: "/support", elevated: false }
         ]
       }
     ]
@@ -234,27 +250,29 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: true,
         links: [
           { label: "Explore All Cases", href: "/in/shop/iphone/accessories/cases-protection", elevated: true },
-          { label: "Gadzio CrystalArmor Clear Case (MagSafe)", href: "/shop/product/iphone18pro-max-clear-magsafe", elevated: true },
-          { label: "Gadzio MagPulse Liquid Silicone Case", href: "/shop/product/iphone17-silicone-black", elevated: true }
+          { label: "Explore Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases", elevated: true },
+          { label: "Explore AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: true },
+          { label: "Search Cases", href: "/search?q=case", elevated: true }
         ]
       },
       {
-        heading: "Mobile Cases Catalog",
+        heading: "More Storefront",
         region: "cases by device",
         elevatedGroup: false,
         links: [
-          { label: "Explore Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases", elevated: false },
-          { label: "Silicone Case for iPhone 17 Pro Max", href: "/shop/product/mc-gadzio-silicone-17promax", elevated: false },
-          { label: "Crystal Clear Case for iPhone 17 Pro", href: "/shop/product/mc-gadzio-clear-17pro", elevated: false }
+          { label: "Android Store", href: "/android", elevated: false },
+          { label: "Sale & Offers", href: "/sale", elevated: false },
+          { label: "Search Full Catalog", href: "/search", elevated: false }
         ]
       },
       {
-        heading: "Featured",
+        heading: "Policies & Help",
         region: "cases features",
         elevatedGroup: false,
         links: [
-          { label: "Military-Grade Drop Defense", href: "/in/shop/iphone/accessories/cases-protection", elevated: false },
-          { label: "1-Year Warranty Protection", href: "/terms", elevated: false },
+          { label: "Shipping Policy", href: "/shipping-policy", elevated: false },
+          { label: "Return & Refund Policy", href: "/return-refund", elevated: false },
+          { label: "Warranty Policy", href: "/terms#warranty", elevated: false },
           { label: "Shopping Bag", href: "/cart", elevated: false }
         ]
       }
@@ -293,7 +311,8 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: false,
         links: [
           { label: "Shopping Bag", href: "/cart", elevated: false },
-          { label: "Order Help", href: "/support", elevated: false }
+          { label: "Shipping Policy", href: "/shipping-policy", elevated: false },
+          { label: "Gadzio Support", href: "/support", elevated: false }
         ]
       }
     ]
@@ -308,10 +327,10 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: true,
         links: [
           { label: "Gadzio Support", href: "/support", elevated: true },
-          { label: "Order Help", href: "/support#order-help", elevated: true },
-          { label: "Warranty & Guarantee", href: "/terms", elevated: true },
-          { label: "Shipping & Delivery Policy", href: "/terms", elevated: true },
-          { label: "Privacy & Account Help", href: "/privacy", elevated: true }
+          { label: "Shipping Policy", href: "/shipping-policy", elevated: true },
+          { label: "Return & Refund Policy", href: "/return-refund", elevated: true },
+          { label: "Warranty Policy", href: "/terms#warranty", elevated: true },
+          { label: "Company Information", href: "/company-information", elevated: true }
         ]
       },
       {
@@ -319,10 +338,10 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "helpful topics",
         elevatedGroup: false,
         links: [
-          { label: "1-Year Replacement Warranty", href: "/terms", elevated: false },
-          { label: "Returns & Exchanges", href: "/terms", elevated: false },
-          { label: "Payment & PayU Inquiries", href: "/terms", elevated: false },
-          { label: "Manage Your Account", href: "/auth", elevated: false }
+          { label: "Order Help", href: "/support#order-help", elevated: false },
+          { label: "Payment Help", href: "/support#payments", elevated: false },
+          { label: "Privacy Policy", href: "/privacy", elevated: false },
+          { label: "Terms & Conditions", href: "/terms", elevated: false }
         ]
       },
       {
@@ -330,8 +349,8 @@ export const NAV_MENUS: FlyoutMenu[] = [
         region: "quick links support",
         elevatedGroup: false,
         links: [
+          { label: "Your Account", href: "/account", elevated: false },
           { label: "Shopping Bag", href: "/cart", elevated: false },
-          { label: "Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: false },
           { label: "Contact Gadzio", href: "/support#contact", elevated: false }
         ]
       }

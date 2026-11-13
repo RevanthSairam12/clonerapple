@@ -151,8 +151,16 @@ export function mergeTiles(tiles: Tile[], overrides: TileOverride[] | undefined)
 
 /* ----------------------------------------------------------------- nav */
 
+export interface NavLinkOverride {
+  label?: string;
+  href?: string;
+}
+
 export interface NavLabelsOverride {
-  items?: { label?: string; href?: string }[];
+  items?: NavLinkOverride[];
+  secondaryLinks?: NavLinkOverride[];
+  promoText?: string;
+  promoHref?: string;
   searchPlaceholder?: string;
 }
 
@@ -162,23 +170,37 @@ export function mergeNavItems(
 ): NavItem[] {
   const overrides = override?.items;
   if (!overrides) return items;
-  // Override array length wins: extras become text-label nav items (no
-  // wordmark — desktop falls back to the plain label; added items have no
-  // flyout menu, matching a plain link).
-  return overrides.map((o, i) => {
-    const item = items[i];
-    if (!item) {
+  // Override array length wins: extras become text-label nav items, and any
+  // built-in item whose href was changed by the admin becomes a direct link
+  // rather than opening the old built-in mega menu.
+  return overrides
+    .map((o, i) => {
+      const item = items[i];
+      if (!item) {
+        const label = o?.label?.trim() ?? '';
+        if (!label) return null;
+        return {
+          key: `admin-item-${i}`,
+          label,
+          href: o?.href?.trim() || '/',
+          ariaLabel: label,
+          wordmark: { viewBox: '0 0 1 1', width: 1, height: 1, paths: [] },
+        };
+      }
+      if (!o) return item;
+      const nextLabel = o.label !== undefined ? o.label.trim() : item.label;
+      if (!nextLabel) return null;
+      const nextHref = o.href !== undefined ? o.href.trim() || item.href : item.href;
+      const hrefCustomized = o.href !== undefined && nextHref !== item.href;
       return {
-        key: `admin-item-${i}`,
-        label: o.label ?? '',
-        href: o.href ?? '#',
-        ariaLabel: o.label ?? '',
-        wordmark: { viewBox: '0 0 1 1', width: 1, height: 1, paths: [] },
+        ...item,
+        key: hrefCustomized ? `custom-nav-${i}` : item.key,
+        label: nextLabel,
+        href: nextHref,
+        ariaLabel: nextLabel,
       };
-    }
-    if (!o) return item;
-    return { ...item, label: o.label ?? item.label, href: o.href ?? item.href };
-  });
+    })
+    .filter((entry): entry is NavItem => entry !== null);
 }
 
 /* ------------------------------------------------------- footer + banner */

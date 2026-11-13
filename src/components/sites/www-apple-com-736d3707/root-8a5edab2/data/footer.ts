@@ -20,7 +20,7 @@ export interface FooterColumn {
 export const FOOTER_FOOTNOTES: { index: number; html: string }[] = [
   {
     "index": 0,
-    "html": "<small>*</small> Free delivery available on all online orders across India with standard dispatch within 24–48 hours. Express courier service available in select metropolitan pin codes."
+    "html": "<small>*</small> Domestic orders are typically delivered in 5–7 business days (subject to internal or external factors). Shipping charges apply based on order amount and are displayed at checkout."
   },
   {
     "index": 1,
@@ -28,7 +28,7 @@ export const FOOTER_FOOTNOTES: { index: number; html: string }[] = [
   },
   {
     "index": 2,
-    "html": "All cases, chargers, and protection accessories sold by Gadzio are backed by our 1-Year Limited Replacement Guarantee covering manufacturing defects and material integrity. Compatibility with Qi2 wireless chargers and third-party devices varies by model — check each product page for the supported devices."
+    "html": "Gadzio does not provide a store warranty of its own. Warranty is subject to the product, and where applicable is officially provided directly by the respective brand. Compatibility varies by model — check each product page for supported devices."
   },
   {
     "index": 3,
@@ -41,7 +41,7 @@ export const FOOTER_FOOTNOTES: { index: number; html: string }[] = [
 ];
 
 /** The whole .gz-gf-sosumi block, verbatim — its ul/ol nesting sets its height. */
-export const FOOTER_FOOTNOTES_HTML = "<ul> <li id=\"footnote-asterisk-1\"> <small>*</small> Free delivery available on all online orders across India with standard dispatch within 24–48 hours. Express courier service available in select metropolitan pin codes. </li> </ul> <ol> <li id=\"footnote-1\">Trade-in values and exchange bonuses vary based on the condition, year, and configuration of your eligible trade-in device. Devices are evaluated at delivery or via authorized partner. Terms and conditions apply.</li> <li id=\"footnote-2\">All cases, chargers, and protection accessories sold by Gadzio are backed by our 1-Year Limited Replacement Guarantee covering manufacturing defects and material integrity. Compatibility with Qi2 wireless chargers and third-party devices varies by model — check each product page for the supported devices.</li> <li id=\"footnote-3\">Payments are securely processed via PayU Payment Solutions with 256-bit SSL encryption. All major UPI applications (Google Pay, PhonePe, Paytm), credit/debit cards, and NetBanking are supported.</li> </ol> <ul> <li>Product specifications, pricing in Indian Rupees (₹), and promotional offers are subject to change without notice.</li> </ul>";
+export const FOOTER_FOOTNOTES_HTML = "<ul> <li id=\"footnote-asterisk-1\"> <small>*</small> Domestic orders are typically delivered in 5–7 business days (subject to internal or external factors). Shipping charges apply based on order amount and are displayed at checkout. </li> </ul> <ol> <li id=\"footnote-1\">Trade-in values and exchange bonuses vary based on the condition, year, and configuration of your eligible trade-in device. Devices are evaluated at delivery or via authorized partner. Terms and conditions apply.</li> <li id=\"footnote-2\">Gadzio does not provide a store warranty of its own. Warranty is subject to the product, and where applicable is officially provided directly by the respective brand. Compatibility varies by model — check each product page for supported devices.</li> <li id=\"footnote-3\">Payments are securely processed via PayU Payment Solutions with 256-bit SSL encryption. All major UPI applications (Google Pay, PhonePe, Paytm), credit/debit cards, and NetBanking are supported.</li> </ol> <ul> <li>Product specifications, pricing in Indian Rupees (₹), and promotional offers are subject to change without notice.</li> </ul>";
 
 export const FOOTER_DIRECTORY: FooterColumn[] = [
   {
@@ -96,11 +96,11 @@ export const FOOTER_DIRECTORY: FooterColumn[] = [
           },
           {
             "label": "Shipping & Delivery",
-            "href": "/support#shipping"
+            "href": "/shipping-policy"
           },
           {
             "label": "Returns & Refunds",
-            "href": "/support#returns"
+            "href": "/return-refund"
           },
           {
             "label": "Payment Help",
@@ -151,6 +151,10 @@ export const FOOTER_DIRECTORY: FooterColumn[] = [
           {
             "label": "Terms of Use",
             "href": "/terms"
+          },
+          {
+            "label": "Company Information",
+            "href": "/company-information"
           }
         ]
       },
@@ -191,7 +195,11 @@ export const FOOTER_BOTTOM: {
     },
     {
       "label": "Sales and Refunds",
-      "href": "/support#returns"
+      "href": "/return-refund"
+    },
+    {
+      "label": "Company Information",
+      "href": "/company-information"
     },
     {
       "label": "Contact Us",
