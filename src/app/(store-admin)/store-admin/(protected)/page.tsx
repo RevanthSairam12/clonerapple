@@ -1,10 +1,12 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
 import { MaintenanceStatusBadge } from '@/components/store-admin/MaintenanceStatusBadge';
 import { OverviewChart } from '@/components/store-admin/OverviewChart';
 import { SaleStatusBadge } from '@/components/store-admin/SaleStatusBadge';
 import { getMaintenanceState, maintenanceStatus } from '@/lib/storefront/maintenance';
-import { getStoreSession } from '@/lib/store-admin/auth';
+import { getStoreSession, isOwnerTwoFactorRequired } from '@/lib/store-admin/auth';
+import { getTotpState } from '@/lib/store-admin/totp';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { formatPaise } from '@/lib/store-admin/amount';
 import { getNeedsAttentionSummary } from '@/lib/store-admin/needs-attention';
@@ -727,8 +729,16 @@ export default async function StoreAdminDashboard({
   const range = parseRange(params.range);
 
   const session = await getStoreSession();
-  const sale = await readSaleState();
-  const maintenance = await getMaintenanceState();
+  const [ownerTotp, ownerTwoFactorRequired, sale, maintenance] = await Promise.all([
+    session?.role === 'store_owner' ? getTotpState(session.adminId) : Promise.resolve(null),
+    session?.role === 'store_owner' ? isOwnerTwoFactorRequired() : Promise.resolve(false),
+    readSaleState(),
+    getMaintenanceState(),
+  ]);
+  const showOwnerTwoFactorBanner = Boolean(ownerTotp && !ownerTotp.enabled);
+  if (showOwnerTwoFactorBanner && ownerTwoFactorRequired) {
+    redirect('/store-admin/profile?require2fa=1#security');
+  }
   const needsAttention = await getNeedsAttentionSummary();
   const sales = tab === 'sales' ? await getSalesAnalytics(range) : null;
   const users = tab === 'users' ? await getUsersAnalytics(range) : null;
@@ -754,6 +764,20 @@ export default async function StoreAdminDashboard({
     <div>
       {params.passwordChanged === '1' && (
         <p className="sa-notice" role="status">Password changed. Other devices were signed out.</p>
+      )}
+      {showOwnerTwoFactorBanner && (
+        <div className="sa-notice sa-twofactor-banner" role="alert">
+          <div className="sa-twofactor-banner-copy">
+            <strong>Protect your owner account with two-factor authentication.</strong>
+            <span>
+              Your owner account can change prices, payments and staff roles. Turn on an
+              authenticator app so a leaked password cannot take over Store Desk.
+            </span>
+          </div>
+          <Link className="sa-btn sa-btn-primary" href="/store-admin/profile#security">
+            Set up two-factor
+          </Link>
+        </div>
       )}
       <section className="sa-hero">
         <div className="sa-hero-copy">

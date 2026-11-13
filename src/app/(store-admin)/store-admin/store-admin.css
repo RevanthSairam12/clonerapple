@@ -5659,3 +5659,23 @@ button.sa-chip:hover {
   background: var(--sa-ink);
   color: #fff;
 }
+
+.sa-twofactor-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--sa-ink);
+  border-left-color: var(--sa-warn, #9a6700);
+}
+
+.sa-twofactor-banner-copy {
+  display: grid;
+  gap: 3px;
+  max-width: 72ch;
+}
+
+.sa-twofactor-banner-copy strong {
+  color: var(--sa-ink);
+}

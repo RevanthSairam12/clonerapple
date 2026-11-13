@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 /** GET /api/store-admin/profile — the signed-in person's own record. */
 export async function GET() {
-  const guard = await requireStoreRole();
+  const guard = await requireStoreRole({ allowTotpSetup: true });
   if (!guard.ok) return guard.response;
 
   const result = await getStaff(guard.session.adminId);
@@ -27,7 +27,7 @@ export async function PUT(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole();
+  const guard = await requireStoreRole({ allowTotpSetup: true });
   if (!guard.ok) return guard.response;
 
   let body: { name?: unknown; phone?: unknown };

@@ -124,7 +124,7 @@ export function TotpPanel({ state }: Props) {
   }
 
   return (
-    <section className="sa-detail-card">
+    <section id="security" className="sa-detail-card">
       <h2 className="sa-card-title">Two-factor authentication</h2>
       <p className="sa-card-note">
         Adds a 6-digit code from an authenticator app to your password. Recommended for every staff

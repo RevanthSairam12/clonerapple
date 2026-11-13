@@ -102,6 +102,11 @@ export const SETTING_SECTIONS = [
     label: 'Maintenance',
     description: 'Take the storefront offline without closing this panel.',
   },
+  {
+    key: 'security',
+    label: 'Security',
+    description: 'Two-factor authentication requirements for store owners.',
+  },
 ] as const satisfies readonly SettingSectionDescriptor[];
 
 export type SettingSectionKey = (typeof SETTING_SECTIONS)[number]['key'] | 'legacy-shipping';
@@ -601,6 +606,18 @@ const FIELD_DEFINITIONS = [
     section: 'maintenance',
     help: 'Optional. Leave blank to end manually.',
   },
+
+  // ------------------------------------------------------- security
+  {
+    key: 'require_owner_2fa',
+    label: 'Require two-factor for owners',
+    kind: 'toggle',
+    limit: 3,
+    default: 'off',
+    section: 'security',
+    help: 'When on, store owner accounts must have two-factor authentication enabled before opening Store Desk actions. Default is off.',
+    options: TOGGLE_OPTIONS,
+  },
 ] as const satisfies readonly SettingFieldDescriptor[];
 
 /**
@@ -754,7 +771,7 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
  * `mail_*` keys decide where the server's SMTP password is sent.
  */
 export function isOwnerOnlySetting(key: string): boolean {
-  return key.startsWith('maintenance_') || key.startsWith('mail_');
+  return key.startsWith('maintenance_') || key.startsWith('mail_') || key === 'require_owner_2fa';
 }
 
 /**

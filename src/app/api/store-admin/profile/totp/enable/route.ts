@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
 
-  const guard = await requireStoreRole();
+  const guard = await requireStoreRole({ allowTotpSetup: true });
   if (!guard.ok) return guard.response;
 
   let body: { code?: unknown };

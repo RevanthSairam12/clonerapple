@@ -37,6 +37,8 @@ export interface StoreSession {
   role: StoreRole;
   /** True until a temporary password has been replaced. */
   mustChangePassword: boolean;
+  /** True when two-factor TOTP is enabled on this staff account. */
+  totpEnabled: boolean;
 }
 
 const COOKIE_NAME = 'store_admin_session';
@@ -173,6 +175,7 @@ function toSession(row: Record<string, any>): StoreSession {
     role: isStoreRole(row.role) ? row.role : 'store_viewer',
     mustChangePassword:
       row.must_change_password === true || String(row.must_change_password) === 'true',
+    totpEnabled: row.totp_enabled === true || String(row.totp_enabled) === 'true',
   };
 }
 
@@ -180,20 +183,20 @@ function toSession(row: Record<string, any>): StoreSession {
 
 export type StoreLoginResult =
   | {
-      ok: true;
-      token: string;
-      adminId: string;
-      role: StoreRole;
-      mustChangePassword: boolean;
-    }
+    ok: true;
+    token: string;
+    adminId: string;
+    role: StoreRole;
+    mustChangePassword: boolean;
+  }
   | {
-      ok: false;
-      error: string;
-      codeRequired?: boolean;
-      retryAfterSec?: number;
-      /** HTTP status the route should use. */
-      status: 401 | 429;
-    };
+    ok: false;
+    error: string;
+    codeRequired?: boolean;
+    retryAfterSec?: number;
+    /** HTTP status the route should use. */
+    status: 401 | 429;
+  };
 
 export const MAX_PASSWORD_FAILURES = MAX_FAILURES;
 export const MAX_STORE_TOTP_FAILURES = MAX_TOTP_FAILURES;
@@ -491,7 +494,7 @@ export async function getStoreSessionForToken(token: string): Promise<StoreSessi
   const sql = getSql();
   if (!sql) return null;
   const rows = await sql`
-    select a.id, a.email, a.name, a.role, a.must_change_password
+    select a.id, a.email, a.name, a.role, a.must_change_password, a.totp_enabled
     from store_admin_sessions s
     join store_admins a on a.id = s.admin_id
     where s.token_hash = ${hashToken(token)}
@@ -546,14 +549,49 @@ export async function logout(): Promise<void> {
  *
  * Page code should use `getStoreSession()` and `redirect()` instead.
  */
+/**
+ * Whether Store settings currently require every `store_owner` to have
+ * two-factor authentication active before using Store Desk routes.
+ *
+ * Defaults to `false` when the setting is `'off'`, unset, or unreadable
+ * (e.g. unit-test mocks without a settings table) so staff login is never
+ * locked out unexpectedly.
+ */
+export async function isOwnerTwoFactorRequired(
+  sqlOverride?: ReturnType<typeof getSql>,
+): Promise<boolean> {
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return false;
+  try {
+    const rows = await sql<{ value: string }[]>`
+      select value
+      from store_settings
+      where key = 'require_owner_2fa'
+      limit 1
+    `;
+    return rows[0]?.value === 'on';
+  } catch {
+    return false;
+  }
+}
+
+export type StoreRoleRequirement =
+  | StoreRole
+  | { allowPasswordChange?: true; allowTotpSetup?: true };
+
 export async function requireStoreRole(
-  ...requirements: Array<StoreRole | { allowPasswordChange: true }>
+  ...requirements: Array<StoreRoleRequirement>
 ): Promise<
   | { ok: true; session: StoreSession }
   | { ok: false; response: NextResponse }
 > {
   const roles = requirements.filter((value): value is StoreRole => typeof value === 'string');
-  const allowPasswordChange = requirements.some((value) => typeof value === 'object' && value.allowPasswordChange);
+  const allowPasswordChange = requirements.some(
+    (value) => typeof value === 'object' && value.allowPasswordChange === true,
+  );
+  const allowTotpSetup = requirements.some(
+    (value) => typeof value === 'object' && value.allowTotpSetup === true,
+  );
   const session = await getStoreSession({ allowPasswordChange: true });
   if (!session) {
     return {
@@ -571,6 +609,22 @@ export async function requireStoreRole(
         error: 'Change your temporary password before continuing.',
         code: 'password_change_required',
         redirect: '/store-admin/change-password',
+      }, { status: 403 }),
+    };
+  }
+  if (
+    session.role === 'store_owner' &&
+    !session.totpEnabled &&
+    !allowPasswordChange &&
+    !allowTotpSetup &&
+    (await isOwnerTwoFactorRequired())
+  ) {
+    return {
+      ok: false,
+      response: NextResponse.json({
+        error: 'Set up two-factor authentication before continuing.',
+        code: 'totp_setup_required',
+        redirect: '/store-admin/profile?require2fa=1#security',
       }, { status: 403 }),
     };
   }

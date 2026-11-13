@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { writeAudit } from '@/lib/store-admin/audit';
-import { requireStoreRole } from '@/lib/store-admin/auth';
+import { isOwnerTwoFactorRequired, requireStoreRole } from '@/lib/store-admin/auth';
 import { disableTotp } from '@/lib/store-admin/totp';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +19,26 @@ export async function POST(request: Request) {
 
   const guard = await requireStoreRole({ allowPasswordChange: true });
   if (!guard.ok) return guard.response;
+
+  if (guard.session.role === 'store_owner' && (await isOwnerTwoFactorRequired())) {
+    await writeAudit({
+      actorId: guard.session.adminId,
+      actorEmail: guard.session.email,
+      action: 'profile.totp_disable',
+      entity: 'store_admin',
+      entityId: guard.session.adminId,
+      status: 'denied',
+      reason: 'require_owner_2fa_enabled',
+      request,
+    });
+    return NextResponse.json(
+      {
+        error:
+          'Turn off "Require two-factor for owners" in Store settings before disabling two-factor authentication.',
+      },
+      { status: 409 },
+    );
+  }
 
   let body: { password?: unknown; code?: unknown };
   try {

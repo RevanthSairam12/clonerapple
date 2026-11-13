@@ -115,6 +115,18 @@ export async function updateStoreSettings(
       // Serialize settings writes and bootstrap, including missing-row inserts.
       // Bootstrap also locks shipping_methods against all legacy method writers.
       await tx`lock table store_settings in share row exclusive mode`;
+      if (validated.some((item) => item.key === 'require_owner_2fa' && item.value === 'on')) {
+        const ownerRows = await tx`
+          select totp_enabled from store_admins where id = ${staffId}
+        `;
+        if (ownerRows.length > 0 && ownerRows[0]?.totp_enabled !== true) {
+          return {
+            ok: false as const,
+            reason: 'invalid-input' as const,
+            error: 'Enable two-factor authentication on Your profile before requiring it for owners.',
+          };
+        }
+      }
       if (validated.some((item) => isShippingSetting(item.key))) {
         const pair = await tx`
           select key, value from store_settings

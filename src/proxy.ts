@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-import { getStoreSessionForToken } from '@/lib/store-admin/auth';
+import { getStoreSessionForToken, isOwnerTwoFactorRequired } from '@/lib/store-admin/auth';
 import {
   MAINTENANCE_RETRY_AFTER_SECONDS,
   getMaintenanceState,
@@ -125,6 +125,13 @@ export async function proxy(request: NextRequest) {
       response = NextResponse.redirect(new URL('/store-admin/login?reason=account-unavailable', request.url));
     } else if (session.mustChangePassword && pathname !== '/store-admin/change-password') {
       response = NextResponse.redirect(new URL('/store-admin/change-password', request.url));
+    } else if (
+      session.role === 'store_owner' &&
+      !session.totpEnabled &&
+      pathname !== '/store-admin/profile' &&
+      (await isOwnerTwoFactorRequired())
+    ) {
+      response = NextResponse.redirect(new URL('/store-admin/profile?require2fa=1#security', request.url));
     }
   }
 

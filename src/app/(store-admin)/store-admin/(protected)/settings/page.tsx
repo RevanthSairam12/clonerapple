@@ -109,6 +109,21 @@ export default async function StoreAdminSettingsPage() {
 
       <section className="sa-detail-card">
         <div className="sa-detail-head">
+          <h2>Owner security</h2>
+        </div>
+        <p className="sa-note">
+          Require an authenticator app on every store owner account. You must turn on two-factor
+          authentication on your own profile before enabling this rule.
+        </p>
+        {isOwner ? (
+          <SettingsForm fields={fieldsForSection('security')} initial={settings} canEdit />
+        ) : (
+          <p className="sa-lock-note">Only a store owner can change owner two-factor settings.</p>
+        )}
+      </section>
+
+      <section className="sa-detail-card">
+        <div className="sa-detail-head">
           <h2>Secrets</h2>
         </div>
         <p className="sa-note">
