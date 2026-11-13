@@ -41,6 +41,7 @@ export const NOTIFICATION_TOPICS = [
   { value: 'reservation_expired', label: 'Reservation expired' },
   { value: 'refund_pending', label: 'Refund pending' },
   { value: 'payment_review', label: 'Payment review' },
+  { value: 'spin_win', label: 'Spin and Win prize' },
 ] as const;
 
 type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number]['value'];

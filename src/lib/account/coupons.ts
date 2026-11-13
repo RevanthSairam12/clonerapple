@@ -40,6 +40,7 @@ type CouponRow = {
   show_to_all_users: boolean;
   assigned_to_emails: string[];
   assigned_customer_groups: string[];
+  source: string | null;
   total_used: number;
   mine_used: number;
   database_now: Date | string;
@@ -78,7 +79,8 @@ export async function listCustomerCouponsUsing(
       select id, code, type, value, scope, status, starts_at, ends_at,
         total_redemption_limit, per_customer_limit, min_order_paise,
         only_new_customers, allowed_customer_groups, restricted_to_emails,
-        show_to_all_users, assigned_to_emails, assigned_customer_groups, created_at
+        show_to_all_users, assigned_to_emails, assigned_customer_groups,
+        (to_jsonb(coupons)->>'source') as source, created_at
       from coupons
       where status = 'active'
         and (starts_at is null or starts_at <= now())
@@ -124,6 +126,7 @@ export async function listCustomerCouponsUsing(
       showToAllUsers: row.show_to_all_users,
       assignedToEmails: row.assigned_to_emails,
       assignedCustomerGroups: row.assigned_customer_groups,
+      source: row.source === 'spin_wheel' ? 'spin_wheel' : 'admin',
     };
     const mine = Number(row.mine_used);
     if (!customerCanDiscoverCoupon(coupon, {

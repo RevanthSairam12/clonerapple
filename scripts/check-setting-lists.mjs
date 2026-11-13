@@ -70,8 +70,8 @@ try {
     'select count(*)::int as count from notification_channel_settings',
   );
   console.log(`notification_channel_settings: OK (${matrix.count} row(s))`);
-  if (matrix.count !== 114) {
-    console.error('notification_channel_settings: expected 114 cells (3 channels × 2 audiences × 19 topics)');
+  if (matrix.count !== 120) {
+    console.error('notification_channel_settings: expected 120 cells (3 channels × 2 audiences × 20 topics)');
     failed = true;
   }
 

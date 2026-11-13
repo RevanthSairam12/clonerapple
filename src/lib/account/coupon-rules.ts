@@ -19,6 +19,7 @@ export interface CustomerCouponView {
   expiryDisplay: string;
   remainingUses: number | null;
   remainingDisplay: string;
+  source?: 'admin' | 'spin_wheel';
 }
 
 /** Server-side selection input, never serialized to a customer. */
@@ -32,6 +33,7 @@ export interface DiscoverableCoupon extends CouponEligibilityDefinition {
   showToAllUsers: boolean;
   assignedToEmails: string[] | null;
   assignedCustomerGroups: string[] | null;
+  source?: 'admin' | 'spin_wheel';
 }
 
 /** Discovery grants never override the independent AND redemption restrictions. */
@@ -80,5 +82,6 @@ export function customerCouponView(
     remainingUses,
     remainingDisplay: remainingUses === null ? 'Available'
       : `${remainingUses} use${remainingUses === 1 ? '' : 's'} remaining`,
+    ...(coupon.source === 'spin_wheel' ? { source: 'spin_wheel' as const } : {}),
   };
 }

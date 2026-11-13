@@ -27,6 +27,7 @@ export const NOTIFICATION_EVENTS = [
   'reservation_expired',
   'refund_pending',
   'payment_review',
+  'spin_win',
 ] as const;
 
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
@@ -72,6 +73,10 @@ export interface NotificationContext {
   refundPaise?: number | null;
   /** The coupon code shown to the customer, or null when none was used. */
   couponCode?: string | null;
+  /** Spin and Win prize label, e.g. "10% off". */
+  prizeName?: string | null;
+  /** Formatted expiry date for a won coupon, e.g. "20 Nov 2026". */
+  couponExpiry?: string | null;
   /** What that coupon took off the order, in paise. */
   discountPaise?: number | null;
   orderStatus?: string | null;

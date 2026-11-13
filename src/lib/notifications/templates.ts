@@ -45,6 +45,8 @@ export const TEMPLATE_VARIABLES = [
   // The coupon code and what it took off. No other coupon detail (scope,
   // limits, targets or other customers) is ever available to a template.
   'coupon_code',
+  'prize_name',
+  'coupon_expiry',
   'discount_amount',
   'item_count',
   'product_name',
@@ -159,6 +161,8 @@ export function templateValues(input: {
   refundPaise?: number | null;
   discountPaise?: number | null;
   couponCode?: string | null;
+  prizeName?: string | null;
+  couponExpiry?: string | null;
   orderStatus?: string | null;
   trackingNumber?: string | null;
   trackingLink?: string | null;
@@ -196,6 +200,8 @@ export function templateValues(input: {
     return_window_days: returnWindow,
     refund_amount: money(input.refundPaise),
     coupon_code: text(input.couponCode),
+    prize_name: text(input.prizeName),
+    coupon_expiry: text(input.couponExpiry),
     discount_amount: money(input.discountPaise),
     item_count: numberText(input.itemCount),
     product_name: text(input.productName),
@@ -642,6 +648,24 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
       body: 'Order {{order_number}} needs a manual payment check. Verify the transaction in the PayU dashboard before fulfilling, cancelling or refunding.',
       sms: '{{order_number}}: payment needs manual review.',
       buttonLabel: 'Open in Store Admin',
+      buttonUrl: '{{admin_link}}',
+    },
+  },
+  spin_win: {
+    [CUSTOMER]: {
+      subject: 'You won {{prize_name}} on Spin and Win!',
+      heading: 'Congratulations, you won {{prize_name}}',
+      body: 'Hi {{customer_name}},\n\nYou won {{prize_name}} on Spin and Win at {{store_name}}! Your personal coupon code is {{coupon_code}}, valid until {{coupon_expiry}}.\n\nIt has been added to Your Coupons and is ready to use at checkout.',
+      sms: '{{store_name}}: You won {{prize_name}}! Code {{coupon_code}} valid until {{coupon_expiry}}.',
+      buttonLabel: 'View my coupons',
+      buttonUrl: '{{admin_link}}',
+    },
+    [STAFF]: {
+      subject: 'Spin and Win prize awarded: {{prize_name}}',
+      heading: 'Spin and Win prize awarded',
+      body: 'A customer won {{prize_name}} on Spin and Win. Coupon {{coupon_code}} (valid until {{coupon_expiry}}) was created.',
+      sms: 'Spin win: {{prize_name}} ({{coupon_code}}).',
+      buttonLabel: 'Open Spin wheel report',
       buttonUrl: '{{admin_link}}',
     },
   },

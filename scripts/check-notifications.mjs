@@ -128,6 +128,8 @@ const SAMPLE = {
   refundPaise: 49900,
   discountPaise: 10000,
   couponCode: 'WELCOME10',
+  prizeName: '10% off',
+  couponExpiry: '20 Nov 2026',
   orderStatus: 'PAID',
   trackingNumber: 'TRK123456',
   trackingLink: 'https://track.example.test/TRK123456',
