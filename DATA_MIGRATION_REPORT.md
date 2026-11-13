@@ -185,7 +185,7 @@ Side-by-side 1200×850 screenshots of `/store-admin/website`, `/store-admin/webs
 | `shipping_enabled` | `"on"` | `store_settings` | Enabled (`shipping_charge_paise = 4000` [₹40], `free_shipping_threshold_paise = 400000` [₹4,000]). |
 | `cod_enabled` / `pickup_enabled` | `"off"` / `"off"` | `store_settings` | Confirm whether Cash on Delivery or Store Pickup should remain disabled at launch. |
 | `PAYU_ENV`, `PAYU_KEY`, `PAYU_SALT` | Env variables | Vercel Environment | Switch from test sandbox (`PAYU_ENV=test`) to production PayU credentials at cutover. |
-| `APP_BASE_URL` | Env variable | Vercel Environment | Set to canonical production HTTPS domain (`https://gadzio.in`). |
+| `APP_BASE_URL` | Env variable | Vercel Environment | Set to canonical production HTTPS domain (`https://gadzio.co.in`). |
 | `MAIL_PASSWORD`, `MAIL_ALLOWED_HOSTS` | Env variables | Vercel Environment | Configure production SMTP host allowlist and credentials when transactional email is enabled. |
 | `analytics_scripts` / `social_links` | `0 rows` | `analytics_scripts`, `social_links` | Add production analytics tags or social profile URLs via Settings → Analytics when ready. |
 

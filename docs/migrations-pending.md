@@ -199,7 +199,7 @@ a recent backup; confirm the host and row counts before touching it.
 
 - Migrations 0055–0061 are **applied**; the record is in the "Applied run — 5 November 2026"
   section above.
-- Migrations **0069, 0070, and 0071** are **applied** to the test database; details below.
+- Migrations **0069, 0070, 0071, and 0072** are **applied** to the test database; details below.
 - No seed, backfill or fixture SQL was run on live catalog tables.
 - `scripts/review-product-options.mjs` has only been run in its refusal paths
   (missing acknowledgement, unsafe host); it has not contacted a database.
@@ -222,3 +222,4 @@ These three additive migration files add the Spin and Win schema, cooldown contr
 | 0069 | `0069_spin_wheel.sql` | `2026-11-13T08:49:26.223Z` | `spin_wheel_settings` (singleton row `'default'`), `spin_wheel_segments` (2..12 slices), `spin_wheel_segment_daily_counts` (`(segment_id, store_day)` primary key), `spin_wheel_spins` (`unique (user_id, store_day)`, `ip_hash` index), `coupons.source` (`admin` / `spin_wheel`), `spin_win` event in `notification_outbox` check + 6 `notification_channel_settings` rows | **RLS enabled** with no public policies on all four new tables (`DATABASE_URL` server-only). |
 | 0070 | `0070_spin_wheel_cooldown.sql` | `2026-11-13T10:26:20.591Z` | `spin_wheel_settings.reward_cooldown_mode` (`disabled` / `until_coupon_expires` / `custom_days`, default `until_coupon_expires`), `reward_cooldown_days` (`1..365`, default `7`), `show_next_spin_countdown` (`boolean`, default `true`) | `spin_wheel_settings` already has RLS enabled from `0069`. |
 | 0071 | `0071_spin_wheel_popup_controls.sql` | `2026-11-13` (post-0070 run) | `spin_wheel_settings.popup_enabled` (`boolean`, default `true`), `popup_delay_seconds` (`0..120`, default `10`), `popup_require_scroll` (`boolean`, default `true`), `popup_mobile_floating_button` (`boolean`, default `true`) | `spin_wheel_settings` already has RLS enabled from `0069`. |
+| 0072 | `0072_free_gifts_and_spin_chance.sql` | `2026-11-13` | `products.is_gift_only`, `free_gift_rules` + `free_gift_redemptions` tables, `order_items` (`is_free_gift`, `free_gift_rule_id`, `free_gift_badge`, `free_gift_source`), `coupons` `'FREE_GIFT'` type (`gift_product_id`, `gift_variant_id`), `spin_wheel_segments` / `spin_wheel_spins` `'FREE_GIFT'` type (`gift_product_id`, `gift_variant_id`, `gift_min_order_paise`, `gift_valid_days`) | **RLS enabled** with no public policies on `free_gift_rules` and `free_gift_redemptions`; `check-security-db-state.mjs` 10/10 PASS. |

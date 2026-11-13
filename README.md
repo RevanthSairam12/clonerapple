@@ -209,7 +209,7 @@ node --test tests/customer-payment-verification.test.mjs tests/payu-local-recove
    - Navigate to **Developer Tools** → **API Keys** to retrieve your live **Merchant Key** and **Merchant Salt**.
    - Navigate to **Developer Tools** → **Webhooks**:
      - Enable Webhooks for **Payment Success**, **Payment Failure**, and **Refund**.
-     - Set the Webhook URL: `https://gadzio.in/api/payu/webhook`.
+     - Set the Webhook URL: `https://gadzio.co.in/api/payu/webhook`.
 
 2. **Production Environment Variables**:
    Update your production server or hosting platform environment (e.g. Vercel, AWS):
@@ -218,7 +218,7 @@ node --test tests/customer-payment-verification.test.mjs tests/payu-local-recove
    PAYU_KEY=<YOUR_PRODUCTION_MERCHANT_KEY>
    PAYU_SALT=<YOUR_PRODUCTION_MERCHANT_SALT>
    PAYU_BASE_URL=https://secure.payu.in
-   APP_BASE_URL=https://gadzio.in
+   APP_BASE_URL=https://gadzio.co.in
    CRON_SECRET=<RANDOM_STRONG_SECRET>
    ```
 

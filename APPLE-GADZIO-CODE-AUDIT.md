@@ -679,7 +679,7 @@ Referenced at lines 53 (hydrate), 71 (save), 80 (storage listener), 160 (remove)
 | `/` title | `'Gadzio'` (code) | ✅ | — |
 | `/` description | Gadzio accessory copy | ✅ | — |
 | `/` OG title/siteName | `'Gadzio'` | ✅ | — |
-| `/` OG URL | `https://gadzio.in/` | ✅ | — |
+| `/` OG URL | `https://gadzio.co.in/` | ✅ | — |
 | **`/` OG image** | `/sites/www-apple-com-736d3707/root-8a5edab2/seo/open_graph_logo.png` | MEDIUM | REPLACE → §7 M-8 |
 | **`metadataBase`** | `http://localhost:3000` | FUNCTIONAL | CHANGE → §15 F-4 |
 | `/` favicon | `/gadzio_logo.png` | ✅ | — |

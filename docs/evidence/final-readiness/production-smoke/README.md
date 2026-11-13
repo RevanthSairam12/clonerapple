@@ -12,7 +12,7 @@
    - Vercel Function region is deployed to `bom1` (Mumbai, India) via `vercel.json`.
    - Supabase PostgreSQL + Supavisor pooler is in `ap-south-1` (Mumbai, India).
 2. **Production Environment Variables Verified (Vercel Production Scope Only):**
-   - `APP_BASE_URL` = canonical production HTTPS origin (e.g. `https://gadzio.in`), no path or query string.
+   - `APP_BASE_URL` = canonical production HTTPS origin (e.g. `https://gadzio.co.in`), no path or query string.
    - `PAYU_ENV=live`, `PAYU_KEY` and `PAYU_SALT` = live merchant credentials (never committed to git or printed in logs).
    - `PAYU_RETURN_SECRET` = 32+ character cryptographic secret for signed return links (`rt`).
    - `CRON_SECRET` = configured for `/api/payu/reconcile`.

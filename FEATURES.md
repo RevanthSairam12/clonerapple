@@ -959,7 +959,7 @@ environment variables in the table below at deploy time.
 | `RECAPTCHA_SECRET_KEY` | **no** | reCAPTCHA is not enforced anywhere. |
 | `MAIL_PASSWORD` | **no** | Email still queues, but every email row is marked `SKIPPED` with “mail not configured (`MAIL_PASSWORD` is missing)”. Checkout is unaffected. |
 | `MSG91_AUTH_KEY` / `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` | **no** | SMS still queues, but every SMS row is marked `SKIPPED` until the chosen gateway's credentials exist. |
-| `APP_BASE_URL` | **no** | Optional. Absolute links in messages fall back to `https://gadzio.in` in production and `http://localhost:3000` in development. |
+| `APP_BASE_URL` | **no** | Optional. Absolute links in messages fall back to `https://gadzio.co.in` in production and `http://localhost:3000` in development. |
 | `NOTIFICATION_RETENTION_ENABLED`, `NOTIFICATION_RETENTION_DAYS` | **no** | Optional. Retention is off unless the switch is `1`/`true`/`on`/`yes`; then finished outbox rows older than N days lose their body and recipient. N defaults to 90 and is clamped to 3650. |
 
 ---

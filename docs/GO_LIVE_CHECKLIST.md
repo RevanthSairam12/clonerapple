@@ -37,7 +37,7 @@ Run against the production database before cutover:
 
 ## 4. Production Environment Variables & Site Address Health Check
 
-- [ ] **`APP_BASE_URL`:** Set to the permanent production HTTPS origin (e.g. `https://gadzio.in`) — no path, no query string, not `localhost`, and **not** a temporary tunnel host (`*.trycloudflare.com`, `*.ngrok-free.app`, etc.).
+- [ ] **`APP_BASE_URL`:** Set to the permanent production HTTPS origin (e.g. `https://gadzio.co.in`) — no path, no query string, not `localhost`, and **not** a temporary tunnel host (`*.trycloudflare.com`, `*.ngrok-free.app`, etc.).
 - [ ] **`PAYU_ENV`:** Set to `live` (or `production`), with live `PAYU_KEY` and `PAYU_SALT`.
 - [ ] **`PAYU_RETURN_SECRET`:** Set to a 32+ character cryptographic secret for signed cross-site return links (`rt`).
 - [ ] **`CRON_SECRET`:** Set to a 32+ character secret for `GET /api/payu/reconcile`.
