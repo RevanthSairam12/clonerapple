@@ -1,0 +1,246 @@
+/**
+ * Pure unit tests for Spin and Win rules:
+ * - weighted randomness distribution accuracy across thousands of draws
+ * - cap & inactive filtering without distorting remaining odds
+ * - high-contrast label foreground selection
+ * - store-timezone midnight reset calculation (IST and DST zones)
+ * - validation rules (2..12 segments, enablement requires terms & active prize)
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createJiti } from 'jiti';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.join(here, '..');
+const jiti = createJiti(import.meta.url, {
+  moduleCache: false,
+  alias: { '@': path.join(root, 'src') },
+});
+
+const {
+  computeSegmentOdds,
+  computeStoreDayInfo,
+  contrastTextForHex,
+  drawWeightedSegment,
+  formatPrizeSummary,
+  isWheelWindowOpen,
+  segmentAvailableForDraw,
+  validateSpinWheelConfigInput,
+} = await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'rules.ts'));
+
+function makeSegment(overrides = {}) {
+  return {
+    id: overrides.id ?? 'seg_1',
+    label: overrides.label ?? '10% off',
+    colorHex: overrides.colorHex ?? '#ffe100',
+    textColorHex: contrastTextForHex(overrides.colorHex ?? '#ffe100'),
+    segmentType: overrides.segmentType ?? 'COUPON',
+    weight: overrides.weight ?? 10,
+    dailyCap: overrides.dailyCap ?? null,
+    totalCap: overrides.totalCap ?? null,
+    totalAwarded: overrides.totalAwarded ?? 0,
+    dailyAwarded: overrides.dailyAwarded ?? 0,
+    isActive: overrides.isActive ?? true,
+    sortOrder: overrides.sortOrder ?? 0,
+    couponType: overrides.couponType ?? 'PERCENT',
+    couponValue: overrides.couponValue ?? 10,
+    couponMaxDiscountPaise: overrides.couponMaxDiscountPaise ?? null,
+    couponMinOrderPaise: overrides.couponMinOrderPaise ?? 0,
+    couponScope: overrides.couponScope ?? 'ORDER',
+    couponTargetIds: overrides.couponTargetIds ?? [],
+    couponValidDays: overrides.couponValidDays ?? 7,
+    couponAllowWithSalePrice: overrides.couponAllowWithSalePrice ?? false,
+  };
+}
+
+test('contrastTextForHex chooses readable foregrounds for light and dark hex colours', () => {
+  assert.equal(contrastTextForHex('#ffe100'), '#111111');
+  assert.equal(contrastTextForHex('#ffffff'), '#111111');
+  assert.equal(contrastTextForHex('#111111'), '#ffffff');
+  assert.equal(contrastTextForHex('#0f172a'), '#ffffff');
+});
+
+test('weighted draw obeys configured probability weights over 20,000 draws using crypto.randomInt', () => {
+  const segments = [
+    makeSegment({ id: 'a', label: 'A', weight: 10 }),
+    makeSegment({ id: 'b', label: 'B', weight: 30 }),
+    makeSegment({ id: 'c', label: 'C', weight: 60, segmentType: 'NO_PRIZE', couponType: null, couponValue: 0 }),
+  ];
+
+  const counts = { a: 0, b: 0, c: 0 };
+  const iterations = 20000;
+  for (let i = 0; i < iterations; i += 1) {
+    const result = drawWeightedSegment(segments);
+    assert.ok(result);
+    counts[result.segment.id] += 1;
+  }
+
+  // Expected ratios: a = 0.10, b = 0.30, c = 0.60 (+/- 2.5% tolerance)
+  assert.ok(Math.abs(counts.a / iterations - 0.1) < 0.025, `Unexpected A ratio: ${counts.a / iterations}`);
+  assert.ok(Math.abs(counts.b / iterations - 0.3) < 0.025, `Unexpected B ratio: ${counts.b / iterations}`);
+  assert.ok(Math.abs(counts.c / iterations - 0.6) < 0.025, `Unexpected C ratio: ${counts.c / iterations}`);
+});
+
+test('exhausted caps and inactive slices are excluded without skewing remaining odds', () => {
+  const segments = [
+    makeSegment({ id: 'capped_daily', weight: 80, dailyCap: 5, dailyAwarded: 5 }),
+    makeSegment({ id: 'capped_total', weight: 80, totalCap: 10, totalAwarded: 10 }),
+    makeSegment({ id: 'inactive', weight: 80, isActive: false }),
+    makeSegment({ id: 'rem_1', weight: 1 }),
+    makeSegment({ id: 'rem_2', weight: 3 }),
+  ];
+
+  assert.equal(segmentAvailableForDraw(segments[0]), false);
+  assert.equal(segmentAvailableForDraw(segments[1]), false);
+  assert.equal(segmentAvailableForDraw(segments[2]), false);
+  assert.equal(segmentAvailableForDraw(segments[3]), true);
+
+  // Configured odds exclude inactive segments cleanly
+  const odds = computeSegmentOdds([segments[2], segments[3], segments[4]]);
+  assert.equal(odds.get('inactive'), 0);
+  assert.equal(odds.get('rem_1'), 25);
+  assert.equal(odds.get('rem_2'), 75);
+
+  // Actual draw excludes daily-capped, total-capped, and inactive slices before weighting
+  const counts = { rem_1: 0, rem_2: 0 };
+  for (let i = 0; i < 4000; i += 1) {
+    const draw = drawWeightedSegment(segments);
+    assert.ok(draw);
+    assert.ok(draw.segment.id === 'rem_1' || draw.segment.id === 'rem_2');
+    counts[draw.segment.id] += 1;
+  }
+  assert.ok(Math.abs(counts.rem_1 / 4000 - 0.25) < 0.04);
+  assert.ok(Math.abs(counts.rem_2 / 4000 - 0.75) < 0.04);
+
+  // Boundary roll checks: totalWeight = 4 -> roll 0 = rem_1, roll 1..3 = rem_2
+  const first = drawWeightedSegment(segments, () => 0);
+  const second = drawWeightedSegment(segments, () => 1);
+  assert.equal(first?.segment.id, 'rem_1');
+  assert.equal(second?.segment.id, 'rem_2');
+  assert.equal(first?.totalWeight, 4);
+});
+
+test('computeStoreDayInfo resets cleanly at midnight in Asia/Kolkata and other store timezones', () => {
+  // 2026-11-13 18:29:59 UTC == 2026-11-13 23:59:59 IST (+05:30)
+  const justBeforeMidnightIst = new Date('2026-11-13T18:29:59.000Z');
+  const justAfterMidnightIst = new Date('2026-11-13T18:30:01.000Z');
+
+  const before = computeStoreDayInfo(justBeforeMidnightIst, 'Asia/Kolkata');
+  const after = computeStoreDayInfo(justAfterMidnightIst, 'Asia/Kolkata');
+
+  assert.equal(before.storeDay, '2026-11-13');
+  assert.equal(after.storeDay, '2026-11-14');
+  assert.ok(before.secondsUntilReset <= 2 && before.secondsUntilReset >= 1);
+  assert.equal(before.nextResetAt.getTime(), new Date('2026-11-13T18:30:00.000Z').getTime());
+
+  // America/New_York (EST -05:00 in mid-November) -> 2026-11-14T04:59:00Z is still 2026-11-13 23:59:00
+  const nyBeforeMidnight = new Date('2026-11-14T04:59:00.000Z');
+  const nyAfterMidnight = new Date('2026-11-14T05:01:00.000Z');
+  assert.equal(computeStoreDayInfo(nyBeforeMidnight, 'America/New_York').storeDay, '2026-11-13');
+  assert.equal(computeStoreDayInfo(nyAfterMidnight, 'America/New_York').storeDay, '2026-11-14');
+});
+
+test('validateSpinWheelConfigInput enforces segment bounds, prize rules, and enablement checklist', () => {
+  const twoSegments = [
+    {
+      id: 's1',
+      label: '10% off',
+      colorHex: '#ffe100',
+      segmentType: 'COUPON',
+      weight: 20,
+      dailyCap: 10,
+      totalCap: null,
+      isActive: true,
+      sortOrder: 0,
+      couponType: 'PERCENT',
+      couponValueInput: '10',
+      couponMaxDiscountRupees: '250',
+      couponMinOrderRupees: '499',
+      couponScope: 'ORDER',
+      couponTargetIds: [],
+      couponValidDays: 7,
+      couponAllowWithSalePrice: false,
+    },
+    {
+      id: 's2',
+      label: 'Try again',
+      colorHex: '#111111',
+      segmentType: 'NO_PRIZE',
+      weight: 80,
+      dailyCap: null,
+      totalCap: null,
+      isActive: true,
+      sortOrder: 1,
+      couponType: null,
+      couponValueInput: '0',
+      couponMaxDiscountRupees: null,
+      couponMinOrderRupees: null,
+      couponScope: 'ORDER',
+      couponTargetIds: [],
+      couponValidDays: 7,
+      couponAllowWithSalePrice: false,
+    },
+  ];
+
+  // Enabling without terms fails
+  const missingTerms = validateSpinWheelConfigInput({
+    settings: { enabled: true, termsText: '   ', spinsPerCustomerPerDay: 1 },
+    segments: twoSegments,
+  });
+  assert.equal(missingTerms.ok, false);
+
+  // Enabling with only NO_PRIZE active fails
+  const noActivePrize = validateSpinWheelConfigInput({
+    settings: { enabled: true, termsText: 'One spin per customer per day.', spinsPerCustomerPerDay: 1 },
+    segments: [
+      { ...twoSegments[0], isActive: false },
+      twoSegments[1],
+    ],
+  });
+  assert.equal(noActivePrize.ok, false);
+
+  // Valid configuration passes and defaults IP limit to 1
+  const valid = validateSpinWheelConfigInput({
+    settings: { enabled: true, title: 'Spin and Win', subtitle: '', termsText: 'One spin per customer per day.' },
+    segments: twoSegments,
+  });
+  assert.equal(valid.ok, true);
+  assert.equal(valid.value.settings.maxSpinsPerIpPerDay, 1);
+  assert.equal(valid.value.segments[0].couponMaxDiscountPaise, 25000);
+  assert.equal(valid.value.segments[0].couponMinOrderPaise, 49900);
+
+  // Fewer than 2 segments rejected
+  const tooFew = validateSpinWheelConfigInput({
+    settings: { enabled: false, title: 'Spin and Win', subtitle: '', termsText: 'Terms' },
+    segments: [twoSegments[0]],
+  });
+  assert.equal(tooFew.ok, false);
+});
+
+test('window and summary helpers behave consistently', () => {
+  const now = new Date('2026-11-13T10:00:00.000Z');
+  assert.deepEqual(
+    isWheelWindowOpen(
+      { enabled: true, startsAt: '2026-11-13T09:00:00.000Z', endsAt: '2026-11-13T11:00:00.000Z', termsText: 'Terms apply' },
+      now,
+    ),
+    { open: true, reason: null },
+  );
+  assert.deepEqual(
+    isWheelWindowOpen(
+      { enabled: true, startsAt: '2026-11-13T12:00:00.000Z', endsAt: null, termsText: 'Terms apply' },
+      now,
+    ),
+    { open: false, reason: 'not_started' },
+  );
+  assert.equal(
+    formatPrizeSummary(makeSegment({ segmentType: 'NO_PRIZE', couponType: null })),
+    'No prize',
+  );
+  assert.match(
+    formatPrizeSummary(makeSegment({ couponType: 'FIXED', couponValue: 15000 })),
+    /150/,
+  );
+});

@@ -273,6 +273,12 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Marketing',
+    items: [
+      { href: '/store-admin/marketing/spin-wheel', label: 'Spin wheel', icon: 'spark' },
+    ],
+  },
+  {
     label: 'Insights',
     items: [
       { href: '/store-admin/reports', label: 'Reports', icon: 'chart' },

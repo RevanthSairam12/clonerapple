@@ -11,7 +11,7 @@ if (typeof window !== 'undefined') {
 }
 
 export interface NeedsAttentionItem {
-  key: 'flagged_payments' | 'refunds_owed' | 'stuck_verifying' | 'failed_notifications' | 'password_reset_mail_failures' | 'reconcile_heartbeat';
+  key: 'flagged_payments' | 'refunds_owed' | 'stuck_verifying' | 'failed_notifications' | 'password_reset_mail_failures' | 'spin_daily_cap' | 'reconcile_heartbeat';
   label: string;
   count: number;
   amountPaise?: number;
@@ -27,6 +27,7 @@ export interface NeedsAttentionSummary {
   stuckVerifyingCount: number;
   failedNotificationsCount: number;
   passwordResetMailFailuresCount: number;
+  spinDailyCapReachedCount: number;
   reconcile: ReconcileHeartbeatState;
   items: NeedsAttentionItem[];
 }
@@ -38,6 +39,7 @@ export function buildNeedsAttentionItems(input: {
   stuckVerifyingCount: number;
   failedNotificationsCount: number;
   passwordResetMailFailuresCount?: number;
+  spinDailyCapReachedCount?: number;
   reconcile: ReconcileHeartbeatState;
 }): NeedsAttentionItem[] {
   const {
@@ -47,6 +49,7 @@ export function buildNeedsAttentionItems(input: {
     stuckVerifyingCount,
     failedNotificationsCount,
     passwordResetMailFailuresCount = 0,
+    spinDailyCapReachedCount = 0,
     reconcile,
   } = input;
 
@@ -108,6 +111,18 @@ export function buildNeedsAttentionItems(input: {
           },
         ]
       : []),
+    ...(spinDailyCapReachedCount > 0
+      ? [
+          {
+            key: 'spin_daily_cap' as const,
+            label: 'Spin wheel daily cap reached',
+            count: spinDailyCapReachedCount,
+            href: '/store-admin/marketing/spin-wheel',
+            urgent: true,
+            detail: `${spinDailyCapReachedCount} active prize segment${spinDailyCapReachedCount === 1 ? '' : 's'} hit today's daily cap`,
+          },
+        ]
+      : []),
     {
       key: 'reconcile_heartbeat',
       label: 'Last reconcile run',
@@ -135,6 +150,7 @@ export async function getNeedsAttentionSummary(
       stuckVerifyingCount: 0,
       failedNotificationsCount: 0,
       passwordResetMailFailuresCount: 0,
+      spinDailyCapReachedCount: 0,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount: 0,
@@ -143,6 +159,7 @@ export async function getNeedsAttentionSummary(
         stuckVerifyingCount: 0,
         failedNotificationsCount: 0,
         passwordResetMailFailuresCount: 0,
+        spinDailyCapReachedCount: 0,
         reconcile,
       }),
     };
@@ -204,6 +221,34 @@ export async function getNeedsAttentionSummary(
       passwordResetMailFailuresCount = 0;
     }
 
+    let spinDailyCapReachedCount = 0;
+    try {
+      const [capRow] = await sql<Array<{ cnt: number | string | null }>>`
+        select count(*)::int as cnt
+        from spin_wheel_segments s
+        join spin_wheel_segment_daily_counts d
+          on d.segment_id = s.id
+         and d.store_day = (
+           now() at time zone coalesce(
+             (
+               select p.name
+               from store_settings ss
+               join pg_timezone_names p on p.name = btrim(ss.value)
+               where ss.key = 'timezone'
+               limit 1
+             ),
+             'Asia/Kolkata'
+           )
+         )::date
+        where s.is_active = true
+          and s.daily_cap is not null
+          and d.win_count >= s.daily_cap
+      `;
+      spinDailyCapReachedCount = Math.max(0, Math.trunc(Number(capRow?.cnt) || 0));
+    } catch {
+      spinDailyCapReachedCount = 0;
+    }
+
     return {
       flaggedPaymentsCount,
       refundsOwedCount,
@@ -211,6 +256,7 @@ export async function getNeedsAttentionSummary(
       stuckVerifyingCount,
       failedNotificationsCount,
       passwordResetMailFailuresCount,
+      spinDailyCapReachedCount,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount,
@@ -219,6 +265,7 @@ export async function getNeedsAttentionSummary(
         stuckVerifyingCount,
         failedNotificationsCount,
         passwordResetMailFailuresCount,
+        spinDailyCapReachedCount,
         reconcile,
       }),
     };
@@ -230,6 +277,7 @@ export async function getNeedsAttentionSummary(
       stuckVerifyingCount: 0,
       failedNotificationsCount: 0,
       passwordResetMailFailuresCount: 0,
+      spinDailyCapReachedCount: 0,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount: 0,
@@ -238,6 +286,7 @@ export async function getNeedsAttentionSummary(
         stuckVerifyingCount: 0,
         failedNotificationsCount: 0,
         passwordResetMailFailuresCount: 0,
+        spinDailyCapReachedCount: 0,
         reconcile,
       }),
     };

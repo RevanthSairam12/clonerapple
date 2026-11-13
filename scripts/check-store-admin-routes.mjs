@@ -81,6 +81,8 @@ const EXPECTED_READ_ONLY_ROUTES = [
   // for every store role; each writes only an audit row.
   'coupons/export/route.ts',
   'reports/coupon-usage/export/route.ts',
+  // Spin wheel CSV export (masked customer email, writes only an audit row).
+  'spin-wheel/export/route.ts',
 ];
 
 /** The only mutation in the customer area: an owner-only, audited reveal. */
@@ -191,6 +193,9 @@ const EXPECTED_MUTATING_ROUTES = [
   'coupons/bulk/route.ts',
   // Phase 5: selected-ID public visibility changes (not code generation).
   'coupons/visibility/route.ts',
+  // Spin wheel admin configuration and read-only staff test spin preview.
+  'spin-wheel/route.ts',
+  'spin-wheel/test-spin/route.ts',
 ];
 
 const EXPECTED_ROUTES = [
