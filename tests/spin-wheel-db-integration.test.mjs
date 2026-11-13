@@ -60,7 +60,7 @@ const skip = process.env.RUN_LEGACY_DB_TESTS !== '1'
 
 function client(schema) {
   return postgres(fixtureConnectionUrl(), {
-    max: schema ? 3 : 1,
+    max: schema ? 4 : 1,
     idle_timeout: 20,
     connect_timeout: 25,
     max_lifetime: 1800,
@@ -79,6 +79,7 @@ const jiti = createJiti(import.meta.url, {
 const {
   executeSpinDrawUsing,
   getCustomerSpinStateUsing,
+  getHomeSpinSurfaceUsing,
   getSpinWheelConfigUsing,
   invalidateSpinWheelCache,
 } = await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'store.ts'));
@@ -690,7 +691,7 @@ test('winner redeems personal spin coupon through checkout order, single-use blo
   assert.notEqual(nextDayWin.spin.couponCode, couponCode);
 });
 
-test('reward cooldown blocks coupon winners until expiry or custom days while allowing NO_PRIZE next day', async () => {
+test('reward cooldown blocks coupon winners until expiry or custom days while allowing NO_PRIZE next day', { skip }, async () => {
   await sql`
     update spin_wheel_settings
     set reward_cooldown_mode = 'until_coupon_expires', reward_cooldown_days = 7, show_next_spin_countdown = true
@@ -707,7 +708,7 @@ test('reward cooldown blocks coupon winners until expiry or custom days while al
   assert.equal(beforeState.dailySpinsTotal, 1);
   assert.equal(beforeState.remainingSpinsToday, 1);
   assert.equal(beforeState.cooldownBlocked, false);
-  assert.equal(beforeState.customerProfile?.email, 'winner.one@example.com');
+  assert.equal(beforeState.customerProfile?.email, 'w***@example.com');
 
   // Day 1: usr_a wins a 7-day coupon, usr_b lands on NO_PRIZE
   const win = await executeSpinDrawUsing(
@@ -809,4 +810,130 @@ test('missing spin_wheel_settings relation (Postgres 42P01) fails closed without
   assert.equal(state.isOpen, false);
   assert.equal(state.remainingSpinsToday, 0);
   assert.deepEqual(state.segments, []);
+});
+
+test('concurrent spins from different customers do not queue behind one segment lock', { skip }, async () => {
+  await sql`
+    update spin_wheel_segments
+    set daily_cap = 5, total_cap = 5
+    where id = 'seg_prize'
+  `;
+  invalidateSpinWheelCache(sql);
+
+  const now = new Date('2026-11-13T10:00:00.000Z');
+  let signalHookEntered;
+  const hookEntered = new Promise((resolve) => {
+    signalHookEntered = resolve;
+  });
+  let releaseCustomerA;
+  const holdCustomerA = new Promise((resolve) => {
+    releaseCustomerA = resolve;
+  });
+  let locksBeforeCounter = [];
+
+  const spinAPromise = executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_lock_a', termsAccepted: true },
+    {
+      nowOverride: now,
+      rollFn: () => 0,
+      lockTimeoutMs: 500,
+      beforeCounterHook: async ({ tx }) => {
+        locksBeforeCounter = await tx`
+          select c.relname, l.mode
+          from pg_locks l
+          join pg_class c on c.oid = l.relation
+          where l.pid = pg_backend_pid()
+            and c.relname in ('spin_wheel_segments', 'spin_wheel_segment_daily_counts')
+            and l.mode <> 'AccessShareLock'
+        `;
+        signalHookEntered();
+        await holdCustomerA;
+      },
+    },
+  );
+
+  let resB;
+  let resC;
+  try {
+    // Wait until usr_a is paused inside its open transaction BEFORE counter updates.
+    await hookEntered;
+
+    assert.equal(
+      locksBeforeCounter.length,
+      0,
+      `expected zero write/row-share segment/counter locks mid-transaction, got ${JSON.stringify(locksBeforeCounter)}`,
+    );
+
+    // With only a 250ms lock timeout, usr_b and usr_c must finish completely while usr_a is STILL paused.
+    [resB, resC] = await Promise.all([
+      executeSpinDrawUsing(
+        sql,
+        { userId: 'usr_b', ipHash: 'ip_lock_b', termsAccepted: true },
+        { nowOverride: now, rollFn: () => 0, lockTimeoutMs: 250 },
+      ),
+      executeSpinDrawUsing(
+        sql,
+        { userId: 'usr_c', ipHash: 'ip_lock_c', termsAccepted: true },
+        { nowOverride: now, rollFn: () => 0, lockTimeoutMs: 250 },
+      ),
+    ]);
+  } finally {
+    // Always release usr_a so the open transaction cannot dangle if an assertion fails.
+    releaseCustomerA();
+  }
+
+  const resA = await spinAPromise;
+  assert.equal(resB.ok, true);
+  assert.equal(resC.ok, true);
+  assert.equal(resB.spin.segmentId, 'seg_prize');
+  assert.equal(resC.spin.segmentId, 'seg_prize');
+  assert.equal(resA.ok, true);
+  assert.equal(resA.spin.segmentId, 'seg_prize');
+
+  const [segRow] = await sql`
+    select total_awarded from spin_wheel_segments where id = 'seg_prize'
+  `;
+  const [dailyRow] = await sql`
+    select awarded_count from spin_wheel_segment_daily_counts where segment_id = 'seg_prize'
+  `;
+  assert.equal(Number(segRow.total_awarded), 3);
+  assert.equal(Number(dailyRow.awarded_count), 3);
+});
+
+test('executeSpinDrawUsing enforces botCheck hook and getHomeSpinSurfaceUsing runs 0 extra DB queries for signed-out visitors', { skip }, async () => {
+  const blocked = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_bot_1', termsAccepted: true },
+    {
+      botCheck: async () => ({ ok: false, error: 'Blocked by bot check' }),
+    },
+  );
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'bot_check_failed');
+  assert.equal(blocked.error, 'Blocked by bot check');
+
+  const [{ cnt: spinCount }] = await sql`select count(*)::int as cnt from spin_wheel_spins`;
+  assert.equal(spinCount, 0);
+
+  // Warm the 5s config cache on spySql itself (WeakMap keys by sql handle),
+  // confirming cold read issues exactly 3 config queries and warm signed-out reads issue 0.
+  let queryCount = 0;
+  const spySql = new Proxy(sql, {
+    apply(target, thisArg, args) {
+      queryCount += 1;
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
+
+  invalidateSpinWheelCache(spySql);
+  const coldGuestSurface = await getHomeSpinSurfaceUsing(spySql, null);
+  assert.equal(coldGuestSurface.banner.show, true);
+  assert.equal(queryCount, 3);
+
+  queryCount = 0;
+  const cachedGuestSurface = await getHomeSpinSurfaceUsing(spySql, null);
+  assert.equal(queryCount, 0);
+  assert.equal(cachedGuestSurface.banner.show, true);
+  assert.equal(cachedGuestSurface.spinState.signedIn, false);
 });

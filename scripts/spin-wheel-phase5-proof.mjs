@@ -100,6 +100,41 @@ async function waitForServerReady(timeoutMs = 45000) {
   throw new Error(`Next.js server on ${ORIGIN} did not become ready in ${timeoutMs}ms`);
 }
 
+async function readTableCounts() {
+  const [row] = await sql`
+    select
+      (select count(*)::int from products) as products,
+      (select count(*)::int from orders) as orders,
+      (select count(*)::int from users) as users,
+      (select count(*)::int from store_admins) as store_admins,
+      (select count(*)::int from coupons) as coupons,
+      (select count(*)::int from coupon_redemptions) as coupon_redemptions,
+      (select count(*)::int from store_admin_audit) as store_admin_audit,
+      (select count(*)::int from spin_wheel_settings) as spin_wheel_settings,
+      (select count(*)::int from spin_wheel_segments) as spin_wheel_segments,
+      (select count(*)::int from spin_wheel_segment_daily_counts) as spin_wheel_segment_daily_counts,
+      (select count(*)::int from spin_wheel_spins) as spin_wheel_spins,
+      (select count(*)::int from notification_outbox) as notification_outbox
+  `;
+  return row;
+}
+
+async function measureDbWarmRtt(samples = 5) {
+  await sql`select 1`; // warmup connection
+  const times = [];
+  for (let i = 0; i < samples; i += 1) {
+    const t0 = performance.now();
+    await sql`select 1`;
+    times.push(Math.round(performance.now() - t0));
+  }
+  const sorted = [...times].sort((a, b) => a - b);
+  return {
+    samplesMs: times,
+    medianMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
+    maxMs: sorted[sorted.length - 1] ?? 0,
+  };
+}
+
 async function snapshotWheelState() {
   const settings = await sql`select * from spin_wheel_settings where id = 'default' limit 1`;
   const segments = await sql`select * from spin_wheel_segments order by sort_order asc, id asc`;
@@ -167,6 +202,10 @@ async function restoreWheelState(snap) {
           max_spins_per_ip_per_day = excluded.max_spins_per_ip_per_day,
           min_account_age_minutes = excluded.min_account_age_minutes,
           show_on_home_page = excluded.show_on_home_page,
+          popup_enabled = excluded.popup_enabled,
+          popup_delay_seconds = excluded.popup_delay_seconds,
+          popup_require_scroll = excluded.popup_require_scroll,
+          popup_mobile_floating_button = excluded.popup_mobile_floating_button,
           reward_cooldown_mode = excluded.reward_cooldown_mode,
           reward_cooldown_days = excluded.reward_cooldown_days,
           show_next_spin_countdown = excluded.show_next_spin_countdown,
@@ -217,7 +256,8 @@ async function cleanupTestData(snap) {
   }
 
   if (createdAdminIds.length > 0) {
-    await sql`delete from store_admin_audit where actor_id = any(${createdAdminIds})`.catch(() => {});
+    // store_admin_audit is append-only at the DB level (immutability trigger);
+    // never attempt UPDATE/DELETE on audit rows — test audit rows retain actor_email masked as '_***@gadzio.test'.
     await sql`delete from store_admin_sessions where admin_id = any(${createdAdminIds})`.catch(() => {});
     await sql`delete from store_admins where id = any(${createdAdminIds})`.catch(() => {});
   }
@@ -226,7 +266,11 @@ async function cleanupTestData(snap) {
   await restoreWheelState(snap);
 }
 
+const baselineCounts = await readTableCounts();
 const snapshot = await snapshotWheelState();
+const dbRtt = await measureDbWarmRtt(5);
+console.log('0/5 Baseline DB snapshot counts:', JSON.stringify(baselineCounts));
+console.log('0/5 Warm DB SELECT 1 RTT:', JSON.stringify(dbRtt));
 
 try {
   await mkdir(OUT_DIR, { recursive: true });
@@ -251,22 +295,35 @@ try {
   const peerShopper = await createCustomerWithSession(PEER_EMAIL, 'Rohan', 'Peer', custHash);
   const tabShopper = await createCustomerWithSession(TAB_EMAIL, 'Asha', 'DoubleTab', custHash);
 
-  const loadShoppers = [];
+  const singleShopper = await createCustomerWithSession(`${PREFIX}single@gadzio.test`, 'Solo', 'Spinner', custHash);
+
+  const loadShoppers20 = [];
   for (let i = 1; i <= 20; i += 1) {
     const c = await createCustomerWithSession(
-      `${PREFIX}load_${String(i).padStart(2, '0')}@gadzio.test`,
-      'Load',
+      `${PREFIX}load20_${String(i).padStart(2, '0')}@gadzio.test`,
+      'Load20',
       `User${i}`,
       custHash,
     );
-    loadShoppers.push(c);
+    loadShoppers20.push(c);
+  }
+
+  const loadShoppers50 = [];
+  for (let i = 1; i <= 50; i += 1) {
+    const c = await createCustomerWithSession(
+      `${PREFIX}load50_${String(i).padStart(2, '0')}@gadzio.test`,
+      'Load50',
+      `User${i}`,
+      custHash,
+    );
+    loadShoppers50.push(c);
   }
 
   // Start built Next.js server cleanly on dedicated port
   const nextBin = path.join(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next');
   serverProc = spawn(process.execPath, [nextBin, 'start', '-H', '127.0.0.1', '-p', String(PORT)], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT) },
+    env: { ...process.env, PORT: String(PORT), TRUST_PROXY: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let serverErrLog = '';
@@ -309,9 +366,13 @@ try {
           startsAt: null,
           endsAt: null,
           spinsPerCustomerPerDay: 1,
-          maxSpinsPerIpPerDay: 50,
+          maxSpinsPerIpPerDay: 100,
           minAccountAgeMinutes: 0,
           showOnHomePage: true,
+          popupEnabled: true,
+          popupDelaySeconds: 0,
+          popupRequireScroll: true,
+          popupMobileFloatingButton: true,
           rewardCooldownMode: 'until_coupon_expires',
           rewardCooldownDays: 7,
           showNextSpinCountdown: true,
@@ -480,9 +541,12 @@ try {
   await guestPage.waitForURL((u) => u.pathname === '/spin-and-win', { timeout: 15000 });
   await guestPage.waitForLoadState('networkidle');
 
-  // Home page dismissible modal popup + strip at 1440px and 390px
+  // Home page dismissible modal popup (scroll-gated) + strip at 1440px and 390px
   await guestPage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
   const popupDialog = guestPage.getByRole('dialog', { name: /Spin to Win/i });
+  // Must stay closed before scrolling when popupRequireScroll = true
+  assert.equal(await popupDialog.count(), 0);
+  await guestPage.evaluate(() => window.scrollTo(0, 220));
   await popupDialog.waitFor({ timeout: 10000 });
   await guestPage.screenshot({
     path: path.join(OUT_DIR, '03-home-popup-1440.png'),
@@ -490,6 +554,28 @@ try {
   });
   await popupDialog.getByRole('button', { name: 'NO THANKS' }).click();
   await popupDialog.waitFor({ state: 'detached', timeout: 5000 });
+  const dismissUntilStored = await guestPage.evaluate(() =>
+    window.localStorage.getItem('gadzio_spin_popup_dismissed_until_v1'),
+  );
+  assert.ok(Number(dismissUntilStored) > Date.now(), 'Expected 7-day localStorage dismissal timestamp');
+
+  // Mobile floating pill behavior at 390px + Escape dismiss check
+  const mobileCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const mobilePage = await mobileCtx.newPage();
+  await mobilePage.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
+  await mobilePage.evaluate(() => window.scrollTo(0, 220));
+  const mobilePill = mobilePage.getByRole('button', { name: /Open Spin to Win/i });
+  await mobilePill.waitFor({ timeout: 10000 });
+  await mobilePage.screenshot({
+    path: path.join(OUT_DIR, '03b-home-mobile-pill-390.png'),
+    fullPage: false,
+  });
+  await mobilePill.click();
+  const mobileDialog = mobilePage.getByRole('dialog', { name: /Spin to Win/i });
+  await mobileDialog.waitFor({ timeout: 5000 });
+  await mobilePage.keyboard.press('Escape');
+  await mobileDialog.waitFor({ state: 'detached', timeout: 5000 });
+  await mobileCtx.close();
 
   const homeStrip = guestPage.getByText('Daily Spin').first();
   await homeStrip.waitFor({ timeout: 10000 });
@@ -690,62 +776,76 @@ try {
   console.log('3/5 Two-tab simultaneous double-spin check passed (1 DB spin row)');
 
   // ------------------------------------------------------------------
-  // 4. Concurrent HTTP load check on POST /api/spin-wheel/spin (20 accounts)
+  // 4. Latency & Concurrency benchmarks: single, 20 concurrent, 50 concurrent
   // ------------------------------------------------------------------
-  const latencies = [];
-  const statusCounts = {};
-  let loadErrors = 0;
+  async function runSpinRequest(shopper) {
+    const t0 = performance.now();
+    try {
+      const res = await fetch(`${ORIGIN}/api/spin-wheel/spin`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: ORIGIN,
+          cookie: `user_session=${shopper.token}`,
+        },
+        body: JSON.stringify({ termsAccepted: true }),
+      });
+      const dt = performance.now() - t0;
+      const body = await res.json().catch(() => null);
+      return {
+        dt,
+        status: res.status,
+        ok: Boolean(res.ok && body?.ok),
+      };
+    } catch {
+      return {
+        dt: performance.now() - t0,
+        status: 'network_error',
+        ok: false,
+      };
+    }
+  }
 
-  await Promise.all(
-    loadShoppers.map(async (shopper) => {
-      const t0 = performance.now();
-      try {
-        const res = await fetch(`${ORIGIN}/api/spin-wheel/spin`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            origin: ORIGIN,
-            cookie: `user_session=${shopper.token}`,
-          },
-          body: JSON.stringify({ termsAccepted: true }),
-        });
-        const dt = performance.now() - t0;
-        latencies.push(dt);
-        statusCounts[res.status] = (statusCounts[res.status] || 0) + 1;
-        const body = await res.json().catch(() => null);
-        if (!res.ok || !body?.ok) {
-          loadErrors += 1;
-        }
-      } catch {
-        latencies.push(performance.now() - t0);
-        loadErrors += 1;
-        statusCounts.network_error = (statusCounts.network_error || 0) + 1;
-      }
-    }),
-  );
+  async function measureConcurrentBatch(label, shoppers) {
+    const results = await Promise.all(shoppers.map((s) => runSpinRequest(s)));
+    const latencies = results.map((r) => r.dt).sort((a, b) => a - b);
+    const statusCounts = {};
+    let errors = 0;
+    for (const r of results) {
+      statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+      if (!r.ok) errors += 1;
+    }
+    const ids = shoppers.map((s) => s.userId);
+    const [{ cnt: dbSpinsWritten }] = await sql`
+      select count(*)::int as cnt from spin_wheel_spins where user_id = any(${ids})
+    `;
+    const summary = {
+      label,
+      concurrentRequests: shoppers.length,
+      statusCounts,
+      errors,
+      p50Ms: Math.round(percentile(latencies, 50)),
+      p95Ms: Math.round(percentile(latencies, 95)),
+      maxMs: Math.round(latencies[latencies.length - 1] ?? 0),
+      dbSpinsWritten,
+    };
+    assert.equal(errors, 0, `${label} had ${errors} failed requests`);
+    assert.equal(dbSpinsWritten, shoppers.length, `${label} dbSpinsWritten mismatch`);
+    return summary;
+  }
 
-  latencies.sort((a, b) => a - b);
-  const p50 = Math.round(percentile(latencies, 50));
-  const p95 = Math.round(percentile(latencies, 95));
-  const maxMs = Math.round(latencies[latencies.length - 1] ?? 0);
-
-  const loadIds = loadShoppers.map((s) => s.userId);
-  const [{ cnt: loadSpinsWritten }] = await sql`
-    select count(*)::int as cnt from spin_wheel_spins where user_id = any(${loadIds})
-  `;
+  const singleResult = await runSpinRequest(singleShopper);
+  assert.equal(singleResult.ok, true, `single spin failed with status ${singleResult.status}`);
+  const batch20 = await measureConcurrentBatch('20-concurrent', loadShoppers20);
+  const batch50 = await measureConcurrentBatch('50-concurrent', loadShoppers50);
 
   console.log('4/5 Load check summary:', JSON.stringify({
-    concurrentRequests: loadShoppers.length,
-    statusCounts,
-    errors: loadErrors,
-    p50Ms: p50,
-    p95Ms: p95,
-    maxMs,
-    dbSpinsWritten: loadSpinsWritten,
+    dbWarmRttMs: dbRtt,
+    singleSpinMs: Math.round(singleResult.dt),
+    batch20,
+    batch50,
   }));
 
-  assert.equal(loadErrors, 0);
-  assert.equal(loadSpinsWritten, loadShoppers.length);
   if (serverErrLog.trim()) {
     console.log('Server stderr excerpt recorded (non-fatal if empty):', serverErrLog.slice(0, 300));
   }
@@ -758,6 +858,32 @@ try {
     console.error('Cleanup failed:', err);
     process.exitCode = 1;
   });
+  const postRestoreCounts = await readTableCounts().catch(() => null);
+  if (postRestoreCounts) {
+    console.log('5/5 Post-restore DB snapshot counts:', JSON.stringify(postRestoreCounts));
+    for (const key of [
+      'products',
+      'orders',
+      'users',
+      'coupons',
+      'coupon_redemptions',
+      'spin_wheel_settings',
+      'spin_wheel_segments',
+      'spin_wheel_segment_daily_counts',
+      'spin_wheel_spins',
+      'notification_outbox',
+    ]) {
+      assert.equal(
+        postRestoreCounts[key],
+        baselineCounts[key],
+        `Post-restore count mismatch on ${key}: expected ${baselineCounts[key]}, got ${postRestoreCounts[key]}`,
+      );
+    }
+    console.log(
+      '5/5 Verified immutable tables match baseline counts; append-only store_admin_audit delta =',
+      Number(postRestoreCounts.store_admin_audit) - Number(baselineCounts.store_admin_audit),
+    );
+  }
   await sql.end({ timeout: 5 }).catch(() => {});
   console.log('5/5 Restored original wheel snapshot and deleted all __phase5_* test data.');
 }

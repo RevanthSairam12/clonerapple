@@ -13,8 +13,8 @@ By default after migration `0069`, the wheel is **disabled** (`enabled = false`,
 Once enabled in **Store Desk → Marketing → Spin wheel** (`/store-admin/marketing/spin-wheel`):
 
 1. **Store Admin** (`/store-admin/marketing/spin-wheel`): settings (including **Cooldown after winning a reward**: wait until won coupon expires / custom `N` days / disabled, plus **Show exact next-spin countdown** toggle), 2–12 wheel segments, live odds & WCAG contrast checker, warnings panel, **Test spin** preview wheel, daily summary & recent spins table, CSV export (`/api/store-admin/spin-wheel/export`), and **Needs attention** alerts on Store Desk Overview (`/store-admin`) when a prize hits its daily cap.
-2. **Home page popup & strip** (`/`): when **Show compact promotional callout on the home page** is checked and the customer still has an eligible `1/1` daily spin, shoppers see a dismissible Cream/Coral/Lilac/Lime Spin to Win popup dialog (`×`, `NO THANKS`, backdrop click, Escape — remembered per browser session) plus the Home **Daily Spin** strip linking to `/spin-and-win`.
-3. **Dedicated wheel page** (`/spin-and-win`): full Spin to Win showcase (`1/1` → `0/1` daily spin quota indicator, Terms & Conditions acceptance, boxed email & phone fields for signed-in shoppers or `/auth?redirect=/spin-and-win` links for guests, instant `SPIN-...` personal coupon reward, Copy button, and `Next spin in Xd HH:MM:SS` / `HH:MM:SS` countdown when enabled).
+2. **Home page popup & strip** (`/`): when **Show compact promotional callout on the home page** is checked and the customer still has an eligible `1/1` daily spin, guests trigger zero extra database queries beyond the 5-second cached wheel configuration, and (when **Popup modal enabled** is on) see an accessible Cream/Coral/Lilac/Lime Spin to Win dialog (focus trap, `aria-modal`, `Escape`, focus return, `prefers-reduced-motion`, session cap + 7-day `localStorage` dismissal, scroll/delay gating, and mobile floating button option — never shown on checkout, payment, account, or admin pages) plus the Home **Daily Spin** strip linking to `/spin-and-win`.
+3. **Dedicated wheel page** (`/spin-and-win`): full Spin to Win showcase (`1/1` → `0/1` daily spin quota indicator, Terms & Conditions acceptance, masked email & phone fields for signed-in shoppers or `/auth?redirect=/spin-and-win` links for guests — no newsletter signup and form fields never sent outside spin/auth, instant `SPIN-...` personal coupon reward, Copy button, and plain cooldown note + `Next spin in Xd HH:MM:SS` / `HH:MM:SS` countdown when enabled).
 4. **Account overview** (`/account`): a **Spin to Win** dashboard card showing live `1/1` / `0/1` quota and either `"Spin now — 1/1 daily free spin ready"` or `"Next spin in Xd HH:MM:SS"`, plus a link under Quick Navigation → **Messages & Offers**.
 5. **Account coupons** (`/account/coupons`) & **Messages** (`/account/messages`): won coupons appear immediately with a `"From Spin and Win"` badge, personal usage limit (`1 use remaining`), expiry date, and copy button, alongside an in-app `"spin_win"` message.
 
@@ -26,11 +26,11 @@ Open **Store Desk → Marketing → Spin wheel** (`/store-admin/marketing/spin-w
 
 1. Review **Wheel settings & guardrails**:
    - **Enable Spin and Win on the storefront** (cannot be enabled until at least one active prize slice and non-empty Terms & Conditions exist).
-   - **Show compact promotional callout on the home page** (optional home banner strip).
+   - **Show compact promotional callout on the home page** (optional home banner strip) and **Home popup controls** (**Enable popup**, **Popup delay (seconds)** defaulting to `10`, **Show only after scrolling** defaulting to on, and **Mobile floating button instead of full-screen popup** defaulting to on).
    - Optional **Start / End date & time** in store timezone (`Asia/Kolkata`).
    - **Max spins per IP address per day** (default `1`; raise carefully only if many real customers share mobile/office NAT).
    - **Minimum account age (minutes)** (default `0`; increase to slow newly created spam accounts).
-   - **Cooldown after winning a reward**: defaults to **Wait until won coupon expires** (prevents repeat reward farming while the customer still has an active won coupon, while `NO_PRIZE` spins still reset daily at midnight); can also be set to a custom number of days (`1–365`) or **Disabled** for normal midnight daily resets.
+   - **Cooldown after winning a reward**: defaults to **Wait until won coupon expires** (prevents repeat reward farming while the customer still has an active won coupon, while `NO_PRIZE` spins still reset daily at midnight); can also be set to a custom number of days (`1–365`) or **Disabled** for normal midnight daily resets (explained plainly in both Admin and customer UI).
    - **Show exact next-spin countdown and cooldown note to customers**: toggles the `Xd HH:MM:SS` / `HH:MM:SS` timer shown alongside `1/1` → `0/1` daily spin quota.
    - **Terms & conditions** (shown directly in the wheel panel; customers must tick acceptance before spinning).
 2. Add or edit **2 to 12 wheel segments**:
@@ -49,7 +49,7 @@ Open **Store Desk → Marketing → Spin wheel** (`/store-admin/marketing/spin-w
 
 ![Home page Daily Spin promotional strip](images/spin-wheel/03-home-strip-1440.png)
 
-- **Spinning & winning**: After ticking Terms & Conditions and clicking **Spin the Wheel**, the server locks `(user_id, store_day)`, enforces caps & IP/age guardrails atomically, issues a single-use `SPIN-...` coupon restricted to the winner's account/email, and queues a `spin_win` notification.
+- **Spinning & winning**: After ticking Terms & Conditions and clicking **SPIN TO WIN**, the server enforces the per-customer `(user_id, store_day)` unique guard, checks IP/age/cooldown limits without cross-customer lock contention, issues a single-use `SPIN-...` coupon restricted to the winner's account/email, updates any capped counters atomically at commit time, and queues a `spin_win` notification.
 - **After winning**: Reopening `/spin-and-win` on the same calendar day shows the result and the live `Next spin in hh:mm:ss` countdown — a second spin on the same store day is never permitted.
 
 | Desktop (`/spin-and-win`, 1440 px) | Mobile (`/spin-and-win`, 390 px) |

@@ -21,6 +21,17 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Spin and Win — Hardening, Lock-Free Concurrency, Home Popup Controls (`0071`) & Accessibility — 13 November 2026
+
+- **Lock-free concurrent spin draw & DB optimizations (`src/lib/spin-wheel/store.ts`, `src/lib/store-admin/spin-wheel.ts`):**
+  - Removed cross-customer `FOR UPDATE OF s` serialization on `spin_wheel_segments`, coalesced timeout/clock/timezone/user/settings initialization into one SQL round-trip, skipped unused counter writes for uncapped segments, and moved conditional `UPDATE ... WHERE <cap> RETURNING` counter increments (inside savepoint retry loop) to the end of `executeSpinDrawUsing`.
+  - Added `getHomeSpinSurfaceUsing` so signed-out home page (`/`) loads perform **0** extra DB queries beyond the 5s cached wheel configuration (3 cold config queries on cache miss).
+  - Exposed optional `botCheck`, `lockTimeoutMs`, and `beforeCounterHook` seams on `executeSpinDrawUsing`, updated `store-admin/spin-wheel.ts` winner counts via `spin_wheel_spins`, and recorded `0069`, `0070`, and `0071` migration target metadata in [`docs/migrations-pending.md`](docs/migrations-pending.md).
+- **Accessible home popup controls & privacy hardening (`migrations/0071_spin_wheel_popup_controls.sql`, `src/lib/spin-wheel/rules.ts`, `src/components/spin-wheel/HomeSpinPopup.tsx`, `SpinToWinShowcase.tsx`, `SpinWheelAdminConsole.tsx`, `src/lib/storefront/maintenance.ts`, `src/app/api/spin-wheel/spin/route.ts`):**
+  - Added `popup_enabled` (default `true`), `popup_delay_seconds` (`0..120`, default `10`), `popup_require_scroll` (default `true`), and `popup_mobile_floating_button` (default `true`) on `spin_wheel_settings` with Store Admin UI controls and help text.
+  - Upgraded `HomeSpinPopup` into an accessible modal dialog (`aria-modal="true"`, focus trap across `Tab`/`Shift+Tab`, `Escape` dismiss, trigger focus restore, `prefers-reduced-motion`, session cap + 7-day `localStorage` dismissal, route blocklist for `/checkout`, `/order`, `/payu`, `/account`, `/store-admin`, `/admin`, `/spin-and-win`, and `<768px` mobile floating pill).
+  - Masked signed-in `customerProfile` email and phone via `maskEmail`/`maskPhone`, changed badge label from `"Verified"` to `"Signed in"`, ensured no form fields are ever posted to newsletters or anywhere outside `/api/spin-wheel/spin` (`{ termsAccepted: true }`) and `/auth`, added plain cooldown copy whenever `rewardCooldownMode` is active, darkened secondary ink shades for >= 5.73:1–18.88:1 WCAG contrast, and added `/spin-and-win` + `/api/spin-wheel` to `src/lib/storefront/maintenance.ts` and `requireStorefrontOpen()` on `POST /api/spin-wheel/spin`.
+
 ### Spin and Win — 1:1 Poster Redesign, `42P01` Hardening & Reward Cooldown (`0070`) — 13 November 2026
 
 - **Schema & fail-closed SSR guard (`migrations/0070_spin_wheel_cooldown.sql`, `src/lib/spin-wheel/store.ts`, `src/lib/spin-wheel/rules.ts`, `src/app/api/spin-wheel/spin/route.ts`):**

@@ -20,6 +20,7 @@ const jiti = createJiti(import.meta.url, {
 });
 
 const {
+  DEFAULT_SPIN_WHEEL_SETTINGS,
   computeSegmentOdds,
   computeSpinCooldownState,
   computeStoreDayInfo,
@@ -383,4 +384,46 @@ test('validateSpinWheelConfigInput validates cooldown mode, custom days, and cou
   assert.equal(customValid.value.settings.rewardCooldownMode, 'custom_days');
   assert.equal(customValid.value.settings.rewardCooldownDays, 14);
   assert.equal(customValid.value.settings.showNextSpinCountdown, false);
+  assert.equal(customValid.value.settings.popupEnabled, true);
+  assert.equal(customValid.value.settings.popupDelaySeconds, 10);
+  assert.equal(customValid.value.settings.popupRequireScroll, true);
+  assert.equal(customValid.value.settings.popupMobileFloatingButton, true);
+
+  // Default settings retain until_coupon_expires cooldown and accessible popup controls
+  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.rewardCooldownMode, 'until_coupon_expires');
+  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupEnabled, true);
+  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupDelaySeconds, 10);
+  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupRequireScroll, true);
+  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupMobileFloatingButton, true);
+
+  // Popup delay bounds (0..120)
+  const badPopupDelayLow = validateSpinWheelConfigInput({
+    settings: { enabled: false, title: 'Spin to Win', termsText: 'Terms', popupDelaySeconds: -1 },
+    segments: twoSegments,
+  });
+  assert.equal(badPopupDelayLow.ok, false);
+
+  const badPopupDelayHigh = validateSpinWheelConfigInput({
+    settings: { enabled: false, title: 'Spin to Win', termsText: 'Terms', popupDelaySeconds: 121 },
+    segments: twoSegments,
+  });
+  assert.equal(badPopupDelayHigh.ok, false);
+
+  const customPopupValid = validateSpinWheelConfigInput({
+    settings: {
+      enabled: true,
+      title: 'Spin to Win',
+      termsText: 'Terms',
+      popupEnabled: false,
+      popupDelaySeconds: 25,
+      popupRequireScroll: false,
+      popupMobileFloatingButton: false,
+    },
+    segments: twoSegments,
+  });
+  assert.equal(customPopupValid.ok, true);
+  assert.equal(customPopupValid.value.settings.popupEnabled, false);
+  assert.equal(customPopupValid.value.settings.popupDelaySeconds, 25);
+  assert.equal(customPopupValid.value.settings.popupRequireScroll, false);
+  assert.equal(customPopupValid.value.settings.popupMobileFloatingButton, false);
 });

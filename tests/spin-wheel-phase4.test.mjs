@@ -103,6 +103,7 @@ test('storefront spin API routes enforce dynamic rendering, same-origin, auth, r
   const spinSrc = await readRel('src/app/api/spin-wheel/spin/route.ts');
   assert.match(spinSrc, /dynamic = 'force-dynamic'/);
   assert.match(spinSrc, /assertSameOrigin/);
+  assert.match(spinSrc, /requireStorefrontOpen/);
   assert.match(spinSrc, /requireAccountSessionApi/);
   assert.match(spinSrc, /clientIpFromRequest/);
   assert.match(spinSrc, /checkRateLimit\(`spin-wheel-ip:/);
@@ -110,16 +111,22 @@ test('storefront spin API routes enforce dynamic rendering, same-origin, auth, r
   assert.match(spinSrc, /ip \? createHash\('sha256'\)\.update\(ip\)\.digest\('hex'\) : ''/);
   assert.match(spinSrc, /executeSpinDraw/);
   assert.match(spinSrc, /outcome\.reason === 'unauthorized'.*401/);
-  assert.match(spinSrc, /outcome\.reason === 'account_too_new'.*403/);
+  assert.match(spinSrc, /outcome\.reason === 'account_too_new' \|\| outcome\.reason === 'bot_check_failed'.*403/);
   assert.match(spinSrc, /reward_cooldown[\s\S]*429/);
   assert.match(spinSrc, /outcome\.reason === 'unavailable'.*503/);
+
+  const maintenanceSrc = await readRel('src/lib/storefront/maintenance.ts');
+  assert.match(maintenanceSrc, /'\/spin-and-win'/);
+  assert.match(maintenanceSrc, /'\/api\/spin-wheel'/);
 
   const storeSrc = await readRel('src/lib/spin-wheel/store.ts');
   assert.match(storeSrc, /42P01/);
   assert.match(storeSrc, /isUndefinedTableError/);
+  assert.match(storeSrc, /maskEmail/);
+  assert.match(storeSrc, /maskPhone/);
 });
 
-test('customer spin UI covers 1:1 poster design, 1/1 quota, popup dismissal, signed-out redirect, terms check, reduced motion, a11y, and countdown', async () => {
+test('customer spin UI covers 1:1 poster design, masked PII, accessible popup with 7-day cap, signed-out redirect, terms check, reduced motion, and cooldown copy', async () => {
   const clientSrc = await readRel('src/components/spin-wheel/CustomerSpinWheelClient.tsx');
   const showcaseSrc = await readRel('src/components/spin-wheel/SpinToWinShowcase.tsx');
   const popupSrc = await readRel('src/components/spin-wheel/HomeSpinPopup.tsx');
@@ -143,11 +150,24 @@ test('customer spin UI covers 1:1 poster design, 1/1 quota, popup dismissal, sig
   assert.match(showcaseSrc, /YOUR PHONE NUMBER/);
   assert.match(showcaseSrc, /SPIN TO WIN/);
   assert.match(showcaseSrc, /NO THANKS/);
+  assert.match(showcaseSrc, /Signed in/);
+  assert.doesNotMatch(showcaseSrc, />\s*Verified\s*</);
+  assert.doesNotMatch(showcaseSrc, /api\/newsletter|newsletter_subscribers|subscribeNewsletter/i);
   assert.match(showcaseSrc, /Daily Spin/);
   assert.match(showcaseSrc, /effectiveRemainingSpins\}\/\$\{state\.dailySpinsTotal\}/);
+  assert.match(showcaseSrc, /Reward cooldown active/);
   assert.match(popupSrc, /role="dialog"/);
+  assert.match(popupSrc, /aria-modal="true"/);
   assert.match(popupSrc, /Escape/);
+  assert.match(popupSrc, /Tab/);
+  assert.match(popupSrc, /previousFocusRef/);
   assert.match(popupSrc, /sessionStorage/);
+  assert.match(popupSrc, /SPIN_POPUP_DISMISS_UNTIL_KEY/);
+  assert.match(popupSrc, /popupDelaySeconds/);
+  assert.match(popupSrc, /popupRequireScroll/);
+  assert.match(popupSrc, /popupMobileFloatingButton/);
+  assert.match(popupSrc, /isSpinPopupRouteBlocked/);
+  assert.match(popupSrc, /prefers-reduced-motion: reduce/);
 
   // Screen reader status region, alert role, prize list, focus styles
   assert.match(showcaseSrc, /role="status" aria-live="polite"/);
@@ -186,9 +206,8 @@ test('home, account dashboard, and account coupons entry points honor active/ban
   const couponsPageSrc = await readRel('src/app/account/coupons/page.tsx');
   const couponsListSrc = await readRel('src/components/account/CouponsList.tsx');
 
-  // Home strip & popup wired on /
-  assert.match(homePageSrc, /getHomeSpinBannerState/);
-  assert.match(homePageSrc, /getCustomerSpinState/);
+  // Home strip & popup wired on / via unified cached-first surface loader
+  assert.match(homePageSrc, /getHomeSpinSurface/);
   assert.match(homeClientSrc, /HomeSpinStrip/);
   assert.match(homeClientSrc, /HomeSpinPopup/);
   assert.match(stripSrc, /if \(!banner\?\.show\) return null/);

@@ -100,6 +100,7 @@ const STOREFRONT = [
   '/shop/buy/gdz-1',
   '/in/shop/iphone/accessories/mobile-cases',
   '/in/shop/iphone/accessories/cases-protection',
+  '/spin-and-win',
   '/search',
   '/support',
   '/android',
@@ -119,6 +120,8 @@ const PURCHASE_APIS = [
   '/api/account/profile',
   '/api/account/addresses',
   '/api/account/orders',
+  '/api/spin-wheel',
+  '/api/spin-wheel/spin',
 ];
 
 const ALLOWED = [
@@ -323,6 +326,8 @@ test('the purchase routes enforce the guard in the route as well as the proxy', 
     'src/app/api/payu/initiate/route.ts',
     'src/app/api/coupons/validate/route.ts',
     'src/app/api/catalog/availability/route.ts',
+    'src/app/api/spin-wheel/route.ts',
+    'src/app/api/spin-wheel/spin/route.ts',
   ]) {
     assert.match(read(file), /requireStorefrontOpen/, file);
   }
