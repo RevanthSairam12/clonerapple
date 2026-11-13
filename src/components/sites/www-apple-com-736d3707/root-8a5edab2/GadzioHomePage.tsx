@@ -6,6 +6,7 @@ import { EndlessEntertainmentGallery } from '@/components/sites/www-apple-com-73
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
 import { HeroSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection';
+import { HomeSpinStrip, type HomeSpinBannerData } from '@/components/spin-wheel/HomeSpinStrip';
 import { NEW_UI_HERO_TILES } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/data/tiles';
 import { GadzioHeroSection } from '@/components/hero/GadzioHeroSection';
 import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
@@ -93,9 +94,11 @@ export interface HomePageOverrides {
 export function GadzioHomePage({
   overrides,
   uiMode = 'new',
+  spinBanner,
 }: {
   overrides?: HomePageOverrides;
   uiMode?: 'new' | 'old';
+  spinBanner?: HomeSpinBannerData;
 } = {}) {
   const [bannerVisible, setBannerVisible] = useState(false);
 
@@ -118,6 +121,7 @@ export function GadzioHomePage({
           /* OLD / CLASSIC UI: Original Showcase Layout */
           <>
             <HeroSection tiles={overrides?.heroTiles} video={overrides?.heroVideo} />
+            <HomeSpinStrip banner={spinBanner} />
             {overrides?.promoEnabled !== false ? (
               <PromoSection heading={overrides?.promoHeading} tiles={overrides?.promoTiles} />
             ) : null}
@@ -130,6 +134,7 @@ export function GadzioHomePage({
           <>
             {/* 1. ACTIVE GADZIO HERO SECTION (UNCHANGED) */}
             <GadzioHeroSection />
+            <HomeSpinStrip banner={spinBanner} />
 
             {/* 2. VALUE PROPOSITIONS & TRUST BADGES BAR */}
             {overrides?.trustBarEnabled !== false && overrides?.trustBar?.enabled !== false ? (

@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { GadzioHomePage } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import type { HomePageOverrides } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import { getContent, getContentMany, getThemeSettings } from '@/lib/content';
+import { getHomeSpinBannerState } from '@/lib/spin-wheel/store';
 import { getCachedStorefrontProducts } from '@/lib/storefront/catalog';
 import { normalizeHomepageSlots, resolveHomepageSlots } from '@/lib/website/homepage-products';
 
@@ -56,7 +57,7 @@ export default async function Home() {
   // Fetch homepage content blocks, site-wide theme settings, and warm the
   // storefront catalog + sale state in parallel so catalog resolution does not
   // wait sequentially behind content/theme reads.
-  const [c, settings] = await Promise.all([
+  const [c, settings, _preloaded, spinBanner] = await Promise.all([
     getContentMany({
       trustBar: ['gadzio.trust_badges', {}],
       categoryGrid: ['gadzio.category_grid', {}],
@@ -83,6 +84,7 @@ export default async function Home() {
     }),
     getThemeSettings(),
     getCachedStorefrontProducts(['__preload__']),
+    getHomeSpinBannerState(),
   ]);
 
   // Site-wide theme settings (Theme page in the admin panel) win over the
@@ -138,5 +140,5 @@ export default async function Home() {
     galleryEnabled: (c.gallery as { enabled?: boolean }).enabled !== false,
   };
 
-  return <GadzioHomePage overrides={overrides} uiMode={uiMode} />;
+  return <GadzioHomePage overrides={overrides} uiMode={uiMode} spinBanner={spinBanner} />;
 }

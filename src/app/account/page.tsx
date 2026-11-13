@@ -5,11 +5,13 @@ import { BuyAgainRow } from '@/components/account/BuyAgainRow';
 import { LiveOrderPoller } from '@/components/account/LiveOrderPoller';
 import { OrderStatusChip } from '@/components/account/OrderStatusChip';
 import { ProductRecommendationRow } from '@/components/account/ProductRecommendationRow';
+import { AccountSpinCard } from '@/components/spin-wheel/AccountSpinCard';
 import { requireAccountPageSession } from '@/lib/account/auth';
 import { getAccountDashboardSummary } from '@/lib/account/dashboard-summary';
 import { getDashboardRecommendations } from '@/lib/account/browsing-history';
 import { listBuyAgainProducts } from '@/lib/account/orders';
 import { isInFlightAccountOrderStatus } from '@/lib/account/order-live';
+import { getCustomerSpinState } from '@/lib/spin-wheel/store';
 import { readSaleState } from '@/lib/storefront/sale-state';
 
 export const dynamic = 'force-dynamic';
@@ -19,14 +21,18 @@ const SHOP_HREF = '/shop/iphone/accessories/cases-protection';
 export default async function AccountPage() {
   const session = await requireAccountPageSession('/account');
 
-  const [summary, buyAgain, recommendations, sale] = await Promise.all([
+  const [summary, buyAgain, recommendations, sale, spinState] = await Promise.all([
     getAccountDashboardSummary(session.userId),
     listBuyAgainProducts(session.userId),
     getDashboardRecommendations(session.userId),
     readSaleState(),
+    getCustomerSpinState(session.userId),
   ]);
 
   if (!summary) notFound();
+
+  const spinOpen = spinState.available && spinState.isOpen && spinState.segments.length >= 2;
+  const showSpinCard = spinOpen || spinState.todaySpin !== null;
 
   const latest = summary.orders.latestOrder;
   const latestInFlight = latest ? isInFlightAccountOrderStatus(latest.status) : false;
@@ -276,6 +282,14 @@ export default async function AccountPage() {
               <span>{summary.support.phone} · {summary.support.email}</span>
             </div>
           </Link>
+
+          {showSpinCard ? (
+            <AccountSpinCard
+              title={spinState.title}
+              todaySpin={spinState.todaySpin}
+              secondsUntilReset={spinState.secondsUntilReset}
+            />
+          ) : null}
         </section>
 
         {/* Grouped Links Below Grid */}
@@ -327,6 +341,13 @@ export default async function AccountPage() {
                     Your coupons
                   </Link>
                 </li>
+                {spinOpen ? (
+                  <li>
+                    <Link href="/spin-and-win" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
+                      Spin and Win
+                    </Link>
+                  </li>
+                ) : null}
                 <li>
                   <Link href="/account/preferences" className="text-[#1d1d1f] hover:underline focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
                     Communication preferences
