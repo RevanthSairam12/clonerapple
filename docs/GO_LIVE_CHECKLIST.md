@@ -12,7 +12,22 @@ This is the authoritative pre-launch and cutover gate checklist for the Gadzio s
   - `DATABASE_URL` uses the **Transaction Pooler** on port `6543` (`sslmode=require`).
   - `DATABASE_MIGRATION_URL` uses the **Session Pooler** on port `5432` (`sslmode=require`) for `npm run db:migrate` and schema scripts (`resolveMigrationDatabaseUrl` refuses port `6543`).
   - `"postgres": "3.4.9"` is pinned in `package.json` and `package-lock.json`, and `disablePoolerPipelining` is active in `src/lib/platform/db.ts` (`DATABASE_DISABLE_POOLER_NO_PIPELINE` unset).
-- [ ] **Role Timeouts:** `idle_in_transaction_session_timeout = '30s'` is configured on `postgres` and `authenticator` roles (`migrations/0067_db_connection_decisions.sql`).
+- [ ] **Role Timeouts (`idle_in_transaction_session_timeout`):** Not applied in a migration — run directly in Supabase SQL Editor (Session Pooler / `postgres` owner role) before go-live so frozen serverless transactions release row locks after 30s (`docs/production-env-20261106.md`):
+
+```sql
+ALTER ROLE postgres SET idle_in_transaction_session_timeout = '30s';
+ALTER ROLE authenticator SET idle_in_transaction_session_timeout = '30s';
+
+-- Verify both role settings in pg_roles / pg_db_role_setting:
+SELECT rolname, rolconfig
+FROM pg_roles
+WHERE rolname IN ('postgres', 'authenticator');
+
+SELECT setrole::regrole AS role_name, setconfig
+FROM pg_db_role_setting
+WHERE setrole IN ('postgres'::regrole, 'authenticator'::regrole)
+  AND setdatabase = 0;
+```
 
 ---
 
@@ -20,7 +35,7 @@ This is the authoritative pre-launch and cutover gate checklist for the Gadzio s
 
 Run against the production database before cutover:
 
-- [ ] `npm run db:migrate` — all 65 migrations (`0001`–`0067`) applied cleanly.
+- [ ] `npm run db:migrate` — all 70 migrations (`0001`–`0072`) applied cleanly.
 - [ ] `node --env-file=.env.local scripts/check-security-db-state.mjs` — all `10/10` checks pass (`MIG-1`, `PRIV-1`, `COLS-anon-allow`, `COLS-anon-deny`, `COLS-authenticated-allow`, `COLS-authenticated-deny`, `PRIV-2`, `RLS-1`, `VIEW-1`, `GUARD-1`).
 - [ ] `node --env-file=.env.local scripts/verify-rls-consumer-tables.mjs` — `users`, `user_sessions`, `orders`, `order_sale_state`, `products.cost_paise`, and `schema_migrations` return HTTP `401` to the publishable key.
 - [ ] `npm run check:db-clientread` — `stuckClientReadCount: 0` in `pg_stat_activity`.
@@ -37,12 +52,15 @@ Run against the production database before cutover:
 
 ## 4. Production Environment Variables & Site Address Health Check
 
+- [ ] **`APP_ENV`:** Set to `production` in Vercel **Production** (and `staging` in **Preview / Staging**).
 - [ ] **`APP_BASE_URL`:** Set to the permanent production HTTPS origin (e.g. `https://gadzio.co.in`) — no path, no query string, not `localhost`, and **not** a temporary tunnel host (`*.trycloudflare.com`, `*.ngrok-free.app`, etc.).
-- [ ] **`PAYU_ENV`:** Set to `live` (or `production`), with live `PAYU_KEY` and `PAYU_SALT`.
+- [ ] **`PAYU_ENV` & `PAYU_BASE_URL`:** `PAYU_ENV=live` paired with `PAYU_BASE_URL=https://secure.payu.in` (exact live base URL) and live `PAYU_KEY` / `PAYU_SALT`.
 - [ ] **`PAYU_RETURN_SECRET`:** Set to a 32+ character cryptographic secret for signed cross-site return links (`rt`).
 - [ ] **`CRON_SECRET`:** Set to a 32+ character secret for `GET /api/payu/reconcile`.
 - [ ] **`TRUST_PROXY`:** Set to `1` on Vercel so `clientIpFromRequest` reads the platform-supplied forwarded client IP.
-- [ ] **`MAIL_ALLOWED_HOSTS` & `MAIL_PASSWORD`:** Set when SMTP delivery is enabled in Store Admin → Settings → Email & SMS.
+- [ ] **`MAIL_ALLOWED_HOSTS` & `MAIL_PASSWORD`:** Set when SMTP delivery is enabled in Store Admin → Settings → Email & SMS (for Resend SMTP, set `MAIL_ALLOWED_HOSTS=smtp.resend.com`).
+- [ ] **CLI Guard:** Run `npm run check:production-env` against production environment variables (reports names and lengths only; exits `0` only when all production rules pass).
+- [ ] **Owner Security:** Turn on TOTP two-factor authentication for all `store_owner` accounts (`/store-admin/profile#security`), then consider enabling **Require two-factor for owners** in Store Admin → Settings.
 - [ ] **Owner Diagnostic (`POST /api/store-admin/site-address-check`):** In Store Admin → Settings → Payments → **Site address health check (`APP_BASE_URL`)**, click **Check site address** and confirm:
   - **Reachable:** `Yes (HTTP 200)`
   - **HTTPS:** `HTTPS`
@@ -51,10 +69,23 @@ Run against the production database before cutover:
 
 ---
 
+## 4b. Email Domain Authentication (Resend SPF, DKIM & DMARC)
+
+Verify domain ownership in the **Resend** dashboard before enabling `mail_status = 'on'` in production:
+
+- [ ] **Add Domain in Resend:** Register the sending domain matching `mail_from_email` (for example `gadzio.co.in`, or a dedicated sending subdomain such as `send.gadzio.co.in`).
+- [ ] **Publish SPF Records:** Add Resend's `TXT` (`v=spf1 include:... ~all`) and return-path `MX` DNS records on the sending domain/subdomain in your DNS provider (never keep duplicate `v=spf1` TXT records on the same host).
+- [ ] **Publish DKIM Records:** Add all Resend-generated **DKIM** `TXT` / `CNAME` selector records (for example `resend._domainkey.<domain>`) verbatim.
+- [ ] **Publish DMARC Record:** Add a `_dmarc.<root-domain>` `TXT` record (`v=DMARC1; p=none; rua=mailto:dmarc@<root-domain>; adkim=r; aspf=r` during initial launch, upgrading to `p=quarantine` / `p=reject` after confirming clean alignment reports).
+- [ ] **Verify & Test Delivery:** Wait for DNS propagation until Resend marks the domain **Verified** (SPF + DKIM green), confirm SMTP credentials match `mail_username=resend` / `MAIL_PASSWORD=<Resend API key>` / `MAIL_ALLOWED_HOSTS=smtp.resend.com`, and verify `spf=pass`, `dkim=pass`, and `dmarc=pass` in headers on a test order/transactional message.
+
+---
+
 ## 5. Automated Pre-Deploy Verification Suite
 
 All checks must pass with zero errors:
 
+- [ ] `npm run check:production-env` (with production env loaded)
 - [ ] `npm run typecheck`
 - [ ] `npm test`
 - [ ] `npm run build`
@@ -71,8 +102,9 @@ All checks must pass with zero errors:
 
 ## 6. Background Reconcile Scheduler (`docs/reconcile-scheduling.md`)
 
-- [ ] Configure the 1–2 minute scheduler calling `GET <APP_BASE_URL>/api/payu/reconcile` with header `Authorization: Bearer <CRON_SECRET>`.
-- [ ] Confirm on `/store-admin` Overview that **Background jobs → Last reconcile run** turns green (`OK`) within 5 minutes.
+- [ ] Confirm `vercel.json` has **no** `"crons"` entry (keeps Hobby & Pro deploys green; `GET /api/payu/reconcile` stays a normal secret-guarded API route).
+- [ ] Configure an external scheduler (recommended: `cron-job.org` Option C) or Supabase `pg_cron` + `pg_net` (Option B) calling `GET <APP_BASE_URL>/api/payu/reconcile` every **1–2 minutes** (1–5 min maximum before the 5-minute Overview heartbeat turns stale) with header `Authorization: Bearer <CRON_SECRET>`.
+- [ ] Confirm on `/store-admin` Overview that **Background jobs → Last reconcile run** turns green (`OK`) within 5 minutes and test duplicate trigger idempotency (`200` without double processing).
 
 ---
 

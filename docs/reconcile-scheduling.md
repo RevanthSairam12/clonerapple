@@ -1,6 +1,10 @@
 # Payment & Reservation Reconciliation Scheduling (`docs/reconcile-scheduling.md`)
 
-## 1. Required Frequency: Every Minute (`* * * * *`)
+> **Adopted Deployment Choice:** `vercel.json` intentionally does **not** register a Vercel Cron schedule (Vercel Hobby plans allow at most one cron run per day and reject every-minute schedules at deploy time). `GET /api/payu/reconcile` remains a normal API route guarded by `Authorization: Bearer <CRON_SECRET>`, driven externally every **1–2 minutes** (or every **1–5 minutes** if latency slack allows; note the Overview heartbeat turns red after 5 minutes without a successful run) via **Option C (External scheduler, e.g. `cron-job.org`)** or **Option B (Supabase `pg_cron` + `pg_net`)**.
+>
+> **Idempotency & Overlap Safety:** Every invocation claims due orders atomically using PostgreSQL `FOR UPDATE SKIP LOCKED` with a **180-second lease** (`src/lib/payu/reconcile.ts`), validates transitions inside database transactions, and enforces unique payment/inventory constraints (`payu_mihpayid`, `stock_movements`). Duplicate or overlapping calls cannot capture an order or deduct/release stock twice.
+
+## 1. Recommended Frequency: Every 1–2 Minutes (`* * * * *`)
 
 The reconciliation endpoint (`/api/payu/reconcile`) **must run every 1 minute (`* * * * *`)** in production. It performs four bounded jobs per tick:
 
@@ -106,16 +110,22 @@ select cron.unschedule('gadzio-reconcile-every-minute');
 
 ---
 
-### Option C: External Scheduler (Cloudflare Cron Worker / Upstash QStash / Systemd Timer)
+### Option C: External Scheduler (`cron-job.org` / Cloudflare Cron Worker / Upstash QStash)
 
-Any external scheduler that supports 1-minute intervals can call either `GET` or `POST`:
+Recommended when keeping `vercel.json` cron-free across all Vercel plans:
 
-- **URL:** `https://<your-domain>/api/payu/reconcile`
-- **Schedule:** `* * * * *` (every minute)
-- **Method:** `GET` or `POST`
-- **Headers:**
-  - `Authorization: Bearer <CRON_SECRET>`
-- **Timeout:** 30 seconds
+#### Step-by-step for `cron-job.org` (Production)
+
+1. Sign in to `cron-job.org` and click **Create cronjob**.
+2. **Title:** `Gadzio PayU Reconcile (Production)`
+3. **URL:** `https://<your-production-domain>/api/payu/reconcile` (for example `https://gadzio.co.in/api/payu/reconcile`)
+4. **Execution schedule:** Every **1 minute** (`* * * * *`) or **2 minutes** (`*/2 * * * *`) — stay within 5 minutes so Store Admin's `Last reconcile run` indicator remains healthy (`OK`). If you use 5 minutes (`*/5 * * * *`), transient network blips can push the indicator temporarily stale.
+5. **Advanced → Request method:** `GET` (the endpoint supports both `GET` and `POST`).
+6. **Advanced → Headers:** Add header key `Authorization` with value `Bearer <CRON_SECRET>` (must match `CRON_SECRET` in Vercel Environment Variables).
+7. **Timeout:** 30 seconds (the route completes well within Vercel's serverless timeout; `FOR UPDATE SKIP LOCKED` keeps overlapping runs safe).
+8. Save and click **Test run** once; confirm HTTP `200` and `{ "success": true, ... }`.
+
+*(For staging, either trigger manually during tests or add a `Staging` job with `APP_ENV=staging` `CRON_SECRET` and bypass/protection disabled for API routes, then disable it when staging is idle.)*
 
 **Verification command (CLI):**
 
