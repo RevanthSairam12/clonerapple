@@ -220,7 +220,9 @@ export async function POST(req: NextRequest) {
     //    key, salt or public site address must fail here, closed: no order row,
     //    no stock claim, no reservation — and one message an operator can act
     //    on instead of a PayU page that cannot return the customer.
-    const payuCheck = checkPayUConfiguration();
+    const payuCheck = checkPayUConfiguration(process.env, {
+      mailOn: settings.mail_status === 'on',
+    });
     if (!payuCheck.ok) {
       console.error(
         `[payu/initiate] payment is not configured (${payuCheck.problem.code}); no order was created`,

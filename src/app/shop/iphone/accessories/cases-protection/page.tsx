@@ -5,24 +5,28 @@ import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesPr
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
 import { getContentMany } from '@/lib/content';
 import { getCasesCategoryView } from '@/lib/storefront/catalog';
+import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { readSaleState } from '@/lib/storefront/sale-state';
 
 import '@/app/in/shop/iphone/accessories/cases-protection/cases.css';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-  title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
-  description:
-    'Explore premium Gadzio protective cases for iPhone 17, iPhone 17 Pro, iPhone 16, and more. Featuring liquid silicone, anti-yellowing crystal clear, and AeroWeave technical fabric with MagSafe compatibility.',
-  openGraph: {
+export function generateMetadata(): Metadata {
+  const url = siteOpenGraphUrl('/shop/iphone/accessories/cases-protection');
+  return {
     title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
-    description: 'Shop Gadzio drop-tested protective cases for iPhone.',
-    url: 'https://gadzio.co.in/shop/iphone/accessories/cases-protection',
-    siteName: 'Gadzio',
-    type: 'website',
-  },
-};
+    description:
+      'Explore premium Gadzio protective cases for iPhone 17, iPhone 17 Pro, iPhone 16, and more. Featuring liquid silicone, anti-yellowing crystal clear, and AeroWeave technical fabric with MagSafe compatibility.',
+    openGraph: {
+      title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
+      description: 'Shop Gadzio drop-tested protective cases for iPhone.',
+      ...(url ? { url } : {}),
+      siteName: 'Gadzio',
+      type: 'website',
+    },
+  };
+}
 
 export default async function ShopCasesPage() {
   const [view, sale] = await Promise.all([getCasesCategoryView(), readSaleState()]);

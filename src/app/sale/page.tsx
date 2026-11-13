@@ -6,6 +6,7 @@ import { CollectionPage } from '@/components/collection/CollectionPage';
 import type { CollectionConfig } from '@/components/collection/types';
 import { applySaleDisplay, readStorefrontCatalog } from '@/lib/catalog/storefront';
 import { collectionProductFromDatabase } from '@/lib/storefront/catalog-merge';
+import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { readSaleState } from '@/lib/storefront/sale-state';
 
 import '@/components/sites/accessories/accessory-category.css';
@@ -13,21 +14,24 @@ import '@/components/sites/accessories/accessory-category.css';
 /** Sale pricing and availability must reflect live DB state per request. */
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-  title: 'Sale | Gadzio Store',
-  description: 'Shop limited-time sale pricing on select Gadzio cases, chargers, audio gear, and everyday tech accessories.',
-  openGraph: {
+export function generateMetadata(): Metadata {
+  const url = siteOpenGraphUrl('/sale');
+  return {
     title: 'Sale | Gadzio Store',
-    description: 'Shop limited-time sale pricing on select Gadzio essentials.',
-    url: 'https://gadzio.co.in/sale',
-    siteName: 'Gadzio',
-    locale: 'en_IN',
-    type: 'website',
-  },
-  icons: {
-    icon: '/gadzio_logo.png',
-  },
-};
+    description: 'Shop limited-time sale pricing on select Gadzio cases, chargers, audio gear, and everyday tech accessories.',
+    openGraph: {
+      title: 'Sale | Gadzio Store',
+      description: 'Shop limited-time sale pricing on select Gadzio essentials.',
+      ...(url ? { url } : {}),
+      siteName: 'Gadzio',
+      locale: 'en_IN',
+      type: 'website',
+    },
+    icons: {
+      icon: '/gadzio_logo.png',
+    },
+  };
+}
 
 export default async function SalePage() {
   const [snapshot, sale] = await Promise.all([

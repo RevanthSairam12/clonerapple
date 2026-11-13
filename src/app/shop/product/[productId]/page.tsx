@@ -6,6 +6,7 @@ import { AccessoryDetailPage } from '@/components/sites/accessories/AccessoryDet
 import { recordProductView } from '@/lib/account/browsing-history';
 import { listProductPageGiftPromos } from '@/lib/free-gifts/store';
 import { getProductDetail } from '@/lib/storefront/catalog';
+import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { getUserSession } from '@/lib/user-auth';
 
@@ -28,6 +29,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const product = detail.product;
+  const ogUrl = siteOpenGraphUrl(`/shop/product/${product.id}`);
   return {
     title: `${product.name} | Gadzio Store`,
     description: product.shortDescription ?? product.description,
@@ -35,7 +37,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title: `${product.name} | Gadzio Store`,
       description: product.shortDescription ?? product.description,
       images: [product.image],
-      url: `https://gadzio.co.in/shop/product/${product.id}`,
+      ...(ogUrl ? { url: ogUrl } : {}),
       siteName: 'Gadzio',
     },
   };

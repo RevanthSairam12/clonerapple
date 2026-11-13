@@ -4,50 +4,33 @@ import Link from 'next/link';
 
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
+import { siteMetadataBase, siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { WHATSAPP_DISPLAY, WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
 
 const TITLE = 'Android Store - Coming Soon | Gadzio';
 const DESCRIPTION =
   "Gadzio's Android store is on the way — cases, chargers, cables and audio built for Android phones. Order Android accessories now on WhatsApp.";
 
-/**
- * Canonical origin for URL-based metadata.
- *
- * Reads the app's existing `APP_BASE_URL` config and ignores a localhost value,
- * so the canonical URL is always a real public origin; anything missing or
- * malformed falls back to the production origin the storefront already uses.
- */
-function siteOrigin(): URL {
-  const configured = process.env.APP_BASE_URL?.trim();
-  if (configured) {
-    try {
-      const url = new URL(configured);
-      if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname)) {
-        return url;
-      }
-    } catch {
-      // Malformed value — fall through to the production origin.
-    }
-  }
-  return new URL('https://gadzio.co.in');
-}
-
-export const metadata: Metadata = {
-  metadataBase: siteOrigin(),
-  title: TITLE,
-  description: DESCRIPTION,
-  // A placeholder store has nothing worth indexing, but its links stay followable.
-  robots: { index: false, follow: true },
-  openGraph: {
+export function generateMetadata(): Metadata {
+  const metadataBase = siteMetadataBase();
+  const url = siteOpenGraphUrl('/android');
+  return {
+    ...(metadataBase ? { metadataBase } : {}),
     title: TITLE,
     description: DESCRIPTION,
-    url: '/android',
-    siteName: 'Gadzio',
-    locale: 'en_US',
-    type: 'website',
-  },
-  icons: { icon: '/gadzio_logo.png' },
-};
+    // A placeholder store has nothing worth indexing, but its links stay followable.
+    robots: { index: false, follow: true },
+    openGraph: {
+      title: TITLE,
+      description: DESCRIPTION,
+      ...(url ? { url } : {}),
+      siteName: 'Gadzio',
+      locale: 'en_US',
+      type: 'website',
+    },
+    icons: { icon: '/gadzio_logo.png' },
+  };
+}
 
 /**
  * The site's primary pill (`.gz-button`) is 17px, which is wider than a 320px

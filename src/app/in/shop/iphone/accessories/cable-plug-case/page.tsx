@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { AccessoryCategoryPage } from '@/components/sites/accessories/AccessoryCategoryPage';
 import { CONFIG } from '@/components/sites/accessories/data/cable-plug-case';
 import { getAccessoryProductsView } from '@/lib/storefront/catalog';
+import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { readSaleState } from '@/lib/storefront/sale-state';
 
 import '@/components/sites/accessories/accessory-category.css';
@@ -10,21 +11,24 @@ import '@/components/sites/accessories/accessory-category.css';
 /** Product records come from the database; page furniture stays coded. */
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-  title: CONFIG.seo.title,
-  description: CONFIG.seo.description,
-  openGraph: {
+export function generateMetadata(): Metadata {
+  const url = siteOpenGraphUrl('/in/shop/iphone/accessories/cable-plug-case');
+  return {
     title: CONFIG.seo.title,
     description: CONFIG.seo.description,
-    url: 'https://gadzio.co.in/in/shop/iphone/accessories/cable-plug-case',
-    siteName: 'Gadzio',
-    locale: 'en_IN',
-    type: 'website',
-  },
-  icons: {
-    icon: '/gadzio_logo.png',
-  },
-};
+    openGraph: {
+      title: CONFIG.seo.title,
+      description: CONFIG.seo.description,
+      ...(url ? { url } : {}),
+      siteName: 'Gadzio',
+      locale: 'en_IN',
+      type: 'website',
+    },
+    icons: {
+      icon: '/gadzio_logo.png',
+    },
+  };
+}
 
 export default async function Page() {
   const [{ products, filters, quickPillFacet, quickPills }, sale] = await Promise.all([

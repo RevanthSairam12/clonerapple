@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { getSql } from '@/lib/platform/db';
+import { getAppBaseUrl } from '@/lib/payu/config';
 import { maskCustomerEmail, maskCustomerPhone } from '@/lib/store-admin/masking';
 import type { StoreSettings } from '@/lib/store-admin/settings-rules';
 
@@ -88,10 +89,8 @@ function firstNonEmpty(...values: (string | undefined)[]): string {
   return '';
 }
 
-function appBaseUrl(): string {
-  return (process.env.APP_BASE_URL || (
-    process.env.NODE_ENV === 'production' ? 'https://gadzio.co.in' : 'http://localhost:3000'
-  )).replace(/\/+$/, '');
+function resolvedNotificationBaseUrl(): string {
+  return getAppBaseUrl() ?? '';
 }
 
 async function readEmailTemplate(sql: Sql, event: NotificationEvent): Promise<StoredEmail | null> {
@@ -405,7 +404,7 @@ export async function enqueueNotification(
       let body = '';
       if (status !== 'SKIPPED') {
         if (channel === 'email') {
-          const rendered = renderEmail(parts, values, appBaseUrl());
+          const rendered = renderEmail(parts, values, resolvedNotificationBaseUrl());
           subject = rendered.subject;
           body = rendered.html;
         } else if (channel === 'sms') {

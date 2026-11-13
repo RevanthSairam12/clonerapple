@@ -17,6 +17,19 @@ if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: PayU configuration and secrets must never be loaded in the browser environment.');
 }
 
+import {
+  checkProductionEnv,
+  shouldEnforceProductionEnv,
+  type ProductionEnvCheckOptions,
+  type ProductionEnvIssueCode,
+} from '@/lib/platform/production-env';
+import {
+  isLocalhostHostname,
+  isTunnelHostname,
+} from '@/lib/platform/site-address-rules';
+
+export { isLocalhostHostname, isTunnelHostname };
+
 export type PayUEnvironment = 'test' | 'live';
 
 /** Routes PayU is told to call back. All are built from the same validated base. */
@@ -56,33 +69,7 @@ export interface PayUConfig {
   appBaseUrl: string;
 }
 
-const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
-
-const TUNNEL_HOST_SUFFIXES = [
-  '.trycloudflare.com',
-  '.ngrok-free.app',
-  '.ngrok-free.dev',
-  '.ngrok.io',
-  '.ngrok.app',
-  '.loca.lt',
-  '.localtunnel.me',
-  '.ts.net',
-] as const;
-
 let warnedAboutLocalhost = false;
-
-export function isLocalhostHostname(hostname: string): boolean {
-  const normalised = hostname.trim().toLowerCase();
-  return LOCAL_HOSTNAMES.has(normalised) || normalised.endsWith('.localhost');
-}
-
-export function isTunnelHostname(hostname: string): boolean {
-  const normalised = hostname.trim().toLowerCase().replace(/\.+$/, '');
-  if (!normalised) return false;
-  return TUNNEL_HOST_SUFFIXES.some(
-    (suffix) => normalised === suffix.slice(1) || normalised.endsWith(suffix),
-  );
-}
 
 /** True when `PAYU_ENV` is set to `'live'` or `'production'`. */
 export function isProductionPayUEnv(
@@ -279,7 +266,7 @@ export function getPayUConfig(env: NodeJS.ProcessEnv = process.env): PayUConfig 
 }
 
 export interface PayUConfigurationProblem {
-  code: 'missing_key' | 'missing_salt' | AppBaseUrlFailureCode;
+  code: 'missing_key' | 'missing_salt' | AppBaseUrlFailureCode | ProductionEnvIssueCode;
   /** Safe to show to a customer or an admin: no secrets, no values. */
   message: string;
   /** Whether the storefront should show the generic "payment unavailable" copy. */
@@ -289,6 +276,7 @@ export interface PayUConfigurationProblem {
 /** Non-throwing validation used by routes that must fail closed with a message. */
 export function checkPayUConfiguration(
   env: NodeJS.ProcessEnv = process.env,
+  options: ProductionEnvCheckOptions = {},
 ): { ok: true; key: string; salt: string; appBaseUrl: string } | { ok: false; problem: PayUConfigurationProblem } {
   const key = (env.PAYU_KEY || '').trim();
   const salt = (env.PAYU_SALT || '').trim();
@@ -320,10 +308,25 @@ export function checkPayUConfiguration(
       ok: false,
       problem: {
         code: base.code,
-        message: 'Online payment is not configured yet.',
+        message: 'Online payment is temporarily unavailable.',
         adminAction: `${base.message} Set APP_BASE_URL to the public HTTPS address of this store.`,
       },
     };
+  }
+
+  if (shouldEnforceProductionEnv(env)) {
+    const prodCheck = checkProductionEnv(env, options);
+    if (!prodCheck.ok) {
+      const firstIssue = prodCheck.issues[0];
+      return {
+        ok: false,
+        problem: {
+          code: firstIssue?.code ?? 'invalid_app_env',
+          message: 'Online payment is temporarily unavailable.',
+          adminAction: prodCheck.issues.map((issue) => issue.message).join(' '),
+        },
+      };
+    }
   }
 
   return { ok: true, key, salt, appBaseUrl: base.baseUrl };
@@ -344,15 +347,25 @@ export function assertPayUCredentialsConfigured(
 /** New checkouts require credentials AND an explicit validated return origin. */
 export function assertPayUConfigured(
   config: PayUConfig = getPayUConfig(),
+  env: NodeJS.ProcessEnv = process.env,
+  options: ProductionEnvCheckOptions = {},
 ): asserts config is PayUConfig & { key: string; salt: string; appBaseUrl: string } {
   assertPayUCredentialsConfigured(config);
   if (!config.appBaseUrl) {
-    const base = resolveAppBaseUrl();
+    const base = resolveAppBaseUrl(env);
     throw new Error(
       `PayU configuration error: ${base.ok
         ? 'APP_BASE_URL must be set to the public site address.'
         : base.message}`,
     );
+  }
+  if (shouldEnforceProductionEnv(env)) {
+    const prodCheck = checkProductionEnv(env, options);
+    if (!prodCheck.ok) {
+      throw new Error(
+        `PayU configuration error: ${prodCheck.issues.map((issue) => issue.message).join(' ')}`,
+      );
+    }
   }
 }
 

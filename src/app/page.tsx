@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { GadzioHomePage } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import type { HomePageOverrides } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage';
 import { getContent, getContentMany, getThemeSettings } from '@/lib/content';
+import { siteMetadataBase, siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { getHomeSpinSurface } from '@/lib/spin-wheel/store';
 import { getUserSession } from '@/lib/user-auth';
 import { getCachedStorefrontProducts } from '@/lib/storefront/catalog';
@@ -14,14 +15,12 @@ export const dynamic = 'force-dynamic';
 const DESCRIPTION =
   'Shop Gadzio mobile accessories, cases, chargers, cables, audio accessories and everyday tech essentials.';
 
-const metadata: Metadata = {
-  metadataBase: new URL('https://gadzio.co.in'),
+const baseMetadata: Metadata = {
   title: 'Gadzio',
   description: DESCRIPTION,
   openGraph: {
     title: 'Gadzio',
     description: DESCRIPTION,
-    url: 'https://gadzio.co.in/',
     siteName: 'Gadzio',
     locale: 'en_US',
     type: 'website',
@@ -38,12 +37,16 @@ async function buildMetadata(): Promise<Metadata> {
     'apple.seo',
     {},
   );
+  const metadataBase = siteMetadataBase();
+  const ogUrl = siteOpenGraphUrl('/');
   return {
-    ...metadata,
-    title: seo.title ?? metadata.title,
+    ...baseMetadata,
+    ...(metadataBase ? { metadataBase } : {}),
+    title: seo.title ?? baseMetadata.title,
     description: seo.description ?? DESCRIPTION,
     openGraph: {
-      ...metadata.openGraph,
+      ...baseMetadata.openGraph,
+      ...(ogUrl ? { url: ogUrl } : {}),
       title: seo.ogTitle ?? seo.title ?? 'Gadzio',
       description: seo.description ?? DESCRIPTION,
     },

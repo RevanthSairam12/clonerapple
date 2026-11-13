@@ -5,6 +5,7 @@ import { CasesProtectionPage } from '@/components/sites/cases-protection/CasesPr
 import type { CasesProtectionOverrides } from '@/components/sites/cases-protection/CasesProtectionPage';
 import { getContent, getContentMany } from '@/lib/content';
 import { getCasesCategoryView } from '@/lib/storefront/catalog';
+import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { readSaleState } from '@/lib/storefront/sale-state';
 
 import './cases.css';
@@ -12,14 +13,13 @@ import './cases.css';
 /** Catalogue edits must appear without a rebuild, so render per-request. */
 export const dynamic = 'force-dynamic';
 
-const metadata: Metadata = {
+const baseMetadata: Metadata = {
   title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
   description:
     'Shop Gadzio protective cases for iPhone. Find MagSafe liquid silicone cases, crystal clear cases, and AeroWeave technical textile cases with military-grade drop defense.',
   openGraph: {
     title: 'Cases & Protection - iPhone Accessories | Gadzio Store',
     description: 'Shop Gadzio drop-tested protective cases for iPhone.',
-    url: 'https://gadzio.co.in/in/shop/iphone/accessories/cases-protection',
     siteName: 'Gadzio',
     locale: 'en_IN',
     type: 'website',
@@ -31,14 +31,16 @@ const metadata: Metadata = {
 
 export async function generateMetadata(): Promise<Metadata> {
   const seo = await getContent<{ title?: string; description?: string }>('cases.seo', {});
+  const url = siteOpenGraphUrl('/in/shop/iphone/accessories/cases-protection');
   return {
-    ...metadata,
-    title: seo.title ?? metadata.title,
-    description: seo.description ?? metadata.description,
+    ...baseMetadata,
+    title: seo.title ?? baseMetadata.title,
+    description: seo.description ?? baseMetadata.description,
     openGraph: {
-      ...metadata.openGraph,
+      ...baseMetadata.openGraph,
+      ...(url ? { url } : {}),
       title: seo.title ?? 'Cases & Protection - iPhone Accessories | Gadzio Store',
-      description: seo.description ?? metadata.openGraph?.description,
+      description: seo.description ?? baseMetadata.openGraph?.description,
     },
   };
 }
