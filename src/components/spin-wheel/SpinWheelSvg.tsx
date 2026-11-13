@@ -51,7 +51,7 @@ function wedgePath(cx: number, cy: number, radius: number, startDeg: number, end
 }
 
 function truncateLabel(label: string, totalSegments: number): string {
-  const maxChars = totalSegments >= 10 ? 14 : totalSegments >= 7 ? 17 : 22;
+  const maxChars = totalSegments >= 10 ? 12 : totalSegments >= 7 ? 14 : 16;
   const trimmed = label.trim() || 'Prize';
   if (trimmed.length <= maxChars) return trimmed;
   return `${trimmed.slice(0, maxChars - 1)}…`;
@@ -87,8 +87,8 @@ export function SpinWheelSvg({
   const cx = 180;
   const cy = 190;
   const outerR = 160;
-  const textR = count >= 9 ? 104 : 98;
-  const fontSize = count >= 10 ? 10.5 : count >= 7 ? 11.5 : 13;
+  const textR = count >= 9 ? 98 : 88;
+  const fontSize = count >= 10 ? 9.5 : count >= 7 ? 10.5 : 11.5;
 
   return (
     <div

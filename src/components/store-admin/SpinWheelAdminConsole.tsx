@@ -443,7 +443,7 @@ export function SpinWheelAdminConsole({
             <h2 className="sa-control-title">Wheel settings &amp; guardrails</h2>
             <fieldset disabled={!canEdit || saving} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: '0.9rem' }}>
               <label className="sa-field">
-                <span className="sa-checkbox">
+                <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <input
                     type="checkbox"
                     checked={settings.enabled}
@@ -451,13 +451,13 @@ export function SpinWheelAdminConsole({
                   />
                   <span>Enable Spin and Win on the storefront</span>
                 </span>
-                <span className="sa-card-note">
+                <span className="sa-card-note" style={{ display: 'block', marginTop: '0.25rem' }}>
                   Turn this on only after reviewing prize weights, terms text, and caps. Requires at least one active prize segment and non-empty terms.
                 </span>
               </label>
 
               <label className="sa-field">
-                <span className="sa-checkbox">
+                <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <input
                     type="checkbox"
                     checked={settings.showOnHomePage}
@@ -465,7 +465,7 @@ export function SpinWheelAdminConsole({
                   />
                   <span>Show compact promotional callout on the home page</span>
                 </span>
-                <span className="sa-card-note">
+                <span className="sa-card-note" style={{ display: 'block', marginTop: '0.25rem' }}>
                   When on and the wheel is active, signed-in or browsing shoppers see a sleek callout linking to the dedicated Spin and Win page.
                 </span>
               </label>

@@ -21,6 +21,19 @@ snapshots remain historical, not reverified by these checks.
 | Notification readiness (no send) | **3 pass, 5 fail**: mail driver not SMTP, SMS off, missing SMTP host, staff email/customer SMS cells off; required provider credentials missing. Exit 0 is not readiness success. |
 | Database contents (historical, 29 October) | 13 active products, 29 orders, 3 users, 1 store admin, 6 content blocks, 0 media, 0 subscribers, 0 order requests, 0 collection rows |
 
+### Spin and Win — Phase 5 (End-to-End Proof, Browser Captures, Load Check & Owner Guide) — 13 November 2026
+
+- **End-to-end DB checkout & next-day spin proof (`tests/spin-wheel-db-integration.test.mjs`):**
+  - Expanded isolated-schema PostgreSQL tests to **9/9 passing**: added full flow where winner spins, checks out through `createOrderUsing` + `consumeCouponInTx` with the personal `SPIN-...` coupon applied, gets blocked by `CouponRejectedError` on a second order (single-use), is replayed on the same store day without re-spinning, and spins again cleanly after `Asia/Kolkata` midnight rollover.
+- **Signed-in real browser walkthrough (`scripts/spin-wheel-phase5-proof.mjs`, `docs/images/spin-wheel/*.png`):**
+  - Executed against a live `next start` server (`127.0.0.1:3105`) with Playwright Edge at **1440×900**, **768×1024**, and **390×844** (restoring pre-existing DB state in `finally`): Store Admin login + wheel save + zero-write `Test spin`; signed-out `/spin-and-win` `/auth?redirect=/spin-and-win` check; signed-in Home strip (`/`), Account card (`/account`), live wheel win + countdown reload block (`/spin-and-win`), Account Coupons `"From Spin and Win"` badge (`/account/coupons`), `/api/coupons/validate` acceptance for winner & rejection for peer customer, and **2-tab simultaneous double spin** producing strictly **1** spin row and **1** coupon.
+  - Polished slice label sizing/radius in `SpinWheelSvg.tsx` (`maxChars`, `textR = 88`, `fontSize = 11.5`) and checkbox spacing in `SpinWheelAdminConsole.tsx`.
+- **Concurrent load check (`POST /api/spin-wheel/spin`) & owner guide (`docs/spin-and-win-guide.md`):**
+  - **20 concurrent signed-in accounts** firing `POST /api/spin-wheel/spin` simultaneously on the live server: **20/20 HTTP 200**, **0 errors**, **20 DB spin rows**, **`p50 = 8,617 ms`**, **`p95 = 10,174 ms`**, **`max = 10,487 ms`** (session pooler on local Windows dev machine).
+  - Wrote one-page owner guide [`docs/spin-and-win-guide.md`](docs/spin-and-win-guide.md) documenting setup, monitoring, and exact visibility rules (wheel is disabled by default until turned on in Store Admin → Marketing → Spin wheel).
+  - **Scope not yet built/proven:** **Free gift on orders** (Phases 1 & 2 — schema, admin rules, cart nudge/auto-gift, checkout gift stock lock & PayU staging checkout with gift item) remains intentionally deferred until user approval.
+- **Measured (13 November 2026):** `RUN_LEGACY_DB_TESTS=1` `node --test --test-concurrency=1 tests/spin-wheel-rules.test.mjs tests/spin-wheel-phase4.test.mjs tests/spin-wheel-db-integration.test.mjs`: **20/20 passed**; `npm run build` and `npm run typecheck` pass; check scripts pass (`check:store-admin-routes` **126 routes**, `check:account-routes` **21 APIs / 11 pages**, `check:admin-boundary`, `check:field-help`, `check:links` **142 links / 8 files**, `check-setting-lists.mjs` **120 notification cells**).
+
 ### Spin and Win — Phase 4 (Customer Wheel UI & Entry Points) — 13 November 2026
 
 - **Customer storefront route & interactive wheel (`src/app/spin-and-win/page.tsx`, `src/components/spin-wheel/CustomerSpinWheelClient.tsx`, `src/components/spin-wheel/SpinWheelSvg.tsx`, `src/lib/spin-wheel/countdown.ts`):**

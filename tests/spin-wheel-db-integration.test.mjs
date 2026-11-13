@@ -67,7 +67,7 @@ function client(schema) {
     ssl: process.env.DATABASE_SSL === 'false' ? undefined : 'require',
     prepare: false,
     connection: schema ? { search_path: schema } : { search_path: 'pg_catalog' },
-    onnotice: () => {},
+    onnotice: () => { },
   });
 }
 
@@ -82,6 +82,10 @@ const {
   invalidateSpinWheelCache,
 } = await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'store.ts'));
 
+const { computeStoreDayInfo } = await jiti.import(
+  path.join(root, 'src', 'lib', 'spin-wheel', 'rules.ts'),
+);
+
 const {
   exportSpinWheelCsvUsing,
   getSpinWheelAdminDataUsing,
@@ -93,8 +97,12 @@ const { listCustomerCouponsUsing } = await jiti.import(
   path.join(root, 'src', 'lib', 'account', 'coupons.ts'),
 );
 
-const { lookupCouponForCart } = await jiti.import(
+const { consumeCouponInTx, lookupCouponForCart } = await jiti.import(
   path.join(root, 'src', 'lib', 'coupons', 'store.ts'),
+);
+
+const { createOrderUsing } = await jiti.import(
+  path.join(root, 'src', 'lib', 'payu', 'orders.ts'),
 );
 
 const SCHEMA = `itest_spin_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`;
@@ -115,7 +123,11 @@ before(async () => {
   const tablesToCopy = [
     'store_settings',
     'users',
+    'stock',
     'orders',
+    'order_items',
+    'order_addresses',
+    'order_status_history',
     'products',
     'categories',
     'coupons',
@@ -138,10 +150,10 @@ before(async () => {
 });
 
 after(async () => {
-  if (sql) await sql.end({ timeout: 2 }).catch(() => {});
+  if (sql) await sql.end({ timeout: 2 }).catch(() => { });
   if (setupSql) {
-    await dropFixtureSchema(setupSql, SCHEMA).catch(() => {});
-    await setupSql.end({ timeout: 2 }).catch(() => {});
+    await dropFixtureSchema(setupSql, SCHEMA).catch(() => { });
+    await setupSql.end({ timeout: 2 }).catch(() => { });
   }
 });
 
@@ -164,7 +176,11 @@ beforeEach(async () => {
       coupon_redemptions,
       coupon_targets,
       coupons,
+      order_status_history,
+      order_addresses,
+      order_items,
       orders,
+      stock,
       products,
       categories,
       users,
@@ -546,4 +562,127 @@ test('editing wheel config does not affect already-won coupons, test spin writes
   const audits = await sql`select action from store_admin_audit order by created_at asc`;
   assert.ok(audits.some((a) => a.action === 'spin_wheel.update'));
   assert.ok(audits.some((a) => a.action === 'spin_wheel.export'));
+});
+
+test('winner redeems personal spin coupon through checkout order, single-use blocks reuse, next day unlocks spin', { skip }, async () => {
+  const day1 = new Date(Date.now() - 48 * 3600 * 1000);
+  const { nextResetAt } = computeStoreDayInfo(day1, 'Asia/Kolkata');
+  const day1ResetMs = nextResetAt.getTime();
+  const sameDay = new Date(day1ResetMs - 60_000);
+  const day2 = new Date(day1ResetMs + 60_000);
+
+  // Day 1: winner spins & gets 15% off coupon (max ₹300)
+  const win = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_checkout', termsAccepted: true },
+    { nowOverride: day1, rollFn: () => 0 },
+  );
+  assert.equal(win.ok, true);
+  assert.equal(win.alreadySpun, false);
+  const couponCode = win.spin.couponCode;
+  assert.ok(couponCode);
+
+  // Same day: second spin returns replay with same coupon (never spins again)
+  const replay = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_checkout', termsAccepted: true },
+    { nowOverride: sameDay, rollFn: () => 0 },
+  );
+  assert.equal(replay.ok, true);
+  assert.equal(replay.alreadySpun, true);
+  assert.equal(replay.spin.couponCode, couponCode);
+
+  // Winner checks out via createOrderUsing with ₹1,000 item -> 15% off (₹150) => ₹850 total
+  const txnid = `SPN${randomBytes(5).toString('hex').toUpperCase()}`;
+  const created = await createOrderUsing(sql, {
+    txnid,
+    userId: 'usr_a',
+    items: [
+      {
+        id: 'prod_1',
+        name: 'Leather Case',
+        quantity: 1,
+        unitPrice: 1000,
+        totalPrice: 1000,
+      },
+    ],
+    subtotalPaise: 100000,
+    shippingPaise: 0,
+    totalPaise: 100000,
+    currency: 'INR',
+    paymentMethod: 'payu',
+    customerName: 'Winner One',
+    customerEmail: 'winner.one@example.com',
+    customerPhone: '9000000000',
+    shippingAddress: {
+      name: 'Winner One',
+      phone: '9000000000',
+      line1: '1 Test Lane',
+      line2: '',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pincode: '560001',
+    },
+    reservationSeconds: 0,
+    coupon: { code: couponCode },
+  });
+
+  assert.equal(created.order.discountPaise, 15000);
+  assert.equal(created.order.totalPaise, 85000);
+  assert.equal(created.order.amount, 850);
+  assert.equal(created.order.couponCode, couponCode);
+
+  // Mark coupon consumed on payment capture
+  await sql.begin(async (tx) => {
+    const consumed = await consumeCouponInTx(tx, created.order.id);
+    assert.equal(consumed, true);
+  });
+
+  // Winner cannot reuse single-use personal coupon on a second order
+  await assert.rejects(
+    () =>
+      createOrderUsing(sql, {
+        txnid: `SPN${randomBytes(5).toString('hex').toUpperCase()}`,
+        userId: 'usr_a',
+        items: [
+          {
+            id: 'prod_1',
+            name: 'Leather Case',
+            quantity: 1,
+            unitPrice: 1000,
+            totalPrice: 1000,
+          },
+        ],
+        subtotalPaise: 100000,
+        shippingPaise: 0,
+        totalPaise: 100000,
+        currency: 'INR',
+        paymentMethod: 'payu',
+        customerName: 'Winner One',
+        customerEmail: 'winner.one@example.com',
+        customerPhone: '9000000000',
+        shippingAddress: {
+          name: 'Winner One',
+          phone: '9000000000',
+          line1: '1 Test Lane',
+          line2: '',
+          city: 'Bengaluru',
+          state: 'Karnataka',
+          pincode: '560001',
+        },
+        reservationSeconds: 0,
+        coupon: { code: couponCode },
+      }),
+    (err) => err?.name === 'CouponRejectedError' && /no longer available|limit|used/i.test(err.message),
+  );
+
+  // Day 2: same customer can spin again and win a brand-new code
+  const nextDayWin = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_checkout', termsAccepted: true },
+    { nowOverride: day2, rollFn: () => 0 },
+  );
+  assert.equal(nextDayWin.ok, true);
+  assert.equal(nextDayWin.alreadySpun, false);
+  assert.notEqual(nextDayWin.spin.couponCode, couponCode);
 });
