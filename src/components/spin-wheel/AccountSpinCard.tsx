@@ -77,7 +77,7 @@ export function AccountSpinCard({
             <span className="font-semibold text-[#1d1d1f]">
               Spin now — {quotaText} daily free spin ready
             </span>
-          ) : todaySpin?.segmentType === 'COUPON' && todaySpin.couponCode ? (
+          ) : (todaySpin?.segmentType === 'COUPON' || todaySpin?.segmentType === 'FREE_GIFT') && todaySpin.couponCode ? (
             <>
               Won <strong>{todaySpin.couponSummary || todaySpin.segmentLabel}</strong> · Code{' '}
               <span className="font-mono font-semibold text-[#1d1d1f]">{todaySpin.couponCode}</span>
@@ -94,7 +94,7 @@ export function AccountSpinCard({
       </div>
       <div className="mt-4 border-t border-[#f5f5f7] pt-3 text-xs text-[#6e6e73]">
         {!isWaiting || readyAfterCountdown ? (
-          <span>Win instant personal coupons · Resets daily</span>
+          <span>Win personal coupons &amp; free gifts · Resets daily</span>
         ) : showNextSpinCountdown ? (
           <span>
             Next spin in <strong className="font-mono text-[#1d1d1f]">{countdown}</strong>

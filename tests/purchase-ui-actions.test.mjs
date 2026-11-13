@@ -44,6 +44,7 @@ function host({ addItem = async () => ({ status: 'added' }), verifySelections = 
             if (!chosen) return;
             props.onChange({ modelKey: chosen.deviceModelId ?? null, colourKey: chosen.colourId ?? null });
           } }) };
+        if (name === '@/components/cart/FreeGiftCartWidgets') return { ProductPageFreeGiftStrip: () => null };
         if (name === '@/components/shop/ProductDescriptionSections') return { ProductDescriptionSections: () => null };
         if (name.endsWith('/GlobalNav')) return { GlobalNav: () => null };
         if (name.endsWith('/GlobalFooter')) return { GlobalFooter: () => null };

@@ -38,7 +38,7 @@ export function parseProductDraft(raw: unknown): ProductDraft {
   const id=body.id;
   if(id!==undefined && (typeof id!=='string'||!DRAFT_ID.test(id))) throw new Error('Invalid product identity.');
   if(id && p.id!==undefined && p.id!==id) throw new Error('Product identity cannot change.');
-  for(const key of ['isActive','trackInventory','inStock']) if(p[key]!==undefined && typeof p[key]!=='boolean') throw new Error(`${key} must be true or false.`);
+  for(const key of ['isActive','isGiftOnly','trackInventory','inStock']) if(p[key]!==undefined && typeof p[key]!=='boolean') throw new Error(`${key} must be true or false.`);
   const product=validateNewProductInput(p);
   if(!product.ok) throw new Error(product.error);
   const metadata=parseMetadataInput(body.metadata??p);

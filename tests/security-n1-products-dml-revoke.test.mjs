@@ -79,19 +79,24 @@ test('the runner never sees its forbidden word', async () => {
   assert.equal(forbidden.test(sql), false, 'the migration must not contain the runner-forbidden word');
 });
 
-test('the migration is numbered after every earlier one', async () => {
+test('the migration is uniquely numbered and no later migration grants privileges on products', async () => {
   const files = (await readdir(path.join(root, 'migrations'))).filter((name) => name.endsWith('.sql'));
   const numbers = files
     .map((name) => Number(name.slice(0, 4)))
     .filter((number) => Number.isFinite(number));
 
   assert.equal(numbers.filter((number) => number === 67).length, 1, 'one file owns this number');
-  assert.equal(
-    numbers.every((number) => number <= 67),
-    true,
-    'a migration may not be numbered above this one',
-  );
   assert.ok(files.includes(path.basename(MIGRATION)));
+
+  const laterFiles = files.filter((name) => Number(name.slice(0, 4)) > 67);
+  for (const later of laterFiles) {
+    const laterSql = await READ(path.join('migrations', later));
+    assert.doesNotMatch(
+      laterSql,
+      /\bgrant\b[\s\S]{0,160}\bon\s+(?:public\.)?products\b/i,
+      `${later} must not grant table privileges back on products`,
+    );
+  }
 });
 
 test('app code writes products only through the owner connection', async () => {

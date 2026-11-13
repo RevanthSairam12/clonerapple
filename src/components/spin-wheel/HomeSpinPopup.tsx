@@ -81,6 +81,7 @@ export function HomeSpinPopup({ spinState }: HomeSpinPopupProps) {
   const [open, setOpen] = useState(false);
   const [showMobilePill, setShowMobilePill] = useState(false);
   const [hasScrolled, setHasScrolled] = useState(() => !(spinState?.popupRequireScroll ?? true));
+  const [viewportReady, setViewportReady] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
 
@@ -109,6 +110,7 @@ export function HomeSpinPopup({ spinState }: HomeSpinPopupProps) {
     const sync = () => {
       setIsMobileViewport(mobileMq.matches);
       setReducedMotion(motionMq.matches);
+      setViewportReady(true);
     };
     sync();
     mobileMq.addEventListener?.('change', sync);
@@ -138,14 +140,17 @@ export function HomeSpinPopup({ spinState }: HomeSpinPopupProps) {
 
   // Honor session + 7-day dismissal cap, configured delay, scroll gate, and mobile mode.
   useEffect(() => {
-    if (!eligible || !hasScrolled || open) return;
+    if (!viewportReady || !eligible || !hasScrolled || open) return;
     if (readPopupSuppressed()) return;
 
     const delayMs = Math.max(0, Number(spinState?.popupDelaySeconds ?? 10)) * 1000;
     const timer = window.setTimeout(() => {
       if (readPopupSuppressed()) return;
 
-      if (isMobileViewport && (spinState?.popupMobileFloatingButton ?? true)) {
+      const mobileNow =
+        isMobileViewport
+        || (typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 767px)').matches);
+      if (mobileNow && (spinState?.popupMobileFloatingButton ?? true)) {
         setShowMobilePill(true);
         return;
       }
@@ -159,6 +164,7 @@ export function HomeSpinPopup({ spinState }: HomeSpinPopupProps) {
 
     return () => window.clearTimeout(timer);
   }, [
+    viewportReady,
     eligible,
     hasScrolled,
     open,

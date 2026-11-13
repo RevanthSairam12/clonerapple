@@ -26,6 +26,8 @@ import {
 } from '@/lib/checkout/transaction-guards';
 import { generateCouponCode } from '@/lib/coupons/codes';
 import { normalizeEmail } from '@/lib/coupons/rules';
+import { isGiftSnapshotInStock } from '@/lib/free-gifts/rules';
+import { giftTargetKey, loadGiftCatalogSnapshotMapUsing } from '@/lib/free-gifts/store';
 import { enqueueNotification } from '@/lib/notifications/enqueue';
 import { getSql } from '@/lib/platform/db';
 import { maskEmail, maskPhone } from '@/lib/store-admin/audit';
@@ -52,7 +54,7 @@ if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Spin wheel store must run on the server only.');
 }
 
-type SqlLike = postgres.Sql | postgres.TransactionSql;
+type SqlLike = postgres.ISql;
 type Row = Record<string, unknown>;
 
 const CONFIG_CACHE_TTL_MS = 5_000;
@@ -85,6 +87,8 @@ export interface CustomerSpinResultView {
   couponCode: string | null;
   couponSummary: string | null;
   couponExpiresAt: string | null;
+  giftProductId?: string | null;
+  giftProductName?: string | null;
   createdAt: string;
 }
 
@@ -211,7 +215,7 @@ function mapCooldownMode(value: unknown): SpinRewardCooldownMode {
     : DEFAULT_SPIN_WHEEL_SETTINGS.rewardCooldownMode;
 }
 
-export function invalidateSpinWheelCache(sql?: postgres.Sql | null): void {
+export function invalidateSpinWheelCache(sql?: SqlLike | null): void {
   const target = sql ?? getSql();
   if (target) configCacheBySql.delete(target as unknown as object);
 }
@@ -259,12 +263,15 @@ export function mapSettingsRow(row: Row | undefined): SpinWheelSettings {
 
 export function mapSegmentRow(row: Row): SpinWheelSegment {
   const colorHex = text(row.color_hex) || '#ffe100';
+  const rawType = text(row.segment_type);
+  const segmentType: SpinSegmentType =
+    rawType === 'COUPON' || rawType === 'FREE_GIFT' ? rawType : 'NO_PRIZE';
   return {
     id: text(row.id),
     label: text(row.label),
     colorHex,
     textColorHex: contrastTextForHex(colorHex),
-    segmentType: text(row.segment_type) === 'COUPON' ? 'COUPON' : 'NO_PRIZE',
+    segmentType,
     weight: Math.max(1, Number(row.weight) || 1),
     dailyCap: row.daily_cap === null || row.daily_cap === undefined ? null : Number(row.daily_cap),
     totalCap: row.total_cap === null || row.total_cap === undefined ? null : Number(row.total_cap),
@@ -285,7 +292,43 @@ export function mapSegmentRow(row: Row): SpinWheelSegment {
       : [],
     couponValidDays: Math.max(1, Number(row.coupon_valid_days) || 7),
     couponAllowWithSalePrice: row.coupon_allow_with_sale_price === true,
+    giftProductId: row.gift_product_id ? text(row.gift_product_id) : null,
+    giftVariantId: row.gift_variant_id ? text(row.gift_variant_id) : null,
+    giftProductName: row.gift_product_name ? text(row.gift_product_name) : null,
+    giftMinOrderPaise: Math.max(0, Number(row.gift_min_order_paise) || 0),
+    giftValidDays: Math.max(1, Number(row.gift_valid_days) || 7),
+    giftAvailable: typeof row.gift_available === 'boolean' ? row.gift_available : undefined,
   };
+}
+
+export async function hydrateFreeGiftSegmentsUsing(
+  sql: SqlLike,
+  segments: SpinWheelSegment[],
+  options: { includeInactive?: boolean } = {},
+): Promise<SpinWheelSegment[]> {
+  const giftTargets = segments
+    .filter(
+      (s) =>
+        (options.includeInactive || s.isActive)
+        && s.segmentType === 'FREE_GIFT'
+        && Boolean(s.giftProductId),
+    )
+    .map((s) => ({ productId: s.giftProductId!, variantId: s.giftVariantId ?? null }));
+  if (giftTargets.length === 0) return segments;
+  try {
+    const snapMap = await loadGiftCatalogSnapshotMapUsing(sql, giftTargets);
+    return segments.map((s) => {
+      if (s.segmentType !== 'FREE_GIFT' || !s.giftProductId) return s;
+      const snap = snapMap.get(giftTargetKey(s.giftProductId, s.giftVariantId ?? null)) ?? null;
+      return {
+        ...s,
+        giftProductName: snap?.productName ?? s.giftProductName ?? null,
+        giftAvailable: isGiftSnapshotInStock(snap),
+      };
+    });
+  } catch {
+    return segments;
+  }
 }
 
 async function readValidatedTimeZone(sql: SqlLike): Promise<string> {
@@ -327,9 +370,10 @@ export async function getSpinWheelConfigUsing(
       ` as Promise<Row[]>,
     ]);
 
+    const segments = await hydrateFreeGiftSegmentsUsing(sql, segmentRows.map(mapSegmentRow));
     const value: SpinWheelConfigSnapshot = {
       settings: mapSettingsRow(settingsRows[0]),
-      segments: segmentRows.map(mapSegmentRow),
+      segments,
       timeZone,
     };
 
@@ -356,8 +400,12 @@ export async function getSpinWheelConfigUsing(
 
 function couponSummaryFromJoinedRow(row: Row): string | null {
   if (!row.coupon_code || !row.c_type) return null;
-  const type = text(row.c_type) as SpinCouponType;
+  const type = text(row.c_type);
   const val = Number(row.c_value) || 0;
+  if (type === 'FREE_GIFT') {
+    const giftName = text(row.gift_product_name).trim();
+    return giftName ? `Free gift: ${giftName}` : 'Free gift item';
+  }
   if (type === 'FREE_SHIPPING') return 'Free shipping';
   if (type === 'PERCENT') return `${val}% off`;
   return `₹${(val / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })} off`;
@@ -367,15 +415,20 @@ function mapSpinResultRow(row: Row): CustomerSpinResultView {
   const storeDayRaw = row.store_day instanceof Date
     ? row.store_day.toISOString().slice(0, 10)
     : text(row.store_day).slice(0, 10);
+  const rawType = text(row.segment_type);
+  const segmentType: SpinSegmentType =
+    rawType === 'COUPON' || rawType === 'FREE_GIFT' ? rawType : 'NO_PRIZE';
   return {
     spinId: text(row.id),
     storeDay: storeDayRaw,
     segmentId: row.segment_id ? text(row.segment_id) : null,
     segmentLabel: text(row.segment_label),
-    segmentType: text(row.segment_type) === 'COUPON' ? 'COUPON' : 'NO_PRIZE',
+    segmentType,
     couponCode: row.coupon_code ? text(row.coupon_code) : null,
     couponSummary: couponSummaryFromJoinedRow(row),
     couponExpiresAt: iso(row.c_ends_at),
+    giftProductId: row.c_gift_product_id ? text(row.c_gift_product_id) : null,
+    giftProductName: row.gift_product_name ? text(row.gift_product_name) : null,
     createdAt: iso(row.created_at) ?? new Date().toISOString(),
   };
 }
@@ -422,9 +475,12 @@ async function readExistingSpinForDay(
     select
       sp.id, sp.store_day::text as store_day, sp.segment_id, sp.segment_label,
       sp.segment_type, sp.coupon_code, sp.created_at,
-      c.type as c_type, c.value as c_value, c.ends_at as c_ends_at
+      c.type as c_type, c.value as c_value, c.ends_at as c_ends_at,
+      to_jsonb(c)->>'gift_product_id' as c_gift_product_id,
+      gp.name as gift_product_name
     from spin_wheel_spins sp
     left join coupons c on c.id = sp.coupon_id
+    left join products gp on gp.id = (to_jsonb(c)->>'gift_product_id')
     where sp.user_id = ${userId} and sp.store_day = ${storeDay}::date
     limit 1
   `) as Row[];
@@ -438,11 +494,13 @@ async function readLatestCouponSpin(
   const rows = (await sql`
     select
       sp.segment_label, sp.coupon_code, sp.created_at,
-      c.type as c_type, c.value as c_value, c.ends_at as c_ends_at
+      c.type as c_type, c.value as c_value, c.ends_at as c_ends_at,
+      gp.name as gift_product_name
     from spin_wheel_spins sp
     left join coupons c on c.id = sp.coupon_id
+    left join products gp on gp.id = (to_jsonb(c)->>'gift_product_id')
     where sp.user_id = ${userId}
-      and sp.segment_type = 'COUPON'
+      and sp.segment_type in ('COUPON', 'FREE_GIFT')
       and sp.coupon_id is not null
     order by sp.created_at desc
     limit 1
@@ -755,6 +813,13 @@ async function insertPersonalSpinCouponInTx(
   const { segment, userEmail, startsAt, endsAt } = input;
   const email = normalizeEmail(userEmail);
   const couponId = `cpn_${randomBytes(6).toString('hex')}`;
+  const isFreeGift = segment.segmentType === 'FREE_GIFT';
+  const cType = isFreeGift ? 'FREE_GIFT' : segment.couponType;
+  const cValue = isFreeGift ? 0 : segment.couponValue;
+  const cScope = isFreeGift ? 'ORDER' : segment.couponScope;
+  const cMinOrder = isFreeGift ? (segment.giftMinOrderPaise ?? 0) : segment.couponMinOrderPaise;
+  const cMaxDiscount = isFreeGift ? null : segment.couponMaxDiscountPaise;
+  const cAllowWithSale = isFreeGift ? true : segment.couponAllowWithSalePrice;
   const summary = formatPrizeSummary(segment);
   const couponName = `Spin & Win: ${segment.label}`.slice(0, 100);
   const description = `Personal Spin and Win reward (${summary})`.slice(0, 300);
@@ -764,42 +829,84 @@ async function insertPersonalSpinCouponInTx(
     const candidate = generateCouponCode('SPIN', 8);
     await tx`savepoint sp_spin_coupon`;
     try {
-      await tx`
-        insert into coupons (
-          id, code, name, description, type, value, scope, status,
-          starts_at, ends_at, total_redemption_limit, per_customer_limit,
-          min_order_paise, max_discount_paise, only_new_customers,
-          allow_with_sale_price, allowed_customer_groups, restricted_to_emails,
-          show_to_all_users, assigned_to_emails, assigned_customer_groups,
-          source, created_by, created_at, updated_at
-        ) values (
-          ${couponId},
-          ${candidate},
-          ${couponName},
-          ${description},
-          ${segment.couponType},
-          ${segment.couponValue},
-          ${segment.couponScope},
-          'active',
-          ${startsAt},
-          ${endsAt},
-          1,
-          1,
-          ${segment.couponMinOrderPaise},
-          ${segment.couponMaxDiscountPaise},
-          false,
-          ${segment.couponAllowWithSalePrice},
-          ${null},
-          ${[email]},
-          false,
-          ${[email]},
-          ${[]},
-          'spin_wheel',
-          'spin_wheel',
-          ${startsAt},
-          ${startsAt}
-        )
-      `;
+      if (isFreeGift) {
+        await tx`
+          insert into coupons (
+            id, code, name, description, type, value, scope, status,
+            starts_at, ends_at, total_redemption_limit, per_customer_limit,
+            min_order_paise, max_discount_paise, only_new_customers,
+            allow_with_sale_price, allowed_customer_groups, restricted_to_emails,
+            show_to_all_users, assigned_to_emails, assigned_customer_groups,
+            gift_product_id, gift_variant_id,
+            source, created_by, created_at, updated_at
+          ) values (
+            ${couponId},
+            ${candidate},
+            ${couponName},
+            ${description},
+            ${cType},
+            ${cValue},
+            ${cScope},
+            'active',
+            ${startsAt},
+            ${endsAt},
+            1,
+            1,
+            ${cMinOrder},
+            ${cMaxDiscount},
+            false,
+            ${cAllowWithSale},
+            ${null},
+            ${[email]},
+            false,
+            ${[email]},
+            ${[]},
+            ${segment.giftProductId ?? null},
+            ${segment.giftVariantId ?? null},
+            'spin_wheel',
+            'spin_wheel',
+            ${startsAt},
+            ${startsAt}
+          )
+        `;
+      } else {
+        await tx`
+          insert into coupons (
+            id, code, name, description, type, value, scope, status,
+            starts_at, ends_at, total_redemption_limit, per_customer_limit,
+            min_order_paise, max_discount_paise, only_new_customers,
+            allow_with_sale_price, allowed_customer_groups, restricted_to_emails,
+            show_to_all_users, assigned_to_emails, assigned_customer_groups,
+            source, created_by, created_at, updated_at
+          ) values (
+            ${couponId},
+            ${candidate},
+            ${couponName},
+            ${description},
+            ${cType},
+            ${cValue},
+            ${cScope},
+            'active',
+            ${startsAt},
+            ${endsAt},
+            1,
+            1,
+            ${cMinOrder},
+            ${cMaxDiscount},
+            false,
+            ${cAllowWithSale},
+            ${null},
+            ${[email]},
+            false,
+            ${[email]},
+            ${[]},
+            'spin_wheel',
+            'spin_wheel',
+            ${startsAt},
+            ${startsAt}
+          )
+        `;
+      }
       await tx`release savepoint sp_spin_coupon`;
       code = candidate;
       break;
@@ -812,7 +919,7 @@ async function insertPersonalSpinCouponInTx(
 
   if (!code) throw new Error('Could not generate a unique coupon code.');
 
-  if (segment.couponScope === 'PRODUCTS') {
+  if (!isFreeGift && segment.couponScope === 'PRODUCTS') {
     for (const productId of segment.couponTargetIds) {
       await tx`
         insert into coupon_targets (coupon_id, product_id)
@@ -820,7 +927,7 @@ async function insertPersonalSpinCouponInTx(
         on conflict do nothing
       `;
     }
-  } else if (segment.couponScope === 'CATEGORIES') {
+  } else if (!isFreeGift && segment.couponScope === 'CATEGORIES') {
     for (const categoryId of segment.couponTargetIds) {
       await tx`
         insert into coupon_targets (coupon_id, category_id)
@@ -851,7 +958,7 @@ async function resolveCooldownForSpinView(
   nextDailyResetAt: Date,
   settings: SpinWheelSettings,
 ) {
-  const latestWin = spin.segmentType === 'COUPON'
+  const latestWin = spin.segmentType === 'COUPON' || spin.segmentType === 'FREE_GIFT'
     ? spinResultToCooldownInput(spin)
     : await readLatestCouponSpin(tx, userId);
   return computeSpinCooldownState({
@@ -992,9 +1099,10 @@ export async function executeSpinDrawUsing(
 
       // Fast path if today's spin already exists for this customer.
       if (existingBefore) {
-        const latestForView = existingBefore.segmentType === 'COUPON'
-          ? spinResultToCooldownInput(existingBefore)
-          : latestWin;
+        const latestForView =
+          existingBefore.segmentType === 'COUPON' || existingBefore.segmentType === 'FREE_GIFT'
+            ? spinResultToCooldownInput(existingBefore)
+            : latestWin;
         const cooldown = computeSpinCooldownState({
           dbNow,
           nextDailyResetAt: dayInfo.nextResetAt,
@@ -1137,7 +1245,10 @@ export async function executeSpinDrawUsing(
 
       // 5. Weighted draw + coupon insert + own spin row update, followed at the very end
       // by conditional counter updates (WHERE count < cap RETURNING) only when capped.
-      let remainingCandidates = segmentRows.map(mapSegmentRow);
+      let remainingCandidates = await hydrateFreeGiftSegmentsUsing(
+        tx,
+        segmentRows.map(mapSegmentRow),
+      );
       let finalChosen: SpinWheelSegment | null = null;
       let finalCouponId: string | null = null;
       let finalCouponCode: string | null = null;
@@ -1160,8 +1271,12 @@ export async function executeSpinDrawUsing(
         let couponCode: string | null = null;
         let couponExpiresAt: Date | null = null;
 
-        if (chosen.segmentType === 'COUPON') {
-          couponExpiresAt = new Date(dbNow.getTime() + chosen.couponValidDays * 86_400_000);
+        if (chosen.segmentType === 'COUPON' || chosen.segmentType === 'FREE_GIFT') {
+          const validDays =
+            chosen.segmentType === 'FREE_GIFT'
+              ? (chosen.giftValidDays ?? chosen.couponValidDays ?? 7)
+              : chosen.couponValidDays;
+          couponExpiresAt = new Date(dbNow.getTime() + validDays * 86_400_000);
           const createdCoupon = await insertPersonalSpinCouponInTx(tx, {
             segment: chosen,
             userEmail,
@@ -1189,6 +1304,7 @@ export async function executeSpinDrawUsing(
           await options.beforeCounterHook({ tx, chosen, spinId });
         }
 
+        let capFailed = false;
         if (needsTotalCap && needsDailyCap) {
           const [counterRow] = (await tx`
             with seg_inc as (
@@ -1216,11 +1332,7 @@ export async function executeSpinDrawUsing(
               (select count(*)::int from day_inc) as day_ok
           `) as Array<{ seg_ok: number; day_ok: number }>;
 
-          if (Number(counterRow?.seg_ok ?? 0) !== 1 || Number(counterRow?.day_ok ?? 0) !== 1) {
-            await tx`rollback to savepoint sp_draw_attempt`;
-            remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
-            continue;
-          }
+          capFailed = Number(counterRow?.seg_ok ?? 0) !== 1 || Number(counterRow?.day_ok ?? 0) !== 1;
         } else if (needsTotalCap) {
           const updated = (await tx`
             update spin_wheel_segments
@@ -1232,11 +1344,7 @@ export async function executeSpinDrawUsing(
             returning id
           `) as Array<{ id: string }>;
 
-          if (updated.length !== 1) {
-            await tx`rollback to savepoint sp_draw_attempt`;
-            remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
-            continue;
-          }
+          capFailed = updated.length !== 1;
         } else if (needsDailyCap) {
           const updatedDaily = (await tx`
             insert into spin_wheel_segment_daily_counts (segment_id, store_day, awarded_count)
@@ -1247,11 +1355,39 @@ export async function executeSpinDrawUsing(
             returning segment_id
           `) as Array<{ segment_id: string }>;
 
-          if (updatedDaily.length !== 1) {
-            await tx`rollback to savepoint sp_draw_attempt`;
-            remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
-            continue;
+          capFailed = updatedDaily.length !== 1;
+        }
+
+        if (capFailed) {
+          await tx`rollback to savepoint sp_draw_attempt`;
+          const uncappedNoPrize = remainingCandidates.find(
+            (seg) =>
+              seg.isActive
+              && seg.segmentType === 'NO_PRIZE'
+              && seg.dailyCap === null
+              && seg.totalCap === null,
+          );
+          if (uncappedNoPrize) {
+            await tx`
+              update spin_wheel_spins
+              set
+                segment_id = ${uncappedNoPrize.id},
+                segment_label = ${uncappedNoPrize.label},
+                segment_type = ${uncappedNoPrize.segmentType},
+                coupon_id = ${null},
+                coupon_code = ${null},
+                roll_value = ${draw.rollValue},
+                weights_snapshot = ${tx.json(draw.weightsSnapshot as never)}
+              where id = ${spinId}
+            `;
+            finalChosen = uncappedNoPrize;
+            finalCouponId = null;
+            finalCouponCode = null;
+            finalCouponExpiresAt = null;
+            break;
           }
+          remainingCandidates = remainingCandidates.filter((seg) => seg.id !== chosen.id);
+          continue;
         }
 
         finalChosen = chosen;
@@ -1268,6 +1404,9 @@ export async function executeSpinDrawUsing(
         );
       }
 
+      const isWinningReward =
+        finalChosen.segmentType === 'COUPON' || finalChosen.segmentType === 'FREE_GIFT';
+
       const spinView: CustomerSpinResultView = {
         spinId,
         storeDay: dayInfo.storeDay,
@@ -1275,12 +1414,14 @@ export async function executeSpinDrawUsing(
         segmentLabel: finalChosen.label,
         segmentType: finalChosen.segmentType,
         couponCode: finalCouponCode,
-        couponSummary: finalChosen.segmentType === 'COUPON' ? formatPrizeSummary(finalChosen) : null,
+        couponSummary: isWinningReward ? formatPrizeSummary(finalChosen) : null,
         couponExpiresAt: finalCouponExpiresAt ? finalCouponExpiresAt.toISOString() : null,
+        giftProductId: finalChosen.segmentType === 'FREE_GIFT' ? (finalChosen.giftProductId ?? null) : null,
+        giftProductName: finalChosen.segmentType === 'FREE_GIFT' ? (finalChosen.giftProductName ?? null) : null,
         createdAt: dbNow.toISOString(),
       };
 
-      const postCooldownInput = finalChosen.segmentType === 'COUPON'
+      const postCooldownInput = isWinningReward
         ? spinResultToCooldownInput(spinView)
         : latestWin;
       const postSpinCooldown = computeSpinCooldownState({
@@ -1291,6 +1432,7 @@ export async function executeSpinDrawUsing(
         rewardCooldownDays: settings.rewardCooldownDays,
       });
 
+      void finalCouponId;
       return {
         alreadySpun: false as const,
         spin: spinView,
@@ -1298,7 +1440,7 @@ export async function executeSpinDrawUsing(
         secondsUntilReset: postSpinCooldown.secondsUntilReset,
         userEmail,
         customerName: userFirstName,
-        wonCoupon: finalChosen.segmentType === 'COUPON' && Boolean(finalCouponCode),
+        wonCoupon: isWinningReward && Boolean(finalCouponCode),
         couponExpiresAt: spinView.couponExpiresAt,
         timeZone,
       };
@@ -1322,7 +1464,10 @@ export async function executeSpinDrawUsing(
             customerEmail: committed.userEmail,
             customerName: committed.customerName,
             couponCode: committed.spin.couponCode,
-            prizeName: committed.spin.segmentLabel,
+            prizeName:
+              committed.spin.segmentType === 'FREE_GIFT' && committed.spin.giftProductName
+                ? `${committed.spin.segmentLabel} (${committed.spin.giftProductName})`
+                : committed.spin.segmentLabel,
             couponExpiry: expiryFormatted,
             customerLink: '/account/coupons',
             staffLink: '/store-admin/marketing/spin-wheel',

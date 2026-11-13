@@ -92,6 +92,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
     material: product?.material ?? '', badge: product?.badge ?? '', price: moneyInput(product?.pricePaise),
     salePrice: moneyInput(product?.salePricePaise), compareAt: moneyInput(product?.compareAtPaise),
     seoTitle: product?.seoTitle ?? '', seoDescription: product?.seoDescription ?? '', isActive: product?.isActive ?? false,
+    isGiftOnly: product?.isGiftOnly ?? false,
     cost: moneyInput(product?.costPaise), sortOrder: String(product?.sortOrder ?? 0), inStock: product?.inStock ?? true,
   }));
   const [metadata, setMetadata] = useState(() => emptyMetadataDraft(metadataState));
@@ -494,7 +495,7 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
         product: { ...form, id: product?.id ?? slug, slug, pricePaise: paise(form.price, 'Product price'), compareAtPaise: paise(form.compareAt, 'Compare-at price', true),
           description: product?.description ?? '', brandId: form.brandId || null, conditionId: form.conditionId || null,
           trackInventory: parentTracking, initialOnHand: editing ? 0 : count(parentCount, 'Opening stock'),
-          ...(form.cost !== moneyInput(product?.costPaise) ? { costPaise: paise(form.cost, 'Internal cost', true, true) } : {}), sortOrder: count(form.sortOrder, 'Display order'), inStock: form.inStock,
+          ...(form.cost !== moneyInput(product?.costPaise) ? { costPaise: paise(form.cost, 'Internal cost', true, true) } : {}), sortOrder: count(form.sortOrder, 'Display order'), inStock: form.inStock, isGiftOnly: form.isGiftOnly,
           sellBy, skuPattern: skuPattern.trim() || null },
         metadata: metadataPayload,
         ...(!product || JSON.parse(initialDescription).shortDescription !== description.shortDescription ? { shortDescription: descriptionParsed.shortDescription } : {}),
@@ -554,6 +555,13 @@ export function ProductWorkflow({ categories, brands, conditions, metadataRefere
         <Field label="Internal cost ₹" help="Optional; used for internal valuation."><input className="sa-input" type="number" min="0.01" step="0.01" value={form.cost} onChange={event => update('cost', event.target.value)} /></Field>
         <Field label="Display order" help="Lower numbers appear first where manual product ordering is used. This does not change category, stock or price."><input className="sa-input" type="number" min="0" max="9999" step="1" value={form.sortOrder} onChange={event => update('sortOrder', event.target.value)} /></Field>
         <label className="sa-check"><input type="checkbox" checked={form.inStock} onChange={event => update('inStock', event.target.checked)} />Available for purchase (stock limits still apply)</label>
+        <div className="sm:col-span-2">
+          <label className="sa-check"><input type="checkbox" checked={form.isGiftOnly} onChange={event => update('isGiftOnly', event.target.checked)} />Gift-only item (hide from storefront catalog)</label>
+          <p className="sa-hint">When checked, this product never appears in shop browsing, search, or Buy Again, and can only be awarded via Free Gift rules or Spin Wheel prizes.</p>
+          {form.isGiftOnly && !masterTracking && (
+            <p className="sa-notice" role="status">Track inventory is off for this gift-only item. Turn on &ldquo;Limit my stock&rdquo; under Stock (Step 4) so unlimited free gifts cannot be awarded if inventory runs out.</p>
+          )}
+        </div>
       </div></details>
     </div>,
     <div key="photos"><ProductPhotoPicker photos={photos} onChange={setPhotos} colours={sharedColours} canEdit={canEdit} /></div>,

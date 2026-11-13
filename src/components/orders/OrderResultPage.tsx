@@ -116,12 +116,17 @@ export async function OrderResultPage({ searchParams, route }: OrderResultPagePr
               ? <img src={item.imageUrl} alt={item.imageAlt ?? item.name} width={64} height={64} className="h-16 w-16 shrink-0 rounded-xl border border-black/10 bg-white object-contain p-1" loading="lazy" />
               : <div className="h-16 w-16 shrink-0 rounded-xl border border-dashed border-black/15 bg-[#e8eaee]/40" aria-hidden="true" />}
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">{item.name}</p>
+              <p className="text-sm font-semibold">
+                {item.name}
+                {item.isFreeGift ? <span className="ml-2 inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900">{item.freeGiftBadge || 'FREE GIFT'}</span> : null}
+              </p>
               {optionLabel ? <p className="mt-0.5 flex items-center gap-2 text-xs text-[#333336]">
                 {item.colourHex ? <span className="inline-block h-3 w-3 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: item.colourHex }} aria-hidden="true" /> : null}
                 <span>{optionLabel}</span>
               </p> : null}
-              <p className="mt-1 text-xs text-[#333336]">Qty {item.quantity} · {formatPaise(item.lineTotalPaise)}</p>
+              <p className="mt-1 text-xs text-[#333336]">
+                Qty {item.quantity} · {item.isFreeGift ? <>FREE (₹0){item.referencePricePaise && item.referencePricePaise > 0 ? <> · <span className="line-through text-[#6e6e73]">{formatPaise(item.referencePricePaise * item.quantity)}</span></> : null}</> : formatPaise(item.lineTotalPaise)}
+              </p>
             </div>
           </li>;
         })}

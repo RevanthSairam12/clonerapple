@@ -90,12 +90,30 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
                     {item.image && <img src={item.image} alt={item.imageAlt ?? item.name} className="h-full w-full object-contain" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h4 className="font-semibold">{item.name}</h4>
+                    <h4 className="font-semibold">
+                      {item.name}
+                      {item.isFreeGift ? (
+                        <span className="ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900">
+                          {item.freeGiftBadge || 'FREE GIFT'}
+                        </span>
+                      ) : null}
+                    </h4>
                     {optionSnapshotLabel(item) && <p className="text-sm text-[#6e6e73]">{optionSnapshotLabel(item)}</p>}
                     {item.variantSku && <p className="text-xs text-[#6e6e73]">SKU: {item.variantSku}</p>}
-                    <p className="mt-1 text-sm text-[#6e6e73]">Qty {item.quantity} · ₹{item.unitPrice.toLocaleString('en-IN')} each</p>
+                    <p className="mt-1 text-sm text-[#6e6e73]">
+                      {item.isFreeGift ? (
+                        <>
+                          Qty {item.quantity} · FREE (₹0)
+                          {item.referencePricePaise != null && item.referencePricePaise > 0 ? (
+                            <> · <span className="line-through">₹{(item.referencePricePaise / 100).toLocaleString('en-IN')}</span></>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>Qty {item.quantity} · ₹{item.unitPrice.toLocaleString('en-IN')} each</>
+                      )}
+                    </p>
                   </div>
-                  <p className="font-semibold">₹{item.totalPrice.toLocaleString('en-IN')}</p>
+                  <p className="font-semibold">{item.isFreeGift ? 'FREE' : `₹${item.totalPrice.toLocaleString('en-IN')}`}</p>
                 </div>
               ))}
             </div>

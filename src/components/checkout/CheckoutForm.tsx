@@ -15,6 +15,13 @@ import {
 } from '@/lib/checkout/shipping-rules';
 import { useCoupon } from '@/lib/cart/useCoupon';
 import { CouponBox } from '@/components/cart/CouponBox';
+import { useCartFreeGifts } from '@/lib/free-gifts/useCartFreeGifts';
+import {
+  FreeGiftConflictNotice,
+  FreeGiftLineRow,
+  FreeGiftProgressNudgeBanner,
+  FreeGiftUnavailablePrompt,
+} from '@/components/cart/FreeGiftCartWidgets';
 import { INDIAN_STATES, normalizeIndianMobile, normalizeIndianState, validateCheckoutContact, validateIndianAddress, checkoutFieldErrors, type CheckoutField, type FieldErrors } from '@/lib/checkout/india-validation';
 import { formatRupees } from '@/lib/store-admin/money';
 
@@ -239,14 +246,39 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
   const discountAmount = totals.discountPaise / 100;
   const totalAmount = totals.totalPaise / 100;
   const nudge = shippingNudge(subtotalPaise, shippingPolicy, totals.shippingPaise);
+  const { evaluation: giftEval } = useCartFreeGifts({
+    items: payableItems.map((item) => ({
+      id: item.id,
+      productId: baseProductId(item),
+      variantId: item.variantId,
+      quantity: item.quantity,
+    })),
+    couponCode: coupon.applied?.code ?? coupon.appliedCode,
+    email,
+    enabled: Boolean(shippingPolicy) && payableItems.length > 0,
+  });
+  const activeSpinGift = coupon.applied?.freeGift ?? giftEval?.spinFreeGift ?? null;
+  const freeGiftNoticeMessage =
+    giftEval?.conflict?.message
+    ?? giftEval?.blockedByCouponMessage
+    ?? coupon.applied?.blockedByFreeGiftMessage
+    ?? null;
+  const [giftUnavailablePrompt, setGiftUnavailablePrompt] = useState<{
+    giftName: string;
+    message: string;
+    reason: string;
+  } | null>(null);
   const paymentUnavailable = !shippingPolicy || quoteUnavailable;
   const currentSignature = JSON.stringify({ sourceKey, shippingPolicy, items: items.map((item) => [item.id, item.quantity, item.unitPaise]), code: coupon.input, total: totals.totalPaise });
   const latestSignature = React.useRef(currentSignature);
   latestSignature.current = currentSignature;
   quoteGeneration.current.update(currentSignature);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  React.useEffect(() => {
+    setGiftUnavailablePrompt(null);
+  }, [currentSignature]);
+
+  const executeCheckout = async (confirmWithoutGift: boolean) => {
     if (isSubmitting || activeReservation || selectionConflict) return;
     if (paymentUnavailable) {
       setErrorMessage('Shipping rates are unavailable. Refresh the page before paying.');
@@ -383,6 +415,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           shippingAddressId: shippingAddressId || undefined,
           shippingAddress: shippingAddressId ? undefined : normalizedAddress,
           marketingOptIn: marketingOptInEnabled && marketingOptIn,
+          confirmWithoutGift: confirmWithoutGift || undefined,
         }),
       });
 
@@ -396,6 +429,22 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         return;
       }
       if (!res.ok || !data.success) {
+        if (res.status === 409 && data.code === 'GIFT_UNAVAILABLE') {
+          setGiftUnavailablePrompt({
+            giftName:
+              typeof data.giftName === 'string' && data.giftName
+                ? data.giftName
+                : 'Free gift',
+            message:
+              typeof data.error === 'string' && data.error
+                ? data.error
+                : 'The free gift just went out of stock. You can still place your order without it.',
+            reason: typeof data.reason === 'string' ? data.reason : 'out_of_stock',
+          });
+          setIsSubmitting(false);
+          setErrorMessage(null);
+          return;
+        }
         if (res.status === 409 && data.code === 'selection_unavailable') {
           const selected = sourceItems.find((item) => baseProductId(item) === data.selection?.id &&
             (item.variantId || null) === (data.selection?.variantId ?? null));
@@ -526,6 +575,12 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGiftUnavailablePrompt(null);
+    await executeCheckout(false);
+  };
+
   // Wait for the cart to hydrate before deciding: the bag is only known on the
   // client, and a stale ?productId= must not flash the unavailable panel over
   // items the customer actually has.
@@ -613,6 +668,17 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         </div>
       )}
 
+      {giftUnavailablePrompt ? (
+        <FreeGiftUnavailablePrompt
+          giftName={giftUnavailablePrompt.giftName}
+          message={giftUnavailablePrompt.message}
+          busy={isSubmitting}
+          onContinueWithoutGift={() => {
+            void executeCheckout(true);
+          }}
+        />
+      ) : null}
+
       {selectionConflict && (
         <section role="alert" className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-semibold">{selectionConflict.name}{selectionConflict.variantLabel ? ` — ${selectionConflict.variantLabel}` : ''} is no longer available.</p>
@@ -699,6 +765,32 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
               </div>
             );
           })}
+          {!giftUnavailablePrompt && giftEval?.unlockedGift ? (
+            <div className="py-3">
+              <FreeGiftLineRow
+                compact
+                badge={giftEval.unlockedGift.badgeText}
+                productName={giftEval.unlockedGift.productName}
+                variantLabel={giftEval.unlockedGift.variantLabel}
+                regularPricePaise={giftEval.unlockedGift.regularPricePaise}
+                imageUrl={giftEval.unlockedGift.imageUrl}
+                note={`${giftEval.unlockedGift.unlockMessage} · Added automatically`}
+              />
+            </div>
+          ) : null}
+          {activeSpinGift ? (
+            <div className="py-3">
+              <FreeGiftLineRow
+                compact
+                badge={activeSpinGift.badge}
+                productName={activeSpinGift.productName}
+                variantLabel={activeSpinGift.variantLabel}
+                regularPricePaise={activeSpinGift.regularPricePaise}
+                imageUrl={activeSpinGift.imageUrl}
+                note={`Included via code ${coupon.applied?.code ?? coupon.appliedCode ?? ''}`}
+              />
+            </div>
+          ) : null}
         </div>
         {hasUnavailable && (
           <div
@@ -735,8 +827,33 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
               </span>
             </div>
           )}
+          {!giftUnavailablePrompt && giftEval?.unlockedGift ? (
+            <div className="flex justify-between text-[#15803d]">
+              <span className="truncate pr-2">Free Gift ({giftEval.unlockedGift.productName})</span>
+              <span className="font-semibold shrink-0">FREE (₹0)</span>
+            </div>
+          ) : null}
+          {activeSpinGift ? (
+            <div className="flex justify-between text-[#15803d]">
+              <span className="truncate pr-2">Reward Gift ({activeSpinGift.productName})</span>
+              <span className="font-semibold shrink-0">FREE (₹0)</span>
+            </div>
+          ) : null}
         </div>
 
+        {giftEval?.nextNudge ? (
+          <div className="mt-3">
+            <FreeGiftProgressNudgeBanner nudge={giftEval.nextNudge} compact />
+          </div>
+        ) : null}
+        {freeGiftNoticeMessage ? (
+          <div className="mt-3">
+            <FreeGiftConflictNotice
+              message={freeGiftNoticeMessage}
+              tone={giftEval?.conflict ? 'warning' : 'info'}
+            />
+          </div>
+        ) : null}
         {nudge && <p className="py-3 text-xs text-[#6e6e73]">{nudge}</p>}
         {paymentUnavailable && <p role="alert" className="py-3 text-sm text-red-700">Shipping rates are temporarily unavailable. Refresh the page before paying.</p>}
         {!paymentUnavailable && couponsEnabled && (

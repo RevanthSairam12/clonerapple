@@ -6,6 +6,11 @@ import {
   releaseConsumedCouponOnRefund,
   releaseCouponInTx,
 } from '@/lib/coupons/store';
+import {
+  appendFreeGiftReturnThresholdNoteInTx,
+  releaseConsumedFreeGiftInTx,
+  releaseFreeGiftInTx,
+} from '@/lib/free-gifts/store';
 import { closeRefundObligationsInTx } from '@/lib/payu/refund-obligations';
 import { releaseClaimedStock, restoreSoldStock } from '@/lib/payu/stock';
 
@@ -508,11 +513,21 @@ export async function createReturn(input: {
       }
 
       const id = `ret_${randomBytes(8).toString('hex')}`;
+      const expectedReturnPaise = parsed.reduce((sum, line) => {
+        const unit = number(byId.get(line.orderItemId)?.unit_price_paise);
+        return sum + Math.max(0, unit * line.quantity);
+      }, 0);
+      const { note: returnStaffNote } = await appendFreeGiftReturnThresholdNoteInTx(tx, {
+        orderId,
+        additionalRefundPaise: expectedReturnPaise,
+        existingNote: nullableText(input.note) ?? '',
+        maxLength: 1000,
+      });
       await tx`
         insert into return_requests (
           id, order_id, status, reason, customer_note, staff_note, source, created_by
         ) values (
-          ${id}, ${orderId}, 'REQUESTED', ${reason}, '', ${nullableText(input.note) ?? ''}, 'staff', ${input.actorId}
+          ${id}, ${orderId}, 'REQUESTED', ${reason}, '', ${returnStaffNote}, 'staff', ${input.actorId}
         )
       `;
       for (const line of parsed) {
@@ -781,6 +796,14 @@ export async function recordRefundInTx(tx: Tx, input: RecordRefundInput): Promis
       }
       if (!check.ok) return refundFailure(check.code, check.error);
 
+      const { note: refundNote, appended: giftThresholdNote } =
+        await appendFreeGiftReturnThresholdNoteInTx(tx, {
+          orderId,
+          additionalRefundPaise: Math.trunc(input.amountPaise),
+          existingNote: note,
+          maxLength: 500,
+        });
+
       const refundId = `ref_${randomBytes(8).toString('hex')}`;
       await tx`
         insert into refunds (
@@ -788,9 +811,22 @@ export async function recordRefundInTx(tx: Tx, input: RecordRefundInput): Promis
           provider_ref, reason, note, recorded_by
         ) values (
           ${refundId}, ${orderId}, ${returnId}, ${Math.trunc(input.amountPaise)}, ${currency},
-          ${method}, ${providerRef}, ${reason}, ${note}, ${input.actorId}
+          ${method}, ${providerRef}, ${reason}, ${refundNote}, ${input.actorId}
         )
       `;
+
+      if (returnId && giftThresholdNote) {
+        await tx`
+          update return_requests
+          set staff_note = case
+            when coalesce(staff_note, '') = '' then ${giftThresholdNote}
+            when position(${giftThresholdNote} in staff_note) > 0 then staff_note
+            else left(staff_note || ' — ' || ${giftThresholdNote}, 1000)
+          end,
+          updated_at = now()
+          where id = ${returnId}
+        `;
+      }
 
       // A refund gives the coupon use back only when the store explicitly
       // asks for that, and only once the refunds cover the captured total.
@@ -1071,8 +1107,10 @@ export async function cancelOrderInTx(tx: Tx, input: CancelOrderInput): Promise<
       { createdBy: input.actorId },
     );
     stockRestored = restored.length > 0;
+    await releaseConsumedFreeGiftInTx(tx, orderId, 'cancelled by store staff');
   } else {
     stockReleased = await releaseClaimedStock(tx, orderId);
+    await releaseFreeGiftInTx(tx, orderId, 'cancelled by store staff');
   }
 
   return {

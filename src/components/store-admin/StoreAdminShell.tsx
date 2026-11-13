@@ -276,6 +276,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Marketing',
     items: [
       { href: '/store-admin/marketing/spin-wheel', label: 'Spin wheel', icon: 'spark' },
+      { href: '/store-admin/marketing/free-gifts', label: 'Free gifts', icon: 'spark' },
     ],
   },
   {

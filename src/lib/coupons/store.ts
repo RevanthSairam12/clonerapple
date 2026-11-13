@@ -65,6 +65,9 @@ function mapCoupon(
     name: text(row.name),
     type: text(row.type) as CouponType,
     value: Number(row.value) || 0,
+    giftProductId: row.gift_product_id ? text(row.gift_product_id) : null,
+    giftVariantId: row.gift_variant_id ? text(row.gift_variant_id) : null,
+    giftProductName: row.gift_product_name ? text(row.gift_product_name) : null,
     scope: text(row.scope) as CouponScope,
     status: text(row.status) as CouponStatus,
     startsAt: (row.starts_at as string | Date | null) ?? null,
@@ -123,6 +126,8 @@ export async function loadCouponDefinition(
     ? await sql`
         select
           c.*,
+          (to_jsonb(c)->>'gift_product_id') as gift_product_id,
+          (to_jsonb(c)->>'gift_variant_id') as gift_variant_id,
           coalesce((
             select jsonb_agg(
               jsonb_build_object(
@@ -142,6 +147,8 @@ export async function loadCouponDefinition(
     : await sql`
         select
           c.*,
+          (to_jsonb(c)->>'gift_product_id') as gift_product_id,
+          (to_jsonb(c)->>'gift_variant_id') as gift_variant_id,
           coalesce((
             select jsonb_agg(
               jsonb_build_object(
@@ -161,6 +168,15 @@ export async function loadCouponDefinition(
 
   const row = rows[0];
   if (!row) return null;
+  if (typeof row.gift_product_id === 'string' && row.gift_product_id) {
+    const [reg] = (await sql`select to_regclass('products')::text as tbl`) as Array<{ tbl: string | null }>;
+    if (reg?.tbl) {
+      const [gp] = (await sql`
+        select name from products where id = ${row.gift_product_id} limit 1
+      `) as Array<{ name: unknown }>;
+      row.gift_product_name = gp?.name ?? null;
+    }
+  }
   const targets =
     'targets_json' in row
       ? parseTargetsJson(row.targets_json)

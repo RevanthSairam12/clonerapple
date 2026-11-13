@@ -11,6 +11,12 @@ import { randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
 
 import { setTransactionTimeouts } from '@/lib/checkout/transaction-guards';
+import {
+  giftTargetKey,
+  listGiftProductPickerOptionsUsing,
+  loadGiftCatalogSnapshotMapUsing,
+  type GiftProductPickerOption,
+} from '@/lib/free-gifts/store';
 import { getSql } from '@/lib/platform/db';
 import {
   collectSpinWheelWarnings,
@@ -20,11 +26,14 @@ import {
   drawWeightedSegment,
   formatPrizeSummary,
   validateSpinWheelConfigInput,
+  weightToChancePercent,
+  type SpinSegmentType,
   type SpinWheelSegment,
   type SpinWheelSettings,
   type SpinWheelWarning,
 } from '@/lib/spin-wheel/rules';
 import {
+  hydrateFreeGiftSegmentsUsing,
   invalidateSpinWheelCache,
   mapSegmentRow,
   mapSettingsRow,
@@ -61,7 +70,7 @@ export interface SpinDailyReportRow {
 export interface SpinSegmentWinRow {
   id: string;
   label: string;
-  segmentType: 'COUPON' | 'NO_PRIZE';
+  segmentType: SpinSegmentType;
   totalAwarded: number;
   dailyAwarded: number;
   dailyCap: number | null;
@@ -85,7 +94,7 @@ export interface SpinRecentLogRow {
   createdAtWall: string;
   customerMasked: string;
   segmentLabel: string;
-  segmentType: 'COUPON' | 'NO_PRIZE';
+  segmentType: SpinSegmentType;
   couponCode: string | null;
   couponStatus: string | null;
 }
@@ -109,6 +118,7 @@ export interface SpinAdminDashboardData {
     recentSpins: SpinRecentLogRow[];
   };
   products: SpinPickerOption[];
+  giftProducts: GiftProductPickerOption[];
   categories: SpinPickerOption[];
 }
 
@@ -117,7 +127,7 @@ export interface SpinTestResult {
   label: string;
   colorHex: string;
   textColorHex: string;
-  segmentType: 'COUPON' | 'NO_PRIZE';
+  segmentType: SpinSegmentType;
   summary: string;
 }
 
@@ -180,12 +190,17 @@ function auditSnapshot(settings: SpinWheelSettings, segments: readonly SpinWheel
       label: s.label,
       type: s.segmentType,
       weight: s.weight,
+      chancePercent: weightToChancePercent(s.weight),
       dailyCap: s.dailyCap,
       totalCap: s.totalCap,
       isActive: s.isActive,
       couponType: s.couponType,
       couponValue: s.couponValue,
       couponValidDays: s.couponValidDays,
+      giftProductId: s.giftProductId ?? null,
+      giftVariantId: s.giftVariantId ?? null,
+      giftMinOrderPaise: s.giftMinOrderPaise ?? 0,
+      giftValidDays: s.giftValidDays ?? 7,
     })),
   };
 }
@@ -209,6 +224,7 @@ export async function getSpinWheelAdminDataUsing(
       orderAggRows,
       recentRows,
       productRows,
+      giftProducts,
       categoryRows,
     ] = await Promise.all([
       sql`select * from spin_wheel_settings where id = 'default' limit 1` as Promise<Row[]>,
@@ -238,7 +254,7 @@ export async function getSpinWheelAdminDataUsing(
         select
           store_day::text as store_day,
           count(*)::int as spins,
-          count(*) filter (where segment_type = 'COUPON')::int as wins,
+          count(*) filter (where segment_type in ('COUPON', 'FREE_GIFT'))::int as wins,
           count(*) filter (where segment_type = 'NO_PRIZE')::int as no_prize
         from spin_wheel_spins
         where store_day >= (${todayStoreDay}::date - interval '29 days')::date
@@ -307,6 +323,7 @@ export async function getSpinWheelAdminDataUsing(
         order by sort_order asc, name asc
         limit 250
       ` as Promise<Row[]>,
+      listGiftProductPickerOptionsUsing(sql, { includeInactive: true }),
       sql`
         select id, name
         from categories
@@ -317,7 +334,9 @@ export async function getSpinWheelAdminDataUsing(
     ]);
 
     const settings = mapSettingsRow(settingsRows[0]);
-    const segments = segmentRows.map(mapSegmentRow);
+    const segments = await hydrateFreeGiftSegmentsUsing(sql, segmentRows.map(mapSegmentRow), {
+      includeInactive: true,
+    });
     const oddsMap = computeSegmentOdds(segments);
     const oddsBySegmentId: Record<string, number> = {};
     for (const [k, v] of oddsMap.entries()) oddsBySegmentId[k] = v;
@@ -363,18 +382,24 @@ export async function getSpinWheelAdminDataUsing(
             revenuePaise: Number(oAgg.revenue_paise ?? 0),
             totalDiscountPaise: Number(oAgg.discount_paise ?? 0),
           },
-          recentSpins: recentRows.map((row) => ({
-            id: text(row.id),
-            storeDay: text(row.store_day).slice(0, 10),
-            createdAtWall: text(row.created_wall),
-            customerMasked: row.customer_email ? maskEmail(text(row.customer_email)) : '[deleted user]',
-            segmentLabel: text(row.segment_label),
-            segmentType: text(row.segment_type) === 'COUPON' ? 'COUPON' : 'NO_PRIZE',
-            couponCode: row.coupon_code ? text(row.coupon_code) : null,
-            couponStatus: row.coupon_status ? text(row.coupon_status) : null,
-          })),
+          recentSpins: recentRows.map((row) => {
+            const rawType = text(row.segment_type);
+            const segmentType: SpinSegmentType =
+              rawType === 'COUPON' || rawType === 'FREE_GIFT' ? rawType : 'NO_PRIZE';
+            return {
+              id: text(row.id),
+              storeDay: text(row.store_day).slice(0, 10),
+              createdAtWall: text(row.created_wall),
+              customerMasked: row.customer_email ? maskEmail(text(row.customer_email)) : '[deleted user]',
+              segmentLabel: text(row.segment_label),
+              segmentType,
+              couponCode: row.coupon_code ? text(row.coupon_code) : null,
+              couponStatus: row.coupon_status ? text(row.coupon_status) : null,
+            };
+          }),
         },
         products: productRows.map((r) => ({ id: text(r.id), name: text(r.name) })),
+        giftProducts,
         categories: categoryRows.map((r) => ({ id: text(r.id), name: text(r.name) })),
       },
     };
@@ -406,10 +431,30 @@ export async function saveSpinWheelConfigUsing(
 
   const { settings: nextSettings, segments: nextSegments } = validated.value;
 
+  class InvalidGiftSegmentError extends Error {}
+
   try {
+    const giftTargets = nextSegments
+      .filter((s) => s.segmentType === 'FREE_GIFT' && s.giftProductId)
+      .map((s) => ({ productId: s.giftProductId!, variantId: s.giftVariantId ?? null }));
+
     await sql.begin(async (tx) => {
       await setTransactionTimeouts(tx);
       const timeZone = await readTimeZone(tx);
+
+      if (giftTargets.length > 0) {
+        const snapMap = await loadGiftCatalogSnapshotMapUsing(tx, giftTargets);
+        for (const seg of nextSegments) {
+          if (seg.segmentType !== 'FREE_GIFT' || !seg.giftProductId) continue;
+          const snap = snapMap.get(giftTargetKey(seg.giftProductId, seg.giftVariantId ?? null)) ?? null;
+          if (!snap) {
+            throw new InvalidGiftSegmentError(`Selected gift product for "${seg.label}" was not found.`);
+          }
+          if (seg.giftVariantId && snap.variantId !== seg.giftVariantId) {
+            throw new InvalidGiftSegmentError(`Selected gift variant for "${seg.label}" does not match the product.`);
+          }
+        }
+      }
 
       const [beforeSettingsRow] = (await tx`
         select * from spin_wheel_settings where id = 'default' for update
@@ -512,6 +557,10 @@ export async function saveSpinWheelConfigUsing(
               coupon_target_ids = ${seg.couponTargetIds},
               coupon_valid_days = ${seg.couponValidDays},
               coupon_allow_with_sale_price = ${seg.couponAllowWithSalePrice},
+              gift_product_id = ${seg.giftProductId},
+              gift_variant_id = ${seg.giftVariantId},
+              gift_min_order_paise = ${seg.giftMinOrderPaise},
+              gift_valid_days = ${seg.giftValidDays},
               updated_at = now()
             where id = ${finalId}
           `;
@@ -536,6 +585,7 @@ export async function saveSpinWheelConfigUsing(
               is_active, sort_order, coupon_type, coupon_value,
               coupon_max_discount_paise, coupon_min_order_paise, coupon_scope,
               coupon_target_ids, coupon_valid_days, coupon_allow_with_sale_price,
+              gift_product_id, gift_variant_id, gift_min_order_paise, gift_valid_days,
               created_at, updated_at
             ) values (
               ${finalId}, ${seg.label}, ${seg.colorHex}, ${seg.segmentType},
@@ -543,7 +593,9 @@ export async function saveSpinWheelConfigUsing(
               ${seg.sortOrder}, ${seg.couponType}, ${seg.couponValue},
               ${seg.couponMaxDiscountPaise}, ${seg.couponMinOrderPaise},
               ${seg.couponScope}, ${seg.couponTargetIds}, ${seg.couponValidDays},
-              ${seg.couponAllowWithSalePrice}, now(), now()
+              ${seg.couponAllowWithSalePrice},
+              ${seg.giftProductId}, ${seg.giftVariantId}, ${seg.giftMinOrderPaise}, ${seg.giftValidDays},
+              now(), now()
             )
           `;
         }
@@ -592,7 +644,10 @@ export async function saveSpinWheelConfigUsing(
       };
     }
     return refreshed;
-  } catch {
+  } catch (error) {
+    if (error instanceof InvalidGiftSegmentError) {
+      return { ok: false, reason: 'invalid-input', error: error.message };
+    }
     console.warn('[store-admin/spin-wheel] failed to save spin wheel configuration');
     return { ok: false, reason: 'unavailable', error: 'Could not save Spin and Win configuration.' };
   }
@@ -635,7 +690,7 @@ export async function runStaffTestSpinUsing(
       order by s.sort_order asc, s.id asc
     `) as Row[];
 
-    const segments = segmentRows.map(mapSegmentRow);
+    const segments = await hydrateFreeGiftSegmentsUsing(sql, segmentRows.map(mapSegmentRow));
     const draw = drawWeightedSegment(segments, rollFn);
     if (!draw) {
       return {

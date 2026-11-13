@@ -15,11 +15,14 @@ import type {
   SpinAdminDashboardData,
   SpinTestResult,
 } from '@/lib/store-admin/spin-wheel';
-import type {
-  SpinCouponScope,
-  SpinCouponType,
-  SpinRewardCooldownMode,
-  SpinSegmentType,
+import {
+  CHANCE_BASIS_POINTS_TOTAL,
+  chancePercentToWeight,
+  formatChancePercent,
+  type SpinCouponScope,
+  type SpinCouponType,
+  type SpinRewardCooldownMode,
+  type SpinSegmentType,
 } from '@/lib/spin-wheel/rules';
 
 interface SegmentDraft {
@@ -27,7 +30,7 @@ interface SegmentDraft {
   label: string;
   colorHex: string;
   segmentType: SpinSegmentType;
-  weight: string;
+  chancePercent: string;
   dailyCap: string;
   totalCap: string;
   dailyAwarded: number;
@@ -41,6 +44,10 @@ interface SegmentDraft {
   couponTargetIds: string[];
   couponValidDays: string;
   couponAllowWithSalePrice: boolean;
+  giftProductId: string;
+  giftVariantId: string;
+  giftMinOrderRupees: string;
+  giftValidDays: string;
 }
 
 interface SettingsDraft {
@@ -84,12 +91,13 @@ function paiseToRupeeString(paise: number | null): string {
 }
 
 function toSegmentDrafts(data: SpinAdminDashboardData): SegmentDraft[] {
+  const defaultGiftProduct = data.giftProducts[0];
   return data.segments.map((seg) => ({
     id: seg.id,
     label: seg.label,
     colorHex: sanitizeHexColor(seg.colorHex, '#ffe100'),
     segmentType: seg.segmentType,
-    weight: String(seg.weight),
+    chancePercent: formatChancePercent(seg.weight),
     dailyCap: seg.dailyCap !== null ? String(seg.dailyCap) : '',
     totalCap: seg.totalCap !== null ? String(seg.totalCap) : '',
     dailyAwarded: seg.dailyAwarded,
@@ -108,6 +116,10 @@ function toSegmentDrafts(data: SpinAdminDashboardData): SegmentDraft[] {
     couponTargetIds: [...seg.couponTargetIds],
     couponValidDays: String(seg.couponValidDays || 7),
     couponAllowWithSalePrice: seg.couponAllowWithSalePrice,
+    giftProductId: seg.giftProductId || defaultGiftProduct?.id || '',
+    giftVariantId: seg.giftVariantId || '',
+    giftMinOrderRupees: paiseToRupeeString(seg.giftMinOrderPaise ?? null),
+    giftValidDays: String(seg.giftValidDays || 7),
   }));
 }
 
@@ -160,24 +172,108 @@ export function SpinWheelAdminConsole({
   const [testOutcome, setTestOutcome] = useState<SpinTestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
 
-  const liveOdds = useMemo(() => {
-    const activeTotal = segments.reduce((sum, seg) => {
-      if (!seg.isActive) return sum;
-      const w = Number.parseInt(seg.weight, 10);
-      return sum + (Number.isFinite(w) && w > 0 ? w : 0);
-    }, 0);
+  const { liveOdds, activeChanceBps, chanceTotalValid } = useMemo(() => {
+    let bpsSum = 0;
+    let allSlicesValid = true;
+    const bpsById: Record<string, number> = {};
+
+    for (const seg of segments) {
+      const parsed = chancePercentToWeight(seg.chancePercent, seg.label || 'Slice');
+      if (parsed.ok) {
+        bpsById[seg.id] = parsed.weight;
+        if (seg.isActive) bpsSum += parsed.weight;
+      } else {
+        bpsById[seg.id] = 0;
+        if (seg.isActive) allSlicesValid = false;
+      }
+    }
 
     const map: Record<string, number> = {};
     for (const seg of segments) {
-      if (!seg.isActive || activeTotal <= 0) {
+      if (!seg.isActive || bpsSum <= 0) {
         map[seg.id] = 0;
         continue;
       }
-      const w = Number.parseInt(seg.weight, 10);
-      map[seg.id] = Number.isFinite(w) && w > 0 ? Math.round((w / activeTotal) * 1000) / 10 : 0;
+      map[seg.id] = Math.round((bpsById[seg.id] / bpsSum) * 10000) / 100;
     }
-    return map;
+    return {
+      liveOdds: map,
+      activeChanceBps: bpsSum,
+      chanceTotalValid: allSlicesValid && bpsSum === CHANCE_BASIS_POINTS_TOTAL,
+    };
   }, [segments]);
+
+  function autoBalanceChances() {
+    setSegments((prev) => {
+      const activeIndices = prev
+        .map((s, idx) => (s.isActive ? idx : -1))
+        .filter((idx) => idx >= 0);
+      if (activeIndices.length === 0) return prev;
+
+      const parsedWeights = activeIndices.map((idx) => {
+        const res = chancePercentToWeight(prev[idx].chancePercent);
+        return res.ok ? res.weight : 100;
+      });
+      const currentTotal = parsedWeights.reduce((a, b) => a + b, 0);
+
+      // Prefer adjusting the largest uncapped NO_PRIZE slice if that keeps every slice >= 1 bps.
+      const noPrizePos = activeIndices.findIndex(
+        (idx) =>
+          prev[idx].segmentType === 'NO_PRIZE'
+          && !prev[idx].dailyCap.trim()
+          && !prev[idx].totalCap.trim(),
+      );
+      if (noPrizePos >= 0) {
+        const othersSum = parsedWeights.reduce(
+          (sum, w, pos) => (pos === noPrizePos ? sum : sum + w),
+          0,
+        );
+        const targetNoPrize = CHANCE_BASIS_POINTS_TOTAL - othersSum;
+        if (targetNoPrize >= 1 && targetNoPrize <= CHANCE_BASIS_POINTS_TOTAL) {
+          const targetIdx = activeIndices[noPrizePos];
+          return prev.map((seg, idx) =>
+            idx === targetIdx
+              ? { ...seg, chancePercent: formatChancePercent(targetNoPrize) }
+              : seg,
+          );
+        }
+      }
+
+      if (currentTotal <= 0) {
+        const base = Math.floor(CHANCE_BASIS_POINTS_TOTAL / activeIndices.length);
+        let rem = CHANCE_BASIS_POINTS_TOTAL - base * activeIndices.length;
+        return prev.map((seg) => {
+          if (!seg.isActive) return seg;
+          const extra = rem > 0 ? 1 : 0;
+          if (rem > 0) rem -= 1;
+          return { ...seg, chancePercent: formatChancePercent(base + extra) };
+        });
+      }
+
+      const scaled = parsedWeights.map((w) =>
+        Math.max(1, Math.round((w / currentTotal) * CHANCE_BASIS_POINTS_TOTAL)),
+      );
+      const scaledSum = scaled.reduce((a, b) => a + b, 0);
+      const diff = CHANCE_BASIS_POINTS_TOTAL - scaledSum;
+      if (diff !== 0) {
+        let adjustPos = 0;
+        for (let i = 1; i < scaled.length; i += 1) {
+          if (scaled[i] > scaled[adjustPos]) adjustPos = i;
+        }
+        scaled[adjustPos] = Math.max(1, scaled[adjustPos] + diff);
+      }
+
+      const nextByIdx = new Map<number, number>();
+      activeIndices.forEach((segIdx, pos) => nextByIdx.set(segIdx, scaled[pos]));
+      return prev.map((seg, idx) =>
+        nextByIdx.has(idx)
+          ? { ...seg, chancePercent: formatChancePercent(nextByIdx.get(idx)!) }
+          : seg,
+      );
+    });
+    setDirty(true);
+    setError(null);
+  }
 
   const previewSlices = useMemo(
     () =>
@@ -222,6 +318,8 @@ export function SpinWheelAdminConsole({
     if (segments.length >= 12) return;
     const nextColor = WHEEL_SEGMENT_PALETTE[segments.length % WHEEL_SEGMENT_PALETTE.length];
     const id = `seg_new_${Date.now().toString(36)}_${segments.length + 1}`;
+    const remainingBps = Math.max(100, CHANCE_BASIS_POINTS_TOTAL - activeChanceBps);
+    const defaultGiftProduct = data.giftProducts[0];
     setSegments((prev) => [
       ...prev,
       {
@@ -229,7 +327,7 @@ export function SpinWheelAdminConsole({
         label: 'New prize',
         colorHex: nextColor,
         segmentType: 'COUPON',
-        weight: '10',
+        chancePercent: formatChancePercent(Math.min(1000, remainingBps)),
         dailyCap: '',
         totalCap: '',
         dailyAwarded: 0,
@@ -243,6 +341,10 @@ export function SpinWheelAdminConsole({
         couponTargetIds: [],
         couponValidDays: '7',
         couponAllowWithSalePrice: false,
+        giftProductId: defaultGiftProduct?.id ?? '',
+        giftVariantId: defaultGiftProduct?.variants[0]?.id ?? '',
+        giftMinOrderRupees: '',
+        giftValidDays: '7',
       },
     ]);
     setDirty(true);
@@ -269,6 +371,13 @@ export function SpinWheelAdminConsole({
   async function saveAll(event: React.FormEvent) {
     event.preventDefault();
     if (!canEdit) return;
+
+    if (!chanceTotalValid) {
+      setError(
+        `Total Chance of getting (%) across active slices must equal 100.00% (currently ${(activeChanceBps / 100).toFixed(2)}%). Use "Auto-balance to 100%" or adjust slice percentages.`,
+      );
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -302,7 +411,7 @@ export function SpinWheelAdminConsole({
           label: seg.label,
           colorHex: seg.colorHex,
           segmentType: seg.segmentType,
-          weight: Number.parseInt(seg.weight, 10),
+          chancePercent: seg.chancePercent,
           dailyCap: seg.dailyCap.trim() ? Number.parseInt(seg.dailyCap, 10) : null,
           totalCap: seg.totalCap.trim() ? Number.parseInt(seg.totalCap, 10) : null,
           isActive: seg.isActive,
@@ -321,6 +430,13 @@ export function SpinWheelAdminConsole({
           couponTargetIds: seg.couponScope === 'ORDER' ? [] : seg.couponTargetIds,
           couponValidDays: Number.parseInt(seg.couponValidDays, 10) || 7,
           couponAllowWithSalePrice: seg.couponAllowWithSalePrice,
+          giftProductId: seg.segmentType === 'FREE_GIFT' ? seg.giftProductId || null : null,
+          giftVariantId: seg.segmentType === 'FREE_GIFT' ? seg.giftVariantId || null : null,
+          giftMinOrderRupees:
+            seg.segmentType === 'FREE_GIFT' && seg.giftMinOrderRupees.trim()
+              ? seg.giftMinOrderRupees.trim()
+              : null,
+          giftValidDays: Number.parseInt(seg.giftValidDays, 10) || 7,
         })),
       };
 
@@ -406,7 +522,7 @@ export function SpinWheelAdminConsole({
   }
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div style={{ display: 'grid', gap: '1.25rem', minWidth: 0 }}>
       {/* Top status bar */}
       <div
         className="sa-control-card"
@@ -466,20 +582,21 @@ export function SpinWheelAdminConsole({
         </div>
       ) : null}
 
-      <form onSubmit={saveAll} style={{ display: 'grid', gap: '1.25rem' }}>
+      <form onSubmit={saveAll} style={{ display: 'grid', gap: '1.25rem', minWidth: 0 }}>
         {/* Settings + Live Preview / Test Spin */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
             gap: '1.25rem',
             alignItems: 'start',
+            minWidth: 0,
           }}
         >
           {/* Settings card */}
           <div className="sa-control-card">
             <h2 className="sa-control-title">Wheel settings &amp; guardrails</h2>
-            <fieldset disabled={!canEdit || saving} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: '0.9rem' }}>
+            <fieldset disabled={!canEdit || saving} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: '0.9rem', minWidth: 0 }}>
               <label className="sa-field">
                 <span className="sa-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <input
@@ -728,11 +845,11 @@ export function SpinWheelAdminConsole({
           </div>
 
           {/* Live Wheel Preview + Test Spin + Help */}
-          <div style={{ display: 'grid', gap: '1.25rem' }}>
+          <div style={{ display: 'grid', gap: '1.25rem', minWidth: 0 }}>
             <div className="sa-control-card" style={{ textAlign: 'center' }}>
               <h2 className="sa-control-title">Wheel preview &amp; test spin</h2>
               <p className="sa-card-note" style={{ marginBottom: '0.9rem' }}>
-                Preview updates live as you edit segments. Test spin draws using your last saved weights without creating a spin record or coupon.
+                Preview updates live as you edit segments. Test spin draws using your last saved chances without creating a spin record or coupon.
               </p>
 
               <SpinWheelSvg
@@ -757,7 +874,7 @@ export function SpinWheelAdminConsole({
 
               {dirty ? (
                 <p className="sa-card-note" style={{ marginTop: '0.6rem' }}>
-                  You have unsaved changes. Save changes first if you want Test spin to use your updated weights.
+                  You have unsaved changes. Save changes first if you want Test spin to use your updated chances.
                 </p>
               ) : null}
 
@@ -788,10 +905,10 @@ export function SpinWheelAdminConsole({
                   <strong>Daily reset at midnight:</strong> Each signed-in customer gets one spin per calendar day in the store timezone ({data.timeZone}), measured by the database clock.
                 </li>
                 <li>
-                  <strong>Server-side random draw:</strong> The server chooses the outcome using cryptographic randomness weighted by each active segment&apos;s Weight.
+                  <strong>Server-side random draw:</strong> The server chooses the outcome using cryptographic randomness based strictly on each active slice&apos;s Chance of getting (%).
                 </li>
                 <li>
-                  <strong>Automatic cap fallback:</strong> If a segment hits its daily or total win cap, it is skipped cleanly and remaining active segments keep their relative odds.
+                  <strong>Strict cap &amp; stock fallback:</strong> If a rolled prize hits its cap or a free-gift SKU is out of stock, that roll lands on an active uncapped &ldquo;No prize&rdquo; slice instead of inflating other prizes&apos; odds.
                 </li>
                 <li>
                   <strong>Personal single-use coupons:</strong> Winning a prize generates a unique coupon code tied strictly to that winner&apos;s account and hidden from other shoppers.
@@ -812,22 +929,43 @@ export function SpinWheelAdminConsole({
                 Wheel segments ({segments.length} of 12)
               </h2>
               <p className="sa-card-note">
-                Configure 2 to 12 slices. Include at least one active Coupon prize segment and ideally a Try again slice with realistic weights.
+                Configure 2 to 12 slices. Set exact Chance of getting (%) across active slices totaling 100.00%, and include an uncapped &ldquo;No prize&rdquo; slice when using caps or Free Gift rewards.
               </p>
             </div>
-            {canEdit ? (
-              <button
-                type="button"
-                className="sa-btn sa-btn-quiet"
-                disabled={segments.length >= 12 || saving}
-                onClick={addSegment}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center' }}>
+              <span
+                className={`sa-badge ${chanceTotalValid ? 'sa-badge-ok' : 'sa-badge-warn'}`}
+                role="status"
               >
-                + Add segment
-              </button>
-            ) : null}
+                Active chance total: {(activeChanceBps / 100).toFixed(2)}% / 100.00%
+                {activeChanceBps !== CHANCE_BASIS_POINTS_TOTAL
+                  ? ` (${activeChanceBps < CHANCE_BASIS_POINTS_TOTAL ? `+${((CHANCE_BASIS_POINTS_TOTAL - activeChanceBps) / 100).toFixed(2)}% left` : `${((activeChanceBps - CHANCE_BASIS_POINTS_TOTAL) / 100).toFixed(2)}% over`})`
+                  : ''}
+              </span>
+              {canEdit && !chanceTotalValid ? (
+                <button
+                  type="button"
+                  className="sa-btn sa-btn-quiet"
+                  disabled={saving}
+                  onClick={autoBalanceChances}
+                >
+                  Auto-balance to 100%
+                </button>
+              ) : null}
+              {canEdit ? (
+                <button
+                  type="button"
+                  className="sa-btn sa-btn-quiet"
+                  disabled={segments.length >= 12 || saving}
+                  onClick={addSegment}
+                >
+                  + Add segment
+                </button>
+              ) : null}
+            </div>
           </div>
 
-          <fieldset disabled={!canEdit || saving} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: '1rem' }}>
+          <fieldset disabled={!canEdit || saving} style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: '1rem', minWidth: 0 }}>
             {segments.map((seg, idx) => {
               const safeColor = sanitizeHexColor(seg.colorHex, '#ffe100');
               const contrastFg = contrastTextForHex(safeColor);
@@ -843,6 +981,7 @@ export function SpinWheelAdminConsole({
                     background: seg.isActive ? '#ffffff' : '#f9fafb',
                     display: 'grid',
                     gap: '0.85rem',
+                    minWidth: 0,
                   }}
                 >
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -855,7 +994,7 @@ export function SpinWheelAdminConsole({
                         {contrastFg === '#ffffff' ? 'Light text' : 'Dark text'} preview
                       </span>
                       <span className="sa-status-chip">
-                        Calculated odds: {odds.toFixed(1)}%
+                        Chance: {odds.toFixed(2)}%
                       </span>
                       <span className="sa-card-note">
                         Awarded today: {seg.dailyAwarded}{seg.dailyCap ? ` / ${seg.dailyCap}` : ''} · All time: {seg.totalAwarded}{seg.totalCap ? ` / ${seg.totalCap}` : ''}
@@ -938,25 +1077,34 @@ export function SpinWheelAdminConsole({
                       <select
                         className="sa-input"
                         value={seg.segmentType}
-                        onChange={(e) => updateSegment(idx, 'segmentType', e.target.value as SpinSegmentType)}
+                        onChange={(e) => {
+                          const nextType = e.target.value as SpinSegmentType;
+                          updateSegment(idx, 'segmentType', nextType);
+                          if (nextType === 'FREE_GIFT' && !seg.giftProductId && data.giftProducts[0]) {
+                            updateSegment(idx, 'giftProductId', data.giftProducts[0].id);
+                            updateSegment(idx, 'giftVariantId', data.giftProducts[0].variants[0]?.id ?? '');
+                          }
+                        }}
                       >
                         <option value="COUPON">Coupon prize</option>
+                        <option value="FREE_GIFT">Free gift item (from catalog)</option>
                         <option value="NO_PRIZE">No prize / Try again</option>
                       </select>
-                      <span className="sa-card-note">Choose whether landing here awards a personal coupon or a friendly message.</span>
+                      <span className="sa-card-note">Choose whether landing here awards a personal discount coupon, a personal ₹0 free-gift claim code, or Try again.</span>
                     </label>
 
                     <label className="sa-field">
-                      <span className="sa-label">Relative weight</span>
+                      <span className="sa-label">Chance of getting (%)</span>
                       <input
                         className="sa-input"
                         type="number"
-                        min={1}
-                        max={10000}
-                        value={seg.weight}
-                        onChange={(e) => updateSegment(idx, 'weight', e.target.value)}
+                        step="0.01"
+                        min="0.01"
+                        max="100"
+                        value={seg.chancePercent}
+                        onChange={(e) => updateSegment(idx, 'chancePercent', e.target.value)}
                       />
-                      <span className="sa-card-note">Higher numbers land more often. Does not have to add up to 100.</span>
+                      <span className="sa-card-note">Exact percentage odds (0.01% to 100.00%). Active slices must sum to 100.00%.</span>
                     </label>
 
                     <label className="sa-field">
@@ -1138,6 +1286,114 @@ export function SpinWheelAdminConsole({
                         </div>
                       ) : null}
                     </div>
+                  ) : seg.segmentType === 'FREE_GIFT' ? (
+                    <div
+                      style={{
+                        borderTop: '1px dashed #e5e7eb',
+                        paddingTop: '0.85rem',
+                        display: 'grid',
+                        gap: '0.85rem',
+                      }}
+                    >
+                      {(() => {
+                        const selectedGiftProd =
+                          data.giftProducts.find((p) => p.id === seg.giftProductId) ?? null;
+                        const selectedGiftVar =
+                          selectedGiftProd?.variants.find((v) => v.id === seg.giftVariantId) ?? null;
+                        const stockCount =
+                          selectedGiftVar
+                            ? selectedGiftVar.availableQty
+                            : selectedGiftProd?.availableQty ?? null;
+                        const trackInv =
+                          selectedGiftVar
+                            ? selectedGiftVar.trackInventory
+                            : selectedGiftProd?.trackInventory ?? false;
+                        const isOut = trackInv && stockCount !== null && stockCount <= 0;
+
+                        return (
+                          <>
+                            <div className="sa-control-grid">
+                              <label className="sa-field">
+                                <span className="sa-label">Gift product (SKU)</span>
+                                <select
+                                  className="sa-input"
+                                  value={seg.giftProductId}
+                                  onChange={(e) => {
+                                    const nextPid = e.target.value;
+                                    const prod = data.giftProducts.find((p) => p.id === nextPid);
+                                    updateSegment(idx, 'giftProductId', nextPid);
+                                    updateSegment(idx, 'giftVariantId', prod?.variants[0]?.id ?? '');
+                                  }}
+                                >
+                                  <option value="">Select gift product…</option>
+                                  {data.giftProducts.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.isGiftOnly ? '[Gift-only] ' : ''}{p.name} — {formatINRFromPaise(p.pricePaise)}
+                                      {p.trackInventory ? ` (${p.availableQty ?? 0} in stock)` : ' (unlimited)'}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span className="sa-card-note">
+                                  Winner receives a personal single-use claim code adding this item for ₹0 at checkout.
+                                </span>
+                              </label>
+
+                              {selectedGiftProd && selectedGiftProd.variants.length > 0 ? (
+                                <label className="sa-field">
+                                  <span className="sa-label">Gift variant (SKU)</span>
+                                  <select
+                                    className="sa-input"
+                                    value={seg.giftVariantId}
+                                    onChange={(e) => updateSegment(idx, 'giftVariantId', e.target.value)}
+                                  >
+                                    <option value="">Select variant…</option>
+                                    {selectedGiftProd.variants.map((v) => (
+                                      <option key={v.id} value={v.id}>
+                                        {v.label} ({v.sku})
+                                        {v.trackInventory ? ` — ${v.availableQty ?? 0} avail.` : ''}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <span className="sa-card-note">Exact variant awarded to the winner.</span>
+                                </label>
+                              ) : null}
+
+                              <label className="sa-field">
+                                <span className="sa-label">Minimum qualifying subtotal (₹, optional)</span>
+                                <input
+                                  className="sa-input"
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="₹0 (any order)"
+                                  value={seg.giftMinOrderRupees}
+                                  onChange={(e) => updateSegment(idx, 'giftMinOrderRupees', e.target.value)}
+                                />
+                                <span className="sa-card-note">Optional minimum cart subtotal to claim this prize gift (at least ₹1 paid checkout applies).</span>
+                              </label>
+
+                              <label className="sa-field">
+                                <span className="sa-label">Claim code valid for (days)</span>
+                                <input
+                                  className="sa-input"
+                                  type="number"
+                                  min={1}
+                                  max={365}
+                                  value={seg.giftValidDays}
+                                  onChange={(e) => updateSegment(idx, 'giftValidDays', e.target.value)}
+                                />
+                                <span className="sa-card-note">Days after winning before the free-gift claim code expires.</span>
+                              </label>
+                            </div>
+
+                            {isOut ? (
+                              <p className="sa-notice" role="status">
+                                This gift SKU is currently out of stock. Active spins landing on this slice redirect strictly to &ldquo;No prize&rdquo;.
+                              </p>
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </div>
                   ) : null}
                 </div>
               );
@@ -1199,7 +1455,7 @@ export function SpinWheelAdminConsole({
           </div>
         </dl>
 
-        <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+        <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', minWidth: 0 }}>
           <div className="sa-table-wrap">
             <table className="sa-table">
               <thead>
@@ -1215,8 +1471,8 @@ export function SpinWheelAdminConsole({
                 {data.reports.winsBySegment.map((row) => (
                   <tr key={row.id}>
                     <td>{row.label}</td>
-                    <td>{row.segmentType === 'COUPON' ? 'Coupon' : 'No prize'}</td>
-                    <td>{row.oddsPercent.toFixed(1)}%</td>
+                    <td>{row.segmentType === 'COUPON' ? 'Coupon' : row.segmentType === 'FREE_GIFT' ? 'Free gift' : 'No prize'}</td>
+                    <td>{row.oddsPercent.toFixed(2)}%</td>
                     <td>{row.dailyAwarded}{row.dailyCap ? ` / ${row.dailyCap}` : ''}</td>
                     <td>{row.totalAwarded}{row.totalCap ? ` / ${row.totalCap}` : ''}</td>
                   </tr>
@@ -1278,7 +1534,7 @@ export function SpinWheelAdminConsole({
                     <td>{row.createdAtWall}</td>
                     <td>{row.customerMasked}</td>
                     <td>{row.segmentLabel}</td>
-                    <td>{row.segmentType === 'COUPON' ? 'Coupon prize' : 'No prize'}</td>
+                    <td>{row.segmentType === 'COUPON' ? 'Coupon prize' : row.segmentType === 'FREE_GIFT' ? 'Free gift' : 'No prize'}</td>
                     <td>{row.couponCode ? <code>{row.couponCode}</code> : '—'}</td>
                     <td>{row.couponStatus ?? '—'}</td>
                   </tr>

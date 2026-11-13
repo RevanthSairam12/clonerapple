@@ -14,10 +14,41 @@ import { contrastTextForHex, sanitizeHexColor } from './colors';
 
 export { contrastTextForHex, sanitizeHexColor };
 
-export type SpinSegmentType = 'COUPON' | 'NO_PRIZE';
+export type SpinSegmentType = 'COUPON' | 'FREE_GIFT' | 'NO_PRIZE';
 export type SpinCouponType = 'PERCENT' | 'FIXED' | 'FREE_SHIPPING';
 export type SpinCouponScope = 'ORDER' | 'PRODUCTS' | 'CATEGORIES';
 export type SpinRewardCooldownMode = 'disabled' | 'until_coupon_expires' | 'custom_days';
+
+export const CHANCE_BASIS_POINTS_TOTAL = 10000;
+
+export function weightToChancePercent(weight: number): number {
+  if (!Number.isFinite(weight) || weight <= 0) return 0;
+  return Math.round(weight) / 100;
+}
+
+export function formatChancePercent(weight: number): string {
+  const pct = weightToChancePercent(weight);
+  return pct.toFixed(2);
+}
+
+export function chancePercentToWeight(
+  value: unknown,
+  label = 'Chance of getting (%)',
+): { ok: true; weight: number } | { ok: false; error: string } {
+  const raw = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+  if (!raw) {
+    return { ok: false, error: `${label} is required.` };
+  }
+  if (!/^\d{1,3}(?:\.\d{1,2})?$/.test(raw)) {
+    return { ok: false, error: `${label} must be a percentage between 0.01 and 100 (up to 2 decimals).` };
+  }
+  const num = Number(raw);
+  const bps = Math.round(num * 100);
+  if (!Number.isInteger(bps) || bps < 1 || bps > CHANCE_BASIS_POINTS_TOTAL) {
+    return { ok: false, error: `${label} must be between 0.01% and 100%.` };
+  }
+  return { ok: true, weight: bps };
+}
 
 export const REWARD_COOLDOWN_MODES: readonly SpinRewardCooldownMode[] = [
   'disabled',
@@ -66,6 +97,13 @@ export interface SpinWheelSegment {
   couponTargetIds: string[];
   couponValidDays: number;
   couponAllowWithSalePrice: boolean;
+  giftProductId?: string | null;
+  giftVariantId?: string | null;
+  giftProductName?: string | null;
+  giftMinOrderPaise?: number;
+  giftValidDays?: number;
+  /** Optional runtime flag set by server loader/tx when checking gift SKU stock. */
+  giftAvailable?: boolean;
 }
 
 export interface SpinWheelSegmentInput {
@@ -73,7 +111,9 @@ export interface SpinWheelSegmentInput {
   label: string;
   colorHex: string;
   segmentType: SpinSegmentType;
-  weight: number;
+  /** Basis points 1..10000 (100 = 1.00%), or supply chancePercent ('0.01'..'100'). */
+  weight?: number;
+  chancePercent?: string | number;
   dailyCap: number | null;
   totalCap: number | null;
   isActive: boolean;
@@ -87,6 +127,10 @@ export interface SpinWheelSegmentInput {
   couponTargetIds: string[];
   couponValidDays: number;
   couponAllowWithSalePrice: boolean;
+  giftProductId?: string | null;
+  giftVariantId?: string | null;
+  giftMinOrderRupees?: string | number | null;
+  giftValidDays?: number;
 }
 
 export interface ValidatedSpinSegment {
@@ -107,6 +151,10 @@ export interface ValidatedSpinSegment {
   couponTargetIds: string[];
   couponValidDays: number;
   couponAllowWithSalePrice: boolean;
+  giftProductId: string | null;
+  giftVariantId: string | null;
+  giftMinOrderPaise: number;
+  giftValidDays: number;
 }
 
 export interface ValidatedSpinConfig {
@@ -133,7 +181,7 @@ export interface ValidatedSpinConfig {
 }
 
 export interface SpinWheelWarning {
-  key: 'no_prize' | 'high_odds' | 'missing_terms' | 'cap_reached';
+  key: 'no_prize' | 'high_odds' | 'missing_terms' | 'cap_reached' | 'chance_total' | 'gift_no_prize_fallback' | 'gift_out_of_stock';
   message: string;
 }
 
@@ -145,6 +193,8 @@ export interface SpinWeightSnapshotItem {
 
 export interface SpinDrawResult<T extends SpinWheelSegment = SpinWheelSegment> {
   segment: T;
+  originalSegment: T;
+  redirectedToNoPrize: boolean;
   rollValue: number;
   totalWeight: number;
   weightsSnapshot: SpinWeightSnapshotItem[];
@@ -165,7 +215,7 @@ export const DEFAULT_SPIN_WHEEL_SETTINGS: SpinWheelSettings = {
   popupDelaySeconds: 10,
   popupRequireScroll: true,
   popupMobileFloatingButton: true,
-  rewardCooldownMode: 'until_coupon_expires',
+  rewardCooldownMode: 'disabled',
   rewardCooldownDays: 7,
   showNextSpinCountdown: true,
 };
@@ -258,52 +308,89 @@ export const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
 const LOCAL_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
 
-/** True when a segment is active and has remaining daily and total cap capacity. */
+/** True when a segment is active, has positive chance/weight, and has remaining cap/stock capacity. */
 export function segmentAvailableForDraw(
-  segment: Pick<SpinWheelSegment, 'isActive' | 'weight' | 'dailyCap' | 'dailyAwarded' | 'totalCap' | 'totalAwarded'>,
+  segment: Pick<SpinWheelSegment, 'isActive' | 'weight' | 'dailyCap' | 'dailyAwarded' | 'totalCap' | 'totalAwarded' | 'segmentType' | 'giftAvailable'>,
 ): boolean {
   if (!segment.isActive) return false;
   if (!Number.isInteger(segment.weight) || segment.weight < 1) return false;
   if (segment.dailyCap !== null && segment.dailyAwarded >= segment.dailyCap) return false;
   if (segment.totalCap !== null && segment.totalAwarded >= segment.totalCap) return false;
+  if (segment.segmentType === 'FREE_GIFT' && segment.giftAvailable === false) return false;
   return true;
 }
 
 /**
- * Cryptographically weighted segment draw.
+ * Cryptographically weighted segment draw using exact configured Chance (%).
  *
- * Exhausted or inactive segments are excluded before summing weights, so the
- * relative odds among remaining eligible segments remain exact.
+ * Strict probability protection:
+ * When an active uncapped `NO_PRIZE` fallback slice exists, we roll across ALL
+ * active slices using their configured probabilities. If the winning roll lands
+ * on a capped-out or out-of-stock prize slice, it redirects strictly to that
+ * `NO_PRIZE` slice rather than inflating other paid prizes' chances.
+ *
+ * Only when no active uncapped `NO_PRIZE` fallback exists do we fall back to
+ * pre-filtering available slices.
  */
 export function drawWeightedSegment<T extends SpinWheelSegment>(
   segments: readonly T[],
   rollFn: (totalWeight: number) => number = (totalWeight) => randomInt(0, totalWeight),
 ): SpinDrawResult<T> | null {
-  const eligible = segments.filter((seg) => segmentAvailableForDraw(seg));
-  if (eligible.length === 0) return null;
+  const active = segments.filter(
+    (seg) => seg.isActive && Number.isInteger(seg.weight) && seg.weight >= 1,
+  );
+  if (active.length === 0) return null;
 
-  const totalWeight = eligible.reduce((sum, seg) => sum + seg.weight, 0);
+  const fallbackNoPrize =
+    active.find(
+      (seg) =>
+        seg.segmentType === 'NO_PRIZE'
+        && seg.dailyCap === null
+        && seg.totalCap === null,
+    ) ?? null;
+
+  const pool = fallbackNoPrize
+    ? active
+    : active.filter((seg) => segmentAvailableForDraw(seg));
+  if (pool.length === 0) return null;
+
+  const totalWeight = pool.reduce((sum, seg) => sum + seg.weight, 0);
   if (!Number.isInteger(totalWeight) || totalWeight <= 0) return null;
 
   const rawRoll = Math.trunc(rollFn(totalWeight));
   const rollValue = Math.max(0, Math.min(totalWeight - 1, rawRoll));
 
-  const weightsSnapshot: SpinWeightSnapshotItem[] = eligible.map((seg) => ({
+  const weightsSnapshot: SpinWeightSnapshotItem[] = pool.map((seg) => ({
     id: seg.id,
     label: seg.label,
     weight: seg.weight,
   }));
 
+  let rolled = pool[pool.length - 1];
   let cumulative = 0;
-  for (const seg of eligible) {
+  for (const seg of pool) {
     cumulative += seg.weight;
     if (rollValue < cumulative) {
-      return { segment: seg, rollValue, totalWeight, weightsSnapshot };
+      rolled = seg;
+      break;
     }
   }
 
+  if (fallbackNoPrize && !segmentAvailableForDraw(rolled)) {
+    return {
+      segment: fallbackNoPrize,
+      originalSegment: rolled,
+      redirectedToNoPrize: true,
+      rollValue,
+      totalWeight,
+      weightsSnapshot,
+    };
+  }
+
   return {
-    segment: eligible[eligible.length - 1],
+    segment: rolled,
+    originalSegment: rolled,
+    redirectedToNoPrize: false,
     rollValue,
     totalWeight,
     weightsSnapshot,
@@ -332,10 +419,26 @@ export function computeSegmentOdds(
 export function formatPrizeSummary(
   segment: Pick<
     SpinWheelSegment,
-    'segmentType' | 'couponType' | 'couponValue' | 'couponMaxDiscountPaise' | 'couponMinOrderPaise' | 'couponValidDays'
+    | 'segmentType'
+    | 'couponType'
+    | 'couponValue'
+    | 'couponMaxDiscountPaise'
+    | 'couponMinOrderPaise'
+    | 'couponValidDays'
+    | 'giftProductName'
+    | 'giftMinOrderPaise'
+    | 'giftValidDays'
   >,
 ): string {
   if (segment.segmentType === 'NO_PRIZE') return 'No prize';
+  if (segment.segmentType === 'FREE_GIFT') {
+    const giftName = segment.giftProductName?.trim() || 'Free gift item';
+    const minPart =
+      segment.giftMinOrderPaise && segment.giftMinOrderPaise > 0
+        ? ` · min ${formatRupees(segment.giftMinOrderPaise)}`
+        : '';
+    return `Free gift: ${giftName}${minPart} · valid ${segment.giftValidDays ?? segment.couponValidDays ?? 7}d`;
+  }
   const base =
     segment.couponType === 'FREE_SHIPPING'
       ? 'Free shipping'
@@ -359,22 +462,53 @@ export function collectSpinWheelWarnings(
 ): SpinWheelWarning[] {
   const warnings: SpinWheelWarning[] = [];
   const active = segments.filter((s) => s.isActive);
-  const activePrizes = active.filter((s) => s.segmentType === 'COUPON');
+  const totalActiveWeight = active.reduce((sum, s) => sum + s.weight, 0);
+  const activePrizes = active.filter((s) => s.segmentType === 'COUPON' || s.segmentType === 'FREE_GIFT');
+
+  if (totalActiveWeight !== CHANCE_BASIS_POINTS_TOTAL) {
+    warnings.push({
+      key: 'chance_total',
+      message: `Active slice chances currently total ${formatChancePercent(totalActiveWeight)}% — adjust chances to equal 100.00% before saving.`,
+    });
+  }
+
   if (activePrizes.length === 0) {
     warnings.push({
       key: 'no_prize',
-      message: 'No active prize segment exists. Customers cannot win a coupon until at least one active prize segment is added.',
+      message: 'No active prize segment exists. Customers cannot win a reward until at least one active prize segment is added.',
     });
   } else {
-    const totalActiveWeight = active.reduce((sum, s) => sum + s.weight, 0);
     const prizeWeight = activePrizes.reduce((sum, s) => sum + s.weight, 0);
     if (totalActiveWeight > 0 && prizeWeight / totalActiveWeight >= 0.85) {
-      const pct = Math.round((prizeWeight / totalActiveWeight) * 100);
+      const pct = (Math.round((prizeWeight / totalActiveWeight) * 1000) / 10).toFixed(1);
       warnings.push({
         key: 'high_odds',
-        message: `Prize odds are ${pct}% (${prizeWeight} of ${totalActiveWeight} weight). Make sure prize budgets and caps are sustainable.`,
+        message: `Total win chance across active prize slices is ${pct}%. Make sure prize budgets and stock caps are sustainable.`,
       });
     }
+  }
+
+  const hasCappedOrGift = active.some(
+    (s) => s.dailyCap !== null || s.totalCap !== null || s.segmentType === 'FREE_GIFT',
+  );
+  const hasUncappedNoPrize = active.some(
+    (s) => s.segmentType === 'NO_PRIZE' && s.dailyCap === null && s.totalCap === null,
+  );
+  if (hasCappedOrGift && !hasUncappedNoPrize) {
+    warnings.push({
+      key: 'gift_no_prize_fallback',
+      message: 'Add at least one active uncapped "No prize" slice so capped or out-of-stock rolls redirect there without inflating other prize odds.',
+    });
+  }
+
+  const outOfStockGifts = active.filter(
+    (s) => s.segmentType === 'FREE_GIFT' && s.giftAvailable === false,
+  );
+  if (outOfStockGifts.length > 0) {
+    warnings.push({
+      key: 'gift_out_of_stock',
+      message: `${outOfStockGifts.length} active free-gift slice${outOfStockGifts.length === 1 ? ' is' : 's are'} currently out of stock and will land on "No prize".`,
+    });
   }
 
   if (!settings.termsText.trim()) {
@@ -392,7 +526,7 @@ export function collectSpinWheelWarnings(
   if (cappedOut.length > 0) {
     warnings.push({
       key: 'cap_reached',
-      message: `${cappedOut.length} active segment${cappedOut.length === 1 ? '' : 's'} ha${cappedOut.length === 1 ? 's' : 've'} reached a daily or total cap and will be skipped until reset or raised.`,
+      message: `${cappedOut.length} active segment${cappedOut.length === 1 ? '' : 's'} ha${cappedOut.length === 1 ? 's' : 've'} reached a daily or total cap and will land on "No prize" until reset or raised.`,
     });
   }
 
@@ -602,7 +736,7 @@ export function validateSpinWheelConfigInput(
   ) {
     return { ok: false, error: 'Choose a valid reward cooldown mode.' };
   }
-  const rewardCooldownMode: SpinRewardCooldownMode = rawCooldownMode ?? 'until_coupon_expires';
+  const rewardCooldownMode: SpinRewardCooldownMode = rawCooldownMode ?? 'disabled';
 
   const rewardCooldownDays = parseRequiredInt(
     settingsRaw.rewardCooldownDays ?? 7,
@@ -654,15 +788,26 @@ export function validateSpinWheelConfigInput(
       };
     }
 
-    const segmentType = seg.segmentType === 'COUPON' || seg.segmentType === 'NO_PRIZE'
-      ? seg.segmentType
-      : null;
+    const segmentType =
+      seg.segmentType === 'COUPON'
+      || seg.segmentType === 'FREE_GIFT'
+      || seg.segmentType === 'NO_PRIZE'
+        ? seg.segmentType
+        : null;
     if (!segmentType) {
-      return { ok: false, error: `Segment "${label}": choose Coupon prize or No prize.` };
+      return { ok: false, error: `Segment "${label}": choose Coupon prize, Free gift item, or No prize.` };
     }
 
-    const weight = parseRequiredInt(seg.weight, 1, 10000, `Segment "${label}" weight`);
-    if (!weight.ok) return weight;
+    let resolvedWeight: number;
+    if (seg.chancePercent !== undefined && seg.chancePercent !== null && String(seg.chancePercent).trim() !== '') {
+      const chanceParsed = chancePercentToWeight(seg.chancePercent, `Segment "${label}" chance (%)`);
+      if (!chanceParsed.ok) return chanceParsed;
+      resolvedWeight = chanceParsed.weight;
+    } else {
+      const weight = parseRequiredInt(seg.weight, 1, CHANCE_BASIS_POINTS_TOTAL, `Segment "${label}" chance basis points`);
+      if (!weight.ok) return weight;
+      resolvedWeight = weight.value;
+    }
 
     const dailyCap = parseOptionalInt(seg.dailyCap, 1, 1_000_000, `Segment "${label}" daily cap`);
     if (!dailyCap.ok) return dailyCap;
@@ -679,7 +824,7 @@ export function validateSpinWheelConfigInput(
         label,
         colorHex,
         segmentType: 'NO_PRIZE',
-        weight: weight.value,
+        weight: resolvedWeight,
         dailyCap: dailyCap.value,
         totalCap: totalCap.value,
         isActive,
@@ -692,6 +837,60 @@ export function validateSpinWheelConfigInput(
         couponTargetIds: [],
         couponValidDays: 7,
         couponAllowWithSalePrice: false,
+        giftProductId: null,
+        giftVariantId: null,
+        giftMinOrderPaise: 0,
+        giftValidDays: 7,
+      });
+      continue;
+    }
+
+    if (segmentType === 'FREE_GIFT') {
+      const giftProductId = typeof seg.giftProductId === 'string' ? seg.giftProductId.trim() : '';
+      if (!giftProductId || !/^[a-zA-Z0-9_-]{1,128}$/.test(giftProductId)) {
+        return {
+          ok: false,
+          error: `Segment "${label}": select a valid catalog gift item.`,
+        };
+      }
+      const giftVariantId =
+        typeof seg.giftVariantId === 'string' && seg.giftVariantId.trim()
+          ? seg.giftVariantId.trim()
+          : null;
+      const giftMinParsed = parseRupeesToPaise(seg.giftMinOrderRupees as string | number | null | undefined);
+      if (!giftMinParsed.ok) {
+        return { ok: false, error: `Segment "${label}" minimum order: ${giftMinParsed.message}` };
+      }
+      const giftValidDays = parseRequiredInt(
+        seg.giftValidDays ?? seg.couponValidDays ?? 7,
+        1,
+        365,
+        `Segment "${label}" claim validity (days)`,
+      );
+      if (!giftValidDays.ok) return giftValidDays;
+
+      validatedSegments.push({
+        id: rawId,
+        label,
+        colorHex,
+        segmentType: 'FREE_GIFT',
+        weight: resolvedWeight,
+        dailyCap: dailyCap.value,
+        totalCap: totalCap.value,
+        isActive,
+        sortOrder,
+        couponType: null,
+        couponValue: 0,
+        couponMaxDiscountPaise: null,
+        couponMinOrderPaise: giftMinParsed.paise ?? 0,
+        couponScope: 'ORDER',
+        couponTargetIds: [],
+        couponValidDays: giftValidDays.value,
+        couponAllowWithSalePrice: Boolean(seg.couponAllowWithSalePrice),
+        giftProductId,
+        giftVariantId,
+        giftMinOrderPaise: giftMinParsed.paise ?? 0,
+        giftValidDays: giftValidDays.value,
       });
       continue;
     }
@@ -763,7 +962,7 @@ export function validateSpinWheelConfigInput(
       label,
       colorHex,
       segmentType: 'COUPON',
-      weight: weight.value,
+      weight: resolvedWeight,
       dailyCap: dailyCap.value,
       totalCap: totalCap.value,
       isActive,
@@ -776,7 +975,40 @@ export function validateSpinWheelConfigInput(
       couponTargetIds: couponScope === 'ORDER' ? [] : couponTargetIds,
       couponValidDays: validDays.value,
       couponAllowWithSalePrice: Boolean(seg.couponAllowWithSalePrice),
+      giftProductId: null,
+      giftVariantId: null,
+      giftMinOrderPaise: 0,
+      giftValidDays: 7,
     });
+  }
+
+  const activeSegments = validatedSegments.filter((seg) => seg.isActive);
+  if (activeSegments.length < MIN_SEGMENTS) {
+    return {
+      ok: false,
+      error: `Keep at least ${MIN_SEGMENTS} active segments on the wheel.`,
+    };
+  }
+
+  const totalChanceBps = activeSegments.reduce((sum, seg) => sum + seg.weight, 0);
+  if (totalChanceBps !== CHANCE_BASIS_POINTS_TOTAL) {
+    return {
+      ok: false,
+      error: `Active slice chances must total 100.00% (currently ${formatChancePercent(totalChanceBps)}%).`,
+    };
+  }
+
+  const hasCappedOrGiftSlice = activeSegments.some(
+    (seg) => seg.dailyCap !== null || seg.totalCap !== null || seg.segmentType === 'FREE_GIFT',
+  );
+  const hasUncappedNoPrize = activeSegments.some(
+    (seg) => seg.segmentType === 'NO_PRIZE' && seg.dailyCap === null && seg.totalCap === null,
+  );
+  if (hasCappedOrGiftSlice && !hasUncappedNoPrize) {
+    return {
+      ok: false,
+      error: 'Include at least one active uncapped "No prize" slice so capped or out-of-stock rolls redirect there without inflating other prize chances.',
+    };
   }
 
   // Enabling gate (Phase 3C): blocked until terms text exists and at least one prize segment is active.
@@ -787,13 +1019,13 @@ export function validateSpinWheelConfigInput(
         error: 'Add Terms & conditions text before enabling the Spin and Win wheel.',
       };
     }
-    const hasActivePrize = validatedSegments.some(
-      (seg) => seg.isActive && seg.segmentType === 'COUPON',
+    const hasActivePrize = activeSegments.some(
+      (seg) => seg.segmentType === 'COUPON' || seg.segmentType === 'FREE_GIFT',
     );
     if (!hasActivePrize) {
       return {
         ok: false,
-        error: 'At least one active coupon prize segment is required before enabling the wheel.',
+        error: 'At least one active coupon or free gift segment is required before enabling the wheel.',
       };
     }
   }

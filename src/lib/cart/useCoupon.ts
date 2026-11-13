@@ -2,8 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createQuoteGeneration, validTotals, type QuoteTotals } from '@/lib/checkout/client-quote';
+import type { CouponFreeGiftPreview } from '@/lib/free-gifts/rules';
 
 const STORAGE_KEY = 'gadzio_coupon_v1';
+
+export function saveCouponCodeForCheckout(code: string): void {
+  const clean = code.trim().toUpperCase();
+  if (!clean) return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, clean);
+  } catch {
+    /* Storage may be blocked. */
+  }
+}
 
 export interface CouponCartLine {
   variantId?: string;
@@ -12,7 +23,11 @@ export interface CouponCartLine {
   quantity: number;
   unitPaise: number;
 }
-export interface AppliedCoupon extends QuoteTotals { code: string }
+export interface AppliedCoupon extends QuoteTotals {
+  code: string;
+  freeGift?: CouponFreeGiftPreview | null;
+  blockedByFreeGiftMessage?: string | null;
+}
 interface Args {
   items: CouponCartLine[];
   subtotalPaise: number;
@@ -88,8 +103,21 @@ export function useCoupon({ items, subtotalPaise, shippingPaise, policySignature
         setIsError(true);
         return null;
       }
-      const next: AppliedCoupon = { code, subtotalPaise: data.subtotalPaise, discountPaise: data.discountPaise,
-        shippingPaise: data.shippingPaise, totalPaise: data.totalPaise };
+      const rawObj = (data && typeof data === 'object' ? data : null) as Record<string, unknown> | null;
+      const rawGift = (rawObj?.freeGift ?? null) as CouponFreeGiftPreview | null;
+      const blockedByFreeGiftMessage =
+        typeof rawObj?.blockedByFreeGiftMessage === 'string'
+          ? rawObj.blockedByFreeGiftMessage
+          : null;
+      const next: AppliedCoupon = {
+        code,
+        subtotalPaise: data.subtotalPaise,
+        discountPaise: data.discountPaise,
+        shippingPaise: data.shippingPaise,
+        totalPaise: data.totalPaise,
+        freeGift: rawGift,
+        blockedByFreeGiftMessage,
+      };
       setResult({ value: next, ticket });
       setAppliedCode(code);
       lastValidated.current = ticket.signature;

@@ -15,6 +15,8 @@ import { useAvailability } from '@/lib/storefront/use-availability';
 import { verifySelections, priceNeedsReview } from '@/lib/storefront/selection';
 import { usePurchaseAction } from '@/lib/storefront/use-purchase-action';
 import { OptionSelector } from '@/components/shop/OptionSelector';
+import { ProductPageFreeGiftStrip } from '@/components/cart/FreeGiftCartWidgets';
+import type { ProductPageGiftPromo } from '@/lib/free-gifts/rules';
 import {
   formatOptionPaise,
   galleryForSelection,
@@ -37,10 +39,11 @@ interface Props {
   /** The shared model/colour selection, restored from the URL by the server. */
   initialModel?: string | null;
   initialColour?: string | null;
+  giftPromos?: ProductPageGiftPromo[];
 }
 
 export function ProductDetailPage({ product: sourceProduct, saleLive = false, inStock = true,
-  initialModel = null, initialColour = null }: Props) {
+  initialModel = null, initialColour = null, giftPromos = [] }: Props) {
   const router = useRouter();
   const { addItem, items: bagItems } = useCart();
   const variants = sourceProduct.purchasableVariants ?? [];
@@ -555,6 +558,8 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
                 </button>
               </div>
             </div>
+
+            <ProductPageFreeGiftStrip promos={giftPromos} />
 
             {/* 5. Add to Bag Button */}
             <button

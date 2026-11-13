@@ -60,6 +60,9 @@ export interface CustomerStatusItem {
   quantity: number;
   unitPricePaise: number;
   lineTotalPaise: number;
+  referencePricePaise?: number | null;
+  isFreeGift?: boolean;
+  freeGiftBadge?: string | null;
   deviceModelName: string | null;
   colourName: string | null;
   colourHex: string | null;
@@ -152,6 +155,9 @@ export async function getCustomerOrderStatus(
       // through jsonb keeps this query valid either way and yields nulls.
       sql`
         select product_name, quantity, unit_price_paise, line_total_paise,
+               to_jsonb(order_items)->>'reference_price_paise' as reference_price_paise,
+               to_jsonb(order_items)->>'is_free_gift' as is_free_gift,
+               to_jsonb(order_items)->>'free_gift_badge' as free_gift_badge,
                to_jsonb(order_items)->>'variant_device_model_name' as device_model_name,
                to_jsonb(order_items)->>'variant_colour_name' as colour_name,
                to_jsonb(order_items)->>'variant_colour_hex' as colour_hex,
@@ -197,11 +203,20 @@ export async function getCustomerOrderStatus(
       if (!name) return [];
       const quantity = Math.max(0, Math.round(Number(row.quantity) || 0));
       const unitPricePaise = Math.max(0, Math.round(Number(row.unit_price_paise) || 0));
+      const rawRefPrice = row.reference_price_paise;
+      const parsedRefPrice =
+        rawRefPrice !== null && rawRefPrice !== undefined && String(rawRefPrice).trim() !== ''
+          ? Math.max(0, Math.round(Number(rawRefPrice) || 0))
+          : null;
+      const isFreeGift = row.is_free_gift === true || row.is_free_gift === 'true';
       return [{
         name,
         quantity,
         unitPricePaise,
-        lineTotalPaise: Math.max(0, Math.round(Number(row.line_total_paise) || unitPricePaise * quantity)),
+        lineTotalPaise: isFreeGift ? 0 : Math.max(0, Math.round(Number(row.line_total_paise) || unitPricePaise * quantity)),
+        referencePricePaise: parsedRefPrice,
+        isFreeGift,
+        freeGiftBadge: nullableText(row.free_gift_badge),
         deviceModelName: nullableText(row.device_model_name),
         colourName: nullableText(row.colour_name),
         colourHex: nullableText(row.colour_hex),

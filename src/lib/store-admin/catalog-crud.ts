@@ -656,13 +656,13 @@ export async function createProduct(
         insert into products (
           id, category_id, slug, name, subtitle, price_paise, compare_at_paise,
           currency, material, brand, brand_id, condition_id, description, badge,
-          seo_title, seo_description, in_stock, is_active, updated_by
+          seo_title, seo_description, in_stock, is_active, is_gift_only, updated_by
         ) values (
           ${input.id}, ${input.categoryId}, ${input.slug}, ${input.name},
           ${input.subtitle}, ${input.pricePaise}, ${input.compareAtPaise}, 'INR',
           ${input.material}, ${input.brand}, ${input.brandId}, ${input.conditionId},
           ${input.description}, ${input.badge || null}, ${input.seoTitle},
-          ${input.seoDescription}, ${inStock}, ${input.isActive}, ${staffId}
+          ${input.seoDescription}, ${inStock}, ${input.isActive}, ${input.isGiftOnly}, ${staffId}
         )
         returning id, slug, name, price_paise
       `) as Row[];

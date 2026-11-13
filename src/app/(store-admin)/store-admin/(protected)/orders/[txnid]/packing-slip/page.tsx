@@ -170,7 +170,7 @@ export default async function OrderPackingSlipPage({ params }: Props) {
             {order.items.map((item) => (
               <tr key={item.lineNumber}>
                 <td className="sa-doc-col-num">{item.lineNumber}</td>
-                <td>{item.productName}{item.variantLabel && <span className="sa-row-sub">{item.variantLabel}</span>}</td>
+                <td>{item.productName}{item.isFreeGift && <span className="sa-badge sa-badge-ok ml-2">{item.freeGiftBadge || 'FREE GIFT'}</span>}{item.variantLabel && <span className="sa-row-sub">{item.variantLabel}</span>}</td>
                 <td className="sa-mono">{item.variantSku || item.productId || '—'}</td>
                 <td className="sa-num sa-doc-qty">{item.quantity}</td>
                 <td className="sa-doc-col-check"><span className="sa-doc-check" aria-hidden="true" /></td>

@@ -52,6 +52,10 @@ export interface AccountOrderItem {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  referencePricePaise?: number | null;
+  isFreeGift?: boolean;
+  freeGiftBadge?: string | null;
+  freeGiftSource?: 'threshold' | 'spin_wheel' | null;
   image: string | null;
 }
 
@@ -133,7 +137,11 @@ type ItemRow = {
   variant_label: string | null;
   quantity: number;
   unit_price_paise: string | number;
+  reference_price_paise?: string | number | null;
   line_total_paise: string | number;
+  is_free_gift?: boolean;
+  free_gift_badge?: string | null;
+  free_gift_source?: string | null;
   /** 0061 snapshots; null on orders placed before the columns existed. */
   variant_device_model_name: string | null;
   variant_colour_name: string | null;
@@ -182,6 +190,16 @@ function mapItems(rows: ItemRow[], snapshot: unknown): AccountOrderItem[] {
         quantity: Number(row.quantity),
         unitPrice: Number(row.unit_price_paise) / 100,
         totalPrice: Number(row.line_total_paise) / 100,
+        referencePricePaise:
+          row.reference_price_paise == null ? null : Number(row.reference_price_paise),
+        isFreeGift: Boolean(row.is_free_gift),
+        freeGiftBadge: row.free_gift_badge ? String(row.free_gift_badge) : null,
+        freeGiftSource:
+          row.free_gift_source === 'spin_wheel'
+            ? ('spin_wheel' as const)
+            : row.free_gift_source === 'threshold'
+              ? ('threshold' as const)
+              : null,
         imageUrl: row.image_url,
       }))
     : parseItems(snapshot);
@@ -395,6 +413,10 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
 
   const itemRows = await sql<ItemRow[]>`
     select product_id, product_name, variant_id, variant_sku, variant_label, quantity, unit_price_paise, line_total_paise,
+           (to_jsonb(order_items)->>'reference_price_paise')::bigint as reference_price_paise,
+           coalesce((to_jsonb(order_items)->>'is_free_gift')::boolean, false) as is_free_gift,
+           to_jsonb(order_items)->>'free_gift_badge' as free_gift_badge,
+           to_jsonb(order_items)->>'free_gift_source' as free_gift_source,
            to_jsonb(order_items)->>'variant_device_model_name' as variant_device_model_name,
            to_jsonb(order_items)->>'variant_colour_name' as variant_colour_name,
            to_jsonb(order_items)->>'variant_colour_hex' as variant_colour_hex,
@@ -553,6 +575,7 @@ export async function listBuyAgainProducts(userId: string): Promise<BuyAgainItem
     where o.user_id = ${userId}
       and o.status = 'PAID'
       and oi.product_id <> ''
+      and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
     group by oi.product_id
     order by max(o.created_at) desc
     limit 40
@@ -586,6 +609,7 @@ export async function getBuyAgainProduct(
     where o.user_id = ${userId}
       and o.status = 'PAID'
       and oi.product_id = ${productId}
+      and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
     limit 1
   `;
   if (!rows[0]) return null;

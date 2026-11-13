@@ -539,6 +539,7 @@ export async function loadCatalogUsing(
       join categories c on c.id = p.category_id
       where p.deleted_at is null
         and p.is_active
+        and coalesce(p.is_gift_only, false) = false
         and c.deleted_at is null
         and c.is_active
       order by p.sort_order asc, p.name asc
@@ -560,7 +561,7 @@ export async function loadCatalogUsing(
       join attributes a on a.id = m.attribute_id and a.is_active and a.deleted_at is null
       join product_attribute_values v on v.product_id = p.id
         and v.attribute_id = a.id and v.archived_at is null
-      where p.deleted_at is null and p.is_active and lower(a.key) <> 'model'
+      where p.deleted_at is null and p.is_active and coalesce(p.is_gift_only, false) = false and lower(a.key) <> 'model'
       order by m.sort_order asc, a.key asc
     `,
     sql`

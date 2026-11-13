@@ -29,6 +29,41 @@ export function normalizeSubtotalPaise(value: unknown): number {
   return Math.trunc(parsed);
 }
 
+export interface EligibleSubtotalLine {
+  linePaise?: number | null;
+  unitPaise?: number | null;
+  quantity?: number | null;
+  isFreeGift?: boolean | null;
+}
+
+/**
+ * Shared eligible subtotal helper used identically by free-shipping thresholds
+ * and Free Gift spend thresholds: sale-priced item subtotal BEFORE coupons,
+ * excluding free gifts, shipping, and taxes.
+ */
+export function computeEligibleSubtotalPaise(
+  lines: readonly EligibleSubtotalLine[],
+): number {
+  let sum = 0;
+  for (const line of lines) {
+    if (line.isFreeGift) continue;
+    const lineTotal =
+      line.linePaise !== undefined && line.linePaise !== null
+        ? normalizeSubtotalPaise(line.linePaise)
+        : normalizeSubtotalPaise(line.unitPaise) * Math.max(0, Math.trunc(Number(line.quantity) || 0));
+    sum += lineTotal;
+  }
+  return sum;
+}
+
+export function quoteShippingFromLines(
+  lines: readonly EligibleSubtotalLine[],
+  policy: ShippingPolicy,
+  validatedFreeShippingCoupon = false,
+): ShippingQuote {
+  return quoteShipping(computeEligibleSubtotalPaise(lines), policy, validatedFreeShippingCoupon);
+}
+
 export function quoteShipping(
   subtotalPaiseInput: unknown,
   policy: ShippingPolicy,

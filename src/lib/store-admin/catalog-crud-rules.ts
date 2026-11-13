@@ -225,6 +225,7 @@ export interface NewProductInput extends MetadataInput {
   seoTitle: string;
   seoDescription: string;
   isActive: boolean;
+  isGiftOnly: boolean;
   trackInventory: boolean;
   initialOnHand: number;
   /** Which options table the editor shows. Never rewrites saved rows. */
@@ -288,6 +289,7 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
   try { metadata = parseMetadataInput(body); }
   catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Invalid product metadata.' }; }
   if (body.isActive !== undefined && typeof body.isActive !== 'boolean') return {ok:false,error:'Visibility must be true or false.'};
+  if (body.isGiftOnly !== undefined && typeof body.isGiftOnly !== 'boolean') return {ok:false,error:'Gift-only flag must be true or false.'};
   if (body.sellBy !== undefined && !isSellBy(body.sellBy)) return {ok:false,error:'Choose how this product is sold.'};
   const skuPattern = optionalText(body.skuPattern, 120, 'The SKU pattern');
   if (!skuPattern.ok) return skuPattern;
@@ -311,6 +313,7 @@ export function validateNewProductInput(input: unknown): FieldResult<NewProductI
       seoTitle: seoTitle.value,
       seoDescription: seoDescription.value,
       isActive: body.isActive === undefined ? false : body.isActive,
+      isGiftOnly: body.isGiftOnly === true,
       ...metadata,
       trackInventory: body.trackInventory === true,
       initialOnHand: initialOnHand.value,

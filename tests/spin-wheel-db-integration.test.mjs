@@ -126,15 +126,25 @@ before(async () => {
     'store_settings',
     'users',
     'stock',
+    'stock_movements',
     'orders',
     'order_items',
     'order_addresses',
     'order_status_history',
+    'colours',
+    'device_brands',
+    'device_models',
     'products',
+    'product_images',
+    'product_device_models',
+    'product_variants',
+    'product_variant_colours',
     'categories',
     'coupons',
     'coupon_targets',
     'coupon_redemptions',
+    'free_gift_rules',
+    'free_gift_redemptions',
     'spin_wheel_settings',
     'spin_wheel_segments',
     'spin_wheel_segment_daily_counts',
@@ -175,6 +185,8 @@ beforeEach(async () => {
       spin_wheel_segment_daily_counts,
       spin_wheel_segments,
       spin_wheel_settings,
+      free_gift_redemptions,
+      free_gift_rules,
       coupon_redemptions,
       coupon_targets,
       coupons,
@@ -182,8 +194,16 @@ beforeEach(async () => {
       order_addresses,
       order_items,
       orders,
+      stock_movements,
       stock,
+      product_variant_colours,
+      product_variants,
+      product_device_models,
+      product_images,
       products,
+      device_models,
+      device_brands,
+      colours,
       categories,
       users,
       store_settings
@@ -240,13 +260,13 @@ beforeEach(async () => {
       coupon_scope, coupon_target_ids, coupon_valid_days, coupon_allow_with_sale_price
     ) values
       (
-        'seg_prize', '15% off', '#ffe100', 'COUPON', 50, null, null,
+        'seg_prize', '15% off', '#ffe100', 'COUPON', 5000, null, null,
         true, 0, 'PERCENT', 15,
         30000, 50000,
         'ORDER', '{}', 7, false
       ),
       (
-        'seg_nope', 'Try tomorrow', '#111111', 'NO_PRIZE', 50, null, null,
+        'seg_nope', 'Try tomorrow', '#111111', 'NO_PRIZE', 5000, null, null,
         true, 1, null, 0,
         null, 0,
         'ORDER', '{}', 7, false
@@ -384,7 +404,7 @@ test('NO_PRIZE spin records the daily spin without creating coupons or notificat
   const res = await executeSpinDrawUsing(
     sql,
     { userId: 'usr_a', ipHash: 'ip_a', termsAccepted: true },
-    { nowOverride: new Date('2026-11-13T11:00:00.000Z'), rollFn: () => 60 }, // lands on seg_nope
+    { nowOverride: new Date('2026-11-13T11:00:00.000Z'), rollFn: (total) => total - 1 }, // lands on seg_nope
   );
 
   assert.equal(res.ok, true);
@@ -499,7 +519,7 @@ test('editing wheel config does not affect already-won coupons, test spin writes
           label: '5% off',
           colorHex: '#e0f2fe',
           segmentType: 'COUPON',
-          weight: 25,
+          weight: 2500,
           dailyCap: null,
           totalCap: null,
           isActive: true,
@@ -518,7 +538,7 @@ test('editing wheel config does not affect already-won coupons, test spin writes
           label: 'Better luck tomorrow',
           colorHex: '#111111',
           segmentType: 'NO_PRIZE',
-          weight: 75,
+          weight: 7500,
           dailyCap: null,
           totalCap: null,
           isActive: true,
@@ -722,7 +742,7 @@ test('reward cooldown blocks coupon winners until expiry or custom days while al
   const noPrize = await executeSpinDrawUsing(
     sql,
     { userId: 'usr_b', ipHash: 'ip_cd_2', termsAccepted: true },
-    { nowOverride: day1, rollFn: () => 99 },
+    { nowOverride: day1, rollFn: (total) => total - 1 },
   );
   assert.equal(noPrize.ok, true);
   assert.equal(noPrize.spin.segmentType, 'NO_PRIZE');
@@ -758,7 +778,7 @@ test('reward cooldown blocks coupon winners until expiry or custom days while al
   const day9Draw = await executeSpinDrawUsing(
     sql,
     { userId: 'usr_a', ipHash: 'ip_cd_1c', termsAccepted: true },
-    { nowOverride: day9, rollFn: () => 99 },
+    { nowOverride: day9, rollFn: (total) => total - 1 },
   );
   assert.equal(day9Draw.ok, true);
 
@@ -781,7 +801,7 @@ test('reward cooldown blocks coupon winners until expiry or custom days while al
   const day5CustomOpen = await executeSpinDrawUsing(
     sql,
     { userId: 'usr_b', ipHash: 'ip_cd_2d', termsAccepted: true },
-    { nowOverride: new Date('2026-11-17T08:01:00.000Z'), rollFn: () => 99 },
+    { nowOverride: new Date('2026-11-17T08:01:00.000Z'), rollFn: (total) => total - 1 },
   );
   assert.equal(day5CustomOpen.ok, true);
 });
@@ -936,4 +956,101 @@ test('executeSpinDrawUsing enforces botCheck hook and getHomeSpinSurfaceUsing ru
   assert.equal(queryCount, 0);
   assert.equal(cachedGuestSurface.banner.show, true);
   assert.equal(cachedGuestSurface.spinState.signedIn, false);
+});
+
+test('Spin FREE_GIFT win issues personal single-use coupon, attaches ₹0 gift on checkout, and redirects OOS rolls strictly to NO_PRIZE', { skip }, async () => {
+  await sql`
+    insert into products (id, category_id, slug, name, price_paise, in_stock, is_active, is_gift_only)
+    values ('gift_pouch', 'cat_1', 'gift-pouch', 'Gift Travel Pouch', 49900, true, true, true)
+  `;
+  await sql`
+    insert into stock (id, product_id, variant_id, on_hand, reserved, low_stock_threshold, track_inventory)
+    values ('stk_gift_pouch', 'gift_pouch', null, 1, 0, 0, true)
+  `;
+
+  await sql`
+    update spin_wheel_segments
+    set segment_type = 'FREE_GIFT',
+        label = 'Free Pouch',
+        weight = 5000,
+        gift_product_id = 'gift_pouch',
+        gift_variant_id = null,
+        gift_min_order_paise = 50000,
+        gift_valid_days = 7,
+        coupon_type = null
+    where id = 'seg_prize'
+  `;
+  invalidateSpinWheelCache(sql);
+
+  const win = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_a', ipHash: 'ip_fg_1', termsAccepted: true },
+    { nowOverride: new Date('2026-11-13T09:00:00.000Z'), rollFn: () => 0 },
+  );
+  assert.equal(win.ok, true);
+  assert.equal(win.spin.segmentType, 'FREE_GIFT');
+  assert.equal(win.spin.giftProductId, 'gift_pouch');
+  assert.equal(win.spin.giftProductName, 'Gift Travel Pouch');
+  assert.ok(win.spin.couponCode?.startsWith('SPIN-'));
+
+  // Winner sees the FREE_GIFT coupon in customer coupons
+  const winnerCoupons = await listCustomerCouponsUsing(sql, 'usr_a', async () => ({
+    ok: true,
+    settings: { coupons_enabled: 'on' },
+  }));
+  const giftCoupon = winnerCoupons.find((c) => c.code === win.spin.couponCode);
+  assert.ok(giftCoupon);
+  assert.equal(giftCoupon.type, 'FREE_GIFT');
+  assert.equal(giftCoupon.giftProductId, 'gift_pouch');
+
+  // Checkout claims the single remaining gift unit at ₹0 while charging paid case price
+  const txnid = `SPFG${randomBytes(5).toString('hex').toUpperCase()}`;
+  const created = await createOrderUsing(sql, {
+    txnid,
+    userId: 'usr_a',
+    items: [
+      { id: 'prod_1', name: 'Leather Case', quantity: 1, unitPrice: 999, totalPrice: 999 },
+    ],
+    subtotalPaise: 99900,
+    shippingPaise: 0,
+    totalPaise: 99900,
+    currency: 'INR',
+    paymentMethod: 'payu',
+    customerName: 'Winner One',
+    customerEmail: 'winner.one@example.com',
+    customerPhone: '9000000000',
+    shippingAddress: {
+      name: 'Winner One',
+      phone: '9000000000',
+      line1: '1 Test Lane',
+      line2: '',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pincode: '560001',
+    },
+    reservationSeconds: 0,
+    coupon: { code: win.spin.couponCode },
+  });
+
+  assert.equal(created.order.totalPaise, 99900);
+  const giftItems = await sql`
+    select * from order_items where order_id = ${created.order.id} and is_free_gift = true
+  `;
+  assert.equal(giftItems.length, 1);
+  assert.equal(giftItems[0].product_id, 'gift_pouch');
+  assert.equal(Number(giftItems[0].unit_price_paise), 0);
+  assert.equal(giftItems[0].free_gift_source, 'spin_wheel');
+
+  // Checkout claimed the single remaining unit (`on_hand` dropped 1 -> 0) -> next customer's roll into FREE_GIFT redirects strictly to uncapped NO_PRIZE
+  const [stkRow] = await sql`select on_hand, reserved from stock where product_id = 'gift_pouch'`;
+  assert.equal(Number(stkRow.on_hand), 0);
+
+  const secondSpin = await executeSpinDrawUsing(
+    sql,
+    { userId: 'usr_b', ipHash: 'ip_fg_2', termsAccepted: true },
+    { nowOverride: new Date('2026-11-13T09:05:00.000Z'), rollFn: () => 0 },
+  );
+  assert.equal(secondSpin.ok, true);
+  assert.equal(secondSpin.spin.segmentType, 'NO_PRIZE');
+  assert.equal(secondSpin.spin.couponCode, null);
 });

@@ -17,6 +17,7 @@ import {
 } from '@/lib/payu/orders';
 import { verifyExistingOrderWithPayU } from '@/lib/payu/process-response';
 import { InsufficientStockError } from '@/lib/payu/stock';
+import { GiftUnavailableError, recordGiftUnavailableAttempt } from '@/lib/free-gifts/store';
 import { isValidCheckoutVariantId, MAX_CHECKOUT_LINES, SelectionUnavailableError } from '@/lib/payu/db-pricing';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
@@ -346,9 +347,26 @@ export async function POST(req: NextRequest) {
         paymentMethod: 'payu',
         shippingAddress,
         reservationSeconds: reservationPolicy.reservationSeconds,
+        confirmWithoutGift: body.confirmWithoutGift === true,
         checkoutConfiguration,
       });
     } catch (error: unknown) {
+      if (error instanceof GiftUnavailableError) {
+        if (error.reason === 'out_of_stock' || error.reason === 'cap_reached') {
+          await recordGiftUnavailableAttempt(error.ruleId);
+        }
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'GIFT_UNAVAILABLE',
+            error: error.message,
+            giftName: error.giftName,
+            reason: error.reason,
+            canContinueWithoutGift: true,
+          },
+          { status: 409 },
+        );
+      }
       if (error instanceof SelectionUnavailableError) {
         return NextResponse.json(
           { success: false, code: 'selection_unavailable', error: error.message, selection: error.selection },

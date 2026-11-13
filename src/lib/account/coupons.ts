@@ -27,6 +27,9 @@ type CouponRow = {
   code: string;
   type: CouponType;
   value: number;
+  gift_product_id: string | null;
+  gift_variant_id: string | null;
+  gift_product_name: string | null;
   scope: CouponScope;
   status: CouponStatus;
   starts_at: Date | string | null;
@@ -80,6 +83,9 @@ export async function listCustomerCouponsUsing(
         total_redemption_limit, per_customer_limit, min_order_paise,
         only_new_customers, allowed_customer_groups, restricted_to_emails,
         show_to_all_users, assigned_to_emails, assigned_customer_groups,
+        (to_jsonb(coupons)->>'gift_product_id') as gift_product_id,
+        (to_jsonb(coupons)->>'gift_variant_id') as gift_variant_id,
+        null::text as gift_product_name,
         (to_jsonb(coupons)->>'source') as source, created_at
       from coupons
       where status = 'active'
@@ -106,13 +112,39 @@ export async function listCustomerCouponsUsing(
     order by c.created_at desc, c.id
   `;
 
+  const giftProductIds = [
+    ...new Set(
+      rows
+        .map((r) => (typeof r.gift_product_id === 'string' ? r.gift_product_id : ''))
+        .filter(Boolean),
+    ),
+  ];
+  const giftNameById = new Map<string, string>();
+  if (giftProductIds.length > 0) {
+    const [reg] = await sql<Array<{ tbl: string | null }>>`select to_regclass('products')::text as tbl`;
+    if (reg?.tbl) {
+      const gpRows = await sql<Array<{ id: string; name: string }>>`
+        select id, name from products where id = any(${giftProductIds}::text[])
+      `;
+      for (const gp of gpRows) {
+        if (gp.id && gp.name) giftNameById.set(String(gp.id), String(gp.name));
+      }
+    }
+  }
+
   const result: CustomerCouponView[] = [];
   for (const row of rows) {
+    const giftName =
+      row.gift_product_name
+      ?? (row.gift_product_id ? (giftNameById.get(row.gift_product_id) ?? null) : null);
     const coupon: DiscoverableCoupon = {
       id: row.id,
       code: row.code,
       type: row.type,
       value: Number(row.value),
+      giftProductId: row.gift_product_id ?? null,
+      giftVariantId: row.gift_variant_id ?? null,
+      giftProductName: giftName,
       scope: row.scope,
       status: row.status,
       startsAt: row.starts_at,

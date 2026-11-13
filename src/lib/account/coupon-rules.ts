@@ -11,6 +11,10 @@ import { formatPaise } from '@/lib/store-admin/amount';
 export interface CustomerCouponView {
   id: string;
   code: string;
+  type: CouponType;
+  giftProductId?: string | null;
+  giftVariantId?: string | null;
+  giftProductName?: string | null;
   valueDisplay: string;
   scopeDisplay: string;
   minOrderPaise: number;
@@ -28,6 +32,9 @@ export interface DiscoverableCoupon extends CouponEligibilityDefinition {
   code: string;
   type: CouponType;
   value: number;
+  giftProductId?: string | null;
+  giftVariantId?: string | null;
+  giftProductName?: string | null;
   scope: CouponScope;
   minOrderPaise: number;
   showToAllUsers: boolean;
@@ -69,8 +76,22 @@ export function customerCouponView(
   return {
     id: coupon.id,
     code: coupon.code,
-    valueDisplay: coupon.type === 'FREE_SHIPPING' ? 'Free shipping'
-      : coupon.type === 'PERCENT' ? `${coupon.value}% off` : `${formatPaise(coupon.value)} off`,
+    type: coupon.type,
+    ...(coupon.type === 'FREE_GIFT'
+      ? {
+          giftProductId: coupon.giftProductId ?? null,
+          giftVariantId: coupon.giftVariantId ?? null,
+          giftProductName: coupon.giftProductName ?? null,
+        }
+      : {}),
+    valueDisplay:
+      coupon.type === 'FREE_GIFT'
+        ? (coupon.giftProductName ? `Free gift: ${coupon.giftProductName}` : 'Free gift')
+        : coupon.type === 'FREE_SHIPPING'
+          ? 'Free shipping'
+          : coupon.type === 'PERCENT'
+            ? `${coupon.value}% off`
+            : `${formatPaise(coupon.value)} off`,
     scopeDisplay: scopeLabels[coupon.scope],
     minOrderPaise: coupon.minOrderPaise,
     minOrderDisplay: coupon.minOrderPaise > 0

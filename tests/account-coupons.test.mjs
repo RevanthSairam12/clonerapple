@@ -122,7 +122,7 @@ test('uppercase discount types and scopes use the shared paise formatter', () =>
 
 test('DTO has an exact safe key allowlist, stable expiry and no recipient/restriction/global data', () => {
   const view = customerCouponView(coupon({ name: 'SECRET', endsAt: '2026-11-03T01:00:00Z', assignedToEmails: [USER.email], totalRedemptionLimit: 80 }), 0);
-  assert.deepEqual(Object.keys(view).sort(), ['id', 'code', 'valueDisplay', 'scopeDisplay', 'minOrderPaise', 'minOrderDisplay', 'expiresAt', 'expiryDisplay', 'remainingUses', 'remainingDisplay'].sort());
+  assert.deepEqual(Object.keys(view).sort(), ['id', 'code', 'type', 'valueDisplay', 'scopeDisplay', 'minOrderPaise', 'minOrderDisplay', 'expiresAt', 'expiryDisplay', 'remainingUses', 'remainingDisplay'].sort());
   assert.equal(view.expiresAt, '2026-11-03T01:00:00.000Z');
   assert.equal(view.expiryDisplay, 'Expires 3 Nov 2026');
   assert.doesNotMatch(JSON.stringify(view), /SECRET|buyer@example.com|totalRedemptionLimit/);

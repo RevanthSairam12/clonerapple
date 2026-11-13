@@ -38,6 +38,7 @@ export interface CatalogProductSummary {
   salePricePaise: number | null;
   currency: string;
   isActive: boolean;
+  isGiftOnly?: boolean;
   inStock: boolean;
   /** Null for missing stock; overviews also use null for mixed stock limits. */
   trackInventory: boolean | null;
@@ -325,6 +326,7 @@ function mapSummary(row: Row): CatalogProductSummary {
     salePricePaise: nullableNumber(row.sale_price_paise),
     currency: text(row.currency) || 'INR',
     isActive: Boolean(row.is_active),
+    isGiftOnly: Boolean(row.is_gift_only),
     inStock: Boolean(row.in_stock),
     trackInventory:
       row.track_inventory === null || row.track_inventory === undefined
@@ -426,6 +428,7 @@ export async function listCatalogOverview(): Promise<CatalogLoad<CatalogOverview
       sql`
         select p.id, p.slug, p.name, p.subtitle, p.price_paise, p.sale_price_paise,
                p.currency, p.is_active, p.in_stock, p.sort_order, p.updated_at,
+               coalesce((to_jsonb(p)->>'is_gift_only')::boolean, false) as is_gift_only,
                p.inventory_mode, s.id as stock_id, s.track_inventory, s.on_hand, s.reserved,
                options.option_count, options.purchasable_count, options.missing_stock_count,
                options.limited_stock_count, options.unlimited_stock_count, options.variant_available,
@@ -485,6 +488,7 @@ export async function getCatalogProduct(
              to_jsonb(p)->'description_sections' as description_sections,
              p.badge, p.highlights, p.in_the_box, p.seo_title,
              p.seo_description, p.in_stock, p.is_active, p.sort_order,
+             coalesce((to_jsonb(p)->>'is_gift_only')::boolean, false) as is_gift_only,
              p.created_at, p.updated_at, p.inventory_mode, p.catalog_revision,
              p.sell_by, p.sku_pattern,
              (select coalesce(jsonb_agg(jsonb_build_object('id',dm.id,'name',dm.name,'isActive',dm.is_active and db.is_active) order by dm.name),'[]'::jsonb) from product_device_models pm join device_models dm on dm.id=pm.device_model_id join device_brands db on db.id=dm.brand_id where pm.product_id=p.id and pm.archived_at is null) as device_models,

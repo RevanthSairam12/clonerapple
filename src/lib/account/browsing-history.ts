@@ -250,6 +250,7 @@ export async function getDashboardRecommendations(userId: string): Promise<{
     where o.user_id = ${userId}
       and o.status = 'PAID'
       and oi.product_id <> ''
+      and coalesce(to_jsonb(oi)->>'is_free_gift', 'false')::boolean = false
   `;
   const purchasedIds = new Set(purchasedRows.map((r) => r.product_id));
   const viewedIds = new Set(history.map((h) => h.productId));
@@ -276,6 +277,7 @@ export async function getDashboardRecommendations(userId: string): Promise<{
       left join stock s on s.product_id = p.id
       where p.is_active = true
         and p.deleted_at is null
+        and coalesce(to_jsonb(p)->>'is_gift_only', 'false')::boolean = false
         and (
           p.category_id = any(${catArray}::text[])
           or lower(p.brand) = any(${brandArray}::text[])

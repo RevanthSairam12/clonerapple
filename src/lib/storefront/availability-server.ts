@@ -38,6 +38,7 @@ async function loadAvailabilityRows(
   const promise = (async () => {
     const rows = (await sql`
       select p.id, p.is_active, p.deleted_at, p.in_stock, p.inventory_mode,
+             coalesce(to_jsonb(p)->>'is_gift_only', 'false')::boolean as is_gift_only,
              s.on_hand, s.reserved, s.low_stock_threshold, s.track_inventory
       from products p left join stock s on s.product_id = p.id and s.variant_id is null
       where p.id = any(${wanted}::text[])
@@ -166,7 +167,7 @@ export async function readAvailabilityUsing(
       })
     : rawVariantRows;
   const byId = new Map(rows.map((row) => [String(row.id), row]));
-  const eligible = (id: string) => { const row = byId.get(id); return Boolean(row && row.deleted_at === null && row.is_active !== false); };
+  const eligible = (id: string) => { const row = byId.get(id); return Boolean(row && row.deleted_at === null && row.is_active !== false && row.is_gift_only !== true); };
   const variants = variantRows.map((row) => eligible(String(row.product_id))
     ? fromStock(String(row.product_id), row, true, String(row.variant_id))
     : unavailable(String(row.product_id), String(row.variant_id)));

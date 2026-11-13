@@ -13,6 +13,11 @@ import {
   couponConnection,
   lookupCouponForCart,
 } from '@/lib/coupons/store';
+import type { CouponFreeGiftPreview } from '@/lib/free-gifts/rules';
+import {
+  evaluateCartFreeGiftsUsing,
+  resolveCouponFreeGiftPreviewUsing,
+} from '@/lib/free-gifts/store';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
 import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
@@ -139,6 +144,51 @@ export async function POST(req: NextRequest) {
       return invalid(result.evaluation.message);
     }
 
+    let freeGiftPreview: CouponFreeGiftPreview | null = null;
+    if (result.evaluation.freeGift) {
+      const giftCheck = await resolveCouponFreeGiftPreviewUsing(sql, {
+        productId: result.evaluation.freeGift.productId,
+        variantId: result.evaluation.freeGift.variantId,
+        cartItems: cart.items.map((item) => ({
+          id: item.id,
+          variantId: item.variantId ?? null,
+          quantity: item.quantity,
+        })),
+      });
+      if (!giftCheck.ok) {
+        return invalid(giftCheck.message);
+      }
+      freeGiftPreview = giftCheck.gift;
+    }
+
+    let blockedByCouponMessage: string | null = null;
+    try {
+      const freeGiftEval = await evaluateCartFreeGiftsUsing(sql, {
+        lines: cart.items.map((item) => ({
+          linePaise: item.unitPaise * item.quantity,
+          isFreeGift: false,
+        })),
+        discountPaise: result.evaluation.discountPaise,
+        couponApplied: true,
+        userId,
+        email,
+      });
+      blockedByCouponMessage = freeGiftEval.blockedByCouponMessage;
+    } catch {
+      blockedByCouponMessage = null;
+    }
+
+    const messageParts: string[] = [];
+    if (result.evaluation.message) {
+      messageParts.push(result.evaluation.message);
+    }
+    if (freeGiftPreview) {
+      messageParts.push(`Free gift included: ${freeGiftPreview.productName} (FREE).`);
+    }
+    if (blockedByCouponMessage) {
+      messageParts.push(blockedByCouponMessage);
+    }
+
     return NextResponse.json(
       {
         valid: true,
@@ -148,7 +198,9 @@ export async function POST(req: NextRequest) {
         shippingPaise: result.evaluation.shippingPaise,
         totalPaise: result.evaluation.totalPaise,
         currency: 'INR',
-        message: result.evaluation.message,
+        freeGift: freeGiftPreview,
+        blockedByFreeGiftMessage: blockedByCouponMessage,
+        message: messageParts.length > 0 ? messageParts.join(' ') : null,
       },
       { headers: NO_STORE },
     );

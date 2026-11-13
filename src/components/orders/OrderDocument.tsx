@@ -29,6 +29,8 @@ export interface OrderDocumentData {
     referencePricePaise?: number | null;
     lineTotalPaise: number;
     currency?: string;
+    isFreeGift?: boolean;
+    freeGiftBadge?: string | null;
   }>;
 }
 
@@ -127,8 +129,8 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
             <thead><tr className={customer ? 'border-b border-[#e5e5ea]' : undefined}><th className="py-3">#</th><th>Item</th><th className="text-right">Qty</th><th className="text-right">Rate</th><th className="text-right">Amount</th></tr></thead>
             <tbody>{order.items.map((item) => <tr key={item.lineNumber} className={customer ? 'border-b border-[#e5e5ea]' : undefined}>
               <td className="py-3">{item.lineNumber}</td>
-              <td>{item.imageUrl && <img src={item.imageUrl} alt={item.imageAlt ?? item.productName} className="mr-2 inline-block h-10 w-10 rounded object-contain align-middle" />}{item.productName}{item.variantLabel && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.variantLabel}</span>}{item.variantSku && <span className="sa-row-sub block text-xs text-[#6e6e73]">SKU: {item.variantSku}</span>}{item.productId && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.productId}</span>}{item.referencePricePaise != null && item.referencePricePaise !== item.unitPricePaise && <span className="sa-row-sub block text-xs text-[#6e6e73]">List price at sale {money(item.referencePricePaise, item.currency)}</span>}</td>
-              <td className="sa-num text-right">{item.quantity}</td><td className="sa-num text-right">{money(item.unitPricePaise, item.currency)}</td><td className="sa-num text-right">{money(item.lineTotalPaise, item.currency)}</td>
+              <td>{item.imageUrl && <img src={item.imageUrl} alt={item.imageAlt ?? item.productName} className="mr-2 inline-block h-10 w-10 rounded object-contain align-middle" />}{item.productName}{item.isFreeGift && <span className={customer ? 'ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900' : 'sa-badge sa-badge-ok ml-2'}>{item.freeGiftBadge || 'FREE GIFT'}</span>}{item.variantLabel && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.variantLabel}</span>}{item.variantSku && <span className="sa-row-sub block text-xs text-[#6e6e73]">SKU: {item.variantSku}</span>}{item.productId && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.productId}</span>}{item.isFreeGift && item.referencePricePaise != null && item.referencePricePaise > 0 ? <span className="sa-row-sub block text-xs text-[#6e6e73]">Regular value <span className="line-through">{money(item.referencePricePaise, item.currency)}</span></span> : item.referencePricePaise != null && item.referencePricePaise !== item.unitPricePaise ? <span className="sa-row-sub block text-xs text-[#6e6e73]">List price at sale {money(item.referencePricePaise, item.currency)}</span> : null}</td>
+              <td className="sa-num text-right">{item.quantity}</td><td className="sa-num text-right">{item.isFreeGift ? 'FREE' : money(item.unitPricePaise, item.currency)}</td><td className="sa-num text-right">{item.isFreeGift ? `FREE (${money(0, item.currency)})` : money(item.lineTotalPaise, item.currency)}</td>
             </tr>)}{order.items.length === 0 && <tr><td colSpan={5} className="sa-doc-muted py-3">No item snapshot is available for this order.</td></tr>}</tbody>
           </table>
         </div>

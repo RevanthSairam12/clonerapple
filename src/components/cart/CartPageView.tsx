@@ -11,6 +11,12 @@ import { getCartLineBaseId } from '@/lib/cart/cart-id';
 import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
 import { useCoupon } from '@/lib/cart/useCoupon';
 import { CouponBox } from '@/components/cart/CouponBox';
+import { useCartFreeGifts } from '@/lib/free-gifts/useCartFreeGifts';
+import {
+  FreeGiftConflictNotice,
+  FreeGiftLineRow,
+  FreeGiftProgressNudgeBanner,
+} from '@/components/cart/FreeGiftCartWidgets';
 import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
 import { verifyAvailabilityLines } from '@/lib/storefront/use-availability';
 import { useRouter } from 'next/navigation';
@@ -150,6 +156,23 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
   const discountAmount = coupon.totals.discountPaise / 100;
   const totalAmount = coupon.totals.totalPaise / 100;
   const nudge = shippingNudge(subtotalPaise, shippingPolicy, coupon.totals.shippingPaise);
+  const { evaluation: giftEval } = useCartFreeGifts({
+    items: availableItems.map((item) => ({
+      id: item.id,
+      productId: getCartLineBaseId(item.productId || item.id) || item.productId || item.id,
+      variantId: item.variantId,
+      quantity: item.quantity,
+    })),
+    couponCode: coupon.applied?.code ?? coupon.appliedCode,
+    email: customerEmail || '',
+    enabled: true,
+  });
+  const activeSpinGift = coupon.applied?.freeGift ?? giftEval?.spinFreeGift ?? null;
+  const freeGiftNoticeMessage =
+    giftEval?.conflict?.message
+    ?? giftEval?.blockedByCouponMessage
+    ?? coupon.applied?.blockedByFreeGiftMessage
+    ?? null;
 
   // Check user session
   useEffect(() => {
@@ -331,6 +354,11 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
               <p className="text-sm text-[#86868b] max-w-md mx-auto mb-6">
                 Explore our selection of premium MagSafe protective cases, accessories, Mac, and iPad devices.
               </p>
+              {giftEval?.nextNudge ? (
+                <div className="max-w-md mx-auto mb-6 text-left">
+                  <FreeGiftProgressNudgeBanner nudge={giftEval.nextNudge} />
+                </div>
+              ) : null}
               <div className="flex flex-wrap justify-center gap-3">
                 <Link
                   href="/shop/iphone/accessories/cases-protection"
@@ -457,6 +485,30 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
                   </div>
                   );
                 })}
+                {giftEval?.unlockedGift ? (
+                  <div className="py-5">
+                    <FreeGiftLineRow
+                      badge={giftEval.unlockedGift.badgeText}
+                      productName={giftEval.unlockedGift.productName}
+                      variantLabel={giftEval.unlockedGift.variantLabel}
+                      regularPricePaise={giftEval.unlockedGift.regularPricePaise}
+                      imageUrl={giftEval.unlockedGift.imageUrl}
+                      note={`${giftEval.unlockedGift.unlockMessage} · Added automatically (no remove needed)`}
+                    />
+                  </div>
+                ) : null}
+                {activeSpinGift ? (
+                  <div className="py-5">
+                    <FreeGiftLineRow
+                      badge={activeSpinGift.badge}
+                      productName={activeSpinGift.productName}
+                      variantLabel={activeSpinGift.variantLabel}
+                      regularPricePaise={activeSpinGift.regularPricePaise}
+                      imageUrl={activeSpinGift.imageUrl}
+                      note={`Unlocked via promo code ${coupon.applied?.code ?? coupon.appliedCode ?? ''} · Remove the code to remove gift`}
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {/* Right Column: Order Summary (Sticky) */}
@@ -487,8 +539,33 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
                         </span>
                       </div>
                     )}
+                    {giftEval?.unlockedGift ? (
+                      <div className="flex justify-between text-[#15803d]">
+                        <span className="truncate pr-2">Free Gift ({giftEval.unlockedGift.productName})</span>
+                        <span className="font-semibold shrink-0">FREE (₹0)</span>
+                      </div>
+                    ) : null}
+                    {activeSpinGift ? (
+                      <div className="flex justify-between text-[#15803d]">
+                        <span className="truncate pr-2">Reward Gift ({activeSpinGift.productName})</span>
+                        <span className="font-semibold shrink-0">FREE (₹0)</span>
+                      </div>
+                    ) : null}
                   </div>
 
+                  {giftEval?.nextNudge ? (
+                    <div className="mb-4">
+                      <FreeGiftProgressNudgeBanner nudge={giftEval.nextNudge} />
+                    </div>
+                  ) : null}
+                  {freeGiftNoticeMessage ? (
+                    <div className="mb-4">
+                      <FreeGiftConflictNotice
+                        message={freeGiftNoticeMessage}
+                        tone={giftEval?.conflict ? 'warning' : 'info'}
+                      />
+                    </div>
+                  ) : null}
                   {nudge && <p className="mb-4 text-xs text-[#6e6e73]">{nudge}</p>}
                   {!shippingPolicy && <p role="alert" className="mb-4 text-sm text-red-700">Shipping rates are temporarily unavailable. Please return shortly to check out.</p>}
                   {shippingPolicy && couponsEnabled && (

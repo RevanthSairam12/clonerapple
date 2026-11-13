@@ -205,6 +205,7 @@ function fixture({ blackOnHand = 10, blackReserved = 0, missingBlack = false,
       return obligations.filter(row => row.order_id === values[0] && row.status === 'PENDING').map(row => ({ id: row.id }));
     }
     if (text.includes("to_regclass('coupon_redemptions')")) return [{ name: null }];
+    if (text.includes("to_regclass('free_gift_rules')")) return [{ rules_table: null, redemptions_table: null }];
     if (text.startsWith('select product_id,variant_id,sum(delta)::int as quantity from stock_movements')) {
       const released = new Map();
       for (const movement of movements.filter(row => row.order_id === values[0] && row.reason === 'release')) {

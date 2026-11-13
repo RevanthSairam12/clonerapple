@@ -145,6 +145,7 @@ async function loadPricingRows(
         and (v.device_model_id is null or (dm.id is not null and db.id is not null and exists(
           select 1 from product_device_models pdm where pdm.product_id=p.id and pdm.device_model_id=v.device_model_id and pdm.archived_at is null)))))
       and p.is_active
+      and coalesce(p.is_gift_only, false) = false
       and lower(p.id) = any(${ids}::text[])
     order by p.id
   `;
@@ -313,6 +314,7 @@ export async function getProductFromDatabase(id: string): Promise<CatalogItem | 
       join categories c on c.id = p.category_id and c.is_active and c.deleted_at is null
       where p.deleted_at is null
         and p.is_active
+        and coalesce(p.is_gift_only, false) = false
         and lower(p.id) = ${normalized.baseId}
       limit 1
     `;

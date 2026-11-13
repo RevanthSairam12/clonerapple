@@ -163,7 +163,8 @@ test('the coupon box shows the server message, including the sale note', async (
   // The preview answers with the evaluation's own message, so the sentence the
   // rules produce is the sentence the bag renders.
   const validate = await source('src/app/api/coupons/validate/route.ts');
-  assert.match(validate, /message: result\.evaluation\.message/);
+  assert.match(validate, /messageParts\.push\(result\.evaluation\.message\)/);
+  assert.match(validate, /message:\s*messageParts\.length > 0 \? messageParts\.join\(' '\) : null/);
 });
 
 test('the coupon audit never records the restricted email addresses', async () => {

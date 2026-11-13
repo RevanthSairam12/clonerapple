@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { ProductDetailPage } from '@/components/shop/ProductDetailPage';
 import { AccessoryDetailPage } from '@/components/sites/accessories/AccessoryDetailPage';
 import { recordProductView } from '@/lib/account/browsing-history';
+import { listProductPageGiftPromos } from '@/lib/free-gifts/store';
 import { getProductDetail } from '@/lib/storefront/catalog';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { getUserSession } from '@/lib/user-auth';
@@ -34,7 +35,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title: `${product.name} | Gadzio Store`,
       description: product.shortDescription ?? product.description,
       images: [product.image],
-      url: `https://gadzio.in/shop/product/${product.id}`,
+      url: `https://gadzio.co.in/shop/product/${product.id}`,
       siteName: 'Gadzio',
     },
   };
@@ -43,10 +44,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function ProductPage({ params, searchParams }: Props) {
   const { productId } = await params;
   const query = await searchParams;
-  const [detail, sale, session] = await Promise.all([
+  const [detail, sale, session, giftPromos] = await Promise.all([
     getProductDetail(productId),
     readSaleState(),
     getUserSession(),
+    listProductPageGiftPromos(),
   ]);
 
   if (!detail) notFound();
@@ -65,6 +67,7 @@ export default async function ProductPage({ params, searchParams }: Props) {
         inStock={detail.stock.inStock}
         initialModel={query.model ?? null}
         initialColour={query.colour ?? null}
+        giftPromos={giftPromos}
       />
     );
   }
@@ -77,6 +80,7 @@ export default async function ProductPage({ params, searchParams }: Props) {
       inStock={detail.stock.inStock}
       initialModel={query.model ?? null}
       initialColour={query.colour ?? null}
+      giftPromos={giftPromos}
     />
   );
 }

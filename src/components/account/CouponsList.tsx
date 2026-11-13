@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { saveCouponCodeForCheckout } from '@/lib/cart/useCoupon';
 import type { CustomerCouponView } from '@/lib/account/coupons';
 
 export function CouponsList({
@@ -11,6 +13,7 @@ export function CouponsList({
   coupons: CustomerCouponView[];
   spinAvailable?: boolean;
 }) {
+  const router = useRouter();
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   async function copyCode(code: string) {
@@ -87,21 +90,38 @@ export function CouponsList({
                   <p className="mt-4 text-2xl font-bold tracking-tight text-[#1d1d1f]">
                     {coupon.valueDisplay}
                   </p>
+                  {coupon.type === 'FREE_GIFT' && coupon.giftProductName ? (
+                    <p className="mt-1 text-xs font-semibold text-[#15803d]">
+                      Reward item: {coupon.giftProductName} (₹0 when applied at checkout)
+                    </p>
+                  ) : null}
                   <p className="mt-1 text-xs text-[#6e6e73]">
                     {coupon.minOrderDisplay}
                   </p>
 
-                  <div className="mt-5 flex items-center justify-between rounded-2xl bg-[#f5f5f7] p-3">
-                    <span className="font-mono text-sm font-bold tracking-wider text-[#1d1d1f]">
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-[#f5f5f7] p-3">
+                    <span className="min-w-0 break-all font-mono text-sm font-bold tracking-wider text-[#1d1d1f]">
                       {coupon.code}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => copyCode(coupon.code)}
-                      className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1d1d1f] shadow-sm hover:bg-[#e8e8ed] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
-                    >
-                      {isCopied ? 'Copied!' : 'Copy'}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => copyCode(coupon.code)}
+                        className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#1d1d1f] shadow-sm hover:bg-[#e8e8ed] focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
+                      >
+                        {isCopied ? 'Copied!' : 'Copy'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          saveCouponCodeForCheckout(coupon.code);
+                          router.push('/cart');
+                        }}
+                        className="rounded-full bg-[#1d1d1f] px-3 py-1 text-xs font-semibold text-white hover:bg-black focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]"
+                      >
+                        {coupon.type === 'FREE_GIFT' ? 'Apply & claim' : 'Apply'}
+                      </button>
+                    </div>
                   </div>
                 </div>
 

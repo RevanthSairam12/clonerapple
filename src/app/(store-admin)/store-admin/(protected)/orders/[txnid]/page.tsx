@@ -288,20 +288,24 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                 {order.items.map((item) => (
                   <tr key={item.lineNumber}>
                     <td>
-                      {item.productName}
+                      {item.productName}{item.isFreeGift && <span className="sa-badge sa-badge-ok ml-2">{item.freeGiftBadge || 'FREE GIFT'}</span>}
                       {item.variantLabel && <span className="sa-row-sub">{item.variantLabel}</span>}
                       {item.variantSku && <span className="sa-row-sub">SKU: {item.variantSku}</span>}
                       <span className="sa-row-sub">{item.productId || `Line ${item.lineNumber}`}</span>
                       {item.referencePricePaise !== null &&
                       item.referencePricePaise !== item.unitPricePaise ? (
                         <span className="sa-row-sub">
-                          List price at sale {formatAmount(item.referencePricePaise, item.currency || order.currency)}
+                          {item.isFreeGift ? (
+                            <>Regular value <span className="line-through">{formatAmount(item.referencePricePaise, item.currency || order.currency)}</span></>
+                          ) : (
+                            <>List price at sale {formatAmount(item.referencePricePaise, item.currency || order.currency)}</>
+                          )}
                         </span>
                       ) : null}
                     </td>
                     <td className="sa-num">{item.quantity}</td>
-                    <td className="sa-num">{formatAmount(item.unitPricePaise, item.currency || order.currency)}</td>
-                    <td className="sa-num">{formatAmount(item.lineTotalPaise, item.currency || order.currency)}</td>
+                    <td className="sa-num">{item.isFreeGift ? 'FREE' : formatAmount(item.unitPricePaise, item.currency || order.currency)}</td>
+                    <td className="sa-num">{item.isFreeGift ? `FREE (${formatAmount(0, item.currency || order.currency)})` : formatAmount(item.lineTotalPaise, item.currency || order.currency)}</td>
                   </tr>
                 ))}
               </tbody>

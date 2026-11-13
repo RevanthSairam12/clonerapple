@@ -20,16 +20,20 @@ const jiti = createJiti(import.meta.url, {
 });
 
 const {
+  CHANCE_BASIS_POINTS_TOTAL,
   DEFAULT_SPIN_WHEEL_SETTINGS,
+  chancePercentToWeight,
   computeSegmentOdds,
   computeSpinCooldownState,
   computeStoreDayInfo,
   contrastTextForHex,
   drawWeightedSegment,
+  formatChancePercent,
   formatPrizeSummary,
   isWheelWindowOpen,
   segmentAvailableForDraw,
   validateSpinWheelConfigInput,
+  weightToChancePercent,
 } = await jiti.import(path.join(root, 'src', 'lib', 'spin-wheel', 'rules.ts'));
 
 function makeSegment(overrides = {}) {
@@ -151,7 +155,7 @@ test('validateSpinWheelConfigInput enforces segment bounds, prize rules, and ena
       label: '10% off',
       colorHex: '#ffe100',
       segmentType: 'COUPON',
-      weight: 20,
+      weight: 2000,
       dailyCap: 10,
       totalCap: null,
       isActive: true,
@@ -170,7 +174,7 @@ test('validateSpinWheelConfigInput enforces segment bounds, prize rules, and ena
       label: 'Try again',
       colorHex: '#111111',
       segmentType: 'NO_PRIZE',
-      weight: 80,
+      weight: 8000,
       dailyCap: null,
       totalCap: null,
       isActive: true,
@@ -328,7 +332,7 @@ test('validateSpinWheelConfigInput validates cooldown mode, custom days, and cou
       label: '10% off',
       colorHex: '#f25c3b',
       segmentType: 'COUPON',
-      weight: 20,
+      weight: 2000,
       dailyCap: null,
       totalCap: null,
       isActive: true,
@@ -347,7 +351,7 @@ test('validateSpinWheelConfigInput validates cooldown mode, custom days, and cou
       label: 'Try again',
       colorHex: '#e8c6ff',
       segmentType: 'NO_PRIZE',
-      weight: 80,
+      weight: 8000,
       dailyCap: null,
       totalCap: null,
       isActive: true,
@@ -389,8 +393,8 @@ test('validateSpinWheelConfigInput validates cooldown mode, custom days, and cou
   assert.equal(customValid.value.settings.popupRequireScroll, true);
   assert.equal(customValid.value.settings.popupMobileFloatingButton, true);
 
-  // Default settings retain until_coupon_expires cooldown and accessible popup controls
-  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.rewardCooldownMode, 'until_coupon_expires');
+  // Default cooldown is 'disabled' (1 spin per store day) with accessible popup controls
+  assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.rewardCooldownMode, 'disabled');
   assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupEnabled, true);
   assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupDelaySeconds, 10);
   assert.equal(DEFAULT_SPIN_WHEEL_SETTINGS.popupRequireScroll, true);
@@ -426,4 +430,67 @@ test('validateSpinWheelConfigInput validates cooldown mode, custom days, and cou
   assert.equal(customPopupValid.value.settings.popupDelaySeconds, 25);
   assert.equal(customPopupValid.value.settings.popupRequireScroll, false);
   assert.equal(customPopupValid.value.settings.popupMobileFloatingButton, false);
+});
+
+test('chancePercentToWeight and exact 100.00% sum + FREE_GIFT validation + strict NO_PRIZE redirect work accurately', () => {
+  assert.equal(CHANCE_BASIS_POINTS_TOTAL, 10000);
+  const halfPct = chancePercentToWeight('12.5', 'Chance');
+  assert.equal(halfPct.ok, true);
+  assert.equal(halfPct.weight, 1250);
+  assert.equal(weightToChancePercent(1250), 12.5);
+  assert.equal(formatChancePercent(1250), '12.50');
+  assert.equal(formatChancePercent(1234), '12.34');
+
+  assert.equal(chancePercentToWeight('0', 'Chance').ok, false);
+  assert.equal(chancePercentToWeight('100.01', 'Chance').ok, false);
+  assert.equal(chancePercentToWeight('12.345', 'Chance').ok, false);
+
+  // Sum !== 100.00% rejected
+  const sum99 = validateSpinWheelConfigInput({
+    settings: { enabled: false, title: 'Spin', termsText: 'Terms' },
+    segments: [
+      { id: 's1', label: 'A', colorHex: '#ffe100', segmentType: 'COUPON', chancePercent: '49.99', isActive: true, couponType: 'PERCENT', couponValueInput: '10', couponScope: 'ORDER', couponValidDays: 7 },
+      { id: 's2', label: 'B', colorHex: '#111111', segmentType: 'NO_PRIZE', chancePercent: '50.00', isActive: true },
+    ],
+  });
+  assert.equal(sum99.ok, false);
+  assert.match(sum99.error, /100\.00%/);
+
+  // FREE_GIFT requires giftProductId and uncapped NO_PRIZE fallback
+  const missingGiftSku = validateSpinWheelConfigInput({
+    settings: { enabled: true, title: 'Spin', termsText: 'Terms' },
+    segments: [
+      { id: 's1', label: 'Free Case', colorHex: '#ffe100', segmentType: 'FREE_GIFT', chancePercent: '12.5', isActive: true, giftValidDays: 5 },
+      { id: 's2', label: 'Try again', colorHex: '#111111', segmentType: 'NO_PRIZE', chancePercent: '87.5', isActive: true },
+    ],
+  });
+  assert.equal(missingGiftSku.ok, false);
+
+  const giftValid = validateSpinWheelConfigInput({
+    settings: { enabled: true, title: 'Spin', termsText: 'Terms' },
+    segments: [
+      { id: 's1', label: 'Free Case', colorHex: '#ffe100', segmentType: 'FREE_GIFT', chancePercent: '12.5', isActive: true, giftProductId: 'prod_gift', giftMinOrderRupees: '499', giftValidDays: 5 },
+      { id: 's2', label: 'Try again', colorHex: '#111111', segmentType: 'NO_PRIZE', chancePercent: '87.5', isActive: true },
+    ],
+  });
+  assert.equal(giftValid.ok, true);
+  assert.equal(giftValid.value.segments[0].weight, 1250);
+  assert.equal(giftValid.value.segments[0].giftProductId, 'prod_gift');
+  assert.equal(giftValid.value.segments[0].giftMinOrderPaise, 49900);
+  assert.equal(giftValid.value.segments[0].giftValidDays, 5);
+
+  // Strict capped redirect: exhausted slice keeps other paid prize at configured 10%, never inflated
+  const segments = [
+    makeSegment({ id: 'capped', label: 'Capped Gift', segmentType: 'FREE_GIFT', weight: 8000, dailyCap: 1, dailyAwarded: 1 }),
+    makeSegment({ id: 'paid', label: '10% Off', segmentType: 'COUPON', weight: 1000 }),
+    makeSegment({ id: 'noprize', label: 'No Prize', segmentType: 'NO_PRIZE', weight: 1000, dailyCap: null, totalCap: null }),
+  ];
+  const rollInCapped = drawWeightedSegment(segments, () => 0);
+  assert.equal(rollInCapped?.segment.id, 'noprize');
+  assert.equal(rollInCapped?.originalSegment.id, 'capped');
+  assert.equal(rollInCapped?.redirectedToNoPrize, true);
+
+  const rollInPaid = drawWeightedSegment(segments, () => 8000);
+  assert.equal(rollInPaid?.segment.id, 'paid');
+  assert.equal(rollInPaid?.redirectedToNoPrize, false);
 });

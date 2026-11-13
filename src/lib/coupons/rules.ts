@@ -23,7 +23,7 @@ export const COUPON_CODE_PATTERN = /^[A-Z0-9-]{3,32}$/;
 export const COUPON_CODE_HELP =
   'Use 3 to 32 letters, digits or hyphens.';
 
-export type CouponType = 'PERCENT' | 'FIXED' | 'FREE_SHIPPING';
+export type CouponType = 'PERCENT' | 'FIXED' | 'FREE_SHIPPING' | 'FREE_GIFT';
 export type CouponScope = 'ORDER' | 'PRODUCTS' | 'CATEGORIES' | 'BRANDS';
 export type CouponStatus = 'active' | 'paused' | 'archived';
 
@@ -38,8 +38,11 @@ export interface CouponDefinition {
   code: string;
   name: string;
   type: CouponType;
-  /** Percent for PERCENT, paise for FIXED, unused for FREE_SHIPPING. */
+  /** Percent for PERCENT, paise for FIXED, unused for FREE_SHIPPING and FREE_GIFT. */
   value: number;
+  giftProductId?: string | null;
+  giftVariantId?: string | null;
+  giftProductName?: string | null;
   scope: CouponScope;
   status: CouponStatus;
   startsAt: Date | string | null;
@@ -116,6 +119,8 @@ export type CouponEvaluation =
       allocations: number[];
       /** Indexes of the lines the discount was spread over. */
       eligibleLineIndexes: number[];
+      /** Populated when coupon type is FREE_GIFT (e.g. won on Spin and Win). */
+      freeGift?: { productId: string; variantId: string | null } | null;
       /** Safe customer-facing note, or null. Never contains coupon internals. */
       message: string | null;
     }
@@ -380,6 +385,8 @@ export function evaluateCoupon(input: {
     rawDiscount = Math.min(Math.max(0, Math.trunc(coupon.value)), eligibleSubtotal);
   } else if (coupon.type === 'FREE_SHIPPING') {
     shippingPaise = 0;
+  } else if (coupon.type === 'FREE_GIFT') {
+    if (!coupon.giftProductId) return reject('inactive');
   } else {
     return reject('inactive');
   }
@@ -402,7 +409,8 @@ export function evaluateCoupon(input: {
   // would consume a use and show the customer no benefit. Free shipping on an
   // order that already ships free, or a percentage that floors to zero paise,
   // is refused here so the checkout never records a zero-value redemption.
-  if (discountPaise === 0 && shippingPaise === originalShippingPaise) {
+  // FREE_GIFT coupons grant a ₹0 gift item instead of a rupee discount.
+  if (coupon.type !== 'FREE_GIFT' && discountPaise === 0 && shippingPaise === originalShippingPaise) {
     return reject('no_discount');
   }
 
@@ -427,6 +435,9 @@ export function evaluateCoupon(input: {
     totalPaise,
     allocations,
     eligibleLineIndexes,
+    ...(coupon.type === 'FREE_GIFT' && coupon.giftProductId
+      ? { freeGift: { productId: coupon.giftProductId, variantId: coupon.giftVariantId ?? null } }
+      : {}),
     message: notes.length > 0 ? notes.join(' ') : null,
   };
 }

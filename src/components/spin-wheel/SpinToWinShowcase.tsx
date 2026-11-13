@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { SpinWheelSvg } from '@/components/spin-wheel/SpinWheelSvg';
+import { saveCouponCodeForCheckout } from '@/lib/cart/useCoupon';
 import {
   computeTargetWheelRotation,
   WHEEL_POINTER_RIGHT_ANGLE_DEG,
@@ -281,7 +282,11 @@ export function SpinToWinShowcase({
         );
       }
 
+      const isPrizeOutcome = (t: CustomerSpinResultView['segmentType']) =>
+        t === 'COUPON' || t === 'FREE_GIFT';
+
       const announceOutcome = (outcomeSpin: CustomerSpinResultView) => {
+        const wonPrize = isPrizeOutcome(outcomeSpin.segmentType);
         setRevealedSpin(outcomeSpin);
         setState((prev) => ({
           ...prev,
@@ -289,22 +294,24 @@ export function SpinToWinShowcase({
           remainingSpinsToday: 0,
           nextSpinAt: body.nextSpinAt,
           secondsUntilReset: body.secondsUntilReset,
-          cooldownBlocked:
-            prev.rewardCooldownMode !== 'disabled' && outcomeSpin.segmentType === 'COUPON',
-          activeReward:
-            outcomeSpin.segmentType === 'COUPON'
-              ? {
-                  couponCode: outcomeSpin.couponCode,
-                  couponSummary: outcomeSpin.couponSummary,
-                  couponExpiresAt: outcomeSpin.couponExpiresAt,
-                  segmentLabel: outcomeSpin.segmentLabel,
-                }
-              : prev.activeReward,
+          cooldownBlocked: prev.rewardCooldownMode !== 'disabled' && wonPrize,
+          activeReward: wonPrize
+            ? {
+                couponCode: outcomeSpin.couponCode,
+                couponSummary: outcomeSpin.couponSummary,
+                couponExpiresAt: outcomeSpin.couponExpiresAt,
+                segmentLabel: outcomeSpin.segmentLabel,
+              }
+            : prev.activeReward,
         }));
         setSpinning(false);
+        const prizeTitle =
+          outcomeSpin.segmentType === 'FREE_GIFT' && outcomeSpin.giftProductName
+            ? `Free gift: ${outcomeSpin.giftProductName}`
+            : outcomeSpin.couponSummary || outcomeSpin.segmentLabel;
         const announcement =
-          outcomeSpin.segmentType === 'COUPON' && outcomeSpin.couponCode
-            ? `Congratulations! You won ${outcomeSpin.couponSummary || outcomeSpin.segmentLabel}. Coupon code ${outcomeSpin.couponCode} saved to Your Coupons.`
+          wonPrize && outcomeSpin.couponCode
+            ? `Congratulations! You won ${prizeTitle}. Reward code ${outcomeSpin.couponCode} saved to Your Coupons.`
             : `Result: ${outcomeSpin.segmentLabel}. Better luck next time.`;
         setLiveAnnouncement(announcement);
       };
@@ -423,18 +430,31 @@ export function SpinToWinShowcase({
             </div>
           ) : displaySpin ? (
             /* Today's Spin Result View */
+            (() => {
+              const displayIsPrize =
+                displaySpin.segmentType === 'COUPON' || displaySpin.segmentType === 'FREE_GIFT';
+              const displayTitle =
+                displaySpin.segmentType === 'FREE_GIFT'
+                  ? `You won ${displaySpin.giftProductName ? `Free gift: ${displaySpin.giftProductName}` : displaySpin.couponSummary || displaySpin.segmentLabel}`
+                  : displayIsPrize
+                    ? `You won ${displaySpin.couponSummary || displaySpin.segmentLabel}`
+                    : displaySpin.segmentLabel;
+              return (
             <div className="mt-6 w-full max-w-[335px] space-y-3">
               <div className="border border-[#111111] bg-white p-5 text-left shadow-xs">
                 <span className="inline-block rounded-full bg-[#d8f561] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#111111]">
-                  {displaySpin.segmentType === 'COUPON' ? 'Reward unlocked' : 'Daily spin used'}
+                  {displayIsPrize ? 'Reward unlocked' : 'Daily spin used'}
                 </span>
                 <h2 className="mt-2.5 text-lg font-bold tracking-tight text-[#111111]">
-                  {displaySpin.segmentType === 'COUPON'
-                    ? `You won ${displaySpin.couponSummary || displaySpin.segmentLabel}`
-                    : displaySpin.segmentLabel}
+                  {displayTitle}
                 </h2>
+                {displaySpin.segmentType === 'FREE_GIFT' && displaySpin.giftProductName ? (
+                  <p className="mt-1 text-xs font-medium text-[#15803d]">
+                    Apply this personal code in your bag or checkout to receive {displaySpin.giftProductName} for ₹0.
+                  </p>
+                ) : null}
 
-                {displaySpin.segmentType === 'COUPON' && displaySpin.couponCode ? (
+                {displayIsPrize && displaySpin.couponCode ? (
                   <>
                     <div className="mt-3 flex items-center justify-between gap-2 border border-dashed border-[#111111] bg-[#fbf8ef] px-3 py-2.5">
                       <code className="font-mono text-sm font-bold tracking-wider text-[#111111]">
@@ -452,9 +472,20 @@ export function SpinToWinShowcase({
                       Saved privately to Your Coupons
                       {wonExpiryFormatted ? ` · Valid until ${wonExpiryFormatted}` : ''}.
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        saveCouponCodeForCheckout(displaySpin.couponCode!);
+                        onClose?.();
+                        router.push('/cart');
+                      }}
+                      className="mt-3 inline-flex h-[44px] w-full items-center justify-center rounded-full border border-[#111111] bg-[#111111] text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111] cursor-pointer"
+                    >
+                      {displaySpin.segmentType === 'FREE_GIFT' ? 'Apply & claim gift →' : 'Apply to bag →'}
+                    </button>
                     <Link
                       href="/account/coupons"
-                      className="mt-3 inline-flex h-[44px] w-full items-center justify-center rounded-full border border-[#111111] bg-[#e8c6ff] text-xs font-bold uppercase tracking-[0.08em] text-[#111111] transition hover:bg-[#dfb4ff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
+                      className="mt-2 inline-flex h-[40px] w-full items-center justify-center rounded-full border border-[#111111] bg-[#e8c6ff] text-xs font-bold uppercase tracking-[0.08em] text-[#111111] transition hover:bg-[#dfb4ff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]"
                     >
                       View my coupons →
                     </Link>
@@ -484,7 +515,7 @@ export function SpinToWinShowcase({
                 ) : (
                   <span>You have used today&apos;s spin ({quotaLabel}).</span>
                 )}
-                {(state.cooldownBlocked || (state.rewardCooldownMode !== 'disabled' && displaySpin.segmentType === 'COUPON')) ? (
+                {(state.cooldownBlocked || (state.rewardCooldownMode !== 'disabled' && displayIsPrize)) ? (
                   <p className="mt-1.5 text-[11px] leading-snug text-[#404040]">
                     {state.rewardCooldownMode === 'until_coupon_expires'
                       ? 'Daily Spin pauses while your won coupon is still active so you can redeem it first.'
@@ -501,6 +532,8 @@ export function SpinToWinShowcase({
                 {variant === 'modal' ? 'NO THANKS' : 'Continue shopping'}
               </button>
             </div>
+              );
+            })()
           ) : state.cooldownBlocked ? (
             /* Subsequent-day Reward Cooldown Blocked View (0/1 quota left!) */
             <div className="mt-6 w-full max-w-[335px] space-y-3">

@@ -12,6 +12,18 @@ import {
 import { planStockClaim, stockKey, type StockIdentity } from '@/lib/checkout/stock-rules';
 import { readCheckoutConfigurationUsing, type CheckoutConfiguration } from '@/lib/checkout/settings';
 import { quoteShipping, type ShippingPolicy } from '@/lib/checkout/shipping-rules';
+import {
+  GiftUnavailableError,
+  consumeFreeGiftInTx,
+  freeGiftTablesPresent,
+  loadGiftCatalogSnapshotUsing,
+  releaseFreeGiftInTx,
+  reserveFreeGiftInTx,
+  resolveAndLockThresholdGiftInTx,
+  resolveCandidateGiftStockIdentitiesInTx,
+  restoreFreeGiftAfterLatePayment,
+} from '@/lib/free-gifts/store';
+import type { FreeGiftRuleRecord } from '@/lib/free-gifts/rules';
 import { resolveCartItemsFromDbUsing } from './db-catalog';
 import type { CartPricingInput, PricedCart } from './db-pricing';
 import {
@@ -147,6 +159,12 @@ export interface OrderItemSnapshot {
   categoryId?: string | null;
   brandId?: string | null;
   onSale?: boolean;
+  /** Free Gift metadata when a promotion or Spin & Win prize attaches a ₹0 item. */
+  isFreeGift?: boolean;
+  freeGiftRuleId?: string | null;
+  freeGiftBadge?: string | null;
+  freeGiftSource?: 'threshold' | 'spin_wheel' | null;
+  referencePricePaise?: number | null;
 }
 
 /** A single `order_items` row derived from a resolved cart line. */
@@ -169,6 +187,11 @@ export interface OrderItemLine {
   unitPricePaise: number;
   lineTotalPaise: number;
   currency: string;
+  isFreeGift?: boolean;
+  freeGiftRuleId?: string | null;
+  freeGiftBadge?: string | null;
+  freeGiftSource?: 'threshold' | 'spin_wheel' | null;
+  referencePricePaise?: number | null;
 }
 
 /**
@@ -202,9 +225,18 @@ export function buildOrderItemLines(
       imageAlt: item.imageAlt ?? null,
       productName: item.name,
       quantity: item.quantity,
-      unitPricePaise: Math.round(item.unitPrice * 100),
-      lineTotalPaise: Math.round(item.totalPrice * 100),
+      unitPricePaise: item.isFreeGift ? 0 : Math.round(item.unitPrice * 100),
+      lineTotalPaise: item.isFreeGift ? 0 : Math.round(item.totalPrice * 100),
       currency,
+      ...(item.isFreeGift
+        ? {
+            isFreeGift: true,
+            freeGiftRuleId: item.freeGiftRuleId ?? null,
+            freeGiftBadge: item.freeGiftBadge ?? 'FREE',
+            freeGiftSource: item.freeGiftSource ?? 'threshold',
+            referencePricePaise: item.referencePricePaise ?? null,
+          }
+        : {}),
     };
   });
 }
@@ -403,6 +435,8 @@ export interface CreateOrderParams {
    * no reservation: stock is still claimed, but no timed hold is recorded.
    */
   reservationSeconds?: number;
+  /** Explicit customer acknowledgement to proceed without an unavailable threshold gift. */
+  confirmWithoutGift?: boolean;
   shippingAddress: {
     name: string;
     phone: string;
@@ -670,6 +704,7 @@ export async function releaseExpiredReservationsForProducts(
     if (row.coupon_id) {
       await releaseCouponInTx(tx, orderId, 'reservation expired');
     }
+    await releaseFreeGiftInTx(tx, orderId, 'reservation expired');
 
     const grace = previousStatus === 'FAILED' || previousStatus === 'CANCELLED';
     const processing = previousStatus === 'PROCESSING';
@@ -787,12 +822,36 @@ export async function createOrderUsing(
       productIds.splice(0, productIds.length, ...[...new Set(itemLines.map((line) => line.productId))].sort());
     }
 
-    const requestedIdentities = itemLines.map((line) => ({
+    const paidRequestedIdentities = itemLines.map((line) => ({
       productId: line.productId,
       variantId: line.variantId || null,
       quantity: line.quantity,
     }));
-    const requestedRecords = requestedIdentities.map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
+    const eligibleSubtotalLines = itemLines.map((line) => ({
+      linePaise: line.lineTotalPaise,
+      isFreeGift: false,
+    }));
+    const hasFreeGiftSchema = await freeGiftTablesPresent(tx);
+    const candidateGifts = hasFreeGiftSchema
+      ? await resolveCandidateGiftStockIdentitiesInTx(tx, {
+          lines: eligibleSubtotalLines,
+          couponCode: params.coupon?.code ?? null,
+          confirmWithoutGift: params.confirmWithoutGift === true,
+        })
+      : { identities: [], thresholdRuleIds: [] };
+
+    const requestedIdentities = [
+      ...paidRequestedIdentities,
+      ...candidateGifts.identities.map((id) => ({
+        productId: id.productId,
+        variantId: id.variantId || null,
+        quantity: 1,
+      })),
+    ];
+    const requestedRecords = requestedIdentities.map((line) => ({
+      product_id: line.productId,
+      variant_id: line.variantId || null,
+    }));
 
     // Lock affected existing orders before any inventory row. Include every line
     // of those orders in the sorted stock lock set, because expiry and supersede
@@ -891,18 +950,20 @@ export async function createOrderUsing(
 
         const identical = isIdenticalCheckoutAttempt(
           {
-            items: mappedExisting.items.map((it) => ({
-              productId: normalizeCartLineId(it.id).baseId || it.id,
-              variantId: it.variantId ?? null,
-              quantity: it.quantity,
-            })),
+            items: mappedExisting.items
+              .filter((it) => !it.isFreeGift)
+              .map((it) => ({
+                productId: normalizeCartLineId(it.id).baseId || it.id,
+                variantId: it.variantId ?? null,
+                quantity: it.quantity,
+              })),
             couponCode: mappedExisting.couponCode,
             customerEmail: mappedExisting.customerEmail,
             customerPhone: mappedExisting.customerPhone,
             shippingAddress: existingAddress,
           },
           {
-            items: requestedIdentities,
+            items: paidRequestedIdentities,
             couponCode: params.coupon?.code ?? null,
             customerEmail: params.customerEmail,
             customerPhone: params.customerPhone,
@@ -924,6 +985,7 @@ export async function createOrderUsing(
               orderAlreadyLocked: true,
             });
             await releaseCouponInTx(tx, String(other.id), 'superseded by a new checkout');
+            await releaseFreeGiftInTx(tx, String(other.id), 'superseded by a new checkout');
             await tx`
               update orders
               set reservation_state = 'RELEASED',
@@ -952,6 +1014,7 @@ export async function createOrderUsing(
           orderAlreadyLocked: true,
         });
         await releaseCouponInTx(tx, orderId, 'superseded by a new checkout');
+        await releaseFreeGiftInTx(tx, orderId, 'superseded by a new checkout');
         const wasOpen =
           previousStatus === 'CREATED'
           || previousStatus === 'PENDING'
@@ -988,15 +1051,22 @@ export async function createOrderUsing(
     }
 
     // Expire matching holds before obtaining stock locks (never stock -> order).
+    const allLockProductIds = [
+      ...new Set([
+        ...productIds,
+        ...candidateGifts.identities.map((id) => id.productId),
+      ]),
+    ].sort();
     const expiredReservations = affectedOrders.length > 0
-      ? await releaseExpiredReservationsForProducts(tx, productIds, itemLines, { alreadyLocked: true })
+      ? await releaseExpiredReservationsForProducts(tx, allLockProductIds, requestedIdentities, { alreadyLocked: true })
       : [];
     const sameRequestedIdentities = affectedOrders.length === 0
+      && candidateGifts.identities.length === 0
       && requestedIdentities.length === itemLines.length
       && requestedIdentities.every((reqLine, idx) => stockKey(reqLine) === stockKey(itemLines[idx]));
-    const stockRows = sameRequestedIdentities
+    const stockRows = sameRequestedIdentities || (affectedOrders.length === 0 && candidateGifts.identities.length > 0)
       ? initialStockRows
-      : await lockStockIdentities(tx, itemLines);
+      : await lockStockIdentities(tx, requestedIdentities);
     const plan = planStockClaim(itemLines, stockRows);
     if (!plan.ok) throw new InsufficientStockError(plan.error);
 
@@ -1070,6 +1140,189 @@ export async function createOrderUsing(
       );
     }
 
+    // 1c. Resolve Free Gifts AFTER coupons + pricing expectation checks,
+    //     so coupon-disallowed gifts don't attach and an unavailable gift aborts
+    //     BEFORE allocating an order number.
+    const giftOrderSnapshots: OrderItemSnapshot[] = [];
+    const giftOrderItemLines: OrderItemLine[] = [];
+    const giftStockLines: Array<{ productId: string; variantId: string | null; requiresStockRow?: boolean; quantity: number; productName: string }> = [];
+    let thresholdGiftToReserve: {
+      rule: FreeGiftRuleRecord;
+      productId: string;
+      variantId: string | null;
+    } | null = null;
+
+    if (hasFreeGiftSchema) {
+      if (couponEvaluation?.ok && couponEvaluation.freeGift) {
+        const spinSnapshot = await loadGiftCatalogSnapshotUsing(
+          tx,
+          couponEvaluation.freeGift.productId,
+          couponEvaluation.freeGift.variantId,
+        );
+        const spinStockLine = spinSnapshot
+          ? {
+              productId: spinSnapshot.productId,
+              variantId: spinSnapshot.variantId,
+              requiresStockRow: Boolean(spinSnapshot.variantId),
+              quantity: 1,
+              productName: spinSnapshot.productName,
+            }
+          : null;
+        const spinStockCheck = spinStockLine
+          ? planStockClaim([...itemLines, spinStockLine], stockRows)
+          : { ok: false as const, error: 'Out of stock' };
+        if (
+          !spinSnapshot
+          || !spinSnapshot.productActive
+          || !spinSnapshot.variantActive
+          || !spinStockCheck.ok
+        ) {
+          const giftTitle = spinSnapshot?.productName ?? 'reward item';
+          throw new CouponRejectedError(
+            'no_eligible_items',
+            `Sorry, the free gift "${giftTitle}" for this reward is currently out of stock. Remove the code to place your order.`,
+          );
+        }
+        giftOrderSnapshots.push({
+          id: spinSnapshot.productId,
+          variantId: spinSnapshot.variantId,
+          variantSku: spinSnapshot.variantSku,
+          variantLabel: spinSnapshot.variantLabel,
+          name: spinSnapshot.productName,
+          quantity: 1,
+          unitPrice: 0,
+          totalPrice: 0,
+          image: spinSnapshot.imageUrl ?? undefined,
+          imageAlt: spinSnapshot.imageAlt,
+          deviceModelId: spinSnapshot.variantDeviceModelId,
+          deviceModelName: spinSnapshot.variantDeviceModelName,
+          colourId: spinSnapshot.variantColourId,
+          colourName: spinSnapshot.variantColourName,
+          colourHex: spinSnapshot.variantColourHex,
+          isFreeGift: true,
+          freeGiftRuleId: null,
+          freeGiftBadge: 'GIFT',
+          freeGiftSource: 'spin_wheel',
+          referencePricePaise: spinSnapshot.regularPricePaise,
+        });
+        giftOrderItemLines.push({
+          lineNumber: itemLines.length + giftOrderItemLines.length + 1,
+          productId: spinSnapshot.productId,
+          variantId: spinSnapshot.variantId,
+          variantSku: spinSnapshot.variantSku,
+          variantLabel: spinSnapshot.variantLabel,
+          deviceModelId: spinSnapshot.variantDeviceModelId,
+          deviceModelName: spinSnapshot.variantDeviceModelName,
+          colourId: spinSnapshot.variantColourId,
+          colourName: spinSnapshot.variantColourName,
+          colourHex: spinSnapshot.variantColourHex,
+          imageUrl: spinSnapshot.imageUrl,
+          imageAlt: spinSnapshot.imageAlt,
+          productName: spinSnapshot.productName,
+          quantity: 1,
+          unitPricePaise: 0,
+          lineTotalPaise: 0,
+          currency,
+          isFreeGift: true,
+          freeGiftRuleId: null,
+          freeGiftBadge: 'GIFT',
+          freeGiftSource: 'spin_wheel',
+          referencePricePaise: spinSnapshot.regularPricePaise,
+        });
+        giftStockLines.push(spinStockLine!);
+      }
+
+      const thresholdResult = await resolveAndLockThresholdGiftInTx(tx, {
+        lines: eligibleSubtotalLines,
+        discountPaise,
+        couponApplied: Boolean(couponDefinition),
+        userId: params.userId ?? null,
+        email: params.customerEmail,
+        confirmWithoutGift: params.confirmWithoutGift === true,
+      });
+      if (thresholdResult.gift) {
+        const { rule, snapshot } = thresholdResult.gift;
+        const thresholdStockLine = {
+          productId: snapshot.productId,
+          variantId: snapshot.variantId,
+          requiresStockRow: Boolean(snapshot.variantId),
+          quantity: 1,
+          productName: snapshot.productName,
+        };
+        const combinedCheck = planStockClaim([...itemLines, ...giftStockLines, thresholdStockLine], stockRows);
+        if (!combinedCheck.ok) {
+          throw new GiftUnavailableError({
+            ruleId: rule.id,
+            ruleName: rule.name,
+            giftName: snapshot.productName,
+            reason: 'out_of_stock',
+            message: `Sorry, the free gift "${snapshot.productName}" just went out of stock. You can continue checking out without the gift.`,
+          });
+        }
+        thresholdGiftToReserve = {
+          rule,
+          productId: snapshot.productId,
+          variantId: snapshot.variantId,
+        };
+        giftOrderSnapshots.push({
+          id: snapshot.productId,
+          variantId: snapshot.variantId,
+          variantSku: snapshot.variantSku,
+          variantLabel: snapshot.variantLabel,
+          name: snapshot.productName,
+          quantity: 1,
+          unitPrice: 0,
+          totalPrice: 0,
+          image: snapshot.imageUrl ?? undefined,
+          imageAlt: snapshot.imageAlt,
+          deviceModelId: snapshot.variantDeviceModelId,
+          deviceModelName: snapshot.variantDeviceModelName,
+          colourId: snapshot.variantColourId,
+          colourName: snapshot.variantColourName,
+          colourHex: snapshot.variantColourHex,
+          isFreeGift: true,
+          freeGiftRuleId: rule.id,
+          freeGiftBadge: rule.badgeText || 'FREE',
+          freeGiftSource: 'threshold',
+          referencePricePaise: snapshot.regularPricePaise,
+        });
+        giftOrderItemLines.push({
+          lineNumber: itemLines.length + giftOrderItemLines.length + 1,
+          productId: snapshot.productId,
+          variantId: snapshot.variantId,
+          variantSku: snapshot.variantSku,
+          variantLabel: snapshot.variantLabel,
+          deviceModelId: snapshot.variantDeviceModelId,
+          deviceModelName: snapshot.variantDeviceModelName,
+          colourId: snapshot.variantColourId,
+          colourName: snapshot.variantColourName,
+          colourHex: snapshot.variantColourHex,
+          imageUrl: snapshot.imageUrl,
+          imageAlt: snapshot.imageAlt,
+          productName: snapshot.productName,
+          quantity: 1,
+          unitPricePaise: 0,
+          lineTotalPaise: 0,
+          currency,
+          isFreeGift: true,
+          freeGiftRuleId: rule.id,
+          freeGiftBadge: rule.badgeText || 'FREE',
+          freeGiftSource: 'threshold',
+          referencePricePaise: snapshot.regularPricePaise,
+        });
+        giftStockLines.push(thresholdStockLine);
+      }
+    }
+
+    const finalPlan =
+      giftStockLines.length > 0
+        ? planStockClaim([...itemLines, ...giftStockLines], stockRows)
+        : plan;
+    if (!finalPlan.ok) throw new InsufficientStockError(finalPlan.error);
+
+    const itemsToPersist = giftOrderSnapshots.length > 0 ? [...items, ...giftOrderSnapshots] : items;
+    const itemLinesToPersist = giftOrderItemLines.length > 0 ? [...itemLines, ...giftOrderItemLines] : itemLines;
+
     // 2. Number the order inside the same transaction as late as possible so
     //    the global counter lock is held only during final persistence.
     let txnid = (params.txnid || '').trim();
@@ -1117,7 +1370,7 @@ export async function createOrderUsing(
           ${txnid},
           ${orderNumber},
           ${params.userId ?? null},
-          ${tx.json(items as any)},
+          ${tx.json(itemsToPersist as any)},
           ${(totalPaise / 100).toFixed(2)},
           ${currency},
           'CREATED',
@@ -1183,7 +1436,29 @@ export async function createOrderUsing(
 
     // Normalised order_items rows: composite cart ids are reduced to catalog
     // base ids here, so every later lookup by product id works.
-    for (const [index, line] of itemLines.entries()) {
+    for (const [index, line] of itemLinesToPersist.entries()) {
+      const lineDiscountPaise = line.isFreeGift ? 0 : (couponLineDiscounts[index] ?? 0);
+      if (writeSnapshots && hasFreeGiftSchema) {
+        await tx`
+          INSERT INTO order_items (
+            order_id, line_number, product_id, product_name, quantity,
+            unit_price_paise, line_total_paise, discount_paise, currency,variant_id,variant_sku,variant_label,
+            variant_device_model_id, variant_device_model_name,
+            variant_colour_id, variant_colour_name, variant_colour_hex,
+            image_url, image_alt,
+            is_free_gift, free_gift_rule_id, free_gift_badge, free_gift_source, reference_price_paise
+          ) VALUES (
+            ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
+            ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
+            ${lineDiscountPaise}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null},
+            ${line.deviceModelId ?? null},${line.deviceModelName ?? null},
+            ${line.colourId ?? null},${line.colourName ?? null},${line.colourHex ?? null},
+            ${line.imageUrl ?? null},${line.imageAlt ?? null},
+            ${Boolean(line.isFreeGift)}, ${line.freeGiftRuleId ?? null}, ${line.freeGiftBadge ?? null}, ${line.freeGiftSource ?? null}, ${line.referencePricePaise ?? null}
+          )
+        `;
+        continue;
+      }
       if (writeSnapshots) {
         await tx`
           INSERT INTO order_items (
@@ -1195,10 +1470,25 @@ export async function createOrderUsing(
           ) VALUES (
             ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
             ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
-            ${couponLineDiscounts[index] ?? 0}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null},
+            ${lineDiscountPaise}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null},
             ${line.deviceModelId ?? null},${line.deviceModelName ?? null},
             ${line.colourId ?? null},${line.colourName ?? null},${line.colourHex ?? null},
             ${line.imageUrl ?? null},${line.imageAlt ?? null}
+          )
+        `;
+        continue;
+      }
+      if (hasFreeGiftSchema) {
+        await tx`
+          INSERT INTO order_items (
+            order_id, line_number, product_id, product_name, quantity,
+            unit_price_paise, line_total_paise, discount_paise, currency,variant_id,variant_sku,variant_label,
+            is_free_gift, free_gift_rule_id, free_gift_badge, free_gift_source, reference_price_paise
+          ) VALUES (
+            ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
+            ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
+            ${lineDiscountPaise}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null},
+            ${Boolean(line.isFreeGift)}, ${line.freeGiftRuleId ?? null}, ${line.freeGiftBadge ?? null}, ${line.freeGiftSource ?? null}, ${line.referencePricePaise ?? null}
           )
         `;
         continue;
@@ -1210,7 +1500,7 @@ export async function createOrderUsing(
         ) VALUES (
           ${rows[0].id}, ${line.lineNumber}, ${line.productId}, ${line.productName},
           ${line.quantity}, ${line.unitPricePaise}, ${line.lineTotalPaise},
-          ${couponLineDiscounts[index] ?? 0}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null}
+          ${lineDiscountPaise}, ${line.currency},${line.variantId || null},${line.variantSku || null},${line.variantLabel || null}
         )
       `;
     }
@@ -1227,11 +1517,24 @@ export async function createOrderUsing(
       });
     }
 
+    if (thresholdGiftToReserve) {
+      await reserveFreeGiftInTx(tx, {
+        ruleId: thresholdGiftToReserve.rule.id,
+        orderId: rows[0].id,
+        customerUserId: params.userId ?? null,
+        customerEmail: params.customerEmail,
+        giftProductId: thresholdGiftToReserve.productId,
+        giftVariantId: thresholdGiftToReserve.variantId,
+        thresholdPaise: thresholdGiftToReserve.rule.targetPaise,
+        quantity: 1,
+      });
+    }
+
     // 4. Claim the planned units. The guarded updates write `sale` movements
     //    under the same locked stock rows, so the ledger always equals the
     //    units the order holds.
-    await claimPlannedStock(tx, rows[0].id, plan.claims);
-    const stockClaimed = plan.claims.length > 0;
+    await claimPlannedStock(tx, rows[0].id, finalPlan.claims);
+    const stockClaimed = finalPlan.claims.length > 0;
 
     return {
       order: mapRowToOrder(rows[0]),
@@ -1722,6 +2025,10 @@ export async function transitionOrderStatusUsing(
       } else {
         await consumeCouponInTx(tx, current.id);
       }
+      const giftRestore = await restoreFreeGiftAfterLatePayment(tx, current.id);
+      if (giftRestore !== 'limit-unavailable') {
+        await consumeFreeGiftInTx(tx, current.id);
+      }
     }
 
     // Only a release decided above moves stock here. A timed failure keeps its
@@ -1730,6 +2037,7 @@ export async function transitionOrderStatusUsing(
     if (releaseNow) {
       stockReleased = await releaseClaimedStock(tx, current.id);
       await releaseCouponInTx(tx, current.id, releaseReason);
+      await releaseFreeGiftInTx(tx, current.id, releaseReason);
     }
 
     if (couponReviewRequired) {
@@ -2001,6 +2309,7 @@ export async function releaseOrderReservation(
 
     const stockReleased = await releaseClaimedStock(tx, current.id);
     await releaseCouponInTx(tx, current.id, input.reason);
+    await releaseFreeGiftInTx(tx, current.id, input.reason);
     const nextStatus = input.cancelOrder
       && (current.status === 'CREATED' || current.status === 'PENDING' || current.status === 'PROCESSING')
       ? 'CANCELLED'

@@ -3,6 +3,7 @@ import type postgres from 'postgres';
 
 import { getSql } from '@/lib/platform/db';
 import { writeAudit } from './audit';
+import { appendFreeGiftReturnThresholdNoteInTx } from '@/lib/free-gifts/store';
 import { isRefundMethod, type RefundMethod } from './return-rules';
 import { recordRefundInTx, type RecordRefundInput, type RefundMutation, type ReturnLoad } from './returns';
 
@@ -123,7 +124,13 @@ async function initiateInTx(tx: Tx, input: InitiateRefundInput): Promise<Extract
   if (!check.ok) throw new RefundFailure(check);
   const requestId = `rreq_${randomBytes(12).toString('hex')}`;
   const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 300) : '';
-  const note = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';
+  const rawNote = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';
+  const { note } = await appendFreeGiftReturnThresholdNoteInTx(tx, {
+    orderId: str(order.id),
+    additionalRefundPaise: Math.trunc(input.amountPaise) + totals.pendingPaise,
+    existingNote: rawNote,
+    maxLength: 500,
+  });
   await tx`insert into refund_requests
     (id, order_id, return_id, amount_paise, currency, method, reason, note, created_by, created_at)
     values (${requestId}, ${str(order.id)}, ${returnId}, ${input.amountPaise}, ${str(order.currency) || 'INR'},

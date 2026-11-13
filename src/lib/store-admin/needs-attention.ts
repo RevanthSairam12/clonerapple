@@ -11,7 +11,7 @@ if (typeof window !== 'undefined') {
 }
 
 export interface NeedsAttentionItem {
-  key: 'flagged_payments' | 'refunds_owed' | 'stuck_verifying' | 'failed_notifications' | 'password_reset_mail_failures' | 'spin_daily_cap' | 'reconcile_heartbeat';
+  key: 'flagged_payments' | 'refunds_owed' | 'stuck_verifying' | 'failed_notifications' | 'password_reset_mail_failures' | 'spin_daily_cap' | 'free_gift_alerts' | 'reconcile_heartbeat';
   label: string;
   count: number;
   amountPaise?: number;
@@ -28,6 +28,7 @@ export interface NeedsAttentionSummary {
   failedNotificationsCount: number;
   passwordResetMailFailuresCount: number;
   spinDailyCapReachedCount: number;
+  freeGiftAlertsCount: number;
   reconcile: ReconcileHeartbeatState;
   items: NeedsAttentionItem[];
 }
@@ -40,6 +41,7 @@ export function buildNeedsAttentionItems(input: {
   failedNotificationsCount: number;
   passwordResetMailFailuresCount?: number;
   spinDailyCapReachedCount?: number;
+  freeGiftAlertsCount?: number;
   reconcile: ReconcileHeartbeatState;
 }): NeedsAttentionItem[] {
   const {
@@ -50,6 +52,7 @@ export function buildNeedsAttentionItems(input: {
     failedNotificationsCount,
     passwordResetMailFailuresCount = 0,
     spinDailyCapReachedCount = 0,
+    freeGiftAlertsCount = 0,
     reconcile,
   } = input;
 
@@ -123,6 +126,18 @@ export function buildNeedsAttentionItems(input: {
           },
         ]
       : []),
+    ...(freeGiftAlertsCount > 0
+      ? [
+          {
+            key: 'free_gift_alerts' as const,
+            label: 'Free gift rules need attention',
+            count: freeGiftAlertsCount,
+            href: '/store-admin/marketing/free-gifts',
+            urgent: true,
+            detail: `${freeGiftAlertsCount} active free gift rule${freeGiftAlertsCount === 1 ? ' has' : 's have'} unavailable checkouts, low/out stock, inactive SKUs, or reached caps`,
+          },
+        ]
+      : []),
     {
       key: 'reconcile_heartbeat',
       label: 'Last reconcile run',
@@ -151,6 +166,7 @@ export async function getNeedsAttentionSummary(
       failedNotificationsCount: 0,
       passwordResetMailFailuresCount: 0,
       spinDailyCapReachedCount: 0,
+      freeGiftAlertsCount: 0,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount: 0,
@@ -160,6 +176,7 @@ export async function getNeedsAttentionSummary(
         failedNotificationsCount: 0,
         passwordResetMailFailuresCount: 0,
         spinDailyCapReachedCount: 0,
+        freeGiftAlertsCount: 0,
         reconcile,
       }),
     };
@@ -249,6 +266,61 @@ export async function getNeedsAttentionSummary(
       spinDailyCapReachedCount = 0;
     }
 
+    let freeGiftAlertsCount = 0;
+    try {
+      const [giftAlertRow] = await sql<Array<{ cnt: number | string | null }>>`
+        select count(*)::int as cnt
+        from free_gift_rules r
+        left join products p on p.id = r.gift_product_id
+        left join product_variants pv on pv.id = r.gift_variant_id
+        left join stock ps on ps.product_id = r.gift_product_id and ps.variant_id is null
+        left join stock vs on vs.product_id = r.gift_product_id and vs.variant_id = r.gift_variant_id
+        where r.archived_at is null
+          and r.is_active = true
+          and (
+            r.unavailable_checkout_count > 0
+            or p.id is null
+            or p.deleted_at is not null
+            or p.is_active = false
+            or (
+              r.gift_variant_id is not null
+              and (
+                pv.id is null
+                or pv.product_id <> r.gift_product_id
+                or pv.is_active = false
+                or pv.is_purchasable = false
+                or pv.retired_at is not null
+              )
+            )
+            or (
+              case
+                when r.gift_variant_id is not null then
+                  coalesce(vs.track_inventory, false)
+                  and (coalesce(vs.on_hand, 0) - coalesce(vs.reserved, 0)) <= greatest(0, coalesce(vs.low_stock_threshold, 0))
+                else
+                  coalesce(ps.track_inventory, false)
+                  and (coalesce(ps.on_hand, 0) - coalesce(ps.reserved, 0)) <= greatest(0, coalesce(ps.low_stock_threshold, 0))
+              end
+            )
+            or (
+              r.max_gifts_total is not null
+              and coalesce(
+                (
+                  select count(*)
+                  from free_gift_redemptions gr
+                  where gr.rule_id = r.id
+                    and gr.state in ('RESERVED', 'CONSUMED')
+                ),
+                0
+              ) >= r.max_gifts_total
+            )
+          )
+      `;
+      freeGiftAlertsCount = Math.max(0, Math.trunc(Number(giftAlertRow?.cnt) || 0));
+    } catch {
+      freeGiftAlertsCount = 0;
+    }
+
     return {
       flaggedPaymentsCount,
       refundsOwedCount,
@@ -257,6 +329,7 @@ export async function getNeedsAttentionSummary(
       failedNotificationsCount,
       passwordResetMailFailuresCount,
       spinDailyCapReachedCount,
+      freeGiftAlertsCount,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount,
@@ -266,6 +339,7 @@ export async function getNeedsAttentionSummary(
         failedNotificationsCount,
         passwordResetMailFailuresCount,
         spinDailyCapReachedCount,
+        freeGiftAlertsCount,
         reconcile,
       }),
     };
@@ -278,6 +352,7 @@ export async function getNeedsAttentionSummary(
       failedNotificationsCount: 0,
       passwordResetMailFailuresCount: 0,
       spinDailyCapReachedCount: 0,
+      freeGiftAlertsCount: 0,
       reconcile,
       items: buildNeedsAttentionItems({
         flaggedPaymentsCount: 0,
@@ -287,6 +362,7 @@ export async function getNeedsAttentionSummary(
         failedNotificationsCount: 0,
         passwordResetMailFailuresCount: 0,
         spinDailyCapReachedCount: 0,
+        freeGiftAlertsCount: 0,
         reconcile,
       }),
     };

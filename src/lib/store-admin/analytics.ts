@@ -295,6 +295,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
         `,
@@ -369,6 +370,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
           group by split_part(oi.product_id, '::', 1)
@@ -388,6 +390,7 @@ export async function getSalesAnalytics(range: RangeKey): Promise<AnalyticsLoad<
           cross join bounds b
           where o.status = 'PAID'
             and o.fulfilment_status <> 'CANCELED'
+            and coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false) = false
             and o.created_at >= b.from_ts
             and o.created_at < b.to_ts
           group by coalesce(c.name, 'Uncategorised')

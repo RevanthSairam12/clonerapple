@@ -4,6 +4,7 @@ import { getSql } from '../platform/db';
 import { ensureInvoiceIssuedInTx } from '@/lib/orders/invoice';
 import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
 import { releaseClaimedStock, restoreSoldStock } from '../payu/stock';
+import { releaseConsumedFreeGiftInTx, releaseFreeGiftInTx } from '@/lib/free-gifts/store';
 
 import { FULFILMENT_TRANSITIONS, mapSaleState, type FulfilmentStatus } from './order-rules';
 export { mapSaleState } from './order-rules';
@@ -142,6 +143,9 @@ function parseItems(value: unknown): OrderItem[] {
           : integer(row.reference_price_paise),
       lineTotalPaise,
       currency: text(row.currency) || 'INR',
+      isFreeGift: row.is_free_gift === true || row.is_free_gift === 'true',
+      freeGiftBadge: nullableText(row.free_gift_badge),
+      freeGiftSource: nullableText(row.free_gift_source),
     };
   });
 }
@@ -234,6 +238,9 @@ export interface OrderItem {
   referencePricePaise: number | null;
   lineTotalPaise: number;
   currency: string;
+  isFreeGift?: boolean;
+  freeGiftBadge?: string | null;
+  freeGiftSource?: string | null;
 }
 
 export interface OrderAddress {
@@ -506,7 +513,9 @@ export async function listOrders(options: {
             'variantSku', oi.variant_sku,
             'variantLabel', to_jsonb(oi)->>'variant_label',
             'deviceModelName', to_jsonb(oi)->>'variant_device_model_name',
-            'colourName', to_jsonb(oi)->>'variant_colour_name'
+            'colourName', to_jsonb(oi)->>'variant_colour_name',
+            'isFreeGift', coalesce((to_jsonb(oi)->>'is_free_gift')::boolean, false),
+            'freeGiftBadge', to_jsonb(oi)->>'free_gift_badge'
           ) order by oi.line_number)
           from order_items oi
           where oi.order_id = o.id
@@ -758,7 +767,10 @@ export async function getOrderDetail(
                to_jsonb(order_items)->>'variant_colour_name' as variant_colour_name,
                to_jsonb(order_items)->>'variant_colour_hex' as variant_colour_hex,
                to_jsonb(order_items)->>'image_url' as image_url,
-               to_jsonb(order_items)->>'image_alt' as image_alt
+               to_jsonb(order_items)->>'image_alt' as image_alt,
+               to_jsonb(order_items)->>'is_free_gift' as is_free_gift,
+               to_jsonb(order_items)->>'free_gift_badge' as free_gift_badge,
+               to_jsonb(order_items)->>'free_gift_source' as free_gift_source
         from order_items
         where order_id = ${orderId}
         order by line_number asc
@@ -822,6 +834,9 @@ export async function getOrderDetail(
           imageAlt: nullableText(row.image_alt),
           quantity: integer(row.quantity) || 1,
           unitPricePaise: integer(row.unit_price_paise),
+          isFreeGift: row.is_free_gift === true || row.is_free_gift === 'true',
+          freeGiftBadge: nullableText(row.free_gift_badge),
+          freeGiftSource: nullableText(row.free_gift_source),
           referencePricePaise: row.reference_price_paise === null || row.reference_price_paise === undefined
             ? null
             : integer(row.reference_price_paise),
@@ -1068,8 +1083,10 @@ async function transitionFulfilmentInTx(
         { createdBy: input.staffId },
       );
       stockMoved = restored.length > 0;
+      await releaseConsumedFreeGiftInTx(tx, orderId, 'fulfilment cancellation');
     } else {
       stockMoved = await releaseClaimedStock(tx, orderId);
+      await releaseFreeGiftInTx(tx, orderId, 'fulfilment cancellation');
       await tx`update orders set reservation_state='RELEASED',reservation_released_at=now(),
         reservation_released_reason='fulfilment cancellation',next_reconcile_at=null,updated_at=now()
         where id=${orderId} and reservation_state='ACTIVE'`;

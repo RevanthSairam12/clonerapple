@@ -113,15 +113,15 @@ export async function claimPaymentVerificationInDb(
       select
         count(*)::int as cnt,
         coalesce(
-          ceil(extract(epoch from ((min(created_at) + make_interval(secs => ${ACTOR_VERIFY_WINDOW_SECONDS})) - coalesce(${nowIso}::timestamptz, now()))))::int,
+          ceil(extract(epoch from ((min(created_at) + make_interval(secs => ${ACTOR_VERIFY_WINDOW_SECONDS})) - coalesce(${nowIso}::timestamptz, clock_timestamp()))))::int,
           ${ACTOR_VERIFY_WINDOW_SECONDS}
         ) as retry_after_sec
       from payment_events
       where source = ${input.source}
         and reason = ${VERIFICATION_CLAIM_REASON}
         and payu_status = ${actorTag}
-        and created_at > coalesce(${nowIso}::timestamptz, now()) - make_interval(secs => ${ACTOR_VERIFY_WINDOW_SECONDS})
-        and created_at <= coalesce(${nowIso}::timestamptz, now())
+        and created_at > coalesce(${nowIso}::timestamptz, clock_timestamp()) - make_interval(secs => ${ACTOR_VERIFY_WINDOW_SECONDS})
+        and (${nowIso}::timestamptz is null or created_at <= ${nowIso}::timestamptz)
     `) as Array<Record<string, unknown>>;
 
     const actorCount = Number(actorRows[0]?.cnt ?? 0);
@@ -143,16 +143,16 @@ export async function claimPaymentVerificationInDb(
     // 2. Per-order 15-second cooldown and bounded 15-second active claim lease
     const recentOrderRows = (await tx`
       select
-        ceil(extract(epoch from ((created_at + make_interval(secs => ${ORDER_VERIFY_COOLDOWN_SECONDS})) - coalesce(${nowIso}::timestamptz, now()))))::int as retry_after_sec
+        ceil(extract(epoch from ((created_at + make_interval(secs => ${ORDER_VERIFY_COOLDOWN_SECONDS})) - coalesce(${nowIso}::timestamptz, clock_timestamp()))))::int as retry_after_sec
       from payment_events
       where order_id = ${orderId}
         and source = ${input.source}
         and (
           reason = ${VERIFICATION_CLAIM_REASON}
-          or created_at > coalesce(${nowIso}::timestamptz, now()) - make_interval(secs => ${ORDER_VERIFY_COOLDOWN_SECONDS})
+          or created_at > coalesce(${nowIso}::timestamptz, clock_timestamp()) - make_interval(secs => ${ORDER_VERIFY_COOLDOWN_SECONDS})
         )
-        and created_at > coalesce(${nowIso}::timestamptz, now()) - make_interval(secs => ${ORDER_VERIFY_COOLDOWN_SECONDS})
-        and created_at <= coalesce(${nowIso}::timestamptz, now())
+        and created_at > coalesce(${nowIso}::timestamptz, clock_timestamp()) - make_interval(secs => ${ORDER_VERIFY_COOLDOWN_SECONDS})
+        and (${nowIso}::timestamptz is null or created_at <= ${nowIso}::timestamptz)
       order by created_at desc, id desc
       limit 1
     `) as Array<Record<string, unknown>>;
@@ -183,7 +183,7 @@ export async function claimPaymentVerificationInDb(
         ${actorTag},
         'unchanged',
         ${VERIFICATION_CLAIM_REASON},
-        coalesce(${nowIso}::timestamptz, now())
+        coalesce(${nowIso}::timestamptz, clock_timestamp())
       )
     `;
 

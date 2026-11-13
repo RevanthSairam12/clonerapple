@@ -44,6 +44,13 @@ export function checkoutFixture() {
     '@/lib/storefront/use-availability': { verifyAvailabilityLines: async () => true },
     '@/lib/cart/useCoupon': { useCoupon: ({ subtotalPaise, shippingPaise }) => ({ input: '', appliedCode: null, applied: null, busy: false, totals: { subtotalPaise, shippingPaise, discountPaise: 0, totalPaise: subtotalPaise + shippingPaise }, revalidate: async () => null, remove() { throw new Error('Unexpected coupon removal'); } }) },
     '@/components/cart/CouponBox': { CouponBox: 'coupon' },
+    '@/lib/free-gifts/useCartFreeGifts': { useCartFreeGifts: () => ({ evaluation: null, loading: false, refresh: async () => {} }) },
+    '@/components/cart/FreeGiftCartWidgets': {
+      FreeGiftConflictNotice: () => null,
+      FreeGiftLineRow: () => null,
+      FreeGiftProgressNudgeBanner: () => null,
+      FreeGiftUnavailablePrompt: () => null,
+    },
     '@/lib/checkout/india-validation': { INDIAN_STATES: [], normalizeIndianMobile: value => value, normalizeIndianState: value => value, validateCheckoutContact: () => ({ ok: true, value: { phone: '9876543210' } }), validateIndianAddress: value => ({ ok: true, value }), checkoutFieldErrors: () => ({}) },
     '@/lib/store-admin/money': { formatRupees: value => String(value) },
   };
