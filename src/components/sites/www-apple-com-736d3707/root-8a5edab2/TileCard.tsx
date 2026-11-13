@@ -96,14 +96,14 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
       </div>
 
       {/* .tile-content */}
-      <div className="relative flex flex-col items-center text-center">
-        <div className={cn('relative z-2', isDark ? 'text-[#f5f5f7]' : 'text-[#1d1d1f]')}>
+      <div className="relative flex w-full max-w-full min-w-0 flex-col items-center px-[20px] text-center am:px-[28px]">
+        <div className={cn('relative z-2 w-full max-w-[540px] min-w-0', isDark ? 'text-[#f5f5f7]' : 'text-[#1d1d1f]')}>
           <Headline
             className={cn(
-              'font-[family-name:var(--gz-font-display)] font-semibold',
+              'font-[family-name:var(--gz-font-display)] font-semibold break-words',
               isHero
                 ? 'text-[32px] leading-[36px] tracking-[0.064px] am:text-[48px] am:leading-[52.0077px] am:tracking-[-0.096px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]'
-                : 'text-[32px] leading-[36px] tracking-[0.064px] al:text-[40px] al:leading-[44px] al:tracking-normal',
+                : 'text-[28px] leading-[32px] tracking-[0.04px] am:text-[32px] am:leading-[36px] al:text-[40px] al:leading-[44px] al:tracking-normal',
               // logo headlines carry the target's optical nudge at every width
               tile.headlineLogo ? 'mt-[4px] mb-[-5px]' : null,
             )}
@@ -136,7 +136,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
 
           <p
             className={cn(
-              'gz-tile-subhead mx-auto font-normal',
+              'gz-tile-subhead mx-auto max-w-full break-words font-normal',
               // Hero subheads keep --gz-font-display (Inter). Promo subheads use
               // Tailwind's default font-sans — the same stack the hero's eyebrow
               // labels inherit from GadzioHeroSection's root <section>.
@@ -145,7 +145,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
               isHero ? 'font-[family-name:var(--gz-font-display)]' : 'font-sans',
               isHero
                 ? 'mt-[4px] text-[19px] leading-[23px] tracking-[0.228px] am:text-[24px] am:leading-[28px] am:tracking-[0.216px] al:mt-[6px] al:text-[28px] al:leading-[32px] al:tracking-[0.196px]'
-                : 'text-[19px] leading-[23px] tracking-[0.228px] al:text-[21px] al:leading-[25px] al:tracking-[0.231px]',
+                : 'text-[17px] leading-[22px] tracking-[0.18px] am:text-[18px] am:leading-[23px] al:text-[21px] al:leading-[25px] al:tracking-[0.231px]',
               // text headlines need the gap the logo tiles get from their -5px
               !tile.headlineLogo ? (isHero ? null : 'mt-[4px] al:mt-[3px]') : null,
             )}
@@ -164,7 +164,7 @@ export function TileCard({ tile, children, priority = false }: TileCardProps) {
         {/* .tile-ctas */}
         <div
           className={cn(
-            'relative z-3 grid grid-flow-col auto-cols-max justify-center',
+            'relative z-3 flex flex-wrap items-center justify-center gap-y-[10px]',
             isHero
               ? 'mt-[11px] gap-x-[14px] am:mt-[16px] am:gap-x-[17px] al:mt-[17px]'
               : 'mt-[11px] gap-x-[14px] am:mt-[12px]',
