@@ -60,10 +60,11 @@ const FOOTER_COLUMNS = [
     title: 'Support',
     links: [
       { label: 'Contact via WhatsApp', href: WHATSAPP_ORDER_URL },
-      { label: 'Shipping & Delivery', href: '/support#shipping' },
-      { label: 'Returns & Refunds', href: '/support#returns' },
+      { label: 'Shipping & Delivery', href: '/shipping-policy' },
+      { label: 'Returns & Refunds', href: '/return-refund' },
       { label: 'Privacy Policy', href: '/privacy' },
       { label: 'Terms of Use', href: '/terms' },
+      { label: 'Company Information', href: '/company-information' },
     ],
   },
   {
@@ -146,9 +147,9 @@ export function GadzioFooter({ content }: { content?: FooterOverride } = {}) {
           <div className="lg:col-span-6 flex flex-col justify-between space-y-6 lg:pl-10">
             {/* Statement */}
             <p className="text-xs sm:text-sm text-white leading-relaxed max-w-xl font-normal">
-              Gadzio is an independent retailer of iPhone accessories in India. Cases, cables,
-              chargers and earphones &mdash; delivered across India, and backed by our 1-Year
-              Limited Replacement Guarantee.
+              Gadzio is an independent retailer of smartphone accessories in India. Cases, cables,
+              chargers and earphones &mdash; delivered across India, with any applicable product
+              warranty provided directly by the respective brand.
             </p>
 
             {/* Payments Row */}

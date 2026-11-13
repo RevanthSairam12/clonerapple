@@ -34,10 +34,10 @@ export interface SeoPageRecord {
 
 const DEFAULT_CONTACT: BusinessContactSettings = {
   tradeName: 'Gadzio',
-  legalName: 'Gadzio',
-  email: 'support@gadzio.in',
-  phone: '+91 80000 00000',
-  address: 'India',
+  legalName: 'RUPEEDO TECHNOLOGIES',
+  email: 'support@gadzio.co.in',
+  phone: '+916304859367',
+  address: 'SAI NIVAS, MOGALTUR, MASJID STREET, MOGALTHUR, AP, WESTGODAVARI, 534281',
   footerText: '',
   cookieNotice: '',
 };

@@ -16,18 +16,18 @@ export async function generateMetadata(): Promise<Metadata> {
     readSeoPageOverride('terms'),
   ]);
   return {
-    title: page?.seoTitle || seo?.metaTitle || 'Terms of Use - Gadzio',
+    title: page?.seoTitle || seo?.metaTitle || 'Terms & Conditions - Gadzio',
     description:
       page?.seoDescription ||
       seo?.metaDescription ||
-      'Review Gadzio terms and conditions of use.',
+      'Review the Terms and Conditions governing your use of the Gadzio website and purchases of smartphone accessories.',
   };
 }
 
 export default async function TermsPage() {
   const { page, contact } = await readStorePageAndContact('terms');
   const title = page?.title || 'Gadzio Terms & Conditions';
-  const lastUpdated = page?.updatedAt || 'September 2026';
+  const lastUpdated = page?.updatedAt || 'November 2026';
   const customSections = page ? parseSafePageParagraphs(page.body) : [];
 
   return (
@@ -71,38 +71,145 @@ export default async function TermsPage() {
               ))
             ) : (
               <>
+                <p>
+                  Please read these Terms and Conditions carefully before using our ecommerce
+                  website (&quot;Website&quot;) and purchasing smartphone accessories
+                  (&quot;Products&quot;) from us. By accessing or using the Website and purchasing
+                  Products, you agree to be bound by these Terms and Conditions. If you do not
+                  agree with any part of these Terms and Conditions, please do not use the Website
+                  or purchase Products from us.
+                </p>
+
                 <section className="space-y-3">
-                  <h2 className="text-xl font-semibold text-[#1d1d1f]">1. Acceptance of Terms</h2>
+                  <h2 className="text-xl font-semibold text-[#1d1d1f]">1. General Terms</h2>
+                  <div className="space-y-3">
+                    <p>
+                      <strong>a.</strong> The Website and Products are provided on an &quot;as
+                      is&quot; and &quot;as available&quot; basis. We make no representations or
+                      warranties of any kind, express or implied, regarding the accuracy,
+                      reliability, or completeness of the information or content on the Website or
+                      the suitability or quality of the Products for any particular purpose.
+                    </p>
+                    <p>
+                      <strong>b.</strong> We reserve the right to modify, suspend, or discontinue
+                      any part of the Website or the availability of the Products at any time
+                      without prior notice.
+                    </p>
+                    <p>
+                      <strong>c.</strong> We do not guarantee that the Website will be
+                      uninterrupted, error-free, or free from viruses or other harmful components.
+                    </p>
+                    <p>
+                      <strong>d.</strong> We reserve the right to refuse service, terminate
+                      accounts, or cancel orders at our discretion if we believe the customer has
+                      violated these Terms and Conditions or applicable laws.
+                    </p>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h2 className="text-xl font-semibold text-[#1d1d1f]">
+                    2. Product Descriptions and Pricing
+                  </h2>
+                  <div className="space-y-3">
+                    <p>
+                      <strong>a.</strong> We strive to provide accurate and up-to-date information
+                      regarding our Products, including descriptions, images, and pricing. However,
+                      we do not warrant that the information is error-free, complete, or current.
+                    </p>
+                    <p>
+                      <strong>b.</strong> We reserve the right to correct any errors, inaccuracies,
+                      or omissions, and to change or update information or cancel orders if any
+                      information on the Website is inaccurate at any time without prior notice.
+                    </p>
+                    <p>
+                      <strong>c.</strong> Prices are subject to change without notice, and any such
+                      changes will not affect orders already placed.
+                    </p>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h2 className="text-xl font-semibold text-[#1d1d1f]">
+                    3. Ordering and Payment
+                  </h2>
+                  <div className="space-y-3">
+                    <p>
+                      <strong>a.</strong> By placing an order, you confirm that you are authorized
+                      to use the payment method provided and that all information you provide is
+                      accurate and complete.
+                    </p>
+                    <p>
+                      <strong>b.</strong> We reserve the right to limit the quantities of Products
+                      available for purchase and to refuse or cancel any order placed with us.
+                    </p>
+                    <p>
+                      <strong>c.</strong> Payment must be made in full at the time of ordering. We
+                      accept various payment methods as specified on the Website.
+                    </p>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h2 className="text-xl font-semibold text-[#1d1d1f]">
+                    4. Limitation of Liability
+                  </h2>
+                  <div className="space-y-3">
+                    <p>
+                      <strong>a.</strong> In no event shall we, our officers, directors, employees,
+                      agents, or affiliates be liable to you or any third party for any direct,
+                      indirect, incidental, consequential, special, or exemplary damages, including
+                      but not limited to, damages for loss of profits, goodwill, data, or other
+                      intangible losses, arising out of or in connection with your use of the
+                      Website or the purchase or use of the Products.
+                    </p>
+                    <p>
+                      <strong>b.</strong> To the maximum extent permitted by applicable law, our
+                      total liability to you for any claim arising out of or relating to these
+                      Terms and Conditions, the Website, or the Products shall not exceed the total
+                      amount paid by you for the Products in question.
+                    </p>
+                    <p>
+                      <strong>c.</strong> We shall not be liable for any delay or failure in
+                      performance resulting from acts beyond our control, including but not limited
+                      to acts of God, natural disasters, power outages, strikes, or governmental
+                      actions.
+                    </p>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h2 className="text-xl font-semibold text-[#1d1d1f]">5. Indemnification</h2>
                   <p>
-                    By accessing or using Gadzio websites, applications, and services, you agree to
-                    comply with and be bound by these Terms and Conditions. If you do not agree to
-                    these terms, please do not use our services.
+                    You agree to indemnify, defend, and hold harmless our company, its officers,
+                    directors, employees, agents, and affiliates from any claims, liabilities,
+                    damages, costs, or expenses (including reasonable attorneys&apos; fees) arising
+                    out of or in connection with your use of the Website or the purchase or use of
+                    the Products, your violation of these Terms and Conditions, or your violation of
+                    any rights of a third party.
                   </p>
                 </section>
 
                 <section className="space-y-3">
                   <h2 className="text-xl font-semibold text-[#1d1d1f]">
-                    2. Accounts and Security
+                    6. Governing Law and Jurisdiction
                   </h2>
                   <p>
-                    You are responsible for maintaining the confidentiality of your account
-                    credentials and for all activities that occur under your account. Notify Gadzio
-                    immediately of any unauthorized use of your account.
+                    These Terms and Conditions shall be governed by the laws of India. Any disputes
+                    arising out of or in connection with these Terms and Conditions shall be
+                    subject to the jurisdiction of the competent courts in India.
                   </p>
                 </section>
 
-                <section className="space-y-3">
-                  <h2 className="text-xl font-semibold text-[#1d1d1f]">
-                    3. Intellectual Property
-                  </h2>
+                <section id="warranty" className="scroll-mt-28 space-y-3">
+                  <h2 className="text-xl font-semibold text-[#1d1d1f]">7. Warranty Policy</h2>
                   <p>
-                    All content, graphics, user interfaces, visual interfaces, photographs,
-                    trademarks, logos, sounds, music, and computer code on this site are owned by,
-                    controlled by, or licensed to Gadzio, and are protected by trade dress,
-                    copyright, patent, and trademark laws. Apple, iPhone, iPad, Mac, AirPods, and
-                    MagSafe are trademarks of Apple Inc., registered in the U.S. and other
-                    countries. Gadzio is an independent retailer of compatible accessories and is
-                    not affiliated with, sponsored by, or endorsed by Apple Inc.
+                    We do not provide any seller or store warranty of our own on Products. Warranty
+                    is strictly subject to the individual Product — where applicable, warranty is
+                    officially provided directly by the respective brand (some Products carry
+                    official brand warranty, while others may not include any warranty). All
+                    warranty claims must be directed to the respective brand under its official
+                    warranty terms.
                   </p>
                 </section>
               </>
@@ -114,6 +221,15 @@ export default async function TermsPage() {
             <div className="flex flex-wrap gap-4 font-semibold text-[#1d1d1f]">
               <Link href="/privacy" className="hover:underline">
                 Privacy Policy
+              </Link>
+              <Link href="/shipping-policy" className="hover:underline">
+                Shipping Policy
+              </Link>
+              <Link href="/return-refund" className="hover:underline">
+                Return &amp; Refund Policy
+              </Link>
+              <Link href="/company-information" className="hover:underline">
+                Company Information
               </Link>
               <Link href="/support" className="hover:underline">
                 Support
