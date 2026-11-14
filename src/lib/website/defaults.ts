@@ -47,7 +47,7 @@ import {
   TRUST_BADGES_ITEMS, CATEGORY_GRID_ITEMS, BRAND_BAR_ITEMS,
   DIWALI_ITEMS, DIWALI_COPY, CROWD_FAVORITES_ITEMS, CROWD_FAVORITES_COPY,
   REVIEWS_ITEMS, REVIEWS_COPY, IN_THE_WILD_ITEMS, IN_THE_WILD_COPY,
-  EVENT_BANNER_COPY,
+  EVENT_BANNER_COPY, SALE_BANNER_COPY,
 } from './section-defaults';
 
 /* ------------------------------------------------------------- helpers */
@@ -302,6 +302,7 @@ export const GADZIO_CROWD_FAVORITES_DEFAULTS = {
   enabled: true, ...CROWD_FAVORITES_COPY, items: CROWD_FAVORITES_ITEMS,
 };
 export const GADZIO_EVENT_BANNER_DEFAULTS = { enabled: true, ...EVENT_BANNER_COPY };
+export const GADZIO_SALE_BANNER_DEFAULTS = { enabled: true, ...SALE_BANNER_COPY };
 export const GADZIO_BRAND_BAR_DEFAULTS = { enabled: true, items: BRAND_BAR_ITEMS };
 export const GADZIO_DIWALI_CAMPAIGN_DEFAULTS = {
   enabled: true, ...DIWALI_COPY, bannerImage: '', items: DIWALI_ITEMS,
@@ -328,6 +329,7 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
   'gadzio.category_grid': GADZIO_CATEGORY_GRID_DEFAULTS,
   'gadzio.crowd_favorites': GADZIO_CROWD_FAVORITES_DEFAULTS,
   'gadzio.event_banner': GADZIO_EVENT_BANNER_DEFAULTS,
+  'gadzio.sale_banner': GADZIO_SALE_BANNER_DEFAULTS,
   'apple.hero_tiles': APPLE_HERO_TILES_DEFAULTS,
   'apple.hero_video': APPLE_HERO_VIDEO_DEFAULTS,
   'apple.promo_section': APPLE_PROMO_DEFAULTS,

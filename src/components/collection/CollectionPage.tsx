@@ -4,7 +4,8 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { GadzioHeader } from '@/components/header/GadzioHeader';
-import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
+import { GadzioSaleBanner, type GadzioSaleBannerProps } from '@/components/banner/GadzioSaleBanner';
+import { GadzioTrustBar, type GadzioTrustBarProps } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { WHATSAPP_ORDER_URL } from '@/lib/whatsapp';
 
@@ -37,6 +38,17 @@ export interface CollectionPageProps {
   products: CollectionProduct[];
   /** The sale switch on the database clock; a live sale never disables a card. */
   saleLive?: boolean;
+  /** Optional editable promotional banner shown directly below header & items nav strip (used on /sale). */
+  saleBanner?: GadzioSaleBannerProps;
+  /** Optional Trust Badges Bar override synced from Store Admin website content. */
+  trustBar?: GadzioTrustBarProps;
+  /** Optional friendly empty state shown when the collection itself currently has zero items. */
+  catalogEmptyState?: {
+    title: string;
+    description: string;
+    ctaLabel?: string;
+    ctaHref?: string;
+  };
   /** Optional overrides from CMS for header, category links, or products */
   overrides?: {
     header?: { title?: string; sortLabel?: string };
@@ -45,7 +57,15 @@ export interface CollectionPageProps {
   };
 }
 
-export function CollectionPage({ config, products, saleLive = false, overrides }: CollectionPageProps) {
+export function CollectionPage({
+  config,
+  products,
+  saleLive = false,
+  saleBanner,
+  trustBar,
+  catalogEmptyState,
+  overrides,
+}: CollectionPageProps) {
   // Merge any CMS overrides
   const resolvedTitle = overrides?.header?.title || config.title;
   const resolvedLinks = useMemo(() => {
@@ -273,6 +293,8 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
         </nav>
       )}
 
+      {saleBanner ? <GadzioSaleBanner {...saleBanner} /> : null}
+
       <div className="gz-collection-container flex-1">
         {/* 2. Breadcrumb (Home / Category) */}
         <div className="gz-collection-breadcrumb-bar">
@@ -426,6 +448,7 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
                   ? undefined
                   : 'No products match these filters. Clear all filters to see everything.'
               }
+              emptyState={products.length === 0 ? catalogEmptyState : undefined}
             />
 
             {/* 8. Pagination: only renders if total products > 24 */}
@@ -447,8 +470,8 @@ export function CollectionPage({ config, products, saleLive = false, overrides }
       </div>
 
       {/* Trust Badges Bar */}
-      <div className="w-full mt-10 border-t border-[#e5e5ea]">
-        <GadzioTrustBar />
+      <div className="w-full mt-10 border-t border-[#e5e5ea] empty:hidden">
+        <GadzioTrustBar items={trustBar?.items} enabled={trustBar?.enabled} />
       </div>
 
       {/* 11. Global Footer */}

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GadzioHeader } from '@/components/header/GadzioHeader';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
-import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
+import { GadzioTrustBar, type GadzioTrustBarProps } from '@/components/trust/GadzioTrustBar';
 import {
   scoreProducts,
   PAGE_SEARCH_ITEMS,
@@ -85,9 +85,10 @@ interface Props {
   initialProducts?: StorefrontProductRef[];
   /** The sale switch on the database clock; a live sale never disables a card. */
   saleLive?: boolean;
+  trustBar?: GadzioTrustBarProps;
 }
 
-export function SearchPageView({ initialQuery = '', initialProducts, saleLive = false }: Props) {
+export function SearchPageView({ initialQuery = '', initialProducts, saleLive = false, trustBar }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [activeCategory, setActiveCategory] = useState('All');
   const router = useRouter();
@@ -335,8 +336,8 @@ export function SearchPageView({ initialQuery = '', initialProducts, saleLive = 
       </div>
 
       {/* Trust Badges */}
-      <div className="w-full mt-10 border-t border-[#e5e5ea]">
-        <GadzioTrustBar />
+      <div className="w-full mt-10 border-t border-[#e5e5ea] empty:hidden">
+        <GadzioTrustBar items={trustBar?.items} enabled={trustBar?.enabled} />
       </div>
 
       <GlobalFooter />

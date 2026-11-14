@@ -9,6 +9,7 @@ import { getProductDetail } from '@/lib/storefront/catalog';
 import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { getUserSession } from '@/lib/user-auth';
+import { readTrustBarContent } from '@/lib/website/trust-bar';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -46,11 +47,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function ProductPage({ params, searchParams }: Props) {
   const { productId } = await params;
   const query = await searchParams;
-  const [detail, sale, session, giftPromos] = await Promise.all([
+  const [detail, sale, session, giftPromos, trustBar] = await Promise.all([
     getProductDetail(productId),
     readSaleState(),
     getUserSession(),
     listProductPageGiftPromos(),
+    readTrustBarContent(),
   ]);
 
   if (!detail) notFound();
@@ -70,6 +72,7 @@ export default async function ProductPage({ params, searchParams }: Props) {
         initialModel={query.model ?? null}
         initialColour={query.colour ?? null}
         giftPromos={giftPromos}
+        trustBar={trustBar}
       />
     );
   }
@@ -83,6 +86,7 @@ export default async function ProductPage({ params, searchParams }: Props) {
       initialModel={query.model ?? null}
       initialColour={query.colour ?? null}
       giftPromos={giftPromos}
+      trustBar={trustBar}
     />
   );
 }

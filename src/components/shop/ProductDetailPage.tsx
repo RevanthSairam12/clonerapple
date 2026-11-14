@@ -5,7 +5,8 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
-import { GadzioTrustBar } from '@/components/trust/GadzioTrustBar';
+import { GadzioTrustBar, type GadzioTrustBarProps } from '@/components/trust/GadzioTrustBar';
+import { DeliveryOptionsModal } from '@/components/shop/DeliveryOptionsModal';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart } from '@/lib/cart/CartContext';
 import {
@@ -40,10 +41,11 @@ interface Props {
   initialModel?: string | null;
   initialColour?: string | null;
   giftPromos?: ProductPageGiftPromo[];
+  trustBar?: GadzioTrustBarProps;
 }
 
 export function ProductDetailPage({ product: sourceProduct, saleLive = false, inStock = true,
-  initialModel = null, initialColour = null, giftPromos = [] }: Props) {
+  initialModel = null, initialColour = null, giftPromos = [], trustBar }: Props) {
   const router = useRouter();
   const { addItem, items: bagItems } = useCart();
   const variants = sourceProduct.purchasableVariants ?? [];
@@ -813,53 +815,17 @@ export function ProductDetailPage({ product: sourceProduct, saleLive = false, in
       </main>
 
       {/* Delivery Dates Modal */}
-      {showDeliveryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-[#e5e5ea] relative">
-            <button
-              onClick={() => setShowDeliveryModal(false)}
-              className="absolute top-4 right-4 text-[#86868b] hover:text-[#1d1d1f] w-8 h-8 rounded-full bg-[#f5f5f7] flex items-center justify-center text-sm"
-              aria-label="Close modal"
-            >
-              ✕
-            </button>
-            <h3 className="text-lg font-semibold text-[#1d1d1f] mb-2">Delivery Options</h3>
-            <p className="text-xs text-[#6e6e73] mb-4">
-              Enter your PIN code to check exact delivery dates for {selectedSize}.
-            </p>
-            <div className="flex gap-2 mb-4">
-              <input
-                type="text"
-                value={pincode}
-                maxLength={6}
-                onChange={(e) => setPincode(e.target.value.replace(/\D/g, ''))}
-                placeholder="Enter 6-digit PIN code"
-                className="flex-1 px-3.5 py-2.5 rounded-xl border border-[#d2d2d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]"
-              />
-              <button
-                type="button"
-                className="bg-[#1d1d1f] text-white text-xs font-semibold px-4 py-2.5 rounded-xl hover:bg-black transition"
-              >
-                Check
-              </button>
-            </div>
-            <div className="bg-[#f5f5f7] rounded-xl p-3.5 space-y-2 text-xs">
-              <div className="flex justify-between font-medium">
-                <span>Standard Delivery:</span>
-                <span className="text-emerald-700 font-semibold">FREE (2-3 Business Days)</span>
-              </div>
-              <div className="flex justify-between text-[#6e6e73]">
-                <span>Carrier:</span>
-                <span>BlueDart / Delhivery Express</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeliveryOptionsModal
+        open={showDeliveryModal}
+        onClose={() => setShowDeliveryModal(false)}
+        itemLabel={selectedSize}
+        pincode={pincode}
+        onPincodeChange={setPincode}
+      />
 
       {/* Trust Badges */}
-      <div className="w-full mt-12 border-t border-[#e5e5ea]">
-        <GadzioTrustBar />
+      <div className="w-full mt-12 border-t border-[#e5e5ea] empty:hidden">
+        <GadzioTrustBar items={trustBar?.items} enabled={trustBar?.enabled} />
       </div>
 
       {/* Global Footer */}

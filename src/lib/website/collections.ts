@@ -99,6 +99,12 @@ const booleanField = (path: string, label: string, hint?: string): FieldSchema =
   type: 'boolean',
   hint: hint ?? `Turn on or off for ${label.toLowerCase()}.`,
 });
+const colorField = (path: string, label: string, hint?: string): FieldSchema => ({
+  path,
+  label,
+  type: 'color',
+  hint: hint ?? `Choose a hex color value for ${label.toLowerCase()}.`,
+});
 
 /**
  * The art-directed image size slots, matching the site's <picture> breakpoints:
@@ -301,9 +307,9 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'gadzio.trust_badges',
-    label: 'Homepage — Trust Badges Bar',
-    sitePaths: ['/'],
-    description: 'The 3 value proposition / trust badges directly below the hero section.',
+    label: 'Trust Badges Bar — Homepage & Product Pages',
+    sitePaths: ['/', '/sale', '/search', '/in/shop/iphone/accessories/cases-protection'],
+    description: 'The value proposition / trust badges strip shown on the homepage, product pages, collection pages, and /sale.',
     fields: [
       booleanField('enabled', 'Show trust badges bar', 'Untick to hide this strip from the homepage.'),
     ],
@@ -384,6 +390,25 @@ export const COLLECTIONS: CollectionSchema[] = [
       url('ctaHref', 'CTA link destination'),
       image('image', 'Feature Image', 'High-impact image of the featured product or showcase'),
       booleanField('enabled', 'Show Feature Banner', 'Untick to hide this banner from the homepage.'),
+    ],
+    disablable: true,
+  },
+  {
+    key: 'gadzio.sale_banner',
+    label: 'Sale Page — Promotional Banner',
+    sitePaths: ['/sale'],
+    description: 'Editable banner displayed on /sale directly below the header and items navigation bar based on the active sale.',
+    fields: [
+      booleanField('enabled', 'Show sale banner', 'Untick to hide this promotional banner on the /sale page.'),
+      text('kicker', 'Eyebrow label', 'Uppercase tag shown above the heading (e.g. SEASONAL OFFERS or FLASH SALE).'),
+      text('badgeText', 'Accent badge (optional)', 'Highlighted pill beside the eyebrow label (e.g. LIMITED BATCH).'),
+      text('heading', 'Banner heading', 'Main display headline for the sale campaign.'),
+      area('subtitle', 'Banner subtitle', 'Supporting promotional description rendered beneath the heading.'),
+      text('ctaLabel', 'CTA button label (optional)', 'Button label shown below the subtitle; leave blank to hide.'),
+      url('ctaHref', 'CTA button link', 'Destination route or #collection-grid-content anchor when clicked.'),
+      image('image', 'Banner showcase image (optional)', 'Optional product or campaign image shown alongside the headline.'),
+      colorField('bgColor', 'Banner background color', 'Background color for the /sale banner surface.'),
+      colorField('accentColor', 'Accent highlight color', 'Accent color used for the highlight pill and CTA button.'),
     ],
     disablable: true,
   },

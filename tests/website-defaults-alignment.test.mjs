@@ -69,6 +69,7 @@ const sections = [
   ['gadzio.diwali_campaign', 'diwali/GadzioDiwaliSection', 'GadzioDiwaliSection'],
   ['gadzio.crowd_favorites', 'crowd-favorites/GadzioCrowdFavorites', 'GadzioCrowdFavorites'],
   ['gadzio.event_banner', 'banner/GadzioEventBanner', 'GadzioEventBanner'],
+  ['gadzio.sale_banner', 'banner/GadzioSaleBanner', 'GadzioSaleBanner'],
   ['gadzio.reviews', 'reviews/GadzioReviewsSection', 'GadzioReviewsSection'],
   ['gadzio.in_the_wild', 'ugc/GadzioInTheWild', 'GadzioInTheWild'],
 ];
@@ -132,7 +133,7 @@ test('brand wordmarks ignore stale saved names while preserving links', () => {
 });
 
 test('editor drops dead paths without exposing retired OPPO keys', () => {
-  assert.equal(COLLECTIONS.length, 32);
+  assert.equal(COLLECTIONS.length, 33);
   assert.equal(COLLECTIONS.filter(collection => collection.key.startsWith('edu.')).length, 11);
   assert.equal(LEGACY_COLLECTION_KEYS.length, 11);
   for (const key of LEGACY_COLLECTION_KEYS) {

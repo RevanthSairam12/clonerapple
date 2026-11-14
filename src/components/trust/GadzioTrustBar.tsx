@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { TRUST_BADGES_ITEMS, type TrustBadgeItem } from '@/lib/website/section-defaults';
+import { useStorefrontTrustBar } from './StorefrontTrustBarContext';
 
 export type { TrustBadgeItem };
 
@@ -97,10 +98,17 @@ function TrustIcon({ name, index }: { name?: string; index: number }) {
   );
 }
 
-export function GadzioTrustBar({ items, enabled = true }: GadzioTrustBarProps) {
-  if (enabled === false) return null;
+export function GadzioTrustBar({ items, enabled }: GadzioTrustBarProps) {
+  const inherited = useStorefrontTrustBar();
+  const resolvedEnabled = enabled ?? inherited?.enabled ?? true;
+  if (resolvedEnabled === false) return null;
 
-  const badges = items && items.length > 0 ? items : DEFAULT_TRUST_BADGES;
+  const badges =
+    items && items.length > 0
+      ? items
+      : inherited?.items && inherited.items.length > 0
+        ? inherited.items
+        : DEFAULT_TRUST_BADGES;
 
   return (
     <section

@@ -302,6 +302,7 @@ function pageHost({ search = '' } = {}) {
         if (name === '@/lib/storefront/category-filters') return filters;
         if (name === '@/lib/storefront/option-selection') return { formatOptionPaise: () => '', normalizeHex: () => '' };
         if (name === '@/components/header/GadzioHeader') return { GadzioHeader: () => null };
+        if (name === '@/components/banner/GadzioSaleBanner') return { GadzioSaleBanner: () => null };
         if (name === '@/components/trust/GadzioTrustBar') return { GadzioTrustBar: () => null };
         if (name.endsWith('/GlobalFooter')) return { GlobalFooter: () => null };
         if (name === '@/lib/whatsapp') return { WHATSAPP_ORDER_URL: '#' };

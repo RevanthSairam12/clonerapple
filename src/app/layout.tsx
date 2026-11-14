@@ -7,15 +7,17 @@ import type { NavLabelsOverride } from "@/components/sites/www-apple-com-736d370
 import { FONT_FALLBACK, FONT_LOADERS } from "@/lib/fontLoaders";
 import { resolveSiteFontName } from "@/lib/fonts";
 import { safeThemeColor } from "@/lib/website/theme-rules";
+import { readTrustBarContent } from "@/lib/website/trust-bar";
 
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const [settings, navOverride] = await Promise.all([
+  const [settings, navOverride, trustBarOverride] = await Promise.all([
     getThemeSettings(),
     getContent<NavLabelsOverride | undefined>("apple.nav", undefined),
+    readTrustBarContent(),
   ]);
 
   // Font family — resolved against the allow-list in src/lib/fonts.ts and
@@ -61,7 +63,10 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <CartProvider>
-          <StorefrontNavProvider navOverride={navOverride}>
+          <StorefrontNavProvider
+            navOverride={navOverride}
+            trustBarOverride={trustBarOverride}
+          >
             {children}
           </StorefrontNavProvider>
         </CartProvider>

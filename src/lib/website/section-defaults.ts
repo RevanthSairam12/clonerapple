@@ -344,3 +344,16 @@ export const EVENT_BANNER_COPY = {
   ctaHref: '/in/shop/iphone/accessories/cases-protection',
   image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
 };
+
+export const SALE_BANNER_COPY = {
+  kicker: 'SEASONAL OFFERS',
+  heading: 'The Gadzio Sale',
+  subtitle:
+    'Save on curated cases, fast GaN chargers, braided cables, and everyday audio essentials while limited-time offers last.',
+  badgeText: 'LIMITED BATCH',
+  ctaLabel: 'SHOP ALL DEALS',
+  ctaHref: '#collection-grid-content',
+  image: '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/icase_large_2x.jpg',
+  bgColor: '#010609',
+  accentColor: '#ffe100',
+};

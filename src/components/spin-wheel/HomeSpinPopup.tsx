@@ -281,14 +281,14 @@ export function HomeSpinPopup({ spinState }: HomeSpinPopupProps) {
           onClick={(event) => {
             if (event.target === event.currentTarget) handleClose();
           }}
-          className={`fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-3 sm:p-6 ${
+          className={`fixed inset-0 z-[9995] flex items-center justify-center overflow-y-auto bg-black/55 p-3 sm:p-6 md:p-8 ${
             reducedMotion ? 'transition-none' : 'backdrop-blur-[2px] transition-opacity'
           }`}
         >
           <div
             ref={dialogRef}
             tabIndex={-1}
-            className="relative max-h-[94dvh] w-full max-w-[980px] overflow-y-auto rounded-[22px] border border-[#111111]/15 bg-[#fbf8ef] shadow-2xl focus:outline-none"
+            className="relative max-h-[calc(100dvh-1.5rem)] w-full max-w-[980px] overflow-y-auto rounded-[22px] border border-[#111111]/15 bg-[#fbf8ef] shadow-2xl focus:outline-none sm:max-h-[90dvh]"
           >
             <SpinToWinShowcase initialState={spinState} variant="modal" onClose={handleClose} />
           </div>

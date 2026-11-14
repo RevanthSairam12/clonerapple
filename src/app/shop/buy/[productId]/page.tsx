@@ -5,6 +5,7 @@ import { recordProductView } from '@/lib/account/browsing-history';
 import { getProductDetail } from '@/lib/storefront/catalog';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { getUserSession } from '@/lib/user-auth';
+import { readTrustBarContent } from '@/lib/website/trust-bar';
 
 interface Props {
   params: Promise<{ productId: string }>;
@@ -36,10 +37,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function BuyPage({ params, searchParams }: Props) {
   const { productId } = await params;
   const query = await searchParams;
-  const [detail, sale, session] = await Promise.all([
+  const [detail, sale, session, trustBar] = await Promise.all([
     getProductDetail(productId),
     readSaleState(),
     getUserSession(),
+    readTrustBarContent(),
   ]);
 
   // This route has always sold the bespoke case range only.
@@ -59,6 +61,7 @@ export default async function BuyPage({ params, searchParams }: Props) {
       inStock={detail.stock.inStock}
       initialModel={query.model ?? null}
       initialColour={query.colour ?? null}
+      trustBar={trustBar}
     />
   );
 }

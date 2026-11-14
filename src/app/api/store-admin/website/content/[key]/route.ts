@@ -19,7 +19,7 @@ function noStore(body: unknown, status = 200) {
 
 /** The storefront route(s) this collection renders on, so a save is live. */
 function revalidateCollection(key: string, sitePaths: readonly string[]) {
-  if (key === 'apple.nav') {
+  if (key === 'apple.nav' || key === 'gadzio.trust_badges') {
     revalidatePath('/', 'layout');
   }
   for (const sitePath of sitePaths) revalidatePath(sitePath);

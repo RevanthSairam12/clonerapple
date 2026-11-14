@@ -105,7 +105,15 @@ export default async function StoreAdminSalePage({
             Sale prices are stored per product and apply only while sale mode is live.
           </p>
         </div>
-        <SaleStatusBadge status={state.status} />
+        <div className="sa-inline-actions">
+          <Link
+            className="sa-btn sa-btn-quiet sa-btn-small"
+            href="/store-admin/website/content/gadzio.sale_banner"
+          >
+            Edit /sale banner
+          </Link>
+          <SaleStatusBadge status={state.status} />
+        </div>
       </div>
 
       <div className="sa-detail-grid">

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import type { CollectionProduct } from './types';
 import { CollectionProductCard } from './CollectionProductCard';
 
@@ -11,6 +12,13 @@ export interface CollectionProductGridProps {
   saleLive?: boolean;
   /** A filter-specific explanation; the generic text is used when omitted. */
   emptyMessage?: string;
+  /** Optional custom empty state when a collection itself currently has no products. */
+  emptyState?: {
+    title: string;
+    description: string;
+    ctaLabel?: string;
+    ctaHref?: string;
+  };
 }
 
 export function CollectionProductGrid({
@@ -18,8 +26,26 @@ export function CollectionProductGrid({
   onClearFilters,
   saleLive = false,
   emptyMessage,
+  emptyState,
 }: CollectionProductGridProps) {
   if (products.length === 0) {
+    if (emptyState) {
+      return (
+        <div className="gz-collection-empty">
+          <h3 className="gz-collection-empty-title">{emptyState.title}</h3>
+          <p className="gz-collection-empty-desc">{emptyState.description}</p>
+          {emptyState.ctaLabel && emptyState.ctaHref ? (
+            <Link
+              href={emptyState.ctaHref}
+              className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-full bg-[#1d1d1f] text-white text-sm font-semibold hover:bg-[#333336] transition-colors"
+            >
+              {emptyState.ctaLabel}
+            </Link>
+          ) : null}
+        </div>
+      );
+    }
+
     return (
       <div className="gz-collection-empty">
         <h3 className="gz-collection-empty-title">
