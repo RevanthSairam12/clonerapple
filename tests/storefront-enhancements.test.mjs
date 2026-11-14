@@ -430,3 +430,27 @@ test('CartPageView omits Free 7-day returns and syncs Trust Badges Bar above foo
   assert.match(bagPage, /readTrustBarContent/);
   assert.match(bagPage, /trustBar=\{trustBar\}/);
 });
+
+/* ------------------------------------------- 6. Catalog Pooler Sequential Read */
+
+test('loadCatalogUsing runs queries sequentially without opening a multi-socket pooler burst', async () => {
+  const { loadCatalogUsing } = await jiti.import(path.join(root, 'src/lib/catalog/storefront.ts'));
+  let inFlight = 0;
+  let maxConcurrent = 0;
+  const sql = async () => {
+    inFlight += 1;
+    maxConcurrent = Math.max(maxConcurrent, inFlight);
+    await new Promise((r) => setTimeout(r, 2));
+    inFlight -= 1;
+    return [];
+  };
+
+  await loadCatalogUsing(sql);
+  assert.equal(maxConcurrent, 1);
+
+  const catalogCacheSrc = await source('src/lib/storefront/catalog.ts');
+  assert.doesNotMatch(catalogCacheSrc, /void\s+startCachedCatalogRefresh\(/);
+
+  const salePage = await source('src/app/sale/page.tsx');
+  assert.match(salePage, /getCachedStorefrontSnapshot\(/);
+});

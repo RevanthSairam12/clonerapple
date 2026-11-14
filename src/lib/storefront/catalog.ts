@@ -116,10 +116,8 @@ function getCachedCatalogSingleflight(): Promise<StorefrontCatalogSnapshot | nul
   if (slot && now - slot.at < CATALOG_SNAPSHOT_TTL_MS) {
     return Promise.resolve(slot.snapshot);
   }
-  if (slot) {
-    void startCachedCatalogRefresh();
-    return Promise.resolve(slot.snapshot);
-  }
+  // Await refreshes inside the active request rather than firing unawaited
+  // background work that can freeze mid-handshake when serverless pauses.
   return startCachedCatalogRefresh();
 }
 
@@ -433,6 +431,13 @@ export const getStorefrontRefs = cache(async (saleState?: SaleState): Promise<St
  * sale switch applied per request. Used by the homepage so `/` shares the
  * 30s catalog cache instead of running 9 uncached full-table queries per visit.
  */
+export const getCachedStorefrontSnapshot = cache(
+  async (): Promise<StorefrontCatalogSnapshot | null> => {
+    const state = await getCatalogState();
+    return state.snapshot;
+  },
+);
+
 export const getCachedStorefrontProducts = cache(
   async (ids: readonly string[]): Promise<StorefrontProduct[]> => {
     if (ids.length === 0) return [];

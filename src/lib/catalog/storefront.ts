@@ -516,16 +516,18 @@ export async function loadCatalogUsing(
   sql: NonNullable<ReturnType<typeof getSql>>,
 ): Promise<CatalogLoad> {
   const colourLinks = await sharedColoursAvailable(sql);
-  const [categories, products, images, attributes, deviceModels, variants, variantColours, stock] = await Promise.all([
-    sql`
+  // Execute sequentially so port-6543 pooler clients (where pipelining is
+  // disabled) reuse one open connection instead of cold-opening 8 parallel TLS
+  // + Supavisor auth handshakes per serverless invocation.
+  const categories = await sql`
       select c.id, c.slug, c.name, c.title, c.subhead, c.breadcrumb_leaf,
              c.count_noun, c.disclaimer, c.nav_label, c.nav_href,
              c.seo_title, c.seo_description, c.sort_order
       from categories c
       where c.deleted_at is null and c.is_active
       order by c.sort_order asc, c.name asc
-    `,
-    sql`
+    `;
+  const products = await sql`
       select p.id, p.category_id, p.slug, p.name, p.subtitle, p.price_paise,
              p.sale_price_paise, p.compare_at_paise, p.currency, p.material, p.brand, p.description,
              to_jsonb(p)->>'short_description' as short_description,
@@ -543,14 +545,14 @@ export async function loadCatalogUsing(
         and c.deleted_at is null
         and c.is_active
       order by p.sort_order asc, p.name asc
-    `,
-    sql`
+    `;
+  const images = await sql`
       select id, product_id, url, alt, role, sort_order,
              to_jsonb(pi)->>'colour_id' as colour_id
       from product_images pi
       where deleted_at is null and is_active
-    `,
-    sql`
+    `;
+  const attributes = await sql`
       select p.id as product_id, a.key, a.label, a.data_type,
              v.value_text, v.value_number, v.value_bool, v.option_value,
              m.show_in_specs, m.show_in_filters, m.show_in_search
@@ -563,8 +565,8 @@ export async function loadCatalogUsing(
         and v.attribute_id = a.id and v.archived_at is null
       where p.deleted_at is null and p.is_active and coalesce(p.is_gift_only, false) = false and lower(a.key) <> 'model'
       order by m.sort_order asc, a.key asc
-    `,
-    sql`
+    `;
+  const deviceModels = await sql`
       select j.product_id, d.id, d.name, d.brand_id, b.name as brand_name,
              (d.is_active and b.is_active) as selection_eligible
       from product_device_models j
@@ -572,27 +574,26 @@ export async function loadCatalogUsing(
       join device_brands b on b.id = d.brand_id
       where j.archived_at is null
       order by j.sort_order asc, b.sort_order asc, d.sort_order asc, d.name asc
-    `,
-    sql`
+    `;
+  const variants = await sql`
       select id, product_id, sku, option_name, option_value, option_hex, is_active, sort_order,
              is_purchasable, device_model_id, combination_key, price_paise_override, sale_price_paise, retired_at
       from product_variants
       order by sort_order asc
-    `,
-    colourLinks
-      ? sql`
+    `;
+  const variantColours = colourLinks
+    ? await sql`
           select vc.variant_id, vc.product_id, vc.colour_id,
                  c.name as colour_name, c.hex as colour_hex
           from product_variant_colours vc
           join colours c on c.id = vc.colour_id
         `
-      : sql`select null::text as variant_id, null::text as product_id, null::text as colour_id,
-                   null::text as colour_name, null::text as colour_hex where false`,
-    sql`
+    : await sql`select null::text as variant_id, null::text as product_id, null::text as colour_id,
+                   null::text as colour_name, null::text as colour_hex where false`;
+  const stock = await sql`
       select product_id, variant_id, on_hand, reserved, low_stock_threshold, track_inventory
       from stock
-    `,
-  ]);
+    `;
 
   return {
     categories: categories as Row[],

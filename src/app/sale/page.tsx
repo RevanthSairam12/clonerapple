@@ -5,7 +5,7 @@ import { CollectionPage } from '@/components/collection/CollectionPage';
 import type { CollectionConfig } from '@/components/collection/types';
 import type { GadzioSaleBannerProps } from '@/components/banner/GadzioSaleBanner';
 import { getContent } from '@/lib/content';
-import { readStorefrontCatalog } from '@/lib/catalog/storefront';
+import { getCachedStorefrontSnapshot } from '@/lib/storefront/catalog';
 import { siteOpenGraphUrl } from '@/lib/storefront/metadata';
 import { selectSalePageProducts } from '@/lib/storefront/sale-page';
 import { readSaleState } from '@/lib/storefront/sale-state';
@@ -37,7 +37,7 @@ export function generateMetadata(): Metadata {
 
 export default async function SalePage() {
   const [snapshot, sale, saleBanner, trustBar] = await Promise.all([
-    readStorefrontCatalog().catch(() => null),
+    getCachedStorefrontSnapshot(),
     readSaleState(),
     getContent<GadzioSaleBannerProps>('gadzio.sale_banner', {}),
     readTrustBarContent(),
