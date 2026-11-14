@@ -21,7 +21,7 @@ import { INVENTORY_REPORT_CTE, inventoryReportLabel } from './inventory-report';
 import type { CatalogWrite } from './catalog-writes';
 import { MetadataError, type AttributePrimitive } from '@/lib/catalog/product-metadata-rules';
 import { metadataGate, saveProductMetadataUsing, strictMetadataAudit } from './product-metadata';
-import { writeProductContentUsing } from './product-content';
+import { ProductContentError, writeProductContentUsing } from './product-content';
 
 if (typeof window !== 'undefined') {
   throw new Error('SECURITY ALERT: Catalogue transfer runs on the server only.');
@@ -33,16 +33,263 @@ type Tx = postgres.TransactionSql;
 const CHUNK = 400;
 
 class MetadataImportError extends MetadataError {
-  constructor(readonly importError: ImportError) {
+  readonly cause?: unknown;
+
+  constructor(readonly importError: ImportError, options?: { cause?: unknown }) {
     super(importError.message);
+    this.name = 'MetadataImportError';
+    if (options && 'cause' in options) this.cause = options.cause;
   }
+}
+
+class DryRunValidated extends Error {}
+
+interface PgErrorMeta {
+  code: string;
+  constraint?: string;
+  table?: string;
+  column?: string;
+  detail?: string;
+}
+
+function postgresErrorMeta(error: unknown): PgErrorMeta | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as Record<string, unknown>;
+  if (typeof record.code !== 'string' || !record.code) return null;
+  return {
+    code: record.code,
+    constraint: typeof record.constraint_name === 'string' ? record.constraint_name : undefined,
+    table: typeof record.table_name === 'string' ? record.table_name : undefined,
+    column: typeof record.column_name === 'string' ? record.column_name : undefined,
+    detail: typeof record.detail === 'string' ? record.detail : undefined,
+  };
+}
+
+function isInfraMetadataError(error: MetadataError): boolean {
+  const lower = error.message.toLowerCase();
+  return lower.includes('audit could not be saved') || lower.includes('unavailable');
+}
+
+function metadataErrorColumn(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.startsWith('before publishing')) return 'metadata';
+  if (lower.includes('product type') || lower.includes('active type')) return 'product_type_id';
+  if (lower.includes('device model') || lower.includes('compatibility')) return 'device_model_ids';
+  if (lower.includes('attribute')) return 'attribute_values';
+  return 'metadata';
+}
+
+function contentErrorColumn(row: ImportRow): string {
+  return row.shortDescription === undefined && row.descriptionSections !== undefined
+    ? 'description_sections'
+    : 'short_description';
+}
+
+async function applyProductContent(tx: Tx, row: ImportRow, staffId: string): Promise<void> {
+  try {
+    await writeProductContentUsing(
+      tx,
+      row.productId,
+      { shortDescription: row.shortDescription, descriptionSections: row.descriptionSections },
+      staffId,
+      { source: 'csv_import' },
+    );
+  } catch (error) {
+    if (error instanceof ProductContentError && error.status < 500) {
+      throw new MetadataImportError({
+        rowNumber: row.rowNumber,
+        column: contentErrorColumn(row),
+        message: error.message,
+      });
+    }
+    throw error;
+  }
+}
+
+function inventoryAdjustmentToImportError(
+  error: unknown,
+  change: InventoryChange,
+  rowNumber: number,
+): ImportError | null {
+  if (error instanceof MetadataError) {
+    if (isInfraMetadataError(error)) return null;
+    const column =
+      change.variantId !== null
+        ? 'inventory_variants'
+        : error.message.toLowerCase().includes('confirm')
+          ? 'confirm_tracking'
+          : 'stock';
+    return { rowNumber, column, message: error.message };
+  }
+  if (error instanceof Error && !postgresErrorMeta(error)) {
+    const msg = error.message;
+    if (
+      msg.includes('reserved units') ||
+      msg.includes('inventory limit') ||
+      msg.includes('must be true or false') ||
+      msg.includes('200 characters or fewer')
+    ) {
+      return {
+        rowNumber,
+        column: change.variantId !== null ? 'inventory_variants' : 'stock',
+        message: msg,
+      };
+    }
+  }
+  return null;
+}
+
+function rowNumberFromPgDetail(
+  rows: ImportRow[],
+  detail: string | undefined,
+  field: 'slug' | 'productId',
+  fallbackRowNumber?: number,
+): number {
+  if (detail) {
+    const matched = rows.find((row) => detail.includes(`(${row[field]})`));
+    if (matched) return matched.rowNumber;
+  }
+  return fallbackRowNumber ?? rows[0]?.rowNumber ?? 1;
+}
+
+function postgresColumnHint(pg: PgErrorMeta): string {
+  const hint = `${pg.constraint ?? ''} ${pg.column ?? ''}`.toLowerCase();
+  if (hint.includes('product_type')) return 'product_type_id';
+  if (hint.includes('category')) return 'category';
+  if (hint.includes('brand')) return 'brand';
+  if (hint.includes('condition')) return 'condition';
+  if (hint.includes('sale_price')) return 'sale_price';
+  if (hint.includes('compare_at')) return 'compare_at_price';
+  if (hint.includes('price')) return 'price';
+  if (hint.includes('slug')) return 'slug';
+  if (hint.includes('on_hand') || hint.includes('reserved') || hint.includes('stock')) return 'stock';
+  return pg.column ?? 'import';
+}
+
+function postgresErrorToImportError(
+  error: unknown,
+  rows: ImportRow[],
+  fallbackRowNumber?: number,
+): ImportError | null {
+  const pg = postgresErrorMeta(error);
+  if (!pg) return null;
+
+  if (pg.code === '23505') {
+    if (pg.constraint === 'products_slug_key') {
+      return {
+        rowNumber: rowNumberFromPgDetail(rows, pg.detail, 'slug', fallbackRowNumber),
+        column: 'slug',
+        message: 'Another product already uses this slug. If swapping slugs across rows, import in two steps.',
+      };
+    }
+    if (pg.constraint === 'products_pkey') {
+      return {
+        rowNumber: rowNumberFromPgDetail(rows, pg.detail, 'productId', fallbackRowNumber),
+        column: 'product_id',
+        message: 'A product with this id already exists.',
+      };
+    }
+    return {
+      rowNumber: fallbackRowNumber ?? rows[0]?.rowNumber ?? 1,
+      column: postgresColumnHint(pg),
+      message: 'Duplicate record violates a unique catalogue constraint.',
+    };
+  }
+
+  if (pg.code === '23503') {
+    return {
+      rowNumber: fallbackRowNumber ?? rows[0]?.rowNumber ?? 1,
+      column: postgresColumnHint(pg),
+      message: 'Referenced catalogue record no longer exists; refresh and try again.',
+    };
+  }
+
+  if (pg.code === '23514') {
+    return {
+      rowNumber: fallbackRowNumber ?? rows[0]?.rowNumber ?? 1,
+      column: postgresColumnHint(pg),
+      message: 'Value violates a catalogue constraint. Check the values in this row and try again.',
+    };
+  }
+
+  if (pg.code === '22P02' || pg.code === '22001' || pg.code === '22003' || pg.code === '23502') {
+    return {
+      rowNumber: fallbackRowNumber ?? rows[0]?.rowNumber ?? 1,
+      column: postgresColumnHint(pg),
+      message: 'One of the row values is invalid, missing, or exceeds field limits.',
+    };
+  }
+
+  return null;
+}
+
+function toImportError(error: unknown, rows: ImportRow[]): ImportError | null {
+  if (error instanceof MetadataImportError) return error.importError;
+  if (error instanceof ProductContentError && error.status < 500) {
+    return {
+      rowNumber: rows[0]?.rowNumber ?? 1,
+      column: rows[0] ? contentErrorColumn(rows[0]) : 'short_description',
+      message: error.message,
+    };
+  }
+  if (error instanceof MetadataError && !isInfraMetadataError(error)) {
+    return {
+      rowNumber: rows[0]?.rowNumber ?? 1,
+      column: metadataErrorColumn(error.message),
+      message: error.message,
+    };
+  }
+  return postgresErrorToImportError(error, rows);
+}
+
+function sanitizeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+  return raw
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, '[redacted-db-url]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim()
+    .slice(0, 240);
+}
+
+function rollbackLogContext(
+  error: unknown,
+  meta: {
+    importId: string;
+    dryRun: boolean;
+    total: number;
+    creates: number;
+    updates: number;
+    mapped: ImportError | null;
+  },
+) {
+  const cause = error instanceof Error && 'cause' in error ? (error as { cause?: unknown }).cause : undefined;
+  const pg = postgresErrorMeta(error) ?? postgresErrorMeta(cause);
+  return {
+    importId: meta.importId,
+    mode: meta.dryRun ? 'dry_run' : 'commit',
+    total: meta.total,
+    creates: meta.creates,
+    updates: meta.updates,
+    outcome: meta.mapped ? 'rejected' : 'unavailable',
+    ...(meta.mapped ? { rowNumber: meta.mapped.rowNumber, column: meta.mapped.column } : {}),
+    ...(pg
+      ? {
+          pgCode: pg.code,
+          ...(pg.constraint ? { constraint: pg.constraint } : {}),
+          ...(pg.table ? { table: pg.table } : {}),
+          ...(pg.column ? { pgColumn: pg.column } : {}),
+        }
+      : {}),
+    errorName: error instanceof Error ? error.name : typeof error,
+    reason: sanitizeErrorMessage(error),
+  };
 }
 
 async function applyMetadata(tx: Tx, row: ImportRow, staffId: string, before?: Row): Promise<void> {
   try {
     if (row.shortDescription !== undefined || row.descriptionSections !== undefined) {
       await metadataGate(tx);
-      await writeProductContentUsing(tx,row.productId,{shortDescription:row.shortDescription,descriptionSections:row.descriptionSections},staffId,{source:'csv_import'});
+      await applyProductContent(tx, row, staffId);
     }
     // Even legacy CSVs without metadata columns must pass the publication gate.
     await saveProductMetadataUsing(tx, row.productId, row.metadata, staffId, { enforcePublication: true });
@@ -58,9 +305,16 @@ async function applyMetadata(tx: Tx, row: ImportRow, staffId: string, before?: R
       });
     }
   } catch (error) {
-    if (error instanceof MetadataError) {
-      throw new MetadataImportError({ rowNumber: row.rowNumber, column: 'metadata', message: error.message });
+    if (error instanceof MetadataImportError) throw error;
+    if (error instanceof MetadataError && !isInfraMetadataError(error)) {
+      throw new MetadataImportError({
+        rowNumber: row.rowNumber,
+        column: metadataErrorColumn(error.message),
+        message: error.message,
+      });
     }
+    const pgError = postgresErrorToImportError(error, [row], row.rowNumber);
+    if (pgError) throw new MetadataImportError(pgError, { cause: error });
     throw error;
   }
 }
@@ -349,8 +603,23 @@ async function loadContext(sql: postgres.Sql): Promise<ImportContext> {
     sql`select id, slug, name from categories where deleted_at is null order by name`,
     sql`select id, name, slug from brands where deleted_at is null order by name`,
     sql`select id, label from conditions order by sort_order`,
-    sql`select id, slug from products where deleted_at is null`,
+    sql`select id, slug, deleted_at from products`,
   ]);
+  const existing = new Map<string, { slug: string }>();
+  const existingSlugs = new Map<string, string>();
+  const deletedIds = new Set<string>();
+  const deletedSlugs = new Set<string>();
+  for (const row of products as Row[]) {
+    const id = text(row.id);
+    const slug = text(row.slug);
+    if (row.deleted_at == null) {
+      existing.set(id, { slug });
+      existingSlugs.set(slug.toLowerCase(), id);
+    } else {
+      deletedIds.add(id.toLowerCase());
+      deletedSlugs.add(slug.toLowerCase());
+    }
+  }
   return {
     categories: (categories as Row[]).map((row) => ({
       id: text(row.id),
@@ -366,9 +635,10 @@ async function loadContext(sql: postgres.Sql): Promise<ImportContext> {
       id: text(row.id),
       label: text(row.label),
     })),
-    existing: new Map(
-      (products as Row[]).map((row) => [text(row.id), { slug: text(row.slug) }]),
-    ),
+    existing,
+    existingSlugs,
+    deletedIds,
+    deletedSlugs,
   };
 }
 
@@ -444,27 +714,74 @@ export async function runCatalogueImport(input: {
     return fail('unavailable', 'The catalogue is not available.');
   }
 
-  const validation = validateImportRows(parsed.header, parsed.rows, context);
-  if (!validation.errors.length) {
-    try {
-      await sql.begin(async tx => {
-        for (const row of validation.rows) {
-          if (row.stock !== null && !row.confirmTracking) {
-            const [stock] = await tx`select track_inventory from stock where product_id=${row.productId} and variant_id is null`;
-            if (!stock?.track_inventory) throw new MetadataImportError({rowNumber:row.rowNumber,column:'confirm_tracking',message:'Explicitly confirm enabling tracking with confirm_tracking=true.'});
-          }
-          await variantInventoryChanges(tx,row);
-        }
-      });
-    } catch (error) {
-      if (error instanceof MetadataImportError) validation.errors.push(error.importError);
-      else return fail('unavailable','Could not validate variant inventory.');
-    }
-  }
   const importId = newId('imp');
-  const failedRows = new Set(validation.errors.map((error) => error.rowNumber));
+  const validation = validateImportRows(parsed.header, parsed.rows, context);
   const creates = validation.rows.filter((row) => row.mode === 'create');
   const updates = validation.rows.filter((row) => row.mode === 'update');
+  if (!validation.errors.length) {
+    if (input.dryRun) {
+      try {
+        await sql.begin(async (tx) => {
+          // Run the same commit-time database, metadata, content and inventory gates, then roll back.
+          await metadataGate(tx);
+          await applyCreates(tx, creates, input.staffId);
+          await applyUpdates(tx, updates, input.staffId);
+          throw new DryRunValidated();
+        });
+      } catch (error) {
+        if (!(error instanceof DryRunValidated)) {
+          const converted = toImportError(error, validation.rows);
+          if (converted) {
+            validation.errors.push(converted);
+          } else {
+            console.warn(
+              '[store-admin/transfer] dry-run validation failed',
+              rollbackLogContext(error, {
+                importId,
+                dryRun: true,
+                total: parsed.rows.length,
+                creates: creates.length,
+                updates: updates.length,
+                mapped: null,
+              }),
+            );
+            return fail('unavailable', 'Could not validate catalogue import.');
+          }
+        }
+      }
+    } else {
+      try {
+        await sql.begin(async (tx) => {
+          for (const row of validation.rows) {
+            if (row.stock !== null && !row.confirmTracking) {
+              const [stock] = await tx`select track_inventory from stock where product_id=${row.productId} and variant_id is null`;
+              if (!stock?.track_inventory) throw new MetadataImportError({rowNumber:row.rowNumber,column:'confirm_tracking',message:'Explicitly confirm enabling tracking with confirm_tracking=true.'});
+            }
+            await variantInventoryChanges(tx,row);
+          }
+        });
+      } catch (error) {
+        const converted = toImportError(error, validation.rows);
+        if (converted) {
+          validation.errors.push(converted);
+        } else {
+          console.warn(
+            '[store-admin/transfer] pre-import stock check failed',
+            rollbackLogContext(error, {
+              importId,
+              dryRun: false,
+              total: parsed.rows.length,
+              creates: creates.length,
+              updates: updates.length,
+              mapped: null,
+            }),
+          );
+          return fail('unavailable', 'Could not validate variant inventory.');
+        }
+      }
+    }
+  }
+  const failedRows = new Set(validation.errors.map((error) => error.rowNumber));
   const base = {
     importId,
     dryRun: input.dryRun,
@@ -556,10 +873,23 @@ export async function runCatalogueImport(input: {
       `;
     });
   } catch (error) {
-    console.warn('[store-admin/transfer] import rolled back');
-    const importError: ImportError = error instanceof MetadataImportError
-      ? error.importError
-      : { rowNumber: 1, column: 'import', message: 'The import failed and nothing was written. Check the file and try again.' };
+    const converted = toImportError(error, validation.rows);
+    console.warn(
+      '[store-admin/transfer] import rolled back',
+      rollbackLogContext(error, {
+        importId,
+        dryRun: false,
+        total: parsed.rows.length,
+        creates: creates.length,
+        updates: updates.length,
+        mapped: converted,
+      }),
+    );
+    const importError: ImportError = converted ?? {
+      rowNumber: 1,
+      column: 'import',
+      message: 'The import failed and nothing was written. Check the file and try again.',
+    };
     try {
       await sql.begin(async (tx) => {
         await tx`
@@ -573,15 +903,15 @@ export async function runCatalogueImport(input: {
         await tx`
           insert into catalog_import_errors (import_id, row_number, column_name, message)
           values (
-            ${importId}, ${importError.rowNumber}, ${importError.column},
+            ${importId}, ${importError.rowNumber}, ${importError.column.slice(0, 80)},
             ${importError.message.slice(0, 500)}
           )
         `;
       });
     } catch {
-      console.warn('[store-admin/transfer] could not record the failed import');
+      console.warn('[store-admin/transfer] could not record the failed import', { importId });
     }
-    if (error instanceof MetadataImportError) {
+    if (converted) {
       return { ok: true, data: {
         ...base,
         status: 'rejected',
@@ -606,11 +936,25 @@ export async function runCatalogueImport(input: {
   };
 }
 
+async function runWithPgError(
+  rows: ImportRow[],
+  run: () => Promise<unknown>,
+  fallbackRowNumber?: number,
+): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    const converted = postgresErrorToImportError(error, rows, fallbackRowNumber);
+    if (converted) throw new MetadataImportError(converted, { cause: error });
+    throw error;
+  }
+}
+
 async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise<void> {
   if (rows.length === 0) return;
 
   for (const batch of chunks(rows)) {
-    await tx`
+    await runWithPgError(batch, () => tx`
       insert into products ${tx(
         batch.map((row) => ({
           id: row.productId,
@@ -647,11 +991,17 @@ async function applyCreates(tx: Tx, rows: ImportRow[], staffId: string): Promise
         'seo_description',
         'updated_by',
       )}
-    `;
+    `);
   }
 
   for (const row of rows) {
-    if (row.stock !== null && !row.confirmTracking) throw new MetadataImportError({rowNumber:row.rowNumber,column:'confirm_tracking',message:'Explicitly confirm tracking activation.'});
+    if (row.stock !== null && !row.confirmTracking) {
+      throw new MetadataImportError({
+        rowNumber: row.rowNumber,
+        column: 'confirm_tracking',
+        message: 'Explicitly confirm enabling tracking with confirm_tracking=true.',
+      });
+    }
     await applyMetadata(tx, row, staffId);
   }
 
@@ -807,9 +1157,14 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
 
   const priceHistory: Row[] = [];
   const inventoryChanges: InventoryChange[] = [];
+  const rowNumberByInventoryKey = new Map<string, number>();
 
   for (const row of [...rows].sort((a,b)=>a.productId.localeCompare(b.productId))) {
-    inventoryChanges.push(...await variantInventoryChanges(tx,row));
+    const variantChanges = await variantInventoryChanges(tx, row);
+    for (const change of variantChanges) {
+      rowNumberByInventoryKey.set(inventoryKey(change.productId, change.variantId), row.rowNumber);
+    }
+    inventoryChanges.push(...variantChanges);
     const before = current.get(row.productId);
     if (!before) {
       throw new Error(`Product ${row.productId} disappeared during the import.`);
@@ -838,27 +1193,33 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
     const nextOnHand = row.stock === null ? onHand : row.stock;
     const inStock = before.inventory_mode === 'variant' || row.stock === null ? null : nextOnHand - reserved > 0;
 
-    if(row.shortDescription!==undefined||row.descriptionSections!==undefined)await writeProductContentUsing(tx,row.productId,{shortDescription:row.shortDescription,descriptionSections:row.descriptionSections},staffId,{source:'csv_import'});
-    await tx`
-      update products
-      set name = ${row.name},
-          slug = ${row.slug},
-          category_id = ${row.categoryId},
-          product_type_id = ${nextTypeId},
-          brand = ${row.brand},
-          brand_id = ${row.brandId},
-          condition_id = ${row.conditionId},
-          description = ${row.description},
-          price_paise = ${row.pricePaise},
-          compare_at_paise = ${row.compareAtPaise},
-          sale_price_paise = ${row.salePricePaise},
-          is_active = ${row.isActive ?? Boolean(before.is_active)},
-          seo_title = ${row.seoTitle},
-          seo_description = ${row.seoDescription},
-          updated_at = now(),
-          updated_by = ${staffId}
-      where id = ${row.productId}
-    `;
+    if (row.shortDescription !== undefined || row.descriptionSections !== undefined) {
+      await applyProductContent(tx, row, staffId);
+    }
+    await runWithPgError(
+      [row],
+      () => tx`
+        update products
+        set name = ${row.name},
+            slug = ${row.slug},
+            category_id = ${row.categoryId},
+            product_type_id = ${nextTypeId},
+            brand = ${row.brand},
+            brand_id = ${row.brandId},
+            condition_id = ${row.conditionId},
+            description = ${row.description},
+            price_paise = ${row.pricePaise},
+            compare_at_paise = ${row.compareAtPaise},
+            sale_price_paise = ${row.salePricePaise},
+            is_active = ${row.isActive ?? Boolean(before.is_active)},
+            seo_title = ${row.seoTitle},
+            seo_description = ${row.seoDescription},
+            updated_at = now(),
+            updated_by = ${staffId}
+        where id = ${row.productId}
+      `,
+      row.rowNumber,
+    );
 
     await applyMetadata(tx, {...row,shortDescription:undefined,descriptionSections:undefined}, staffId, before);
 
@@ -899,11 +1260,13 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
     }
 
     if (row.stock !== null || row.lowStockThreshold !== null) {
-      inventoryChanges.push({productId:row.productId,variantId:null,
+      const parentChange: InventoryChange = {productId:row.productId,variantId:null,
         ...(row.stock===null?{}:{onHand:row.stock}),
         ...(row.lowStockThreshold===null?{}:{lowStockThreshold:row.lowStockThreshold}),
         ...(!before.stock_id?{onHand:row.stock??0,trackInventory:row.stock!==null}:row.stock===null?{}:{trackInventory:true}),
-        confirmTracking:row.confirmTracking,reason:'adjustment',note:'CSV parent stocktake'});
+        confirmTracking:row.confirmTracking,reason:'adjustment',note:'CSV parent stocktake'};
+      rowNumberByInventoryKey.set(inventoryKey(row.productId, null), row.rowNumber);
+      inventoryChanges.push(parentChange);
     }
   }
 
@@ -925,7 +1288,14 @@ async function applyUpdates(tx: Tx, rows: ImportRow[], staffId: string): Promise
     `;
   }
   for (const change of inventoryChanges.sort((a,b)=>inventoryKey(a.productId,a.variantId).localeCompare(inventoryKey(b.productId,b.variantId)))) {
-    await adjustVariantInventoryUsing(tx,change,staffId);
+    try {
+      await adjustVariantInventoryUsing(tx,change,staffId);
+    } catch (error) {
+      const rowNumber = rowNumberByInventoryKey.get(inventoryKey(change.productId, change.variantId)) ?? 1;
+      const converted = inventoryAdjustmentToImportError(error, change, rowNumber);
+      if (converted) throw new MetadataImportError(converted);
+      throw error;
+    }
   }
 }
 

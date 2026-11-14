@@ -261,3 +261,101 @@ test('the template carries the header and one example row', () => {
   assert.equal(header, IMPORT_COLUMNS.join(','));
   assert.equal((example.match(/,/g) ?? []).length >= IMPORT_COLUMNS.length - 1, true);
 });
+
+test('slug collisions against existing products with distinct ids are refused', () => {
+  const context = {
+    ...CONTEXT,
+    existing: new Map([
+      ['prod_1', { slug: 'gan-charger-65w' }],
+      ['prod_2', { slug: 'usb-cable' }],
+    ]),
+  };
+
+  const createCollision = validate(
+    [{ name: 'GaN Charger 65W', slug: 'gan-charger-65w', category: 'Power', price: '100' }],
+    context,
+  );
+  assert.equal(
+    createCollision.errors.some(
+      (error) => error.column === 'product_id' && error.message.includes('exists'),
+    ),
+    true,
+  );
+
+  const updateCollision = validate(
+    [
+      {
+        product_id: 'prod_2',
+        name: 'Cable renamed',
+        slug: 'gan-charger-65w',
+        category: 'Power',
+        price: '100',
+      },
+    ],
+    context,
+  );
+  assert.equal(
+    updateCollision.errors.some(
+      (error) => error.column === 'slug' && error.message.includes('already uses this slug'),
+    ),
+    true,
+  );
+});
+
+test('collisions with soft-deleted product ids and slugs are refused before commit', () => {
+  const context = {
+    ...CONTEXT,
+    existing: new Map([['prod_live', { slug: 'live-slug' }]]),
+    deletedIds: new Set(['archived-charger', 'prod_deleted']),
+    deletedSlugs: new Set(['archived-charger', 'deleted-slug']),
+  };
+
+  const updateDeleted = validate(
+    [
+      {
+        product_id: 'prod_deleted',
+        name: 'Old',
+        slug: 'deleted-slug',
+        category: 'Power',
+        price: '100',
+      },
+    ],
+    context,
+  );
+  assert.equal(
+    updateDeleted.errors.some(
+      (error) => error.column === 'product_id' && error.message.includes('deleted'),
+    ),
+    true,
+  );
+
+  const createDeletedSlug = validate(
+    [{ name: 'Archived Charger', slug: 'archived-charger', category: 'Power', price: '100' }],
+    context,
+  );
+  assert.equal(
+    createDeletedSlug.errors.some(
+      (error) => error.column === 'slug' && error.message.includes('deleted product'),
+    ),
+    true,
+  );
+
+  const updateToDeletedSlug = validate(
+    [
+      {
+        product_id: 'prod_live',
+        name: 'Live',
+        slug: 'deleted-slug',
+        category: 'Power',
+        price: '100',
+      },
+    ],
+    context,
+  );
+  assert.equal(
+    updateToDeletedSlug.errors.some(
+      (error) => error.column === 'slug' && error.message.includes('deleted product'),
+    ),
+    true,
+  );
+});

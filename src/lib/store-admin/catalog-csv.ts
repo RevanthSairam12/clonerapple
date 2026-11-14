@@ -214,8 +214,14 @@ export interface ImportContext {
   categories: CsvCategory[];
   brands: CsvBrand[];
   conditions: CsvCondition[];
-  /** Products that already exist, keyed by id (id is also the slug). */
+  /** Live products that already exist, keyed by id. */
   existing: Map<string, { slug: string }>;
+  /** Live product ids keyed by slug (derived automatically from `existing` when omitted). */
+  existingSlugs?: Map<string, string>;
+  /** Soft-deleted product ids still reserving primary keys in `products`. */
+  deletedIds?: Set<string>;
+  /** Soft-deleted product slugs still reserving the unique slug index in `products`. */
+  deletedSlugs?: Set<string>;
 }
 
 export interface ImportRow {
@@ -325,6 +331,21 @@ export function validateImportRows(
   if (result.errors.length) return result;
   const seenIds = new Set<string>();
   const seenSlugs = new Set<string>();
+  const existingById = new Map<string, { id: string; slug: string }>();
+  const existingSlugs = new Map<string, string>();
+  for (const [id, item] of context.existing) {
+    const idKey = id.toLowerCase();
+    const slugKey = item.slug.toLowerCase();
+    existingById.set(idKey, { id: idKey, slug: slugKey });
+    existingSlugs.set(slugKey, idKey);
+  }
+  if (context.existingSlugs) {
+    for (const [slugKey, id] of context.existingSlugs) {
+      existingSlugs.set(slugKey.toLowerCase(), id.toLowerCase());
+    }
+  }
+  const deletedIds = new Set(Array.from(context.deletedIds ?? [], (id) => id.toLowerCase()));
+  const deletedSlugs = new Set(Array.from(context.deletedSlugs ?? [], (item) => item.toLowerCase()));
 
   const categoryByKey = new Map<string, string>();
   for (const category of context.categories) {
@@ -359,16 +380,34 @@ export function validateImportRows(
     }
 
     const rawId = cell(header, row, 'product_id').toLowerCase();
-    const existing = rawId ? context.existing.get(rawId) : undefined;
+    const existing = rawId ? existingById.get(rawId) : undefined;
     const mode: 'create' | 'update' = existing ? 'update' : 'create';
-    if (rawId && !existing) fail('product_id', 'No product has that id.');
+    if (rawId && !existing) {
+      fail(
+        'product_id',
+        deletedIds.has(rawId)
+          ? 'This product was deleted and cannot be updated via CSV.'
+          : 'No product has that id.',
+      );
+    }
 
     const productId = existing ? rawId : slug;
-    if (mode === 'create' && context.existing.has(slug)) {
-      fail('product_id', 'A product with this slug exists — set product_id to update it.');
+    const slugOwnerId = existingSlugs.get(slug);
+    if (mode === 'create' && !rawId) {
+      if (slugOwnerId !== undefined) {
+        fail('product_id', 'A product with this slug exists — set product_id to update it.');
+      } else if (existingById.has(productId)) {
+        fail('product_id', 'A product with this id exists — set product_id to update it.');
+      } else if (deletedIds.has(productId) || deletedSlugs.has(slug)) {
+        fail('slug', 'A deleted product already uses this id or slug. Choose a different slug.');
+      }
     }
-    if (mode === 'update' && slug !== existing?.slug && context.existing.has(slug)) {
-      fail('slug', 'Another product already uses this slug.');
+    if (mode === 'update' && slug !== existing?.slug) {
+      if (slugOwnerId !== undefined && slugOwnerId !== rawId) {
+        fail('slug', 'Another product already uses this slug.');
+      } else if (deletedSlugs.has(slug)) {
+        fail('slug', 'A deleted product already uses this slug. Choose a different slug.');
+      }
     }
 
     const idKey = productId.toLowerCase();
