@@ -152,46 +152,131 @@ function rowNumberFromPgDetail(
   return fallbackRowNumber ?? rows[0]?.rowNumber ?? 1;
 }
 
-function postgresColumnHint(pg: PgErrorMeta): string {
-  const hint = `${pg.constraint ?? ''} ${pg.column ?? ''}`.toLowerCase();
-  if (hint.includes('product_type')) return 'product_type_id';
-  if (hint.includes('category')) return 'category';
-  if (hint.includes('brand')) return 'brand';
-  if (hint.includes('condition')) return 'condition';
-  if (hint.includes('sale_price')) return 'sale_price';
-  if (hint.includes('compare_at')) return 'compare_at_price';
-  if (hint.includes('price')) return 'price';
-  if (hint.includes('slug')) return 'slug';
-  if (hint.includes('on_hand') || hint.includes('reserved') || hint.includes('stock')) return 'stock';
-  return pg.column ?? 'import';
+const PRODUCT_COLUMN_TO_CSV: Readonly<Record<string, string>> = {
+  id: 'product_id',
+  slug: 'slug',
+  category_id: 'category',
+  brand_id: 'brand',
+  condition_id: 'condition',
+  product_type_id: 'product_type_id',
+  price_paise: 'price',
+  compare_at_paise: 'compare_at_price',
+  sale_price_paise: 'sale_price',
+};
+
+const PRODUCT_CONSTRAINT_TO_CSV: Readonly<Record<string, string>> = {
+  products_pkey: 'product_id',
+  products_slug_key: 'slug',
+  products_category_id_fkey: 'category',
+  products_brand_id_fkey: 'brand',
+  products_condition_id_fkey: 'condition',
+  products_product_type_id_fkey: 'product_type_id',
+  products_type_category_fk: 'product_type_id',
+  products_price_paise_check: 'price',
+  products_price_check: 'price',
+  products_compare_at_paise_check: 'compare_at_price',
+  products_compare_at_check: 'compare_at_price',
+  products_sale_price_paise_check: 'sale_price',
+  products_sale_price_check: 'sale_price',
+};
+
+const STOCK_CONSTRAINT_TO_CSV: Readonly<Record<string, string>> = {
+  stock_on_hand_check: 'stock',
+  stock_low_stock_threshold_check: 'low_stock_threshold',
+  stock_reserved_le_on_hand: 'stock',
+  stock_reserved_check: 'stock',
+};
+
+const SEQUENCE_BACKED_KEY_CONSTRAINTS = new Set([
+  'price_history_pkey',
+  'stock_movements_pkey',
+  'product_content_revisions_pkey',
+  'product_content_revisions_revision_number_key',
+  'store_admin_audit_pkey',
+  'catalog_imports_pkey',
+  'catalog_import_errors_pkey',
+]);
+
+export function postgresColumnHint(pg: PgErrorMeta): string {
+  const table = pg.table?.toLowerCase();
+  const constraint = pg.constraint?.toLowerCase();
+  const column = pg.column?.toLowerCase();
+
+  if (constraint && SEQUENCE_BACKED_KEY_CONSTRAINTS.has(constraint)) {
+    return 'import';
+  }
+
+  if (table === undefined || table === 'products') {
+    if (constraint && Object.hasOwn(PRODUCT_CONSTRAINT_TO_CSV, constraint)) {
+      return PRODUCT_CONSTRAINT_TO_CSV[constraint];
+    }
+    if (constraint?.startsWith('products_')) {
+      if (/^products_sale_price(?:_paise)?_(?:check\d*|key|unique\w*|idx\w*)$/.test(constraint)) {
+        return 'sale_price';
+      }
+      if (/^products_compare_at(?:_paise)?_(?:check\d*|key|unique\w*|idx\w*)$/.test(constraint)) {
+        return 'compare_at_price';
+      }
+      if (/^products_price(?:_paise)?_(?:check\d*|key|unique\w*|idx\w*)$/.test(constraint)) {
+        return 'price';
+      }
+      if (/^products_slug_/.test(constraint)) return 'slug';
+      if (/^products_category_id_/.test(constraint)) return 'category';
+      if (/^products_brand_id_/.test(constraint)) return 'brand';
+      if (/^products_condition_id_/.test(constraint)) return 'condition';
+      if (/^products_(?:product_type_id|type_category)_/.test(constraint)) return 'product_type_id';
+    }
+    if (column && Object.hasOwn(PRODUCT_COLUMN_TO_CSV, column) && (table === 'products' || constraint?.startsWith('products_'))) {
+      return PRODUCT_COLUMN_TO_CSV[column];
+    }
+  }
+
+  if (table === undefined || table === 'stock') {
+    if (constraint && Object.hasOwn(STOCK_CONSTRAINT_TO_CSV, constraint)) {
+      return STOCK_CONSTRAINT_TO_CSV[constraint];
+    }
+    if (table === 'stock' && (column === 'on_hand' || column === 'reserved')) return 'stock';
+    if (table === 'stock' && column === 'low_stock_threshold') return 'low_stock_threshold';
+  }
+
+  return 'import';
 }
 
-function postgresErrorToImportError(
+export function postgresErrorToImportError(
   error: unknown,
   rows: ImportRow[],
   fallbackRowNumber?: number,
 ): ImportError | null {
   const pg = postgresErrorMeta(error);
   if (!pg) return null;
+  const constraint = pg.constraint?.toLowerCase();
 
   if (pg.code === '23505') {
-    if (pg.constraint === 'products_slug_key') {
+    if (constraint === 'products_slug_key') {
       return {
         rowNumber: rowNumberFromPgDetail(rows, pg.detail, 'slug', fallbackRowNumber),
         column: 'slug',
         message: 'Another product already uses this slug. If swapping slugs across rows, import in two steps.',
       };
     }
-    if (pg.constraint === 'products_pkey') {
+    if (constraint === 'products_pkey') {
       return {
         rowNumber: rowNumberFromPgDetail(rows, pg.detail, 'productId', fallbackRowNumber),
         column: 'product_id',
         message: 'A product with this id already exists.',
       };
     }
+    if (constraint && SEQUENCE_BACKED_KEY_CONSTRAINTS.has(constraint)) {
+      return {
+        rowNumber: 1,
+        column: 'import',
+        message: 'Could not save catalogue history because a database ID sequence is out of sync. Ask an administrator to resynchronize database sequences and try again.',
+      };
+    }
+    const column = postgresColumnHint(pg);
     return {
-      rowNumber: fallbackRowNumber ?? rows[0]?.rowNumber ?? 1,
-      column: postgresColumnHint(pg),
+      rowNumber: column === 'import' ? fallbackRowNumber ?? 1 : fallbackRowNumber ?? rows[0]?.rowNumber ?? 1,
+      column,
       message: 'Duplicate record violates a unique catalogue constraint.',
     };
   }

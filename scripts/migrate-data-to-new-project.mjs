@@ -12,7 +12,9 @@
  * 5. Copies storage bucket objects (download from source, upload to target, verify size/checksum).
  * 6. Never prints passwords, secrets, connection strings or keys.
  * 7. Transactional: wraps table groups in transactions and stops at the first problem.
- * 8. Sequences (order_number_counters, receipt, invoice) are initialized fresh, not copied.
+ * 8. Counters (order_number_counters, receipt, invoice) are initialized fresh, not copied.
+ * 9. Sequence-backed columns copied with explicit values (e.g. price_history.id and
+ *    product_content_revisions.revision_number) are synchronized after all rows are copied.
  *
  * Usage:
  *   node scripts/migrate-data-to-new-project.mjs                # Dry-run
@@ -24,7 +26,205 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 import postgres from 'postgres';
+
+const SAFE_PG_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+
+export const MIGRATED_SEQUENCE_COLUMNS = Object.freeze([
+  Object.freeze({
+    schema: 'public',
+    table: 'price_history',
+    column: 'id',
+  }),
+  Object.freeze({
+    schema: 'public',
+    table: 'product_content_revisions',
+    column: 'revision_number',
+  }),
+]);
+
+function assertSafeIdentifier(value, label) {
+  if (typeof value !== 'string' || !SAFE_PG_IDENTIFIER.test(value)) {
+    throw new Error(`Unsafe PostgreSQL ${label}: ${String(value)}`);
+  }
+  return value;
+}
+
+function quoteIdent(ident) {
+  return `"${assertSafeIdentifier(ident, 'identifier')}"`;
+}
+
+function parseSequenceIdentifier(raw, defaultSchema = 'public') {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new Error('pg_get_serial_sequence returned no sequence name.');
+  }
+  const stripQuotes = (part) =>
+    part.startsWith('"') && part.endsWith('"') ? part.slice(1, -1) : part;
+  const parts = raw.trim().split('.');
+  if (parts.length === 1) {
+    return {
+      schema: assertSafeIdentifier(defaultSchema, 'sequence schema'),
+      name: assertSafeIdentifier(stripQuotes(parts[0]), 'sequence name'),
+    };
+  }
+  if (parts.length === 2) {
+    return {
+      schema: assertSafeIdentifier(stripQuotes(parts[0]), 'sequence schema'),
+      name: assertSafeIdentifier(stripQuotes(parts[1]), 'sequence name'),
+    };
+  }
+  throw new Error(`Unexpected PostgreSQL sequence identifier: ${raw}`);
+}
+
+export async function syncSequenceForColumn(tx, spec) {
+  const schema = assertSafeIdentifier(spec.schema ?? 'public', 'table schema');
+  const table = assertSafeIdentifier(spec.table, 'table name');
+  const column = assertSafeIdentifier(spec.column, 'column name');
+  const qualifiedTable = `${schema}.${table}`;
+  const quotedTable = `${quoteIdent(schema)}.${quoteIdent(table)}`;
+  const quotedColumn = quoteIdent(column);
+
+  const [seqRow] = await tx.unsafe(
+    'SELECT pg_get_serial_sequence($1, $2) AS sequence_name',
+    [qualifiedTable, column],
+  );
+  const seqParts = parseSequenceIdentifier(seqRow?.sequence_name, schema);
+  const qualifiedSeq = `${seqParts.schema}.${seqParts.name}`;
+  const quotedSeq = `${quoteIdent(seqParts.schema)}.${quoteIdent(seqParts.name)}`;
+
+  const [stats] = await tx.unsafe(
+    `SELECT MAX(${quotedColumn})::bigint AS max_value, EXISTS (SELECT 1 FROM ${quotedTable}) AS has_rows FROM ${quotedTable}`,
+  );
+  const hasRows = Boolean(stats?.has_rows);
+  const maxValue = stats?.max_value == null ? null : BigInt(stats.max_value);
+
+  const [seqState] = await tx.unsafe(
+    `SELECT last_value::bigint AS last_value, is_called FROM ${quotedSeq}`,
+  );
+  if (!seqState || seqState.last_value == null) {
+    throw new Error(`Could not inspect current sequence state for ${qualifiedSeq}.`);
+  }
+
+  const currentNext = seqState.is_called
+    ? BigInt(seqState.last_value) + 1n
+    : BigInt(seqState.last_value);
+  const desiredNext = hasRows && maxValue !== null ? maxValue + 1n : 1n;
+
+  if (desiredNext > currentNext) {
+    // Only advance the sequence; never reset backwards if already ahead.
+    const setValue = hasRows && maxValue !== null && maxValue >= 1n ? maxValue : 1n;
+    const setCalled = hasRows && maxValue !== null && maxValue >= 1n;
+    await tx.unsafe(
+      'SELECT setval($1::regclass, $2::bigint, $3::boolean)',
+      [qualifiedSeq, setValue.toString(), setCalled],
+    );
+    return {
+      table: qualifiedTable,
+      column,
+      sequence: qualifiedSeq,
+      updated: true,
+      nextValue: desiredNext.toString(),
+    };
+  }
+
+  return {
+    table: qualifiedTable,
+    column,
+    sequence: qualifiedSeq,
+    updated: false,
+    nextValue: currentNext.toString(),
+  };
+}
+
+export async function syncMigratedSequences(tx, specs = MIGRATED_SEQUENCE_COLUMNS) {
+  const results = [];
+  for (const spec of specs) {
+    results.push(await syncSequenceForColumn(tx, spec));
+  }
+  return results;
+}
+
+export async function applyManifestToTarget(targetSql, manifest, { allowNonEmpty = false } = {}) {
+  for (const item of manifest) {
+    console.log(`\nApplying table [${item.table}] (${item.rows.length} rows)...`);
+    if (item.rows.length === 0) {
+      if (item.syncEmpty) {
+        await targetSql.unsafe(`DELETE FROM public.${quoteIdent(item.table)}`);
+        console.log(`  0 rows on source — cleared migration-seeded rows in target public."${item.table}".`);
+      } else {
+        console.log(`  0 rows — skipping.`);
+      }
+      continue;
+    }
+
+    const quotedTable = `public.${quoteIdent(item.table)}`;
+    const [{ count: currentTargetCount }] = await targetSql.unsafe(
+      `SELECT count(*)::int AS count FROM ${quotedTable}`,
+    );
+
+    if (currentTargetCount > 0 && !allowNonEmpty) {
+      throw new Error(
+        `Target table public."${item.table}" already has ${currentTargetCount} rows. Refusing to write to non-empty table (pass --allow-non-empty to override).`,
+      );
+    }
+
+    await targetSql.begin(async (tx) => {
+      // Use replica role so exact original timestamps, revisions and identity values are preserved
+      await tx.unsafe("SET session_replication_role = 'replica'");
+
+      for (const row of item.rows) {
+        const keys = Object.keys(row);
+        const columns = keys.map((k) => quoteIdent(k)).join(', ');
+        const values = keys.map((k) => row[k]);
+        const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+
+        const updateColumns = keys.filter((k) => k !== item.pk && k !== 'revision_number');
+        const updateClause = updateColumns.length > 0
+          ? `DO UPDATE SET ${updateColumns.map((k) => `${quoteIdent(k)} = excluded.${quoteIdent(k)}`).join(', ')}`
+          : 'DO NOTHING';
+
+        const insertSql = `
+            INSERT INTO ${quotedTable} (${columns})
+            OVERRIDING SYSTEM VALUE
+            VALUES (${placeholders})
+            ON CONFLICT (${quoteIdent(item.pk)}) ${updateClause}
+          `;
+        await tx.unsafe(insertSql, values);
+      }
+    });
+    console.log(`  Successfully migrated ${item.rows.length} rows into public."${item.table}"`);
+  }
+
+  console.log('\nInitializing counters & sequences on target...');
+  let sequenceResults = [];
+  await targetSql.begin(async (tx) => {
+    await tx.unsafe(`
+        INSERT INTO public.order_number_counters (name, next_number, updated_at)
+        VALUES ('order', 1009, now())
+        ON CONFLICT (name) DO UPDATE SET next_number = 1009, updated_at = now()
+      `);
+    await tx.unsafe(`
+        INSERT INTO public.receipt_counters (name, next_number)
+        VALUES ('pos_receipt', 1)
+        ON CONFLICT (name) DO NOTHING
+      `);
+    await tx.unsafe(`
+        INSERT INTO public.invoice_number_counters (name, last_number)
+        VALUES ('invoice', 0)
+        ON CONFLICT (name) DO NOTHING
+      `);
+
+    sequenceResults = await syncMigratedSequences(tx);
+  });
+  for (const result of sequenceResults) {
+    console.log(
+      `  Sequence ${result.sequence} (${result.table}.${result.column}): ${result.updated ? 'synchronized' : 'already ahead'} (next=${result.nextValue})`,
+    );
+  }
+  console.log('  Counters & sequences initialized successfully.');
+  return sequenceResults;
+}
 
 async function loadEnv() {
   const env = { ...process.env };
@@ -352,10 +552,13 @@ async function main() {
         console.log(`  ${item.table.padEnd(30)}: ${String(item.rows.length).padStart(4)} rows (${item.group})`);
       }
       console.log(`  ${'storage (media bucket)'.padEnd(30)}: ${String(storageObjects.length).padStart(4)} objects`);
-      console.log('\nSequences that will be initialized fresh on target:');
+      console.log('\nCounters initialized fresh & sequences synchronized on target:');
       console.log('  order_number_counters          : initialized to order_start_number (1009)');
       console.log('  receipt_counters               : initialized to 1');
       console.log('  invoice_number_counters        : initialized to 0');
+      for (const spec of MIGRATED_SEQUENCE_COLUMNS) {
+        console.log(`  ${`${spec.table}.${spec.column}`.padEnd(31)}: synchronized to MAX(${spec.column})`);
+      }
       console.log('\nTo execute live migration to Mumbai target project, run:');
       console.log('  node scripts/migrate-data-to-new-project.mjs --apply');
       return;
@@ -363,80 +566,7 @@ async function main() {
 
     // LIVE APPLY
     console.log('\n================ LIVE APPLY EXECUTION ================');
-    for (const item of manifest) {
-      console.log(`\nApplying table [${item.table}] (${item.rows.length} rows)...`);
-      if (item.rows.length === 0) {
-        if (item.syncEmpty) {
-          await targetSql.unsafe(`DELETE FROM public."${item.table}"`);
-          console.log(`  0 rows on source — cleared migration-seeded rows in target public."${item.table}".`);
-        } else {
-          console.log(`  0 rows — skipping.`);
-        }
-        continue;
-      }
-
-      // Pre-check target table count
-      const [{ count: currentTargetCount }] = await targetSql.unsafe(
-        `SELECT count(*)::int AS count FROM public."${item.table}"`
-      );
-
-      if (currentTargetCount > 0 && !allowNonEmpty) {
-        throw new Error(
-          `Target table public."${item.table}" already has ${currentTargetCount} rows. Refusing to write to non-empty table (pass --allow-non-empty to override).`
-        );
-      }
-
-      await targetSql.begin(async (tx) => {
-        // Use replica role so exact original timestamps, revisions and identity values are preserved
-        await tx.unsafe("SET session_replication_role = 'replica'");
-
-        // Build insert statement
-        for (const row of item.rows) {
-          const keys = Object.keys(row);
-          const columns = keys.map((k) => `"${k}"`).join(', ');
-          const values = keys.map((k) => row[k]);
-          const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
-
-          const updateColumns = keys.filter((k) => k !== item.pk && k !== 'revision_number');
-          const updateClause = updateColumns.length > 0
-            ? `DO UPDATE SET ${updateColumns.map((k) => `"${k}" = excluded."${k}"`).join(', ')}`
-            : 'DO NOTHING';
-
-          const insertSql = `
-            INSERT INTO public."${item.table}" (${columns})
-            OVERRIDING SYSTEM VALUE
-            VALUES (${placeholders})
-            ON CONFLICT ("${item.pk}") ${updateClause}
-          `;
-          await tx.unsafe(insertSql, values);
-        }
-      });
-      console.log(`  Successfully migrated ${item.rows.length} rows into public."${item.table}"`);
-    }
-
-    // Initialize sequences fresh
-    console.log('\nInitializing counters & sequences on target...');
-    await targetSql.begin(async (tx) => {
-      // 1. order_number_counters
-      await tx.unsafe(`
-        INSERT INTO public.order_number_counters (name, next_number, updated_at)
-        VALUES ('order', 1009, now())
-        ON CONFLICT (name) DO UPDATE SET next_number = 1009, updated_at = now()
-      `);
-      // 2. receipt_counters
-      await tx.unsafe(`
-        INSERT INTO public.receipt_counters (name, next_number)
-        VALUES ('pos_receipt', 1)
-        ON CONFLICT (name) DO NOTHING
-      `);
-      // 3. invoice_number_counters
-      await tx.unsafe(`
-        INSERT INTO public.invoice_number_counters (name, last_number)
-        VALUES ('invoice', 0)
-        ON CONFLICT (name) DO NOTHING
-      `);
-    });
-    console.log('  Counters initialized successfully.');
+    await applyManifestToTarget(targetSql, manifest, { allowNonEmpty });
 
     // Storage object replication
     if (targetSupabaseUrl && targetServiceKey) {
@@ -483,7 +613,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('\n[FATAL ERROR]', err.message);
-  process.exit(1);
-});
+const isCliEntry =
+  process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+if (isCliEntry) {
+  main().catch((err) => {
+    console.error('\n[FATAL ERROR]', err.message);
+    process.exit(1);
+  });
+}

@@ -62,6 +62,7 @@ async function buildHarness() {
       adjustVariantInventory: null,
       onInsertProducts: null,
       onUpdateProduct: null,
+      onInsertPriceHistory: null,
     },
   };
 
@@ -121,6 +122,10 @@ async function buildHarness() {
       }
       if (query.startsWith('update products set name =')) {
         if (state.hooks.onUpdateProduct) return state.hooks.onUpdateProduct(values);
+        return Promise.resolve([]);
+      }
+      if (query.startsWith('insert into price_history')) {
+        if (state.hooks.onInsertPriceHistory) return state.hooks.onInsertPriceHistory(values);
         return Promise.resolve([]);
       }
       if (query.startsWith('insert into catalog_imports')) {
@@ -208,7 +213,13 @@ async function buildHarness() {
   });
   const transfer = await jiti.import(path.join(root, 'src/lib/store-admin/catalog-transfer.ts'));
 
-  return { state, MetadataError: rules.MetadataError, runCatalogueImport: transfer.runCatalogueImport };
+  return {
+    state,
+    MetadataError: rules.MetadataError,
+    runCatalogueImport: transfer.runCatalogueImport,
+    postgresErrorToImportError: transfer.postgresErrorToImportError,
+    postgresColumnHint: transfer.postgresColumnHint,
+  };
 }
 
 function captureWarns(run) {
@@ -455,4 +466,103 @@ test('Postgres unique constraint violation rejects with row/column and infra fai
   assert.equal(auditFailRes.result.ok, false);
   assert.equal(auditFailRes.result.reason, 'unavailable');
   assert.equal(auditFailRes.warns[0][1].outcome, 'unavailable');
+});
+
+test('postgresErrorToImportError maps product vs unrelated constraints without misreporting price_history_pkey on ₹1 imports', async () => {
+  const { state, runCatalogueImport, postgresErrorToImportError } = await buildHarness();
+  const sampleRows = [{ rowNumber: 2, slug: 'test-item', productId: 'test-item' }];
+
+  // 1. products_slug_key -> slug
+  const slugErr = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'products_slug_key', table_name: 'products', detail: 'Key (slug)=(test-item) already exists.' },
+    sampleRows,
+  );
+  assert.equal(slugErr.column, 'slug');
+  assert.equal(slugErr.rowNumber, 2);
+
+  // 2. products_pkey -> product_id
+  const pkeyErr = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'products_pkey', table_name: 'products', detail: 'Key (id)=(test-item) already exists.' },
+    sampleRows,
+  );
+  assert.equal(pkeyErr.column, 'product_id');
+
+  // 3. price_history_pkey -> database/import-level error, NOT 'price'
+  const priceHistoryErr = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'price_history_pkey', table_name: 'price_history', column_name: 'id' },
+    sampleRows,
+  );
+  assert.notEqual(priceHistoryErr.column, 'price');
+  assert.equal(priceHistoryErr.column, 'import');
+  assert.equal(priceHistoryErr.message.includes('price_history_pkey'), false);
+
+  // Also ensure price_history_pkey without table_name still avoids 'price'.
+  const priceHistoryNoTable = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'price_history_pkey' },
+    sampleRows,
+  );
+  assert.equal(priceHistoryNoTable.column, 'import');
+
+  // 4. Actual unambiguous product pricing constraints -> 'price'
+  const productPriceCheck = postgresErrorToImportError(
+    { code: '23514', constraint_name: 'products_price_paise_check', table_name: 'products', column_name: 'price_paise' },
+    sampleRows,
+  );
+  assert.equal(productPriceCheck.column, 'price');
+
+  const productPriceKey = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'products_price_paise_key', table_name: 'products', column_name: 'price_paise' },
+    sampleRows,
+  );
+  assert.equal(productPriceKey.column, 'price');
+
+  // Unrelated constraint whose name contains 'price' must NOT blame 'price'.
+  const unrelatedPriceKey = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'unrelated_price_bucket_unique', table_name: 'other_table' },
+    sampleRows,
+  );
+  assert.notEqual(unrelatedPriceKey.column, 'price');
+  assert.equal(unrelatedPriceKey.column, 'import');
+
+  // 5. Unknown 23505 constraint -> generic import error without raw DB detail
+  const unknown23505 = postgresErrorToImportError(
+    { code: '23505', constraint_name: 'some_custom_unique_idx', detail: 'INTERNAL_SECRET_ROW_VALUE' },
+    sampleRows,
+  );
+  assert.equal(unknown23505.column, 'import');
+  assert.equal(unknown23505.message, 'Duplicate record violates a unique catalogue constraint.');
+  assert.equal(unknown23505.message.includes('INTERNAL_SECRET_ROW_VALUE'), false);
+
+  // End-to-end ₹1 product update: when price_history_pkey collides on ₹1 change, error reports 'import' (never 'price').
+  state.hooks.onInsertPriceHistory = async () => {
+    throw Object.assign(
+      new Error('duplicate key value violates unique constraint "price_history_pkey"'),
+      { name: 'PostgresError', code: '23505', constraint_name: 'price_history_pkey', table_name: 'price_history', column_name: 'id' },
+    );
+  };
+  const oneRupeeFail = await captureWarns(() =>
+    runCatalogueImport({
+      filename: 'one-rupee.csv',
+      csv: 'product_id,name,slug,category,price\nprod_1,Charger,existing-charger,Power,1\n',
+      dryRun: false,
+      staffId: 'stf_1',
+    }),
+  );
+  assert.equal(oneRupeeFail.result.ok, true);
+  assert.equal(oneRupeeFail.result.data.status, 'rejected');
+  assert.equal(oneRupeeFail.result.data.errors[0].column, 'import');
+  assert.equal(oneRupeeFail.warns[0][1].pgCode, '23505');
+  assert.equal(oneRupeeFail.warns[0][1].constraint, 'price_history_pkey');
+  state.hooks.onInsertPriceHistory = null;
+
+  // When price_history succeeds, ₹1 imports cleanly.
+  const oneRupeeOk = await runCatalogueImport({
+    filename: 'one-rupee-ok.csv',
+    csv: 'product_id,name,slug,category,price\nprod_1,Charger,existing-charger,Power,1\n',
+    dryRun: false,
+    staffId: 'stf_1',
+  });
+  assert.equal(oneRupeeOk.ok, true);
+  assert.equal(oneRupeeOk.data.status, 'imported');
+  assert.equal(oneRupeeOk.data.updated, 1);
 });
