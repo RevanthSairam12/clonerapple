@@ -5,6 +5,7 @@ import { readSaleState } from '@/lib/storefront/sale-state';
 import { getStorefrontRefs } from '@/lib/storefront/catalog';
 import { getUserSession } from '@/lib/user-auth';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
+import { readTrustBarContent } from '@/lib/website/trust-bar';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,11 +16,12 @@ export const metadata: Metadata = {
 
 export default async function BagPage() {
   const saleClock = await readSaleState();
-  const [{ products, saleLive }, configuration, session, customerSettings] = await Promise.all([
+  const [{ products, saleLive }, configuration, session, customerSettings, trustBar] = await Promise.all([
     getStorefrontRefs(saleClock),
     readCheckoutConfiguration(),
     getUserSession(),
     readCustomerSettings(),
+    readTrustBarContent(),
   ]);
   return (
     <CartPageView
@@ -30,6 +32,7 @@ export default async function BagPage() {
       customerEmail={session?.email || null}
       guestCheckoutEnabled={customerSettings.guest_checkout === 'on'}
       couponsEnabled={configuration.ok && configuration.settings.coupons_enabled === 'on'}
+      trustBar={trustBar}
     />
   );
 }

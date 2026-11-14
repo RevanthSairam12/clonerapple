@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { GlobalNav } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav';
-import { GadzioTrustBar, DEFAULT_TRUST_BADGES } from '@/components/trust/GadzioTrustBar';
+import { GadzioTrustBar, type GadzioTrustBarProps } from '@/components/trust/GadzioTrustBar';
 import { GlobalFooter } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter';
 import { useCart, type CartItem } from '@/lib/cart/CartContext';
 import { getSuggestedProducts } from '@/lib/search/searchTracker';
@@ -52,9 +52,11 @@ interface Props {
   guestCheckoutEnabled?: boolean;
   /** Payments → Coupons. Off hides the box; the server refuses codes anyway. */
   couponsEnabled?: boolean;
+  /** Store Admin `gadzio.trust_badges` override rendered above the footer. */
+  trustBar?: GadzioTrustBarProps;
 }
 
-export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleClock, customerEmail = null, couponsEnabled = true, guestCheckoutEnabled = false }: Props) {
+export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleClock, customerEmail = null, couponsEnabled = true, guestCheckoutEnabled = false, trustBar }: Props) {
   const { items, totalCount, updateQuantity, removeItem, addItem, stockNotice } = useCart();
   const router = useRouter();
   const [checkoutNotice, setCheckoutNotice] = useState<string | null>(null);
@@ -816,8 +818,8 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
       </div>
 
       {/* Trust Badges */}
-      <div className="w-full mt-10 border-t border-[#e5e5ea]">
-        <GadzioTrustBar items={DEFAULT_TRUST_BADGES.map((badge, index) => index === 0 ? { ...badge, title: 'Delivery across India', subtitle: 'Shipping shown at checkout' } : badge)} />
+      <div className="w-full mt-10 border-t border-[#e5e5ea] empty:hidden">
+        <GadzioTrustBar items={trustBar?.items} enabled={trustBar?.enabled} />
       </div>
 
       <GlobalFooter />

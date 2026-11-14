@@ -307,9 +307,9 @@ export const COLLECTIONS: CollectionSchema[] = [
   },
   {
     key: 'gadzio.trust_badges',
-    label: 'Trust Badges Bar — Homepage & Product Pages',
-    sitePaths: ['/', '/sale', '/search', '/in/shop/iphone/accessories/cases-protection'],
-    description: 'The value proposition / trust badges strip shown on the homepage, product pages, collection pages, and /sale.',
+    label: 'Trust Badges Bar — Homepage, Product Pages & Cart',
+    sitePaths: ['/', '/cart', '/sale', '/search', '/in/shop/iphone/accessories/cases-protection'],
+    description: 'The value proposition / trust badges strip shown on the homepage, product pages, collection pages, /cart, and /sale.',
     fields: [
       booleanField('enabled', 'Show trust badges bar', 'Untick to hide this strip from the homepage.'),
     ],

@@ -414,10 +414,19 @@ test('HomeSpinPopup modal overlays sticky header and floating brand switcher cle
   );
 });
 
-/* ------------------------------------------- 5. Cart Delivery Strip Copy */
+/* ------------------------------------------- 5. Cart Delivery Strip & Trust Bar */
 
-test('CartPageView omits Free 7-day returns from the /cart delivery strip', async () => {
+test('CartPageView omits Free 7-day returns and syncs Trust Badges Bar above footer with admin content', async () => {
   const cartView = await source('src/components/cart/CartPageView.tsx');
+  const cartPage = await source('src/app/cart/page.tsx');
+  const bagPage = await source('src/app/bag/page.tsx');
+
   assert.match(cartView, /Delivery across India\./);
   assert.doesNotMatch(cartView, /Free 7-day returns/i);
+  assert.match(cartView, /<GadzioTrustBar\s+items=\{trustBar\?\.items\}\s+enabled=\{trustBar\?\.enabled\}\s*\/>/);
+  assert.doesNotMatch(cartView, /DEFAULT_TRUST_BADGES/);
+  assert.match(cartPage, /readTrustBarContent/);
+  assert.match(cartPage, /trustBar=\{trustBar\}/);
+  assert.match(bagPage, /readTrustBarContent/);
+  assert.match(bagPage, /trustBar=\{trustBar\}/);
 });
