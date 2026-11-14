@@ -295,7 +295,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
                 🚚
               </span>
               <span>
-                <strong>Delivery across India.</strong> Shipping is shown in your order summary. Free 7-day returns.
+                <strong>Delivery across India.</strong> Shipping is shown in your order summary.
               </span>
             </div>
             <div className="flex items-center gap-2 text-[#86868b]">

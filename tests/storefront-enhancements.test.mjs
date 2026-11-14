@@ -413,3 +413,11 @@ test('HomeSpinPopup modal overlays sticky header and floating brand switcher cle
     `HomeSpinPopup z-[${popupZ}] must sit above header z-[${headerZ}] and switcher z-[${switcherZ}]`,
   );
 });
+
+/* ------------------------------------------- 5. Cart Delivery Strip Copy */
+
+test('CartPageView omits Free 7-day returns from the /cart delivery strip', async () => {
+  const cartView = await source('src/components/cart/CartPageView.tsx');
+  assert.match(cartView, /Delivery across India\./);
+  assert.doesNotMatch(cartView, /Free 7-day returns/i);
+});
