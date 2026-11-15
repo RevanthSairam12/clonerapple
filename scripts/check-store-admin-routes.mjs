@@ -127,6 +127,7 @@ EXPECTED_OWNER_ROUTES.push('site-address-check/route.ts');
 const EXPECTED_MUTATING_ROUTES = [
   'orders/[txnid]/fulfilment/route.ts',
   'orders/[txnid]/delivery/route.ts',
+  'orders/[txnid]/serial-numbers/route.ts',
   'requests/[id]/route.ts',
   'orders/[txnid]/payments/route.ts',
   'pos/sales/route.ts',

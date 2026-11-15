@@ -24,7 +24,7 @@ export const NOTIFICATION_AUDIENCES = [
 ] as const;
 
 export const NOTIFICATION_TOPICS = [
-  { value: 'order_placed', label: 'Order placed' },
+  { value: 'order_placed', label: 'Order accepted' },
   { value: 'payment_received', label: 'Payment received' },
   { value: 'processing', label: 'Processing' },
   { value: 'shipped', label: 'Shipped' },

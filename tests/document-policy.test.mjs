@@ -108,3 +108,29 @@ test('customer legacy partial identities and insufficient capture never invent i
   const underpaid = projectCustomerDocumentState(deriveDocumentState({...facts, capturedPaise:999}));
   assert.equal(underpaid.kind, 'status'); assert.equal(underpaid.canViewReceipt, false);
 });
+
+test('delivered customer invoice requires submitting a bill request reason before viewing', () => {
+  const facts = {
+    paymentStatus: 'PAID',
+    fulfilmentStatus: 'DELIVERED',
+    totalPaise: 1000,
+    capturedPaise: 1000,
+    invoiceNumber: 'INV000042',
+    invoiceIssuedAt: '2026-11-02T00:00:00Z',
+  };
+  const beforeReason = projectCustomerDocumentState(deriveDocumentState({ ...facts, billRequested: false }));
+  assert.equal(beforeReason.canRequestBill, true);
+  assert.equal(beforeReason.canViewInvoice, false);
+  assert.equal(beforeReason.kind, 'receipt');
+  assert.equal(beforeReason.invoiceNumber, null);
+  assert.equal(
+    projectCustomerDocumentState(deriveDocumentState({ ...facts, billRequested: false }), 'invoice').canViewBill,
+    false,
+  );
+
+  const afterReason = projectCustomerDocumentState(deriveDocumentState({ ...facts, billRequested: true }));
+  assert.equal(afterReason.canRequestBill, false);
+  assert.equal(afterReason.canViewInvoice, true);
+  assert.equal(afterReason.kind, 'invoice');
+  assert.equal(afterReason.invoiceNumber, 'INV000042');
+});

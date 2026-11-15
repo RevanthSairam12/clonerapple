@@ -9,11 +9,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ tx
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
   const { txnid } = await context.params;
+  const body = await request.json().catch(() => ({}));
   try {
-    // Do not parse obsolete reasons or return an old request as a successful action.
-    await requestBill(auth.session.userId, txnid);
+    await requestBill(auth.session.userId, txnid, body);
+    return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof BillRequestError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof BillRequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.warn('[account/bill-request] request unavailable');
     return NextResponse.json({ error: 'Bill requests are unavailable. Please try again.' }, { status: 503 });
   }

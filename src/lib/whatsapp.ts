@@ -17,3 +17,12 @@ const ORDER_MESSAGE =
 
 /** Opens a WhatsApp chat with the Android-accessory order message prefilled. */
 export const WHATSAPP_ORDER_URL = `https://wa.me/${WHATSAPP_NUMBER}?text=${ORDER_MESSAGE}`;
+
+/** Opens a WhatsApp chat requesting cancellation for a specific order. */
+export function buildWhatsAppCancelOrderUrl(txnid: string): string {
+  const cleanTxnid = txnid.trim();
+  const message = cleanTxnid
+    ? `Hi Gadzio, I would like to request cancellation for my order ${cleanTxnid}.`
+    : 'Hi Gadzio, I would like to request order cancellation.';
+  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+}

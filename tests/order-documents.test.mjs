@@ -95,7 +95,7 @@ const renderJiti = createJiti(import.meta.url, {
     '@/lib/store-admin/catalog': { formatDate: (value) => String(value) },
   },
 });
-const { OrderDocument, OrderDocumentStatus } = await renderJiti.import(
+const { OrderDocument, OrderDocumentStatus, buildOrderBarcodeValue } = await renderJiti.import(
   path.join(here, '..', 'src/components/orders/OrderDocument.tsx'),
 );
 const { deriveDocumentState, projectCustomerDocumentState } = await renderJiti.import(
@@ -143,6 +143,7 @@ test('customer paid receipt needs no historical request and uses no invoice or b
 
 test('issued delivered invoice retains reference and prominent completed/pending refund facts', () => {
   const html = renderDocument({ ...baseFacts, fulfilmentStatus: 'DELIVERED', shipmentStarted: true,
+    billRequested: true,
     invoiceNumber: 'PERMANENT-0007', invoiceIssuedAt: '2026-10-31T00:00:00Z',
     refundedPaise: 2500, pendingRefundPaise: 1500, refundDuePaise: 1000 }, true);
   for (const text of ['PERMANENT-0007', '2026-10-31T00:00:00Z', 'Refund Initiated',
@@ -205,7 +206,7 @@ test('delivered invoice refund stamps remain truthful for full, partial, pending
     [{lastRefundOutcome:'FAILED'}, 'FAILED'],
     [{lastRefundOutcome:'REJECTED'}, 'REJECTED'],
   ]) {
-    const html = renderDocument({...baseFacts,fulfilmentStatus:'DELIVERED',invoiceNumber:'REFUND-INVOICE',
+    const html = renderDocument({...baseFacts,fulfilmentStatus:'DELIVERED',billRequested:true,invoiceNumber:'REFUND-INVOICE',
       invoiceIssuedAt:'2026-11-01',...refund}, true);
     assert.ok(html.includes(label),label);
     assert.match(html,/REFUND-INVOICE/);
@@ -228,4 +229,133 @@ test('staff cancelled issued documents retain immutable identity and refund over
     invoiceNumber:'STAFF-CANCELLED',invoiceIssuedAt:'2026-11-01',refundedPaise:10000});
   assert.match(html,/STAFF-CANCELLED/); assert.match(html,/Refund Successful/);
   assert.match(html,/CANCELLED/); assert.match(html,/not confirmation of a current paid sale/);
+});
+
+test('invoice renders company details, MSME Udyam number, logo on top, and serial number per product', () => {
+  const serialOrder = {
+    ...documentOrder,
+    items: [
+      { ...documentOrder.items[0], serialNumber: 'SN-GADZIO-001' },
+      { lineNumber: 2, productName: 'Second accessory', quantity: 1, unitPricePaise: 5000, lineTotalPaise: 5000, serialNumber: 'SN-GADZIO-002' },
+    ],
+  };
+  const html = renderToStaticMarkup(createElement(OrderDocument, {
+    order: serialOrder,
+    totals: documentTotals,
+    state: deriveDocumentState({
+      ...baseFacts,
+      fulfilmentStatus: 'DELIVERED',
+      billRequested: true,
+      invoiceNumber: 'INV000099',
+      invoiceIssuedAt: '2026-11-02T00:00:00Z',
+    }),
+    customer: true,
+  }));
+  assert.match(html, /\/gadzio_logo\.png/);
+  assert.match(html, /RUPEEDO TECHNOLOGIES/);
+  assert.match(html, /UDYAM-AP-12-0109134/);
+  assert.match(html, /Serial No:.*SN-GADZIO-001/);
+  assert.match(html, /Serial No:.*SN-GADZIO-002/);
+});
+
+test('invoice renders Shipped to user name only (no address) and unique order+date barcode at bottom', () => {
+  const addressedOrder = {
+    ...documentOrder,
+    billTo: {
+      type: 'billing',
+      fullName: 'Billing User',
+      phone: '8888888888',
+      line1: '99 Secret Billing Lane',
+      line2: 'Suite 4',
+      city: 'Bengaluru',
+      state: 'KA',
+      postalCode: '560001',
+      country: 'IN',
+    },
+    shipTo: {
+      type: 'shipping',
+      fullName: 'Aarav Rao',
+      phone: '9999999999',
+      line1: '123 MG Road',
+      line2: 'Near Metro',
+      city: 'Hyderabad',
+      state: 'TS',
+      postalCode: '500001',
+      country: 'IN',
+    },
+  };
+  const html = renderToStaticMarkup(createElement(OrderDocument, {
+    order: addressedOrder,
+    totals: documentTotals,
+    state: deriveDocumentState({
+      ...baseFacts,
+      fulfilmentStatus: 'DELIVERED',
+      billRequested: true,
+      invoiceNumber: 'INV000100',
+      invoiceIssuedAt: '2026-11-02T00:00:00Z',
+    }),
+    customer: true,
+  }));
+
+  assert.match(html, /Shipped to<\/h2>.*<strong>Aarav Rao<\/strong>/);
+  assert.doesNotMatch(html, /Bill to|Billing User|123 MG Road|Near Metro|Hyderabad|500001|9999999999|99 Secret Billing Lane|560001|8888888888/);
+
+  const codeA = buildOrderBarcodeValue('ORDER-ONLY', '2026-11-02T00:00:00Z', new Date('2026-11-15T10:00:00+05:30'));
+  const codeDiffOrder = buildOrderBarcodeValue('ORDER-TWO', '2026-11-02T00:00:00Z', new Date('2026-11-15T10:00:00+05:30'));
+  const codeDiffDate = buildOrderBarcodeValue('ORDER-ONLY', '2026-11-02T00:00:00Z', new Date('2026-11-16T10:00:00+05:30'));
+  assert.notEqual(codeA, codeDiffOrder);
+  assert.notEqual(codeA, codeDiffDate);
+  assert.match(html, /<svg[^>]*role="img"[^>]*aria-label="Order verification barcode GZ-/);
+  assert.ok(html.indexOf('Order verification barcode') > html.indexOf('Order total'));
+});
+
+test('saveOrderSerialNumbersUsing saves serial numbers for every item and issues the invoice', async () => {
+  const { saveOrderSerialNumbersUsing } = await jiti.import(
+    path.join(here, '..', 'src/lib/store-admin/orders.ts'),
+  );
+  const queries = [];
+  const fakeSql = async (strings, ...values) => {
+    const query = strings.join('?').replace(/\s+/g, ' ').trim().toLowerCase();
+    queries.push({ query, values });
+    if (query.startsWith('select id, txnid, status')) {
+      return [{ id: 'ord-sn-1', txnid: 'GDZ000010', status: 'PAID', fulfilment_status: 'PROCESSING' }];
+    }
+    if (query.startsWith('select line_number, product_id')) {
+      return [
+        { line_number: 1, product_id: 'p1', product_name: 'Item 1' },
+        { line_number: 2, product_id: 'p2', product_name: 'Item 2' },
+      ];
+    }
+    if (query.startsWith('select invoice_number')) return [{ invoice_number: null, invoice_issued_at: null }];
+    if (query.startsWith('select value from store_settings')) return [{ value: 'INV' }];
+    if (query.startsWith('update invoice_number_counters')) return [{ value: '7' }];
+    if (query.startsWith('update orders set invoice_sequence')) return [{ invoice_issued_at: '2026-11-02T00:00:00Z' }];
+    if (query.startsWith('update') || query.startsWith('insert')) return [];
+    throw new Error(`Unexpected SQL: ${query}`);
+  };
+  fakeSql.begin = async (fn) => fn(fakeSql);
+  fakeSql.json = (v) => v;
+
+  const missing = await saveOrderSerialNumbersUsing(fakeSql, {
+    txnid: 'GDZ000010',
+    serialNumbers: [{ lineNumber: 1, serialNumber: 'SN-1' }],
+    staffId: 'staff-1',
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, 'invalid-input');
+
+  const okResult = await saveOrderSerialNumbersUsing(fakeSql, {
+    txnid: 'GDZ000010',
+    serialNumbers: [
+      { lineNumber: 1, serialNumber: 'SN-1' },
+      { lineNumber: 2, serialNumber: 'SN-2' },
+    ],
+    staffId: 'staff-1',
+  });
+  assert.equal(okResult.ok, true);
+  assert.equal(okResult.invoiceNumber, 'INV000007');
+  assert.equal(
+    queries.filter((q) => q.query.startsWith('update order_items set serial_number')).length,
+    2,
+  );
 });

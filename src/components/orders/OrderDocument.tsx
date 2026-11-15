@@ -21,6 +21,7 @@ export interface OrderDocumentData {
     variantId?: string | null;
     variantSku?: string | null;
     variantLabel?: string | null;
+    serialNumber?: string | null;
     /** The ordered photo, snapshotted with the line (0061). */
     imageUrl?: string | null;
     imageAlt?: string | null;
@@ -69,16 +70,111 @@ export function OrderDocumentStatus({ state, currency = 'INR', customer = false 
   );
 }
 
-function AddressBlock({ address, customer }: { address: DocumentAddress | null | undefined; customer: boolean }) {
-  if (!address) return <p className="sa-doc-muted text-sm text-[#6e6e73]">No address snapshot is available.</p>;
-  return <address className={customer ? 'mt-2 flex flex-col text-sm not-italic leading-6' : 'sa-doc-address'}>
-    <strong>{address.fullName || 'Customer'}</strong>
-    {address.phone && <span>{address.phone}</span>}
-    <span>{address.line1}</span>
-    {address.line2 && <span>{address.line2}</span>}
-    <span>{[address.city, address.state, address.postalCode].filter(Boolean).join(', ')}</span>
-    <span>{address.country}</span>
-  </address>;
+function formatIstDateStamp(value?: string | Date): string {
+  const date = value instanceof Date ? value : value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '00000000';
+  try {
+    const formatted = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+    const digits = formatted.replace(/\D/g, '');
+    if (digits.length === 8) return digits;
+  } catch {
+    // Fallback to UTC stamp when Intl timeZone data is unavailable.
+  }
+  const y = String(date.getUTCFullYear()).padStart(4, '0');
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+function fnv1aHex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
+}
+
+/** Deterministic unique barcode value mixing order ID, order date, and current date. */
+export function buildOrderBarcodeValue(
+  txnid: string,
+  createdAt?: string,
+  now: Date = new Date(),
+): string {
+  const cleanId = txnid.toUpperCase().replace(/[^A-Z0-9]/g, '') || '0';
+  const orderDate = formatIstDateStamp(createdAt);
+  const currentDate = formatIstDateStamp(now);
+  const dateMix = `${orderDate}${currentDate}`;
+  let mixed = '';
+  const maxLen = Math.max(cleanId.length, dateMix.length);
+  for (let i = 0; i < maxLen; i += 1) {
+    if (i < cleanId.length) mixed += cleanId[i];
+    if (i < dateMix.length) mixed += dateMix[i];
+  }
+  const checksum = fnv1aHex(`${cleanId}|${orderDate}|${currentDate}`);
+  return `GZ-${mixed}-${checksum}`;
+}
+
+function OrderBarcode({ code, customer }: { code: string; customer: boolean }) {
+  const bars: Array<{ x: number; w: number }> = [];
+  let cursor = 0;
+  const pushGuard = (pattern: number[]) => {
+    pattern.forEach((w, idx) => {
+      if (idx % 2 === 0) bars.push({ x: cursor, w });
+      cursor += w;
+    });
+  };
+
+  pushGuard([2, 1, 1, 2, 1, 1]);
+  for (let i = 0; i < code.length; i += 1) {
+    const ch = code.charCodeAt(i);
+    for (let slot = 0; slot < 3; slot += 1) {
+      const barWidth = ((ch >> (slot * 2)) & 1) === 1 ? 2 : 1;
+      const gapWidth = (((ch + i) >> slot) & 1) === 1 ? 2 : 1;
+      bars.push({ x: cursor, w: barWidth });
+      cursor += barWidth + gapWidth;
+    }
+  }
+  pushGuard([2, 1, 1, 1, 2]);
+
+  return (
+    <div
+      className={
+        customer
+          ? 'mt-6 flex flex-col items-center border-t border-[#e5e5ea] pt-5 text-center'
+          : 'sa-doc-barcode mt-6 flex flex-col items-center border-t border-black/10 pt-4 text-center'
+      }
+      data-order-barcode={code}
+    >
+      <svg
+        role="img"
+        aria-label={`Order verification barcode ${code}`}
+        viewBox={`0 0 ${cursor} 44`}
+        className="h-11 w-full max-w-[340px]"
+        preserveAspectRatio="none"
+      >
+        {bars.map((bar) => (
+          <rect key={bar.x} x={bar.x} y={0} width={bar.w} height={44} fill="#111111" />
+        ))}
+      </svg>
+      <span className="mt-1.5 font-mono text-xs tracking-[0.18em] text-[#1d1d1f]">{code}</span>
+    </div>
+  );
+}
+
+function ShippedToName({ address, customer }: { address: DocumentAddress | null | undefined; customer: boolean }) {
+  const name = address?.fullName?.trim();
+  if (!name) return <p className="sa-doc-muted text-sm text-[#6e6e73]">Customer</p>;
+  return (
+    <p className={customer ? 'mt-2 text-sm not-italic leading-6' : 'sa-doc-address'}>
+      <strong>{name}</strong>
+    </p>
+  );
 }
 
 /** Presentation only. Each caller must authorize and construct its own address/item DTO. */
@@ -100,15 +196,18 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
   const paymentReceipt = state.kind === 'receipt';
   const showInvoiceIdentity = !customer || (showBill && state.kind === 'invoice');
   const rowClass = customer ? 'flex justify-between gap-4 py-1' : 'sa-doc-total-row';
+  const barcodeValue = showBill ? buildOrderBarcodeValue(order.txnid, order.createdAt) : '';
   return (
     <article className={customer ? 'rounded-3xl border border-[#e5e5ea] bg-white p-6 shadow-sm sm:p-10' : 'sa-doc-sheet'}>
       <DocumentHeader settings={settings} customer={customer} title={showBill ? documentTitle(state) : 'Order / payment status'} badge={showBill ? (paymentReceipt ? 'Payment record' : 'Bill of supply') : 'Status only'} kicker={showBill ? (paymentReceipt ? 'Verified payment with current order and refund status.' : 'No tax collected — the business is not GST-registered.') : 'This is not proof of payment.'} />
       <OrderDocumentStatus state={state} currency={order.currency} customer={customer} />
       <div className={customer ? 'my-6 grid gap-6 sm:grid-cols-2' : 'sa-doc-parties'}>
-        {showBill && <>
-          <section className="sa-doc-block"><h2 className={customer ? 'font-semibold' : undefined}>{paymentReceipt ? 'Customer' : 'Bill to'}</h2><AddressBlock address={order.billTo ?? order.shipTo} customer={customer} /></section>
-          <section className="sa-doc-block"><h2 className={customer ? 'font-semibold' : undefined}>Ship to</h2><AddressBlock address={order.shipTo ?? order.billTo} customer={customer} /></section>
-        </>}
+        {showBill && (
+          <section className="sa-doc-block">
+            <h2 className={customer ? 'font-semibold' : undefined}>Shipped to</h2>
+            <ShippedToName address={order.shipTo ?? order.billTo} customer={customer} />
+          </section>
+        )}
         <section className="sa-doc-block sa-doc-facts">
           <h2 className={customer ? 'font-semibold' : undefined}>Details</h2>
           <dl className={customer ? 'mt-2 space-y-2 text-sm' : 'sa-doc-facts-list'}>
@@ -129,7 +228,7 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
             <thead><tr className={customer ? 'border-b border-[#e5e5ea]' : undefined}><th className="py-3">#</th><th>Item</th><th className="text-right">Qty</th><th className="text-right">Rate</th><th className="text-right">Amount</th></tr></thead>
             <tbody>{order.items.map((item) => <tr key={item.lineNumber} className={customer ? 'border-b border-[#e5e5ea]' : undefined}>
               <td className="py-3">{item.lineNumber}</td>
-              <td>{item.imageUrl && <img src={item.imageUrl} alt={item.imageAlt ?? item.productName} className="mr-2 inline-block h-10 w-10 rounded object-contain align-middle" />}{item.productName}{item.isFreeGift && <span className={customer ? 'ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900' : 'sa-badge sa-badge-ok ml-2'}>{item.freeGiftBadge || 'FREE GIFT'}</span>}{item.variantLabel && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.variantLabel}</span>}{item.variantSku && <span className="sa-row-sub block text-xs text-[#6e6e73]">SKU: {item.variantSku}</span>}{item.productId && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.productId}</span>}{item.isFreeGift && item.referencePricePaise != null && item.referencePricePaise > 0 ? <span className="sa-row-sub block text-xs text-[#6e6e73]">Regular value <span className="line-through">{money(item.referencePricePaise, item.currency)}</span></span> : item.referencePricePaise != null && item.referencePricePaise !== item.unitPricePaise ? <span className="sa-row-sub block text-xs text-[#6e6e73]">List price at sale {money(item.referencePricePaise, item.currency)}</span> : null}</td>
+              <td>{item.imageUrl && <img src={item.imageUrl} alt={item.imageAlt ?? item.productName} className="mr-2 inline-block h-10 w-10 rounded object-contain align-middle" />}{item.productName}{item.isFreeGift && <span className={customer ? 'ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900' : 'sa-badge sa-badge-ok ml-2'}>{item.freeGiftBadge || 'FREE GIFT'}</span>}{item.variantLabel && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.variantLabel}</span>}{item.variantSku && <span className="sa-row-sub block text-xs text-[#6e6e73]">SKU: {item.variantSku}</span>}{item.serialNumber && <span className="sa-row-sub block text-xs font-medium text-[#1d1d1f]">Serial No: <span className="font-mono">{item.serialNumber}</span></span>}{item.productId && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.productId}</span>}{item.isFreeGift && item.referencePricePaise != null && item.referencePricePaise > 0 ? <span className="sa-row-sub block text-xs text-[#6e6e73]">Regular value <span className="line-through">{money(item.referencePricePaise, item.currency)}</span></span> : item.referencePricePaise != null && item.referencePricePaise !== item.unitPricePaise ? <span className="sa-row-sub block text-xs text-[#6e6e73]">List price at sale {money(item.referencePricePaise, item.currency)}</span> : null}</td>
               <td className="sa-num text-right">{item.quantity}</td><td className="sa-num text-right">{item.isFreeGift ? 'FREE' : money(item.unitPricePaise, item.currency)}</td><td className="sa-num text-right">{item.isFreeGift ? `FREE (${money(0, item.currency)})` : money(item.lineTotalPaise, item.currency)}</td>
             </tr>)}{order.items.length === 0 && <tr><td colSpan={5} className="sa-doc-muted py-3">No item snapshot is available for this order.</td></tr>}</tbody>
           </table>
@@ -145,6 +244,7 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
       <footer className={customer ? 'mt-8 text-sm text-[#6e6e73]' : 'sa-doc-note'}>
         {settings?.receipt_footer?.trim() && <p>{settings.receipt_footer.trim()}</p>}
         {showBill && !paymentReceipt && <p>This document is a bill of supply for a non-GST-registered business. It is not a tax invoice and no GST has been charged.</p>}
+        {showBill && barcodeValue && <OrderBarcode code={barcodeValue} customer={customer} />}
       </footer>
     </article>
   );

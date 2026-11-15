@@ -14,7 +14,7 @@ import { LIST_KINDS, listSettingRows } from '@/lib/store-admin/setting-lists';
 export const dynamic = 'force-dynamic';
 
 const EVENT_LABELS: Record<string, string> = {
-  order_placed: 'Order placed',
+  order_placed: 'Order accepted',
   payment_received: 'Payment received',
   processing: 'Processing',
   shipped: 'Shipped',

@@ -12,14 +12,18 @@
  * character stripped for every channel, escaped for HTML email, and flattened
  * to one line for subjects and SMS so a newline cannot inject a mail header.
  *
- * Email bodies are treated as plain text: the whole rendered body is escaped
- * and newlines become <br>. That keeps a stored `<script>` harmless and means
- * customer data can never become markup.
+ * Custom body text is treated as plain text: the whole rendered body is
+ * HTML-escaped and newlines become <br>. Structured order data (items,
+ * addresses, totals, tracking, payment, and refund metadata) is escaped field
+ * by field inside the email card layout.
  *
  * Pure module: no database, no Next.js, no environment access.
  */
 
 import type {
+  EmailOrderAddress,
+  EmailOrderDetail,
+  EmailOrderItem,
   NotificationAudience,
   NotificationChannel,
   NotificationEvent,
@@ -252,6 +256,8 @@ export interface EmailParts {
   buttonLabel: string;
   buttonUrl: string;
   footer: string;
+  /** True when `body` came from an admin-edited database row rather than EVENT_COPY. */
+  isCustom?: boolean;
 }
 
 export interface RenderedEmail {
@@ -260,93 +266,773 @@ export interface RenderedEmail {
   html: string;
 }
 
+interface DetailRow {
+  label: string;
+  value: string;
+  linkUrl?: string;
+}
+
+interface DetailButton {
+  label: string;
+  url: string;
+  primary: boolean;
+}
+
+interface DetailView {
+  heading: string;
+  badgeDate: string;
+  highlightLabel: string;
+  highlightValue: string;
+  showItems: boolean;
+  summaryRows: Array<{ label: string; value: string }>;
+  totalLabel: string;
+  totalValue: string;
+  rows: DetailRow[];
+  note: string;
+  closingAccent: string;
+  buttons: DetailButton[];
+}
+
+const ITEM_CIRCLE_PALETTE = ['#fadadd', '#fde4c8', '#e6e9fa', '#dff3e8'] as const;
+
+function currentDateLabel(): string {
+  try {
+    return new Intl.DateTimeFormat('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Kolkata',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function formatShippingAddress(addr: EmailOrderAddress | null | undefined): string {
+  if (!addr) return '';
+  const parts = [
+    addr.fullName,
+    addr.line1,
+    addr.line2,
+    addr.city,
+    addr.state,
+    addr.postalCode,
+    addr.phone ? `Phone: ${addr.phone}` : '',
+  ]
+    .map((p) => stripControlChars(text(p)))
+    .filter(Boolean);
+  return parts.join(', ');
+}
+
+function displayOrderReference(detail: EmailOrderDetail): string {
+  const num = text(detail.orderNumber);
+  const txn = text(detail.txnid);
+  if (num && txn && num !== txn) return `${num} (${txn})`;
+  return num || txn;
+}
+
+function safeDetailLink(pathOrUrl: string | null | undefined, baseUrl: string): string {
+  return safeEmailLink(pathOrUrl, baseUrl);
+}
+
+function buildItemOptionsLine(item: EmailOrderItem): string {
+  const bits: string[] = [];
+  if (text(item.deviceModelName)) bits.push(`Model: ${text(item.deviceModelName)}`);
+  if (text(item.colourName)) bits.push(`Color: ${text(item.colourName)}`);
+  if (text(item.variantLabel) && !text(item.deviceModelName) && !text(item.colourName)) {
+    bits.push(text(item.variantLabel));
+  }
+  bits.push(`Qty: ${Math.max(1, item.quantity)}`);
+  return bits.map((bit) => escapeHtml(bit)).join('&nbsp;&nbsp;&nbsp;&nbsp;');
+}
+
+function buildPricingSummaryRows(detail: EmailOrderDetail): Array<{ label: string; value: string }> {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: 'Subtotal', value: formatPaise(detail.subtotalPaise) },
+  ];
+  if (detail.discountPaise > 0) {
+    const label = detail.couponCode ? `Discount (${detail.couponCode})` : 'Discount';
+    rows.push({ label, value: `-${formatPaise(detail.discountPaise)}` });
+  }
+  rows.push({
+    label: 'Shipping',
+    value: detail.shippingPaise === 0 ? 'Free' : formatPaise(detail.shippingPaise),
+  });
+  return rows;
+}
+
+function buildDetailView(
+  detail: EmailOrderDetail,
+  headingOverride: string,
+  baseUrl: string,
+): DetailView {
+  const encodedTxnid = encodeURIComponent(detail.txnid);
+  const orderStatusUrl = safeDetailLink(`/order/status?txnid=${encodedTxnid}`, baseUrl);
+  const receiptUrl = safeDetailLink(`/account/orders/${encodedTxnid}/receipt`, baseUrl);
+  const supportUrl = safeDetailLink('/support', baseUrl);
+  const retryUrl = safeDetailLink(`/order/failed?txnid=${encodedTxnid}`, baseUrl);
+  const issueUrl = safeDetailLink(
+    detail.hasCustomerAccount ? `/account/orders/${encodedTxnid}` : '/support',
+    baseUrl,
+  );
+  const firstProductItem = detail.items.find((item) => text(item.productId));
+  const reviewUrl = safeDetailLink(
+    firstProductItem?.productId
+      ? `/shop/product/${encodeURIComponent(text(firstProductItem.productId))}`
+      : '/shop',
+    baseUrl,
+  );
+  const externalTrackingUrl = safeHttpsUrl(detail.trackingUrl);
+  const orderRef = displayOrderReference(detail);
+  const fallbackDate = detail.orderDate || currentDateLabel();
+  const formattedAddress = formatShippingAddress(detail.shippingAddress);
+  const pricingSummary = buildPricingSummaryRows(detail);
+
+  switch (detail.event) {
+    case 'order_placed':
+      return {
+        heading: headingOverride || 'Order Accepted!',
+        badgeDate: fallbackDate,
+        highlightLabel: formattedAddress ? 'Shipping Address:' : 'Order Status:',
+        highlightValue: formattedAddress || 'Order Accepted — Preparing for Dispatch',
+        showItems: true,
+        summaryRows: pricingSummary,
+        totalLabel: 'Total:',
+        totalValue: formatPaise(detail.totalPaise),
+        rows: [
+          { label: 'Order ID', value: orderRef },
+          { label: 'Order Date', value: detail.orderDate || fallbackDate },
+          { label: 'Payment Method', value: detail.paymentMethod || 'Online Payment' },
+          { label: 'Payment Status', value: detail.paymentStatus || 'Pending Confirmation' },
+          { label: 'Estimated Delivery', value: detail.estimatedDelivery || '3–5 business days' },
+        ],
+        note: detail.expectedDispatch
+          ? `Your order has been accepted and will be packed shortly (${detail.expectedDispatch}).`
+          : 'Your order has been accepted and will be dispatched within 1–2 business days.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons: orderStatusUrl ? [{ label: 'View Order', url: orderStatusUrl, primary: true }] : [],
+      };
+
+    case 'payment_received': {
+      const paidPaise =
+        detail.paidAmountPaise !== null && detail.paidAmountPaise !== undefined && detail.paidAmountPaise > 0
+          ? detail.paidAmountPaise
+          : detail.totalPaise;
+      const buttons: DetailButton[] = [];
+      if (receiptUrl) buttons.push({ label: 'Payment Receipt', url: receiptUrl, primary: true });
+      if (orderStatusUrl) buttons.push({ label: 'View Order', url: orderStatusUrl, primary: buttons.length === 0 });
+      return {
+        heading: headingOverride || 'Payment Successful!',
+        badgeDate: detail.paymentDate || fallbackDate,
+        highlightLabel: 'Transaction ID:',
+        highlightValue: detail.transactionId || detail.txnid,
+        showItems: true,
+        summaryRows: pricingSummary,
+        totalLabel: 'Amount Paid:',
+        totalValue: formatPaise(paidPaise),
+        rows: [
+          { label: 'Transaction ID', value: detail.transactionId || detail.txnid },
+          { label: 'Payment Amount', value: formatPaise(paidPaise) },
+          { label: 'Payment Method', value: detail.paymentMethod || 'Online Payment' },
+          { label: 'Payment Date', value: detail.paymentDate || fallbackDate },
+          { label: 'Order ID', value: orderRef },
+        ],
+        note: 'Your payment is confirmed and your receipt is ready. We will update you as soon as dispatch begins.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons,
+      };
+    }
+
+    case 'processing': {
+      const buttons: DetailButton[] = [];
+      if (supportUrl) buttons.push({ label: 'Customer Support', url: supportUrl, primary: true });
+      if (orderStatusUrl) buttons.push({ label: 'View Order', url: orderStatusUrl, primary: buttons.length === 0 });
+      return {
+        heading: headingOverride || 'Order is Processing!',
+        badgeDate: fallbackDate,
+        highlightLabel: 'Processing Status:',
+        highlightValue: detail.processingStatus || 'Processing — Preparing for Dispatch',
+        showItems: true,
+        summaryRows: pricingSummary,
+        totalLabel: 'Total:',
+        totalValue: formatPaise(detail.totalPaise),
+        rows: [
+          { label: 'Order ID', value: orderRef },
+          { label: 'Order Date', value: detail.orderDate || fallbackDate },
+          { label: 'Processing Status', value: detail.processingStatus || 'Processing — Preparing for Dispatch' },
+          { label: 'Expected Dispatch Date', value: detail.expectedDispatch || 'Dispatched in 1–2 business days.' },
+        ],
+        note: 'Our team is carefully packing your order. Need any assistance before dispatch? Use Customer Support below.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons,
+      };
+    }
+
+    case 'shipped': {
+      const buttons: DetailButton[] = [];
+      const trackHref = externalTrackingUrl || orderStatusUrl;
+      if (trackHref) buttons.push({ label: 'Track Shipment', url: trackHref, primary: true });
+      if (orderStatusUrl && externalTrackingUrl) {
+        buttons.push({ label: 'View Order', url: orderStatusUrl, primary: false });
+      }
+      return {
+        heading: headingOverride || 'Your Order Has Shipped!',
+        badgeDate: detail.dispatchDate || fallbackDate,
+        highlightLabel: `Courier Partner — ${detail.courierPartner || 'Courier Partner'}:`,
+        highlightValue: detail.trackingId ? `Tracking ID: ${detail.trackingId}` : 'Shipment Handed Over to Courier',
+        showItems: true,
+        summaryRows: pricingSummary,
+        totalLabel: 'Total:',
+        totalValue: formatPaise(detail.totalPaise),
+        rows: [
+          { label: 'Courier Partner', value: detail.courierPartner || 'Courier Partner' },
+          { label: 'Tracking ID', value: detail.trackingId || 'Updating shortly' },
+          {
+            label: 'Tracking URL',
+            value: externalTrackingUrl || 'Available via View Order once courier activates tracking',
+            ...(externalTrackingUrl ? { linkUrl: externalTrackingUrl } : {}),
+          },
+          { label: 'Dispatch Date', value: detail.dispatchDate || fallbackDate },
+          { label: 'Estimated Delivery', value: detail.estimatedDelivery || '3–5 business days' },
+        ],
+        note: 'Your parcel has been handed over to our courier partner and is now on its way.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons,
+      };
+    }
+
+    case 'delivered': {
+      const buttons: DetailButton[] = [];
+      if (reviewUrl) buttons.push({ label: 'Review Products', url: reviewUrl, primary: true });
+      if (issueUrl) buttons.push({ label: 'Report an Issue', url: issueUrl, primary: buttons.length === 0 });
+      const deliveredDate = detail.deliveredDate || fallbackDate;
+      return {
+        heading: headingOverride || 'Order Delivered!',
+        badgeDate: deliveredDate,
+        highlightLabel: formattedAddress ? 'Delivered To:' : 'Delivered Date:',
+        highlightValue: formattedAddress || deliveredDate,
+        showItems: true,
+        summaryRows: pricingSummary,
+        totalLabel: 'Order Total:',
+        totalValue: formatPaise(detail.totalPaise),
+        rows: [
+          { label: 'Delivered Date', value: deliveredDate },
+          { label: 'Order ID', value: orderRef },
+          {
+            label: 'Order Summary',
+            value: `${detail.items.length} item${detail.items.length === 1 ? '' : 's'} · Total ${formatPaise(detail.totalPaise)}`,
+          },
+        ],
+        note: 'Your order has been delivered! Enjoy your purchase — you can review your products or report an issue anytime.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons,
+      };
+    }
+
+    case 'cancelled': {
+      const refundPaise = detail.refundAmountPaise ?? 0;
+      const refundSummary = refundPaise > 0
+        ? `${formatPaise(refundPaise)} — ${detail.refundStatus || 'Eligible for refund'}`
+        : `₹0.00 — ${detail.refundStatus || 'No payment captured'}`;
+      const rows: DetailRow[] = [
+        { label: 'Cancellation Confirmation', value: `Confirmed — Order ${orderRef} cancelled` },
+        { label: 'Order ID', value: orderRef },
+      ];
+      if (text(detail.cancellationReason)) {
+        rows.push({ label: 'Cancellation Reason', value: text(detail.cancellationReason) });
+      }
+      rows.push({
+        label: 'Refund Eligibility',
+        value: detail.refundEligibility || 'No payment captured — no refund required',
+      });
+      rows.push({ label: 'Refund Amount & Status', value: refundSummary });
+
+      return {
+        heading: headingOverride || 'Order Cancelled',
+        badgeDate: currentDateLabel(),
+        highlightLabel: 'Cancellation Confirmation:',
+        highlightValue: `Order ${orderRef} has been cancelled`,
+        showItems: true,
+        summaryRows: pricingSummary,
+        totalLabel: 'Order Total:',
+        totalValue: formatPaise(detail.totalPaise),
+        rows,
+        note: 'This order has been cancelled and will not be dispatched. Any eligible refund follows the status shown above.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons: orderStatusUrl ? [{ label: 'View Order', url: orderStatusUrl, primary: true }] : [],
+      };
+    }
+
+    case 'refund_pending': {
+      const amount = detail.refundAmountPaise ?? detail.totalPaise;
+      const refundId = text(detail.refundId) || `REF-${detail.orderNumber || detail.txnid}`;
+      const initDate = detail.refundInitiationDate || currentDateLabel();
+      return {
+        heading: headingOverride || 'Refund Initiated!',
+        badgeDate: initDate,
+        highlightLabel: 'Refund ID:',
+        highlightValue: `${refundId} · Submitted to Payment Provider`,
+        showItems: false,
+        summaryRows: [
+          { label: 'Original Transaction ID', value: detail.transactionId || detail.txnid },
+          { label: 'Refund Method', value: detail.refundMethod || detail.paymentMethod || 'Original Payment Method' },
+        ],
+        totalLabel: 'Refund Amount:',
+        totalValue: formatPaise(amount),
+        rows: [
+          { label: 'Refund ID', value: refundId },
+          { label: 'Original Transaction ID', value: detail.transactionId || detail.txnid },
+          { label: 'Refund Amount', value: formatPaise(amount) },
+          { label: 'Refund Method', value: detail.refundMethod || detail.paymentMethod || 'Original Payment Method' },
+          { label: 'Initiation Date', value: initDate },
+          { label: 'Expected Processing Time', value: detail.refundExpectedTime || '5–7 business days' },
+        ],
+        note: 'Your refund request has been successfully submitted to the payment provider. We will send another confirmation once settlement completes.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons: orderStatusUrl ? [{ label: 'View Order', url: orderStatusUrl, primary: true }] : [],
+      };
+    }
+
+    case 'refund_completed': {
+      const amount = detail.refundAmountPaise ?? detail.totalPaise;
+      const procDate = detail.refundProcessingDate || currentDateLabel();
+      const refNo = text(detail.refundReference) || text(detail.refundId) || detail.txnid;
+      return {
+        heading: headingOverride || 'Refund Successful!',
+        badgeDate: procDate,
+        highlightLabel: 'Refund Confirmation:',
+        highlightValue: `Confirmed — ${formatPaise(amount)} refunded`,
+        showItems: false,
+        summaryRows: [
+          { label: 'Refund Reference Number', value: refNo },
+          { label: 'Original Payment Method', value: detail.paymentMethod || detail.refundMethod || 'Original Payment Method' },
+        ],
+        totalLabel: 'Refunded Amount:',
+        totalValue: formatPaise(amount),
+        rows: [
+          { label: 'Refund Confirmation', value: 'Refund Successful — Completed' },
+          { label: 'Refunded Amount', value: formatPaise(amount) },
+          { label: 'Refund Reference Number', value: refNo },
+          { label: 'Original Payment Method', value: detail.paymentMethod || detail.refundMethod || 'Original Payment Method' },
+          { label: 'Processing Date', value: procDate },
+        ],
+        note: 'Bank processing disclaimer: Depending on your bank, UPI app, or card issuer, please allow 3–7 business days for the refunded amount to reflect on your statement.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons: orderStatusUrl ? [{ label: 'View Order', url: orderStatusUrl, primary: true }] : [],
+      };
+    }
+
+    case 'payment_failed': {
+      const charged = detail.paidAmountPaise ?? 0;
+      const chargedDisplay = charged > 0
+        ? `${formatPaise(charged)} (Captured — contact support for verification)`
+        : '₹0.00 (No amount charged)';
+      const rows: DetailRow[] = [
+        { label: 'Payment Failure Status', value: 'Failed / Expired — Order not confirmed' },
+        { label: 'Order / Payment Reference', value: orderRef },
+      ];
+      if (text(detail.paymentFailureReason)) {
+        rows.push({ label: 'Failure Reason', value: text(detail.paymentFailureReason) });
+      }
+      rows.push({ label: 'Amount Charged, if any', value: chargedDisplay });
+
+      const buttons: DetailButton[] = [];
+      if (retryUrl) buttons.push({ label: 'Retry Payment', url: retryUrl, primary: true });
+      if (supportUrl) buttons.push({ label: 'Customer Support', url: supportUrl, primary: buttons.length === 0 });
+
+      return {
+        heading: headingOverride || 'Payment Failed',
+        badgeDate: fallbackDate,
+        highlightLabel: 'Payment Failure Status:',
+        highlightValue: 'Payment Failed / Expired',
+        showItems: false,
+        summaryRows: [{ label: 'Order / Payment Reference', value: orderRef }],
+        totalLabel: 'Amount Charged:',
+        totalValue: charged > 0 ? formatPaise(charged) : '₹0.00',
+        rows,
+        note: 'Duplicate payment support instructions: If your bank or UPI app shows a debit, please do not initiate another payment immediately. Unsettled charges usually auto-reverse within 3–5 business days, or contact Support with your Order Reference and bank UTR.',
+        closingAccent: 'Need help completing your order?',
+        buttons,
+      };
+    }
+
+    default:
+      return {
+        heading: headingOverride || 'Order Update',
+        badgeDate: fallbackDate,
+        highlightLabel: formattedAddress ? 'Shipping Address:' : 'Order Status:',
+        highlightValue: formattedAddress || statusLabel(detail.orderStatus) || 'Updated',
+        showItems: detail.items.length > 0,
+        summaryRows: pricingSummary,
+        totalLabel: 'Total:',
+        totalValue: formatPaise(detail.totalPaise),
+        rows: [{ label: 'Order ID', value: orderRef }],
+        note: 'You can view the latest status of your order anytime using the button below.',
+        closingAccent: 'Thanks for shopping with us!',
+        buttons: orderStatusUrl ? [{ label: 'View Order', url: orderStatusUrl, primary: true }] : [],
+      };
+  }
+}
+
+/**
+ * Gmail strips inline <svg> elements, so draw the top-left shopping bag mark
+ * using crisp border geometry inside a role="presentation" table.
+ */
+function renderShoppingBagMarkHtml(): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr>
+      <td align="center" style="padding:0;line-height:0;font-size:0;">
+        <div style="width:10px;height:6px;margin:0 auto;border:2px solid #111111;border-bottom:0;border-radius:6px 6px 0 0;"></div>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" style="padding:0;line-height:0;font-size:0;">
+        <div style="width:20px;height:16px;border:2px solid #111111;border-radius:4px 4px 6px 6px;background-color:#ffffff;"></div>
+      </td>
+    </tr>
+  </table>`;
+}
+
+function renderItemRowHtml(
+  item: EmailOrderItem,
+  index: number,
+  event: NotificationEvent,
+  baseUrl: string,
+): string {
+  const circleBg = ITEM_CIRCLE_PALETTE[index % ITEM_CIRCLE_PALETTE.length];
+  const imgUrl = safeEmailLink(item.imageUrl, baseUrl);
+  const alt = escapeHtml(item.imageAlt || item.productName);
+  const initial = escapeHtml((text(item.productName).charAt(0) || 'G').toUpperCase());
+
+  const thumbHtml = imgUrl
+    ? `<img src="${escapeHtml(imgUrl)}" alt="${alt}" width="42" height="42" style="display:block;width:42px;height:42px;object-fit:contain;margin:0 auto;border:0;border-radius:50%;" />`
+    : `<span style="font-size:17px;font-weight:700;color:#3a2f35;line-height:42px;display:block;text-align:center;">${initial}</span>`;
+
+  const badgeHtml = item.isFreeGift
+    ? ` <span style="display:inline-block;padding:2px 8px;margin-left:6px;background:#fce4ec;color:#c82362;border-radius:999px;font-size:10px;font-weight:700;vertical-align:middle;">${escapeHtml(item.freeGiftBadge || 'FREE GIFT')}</span>`
+    : '';
+
+  const productHref = event === 'delivered' && text(item.productId)
+    ? safeEmailLink(`/shop/product/${encodeURIComponent(text(item.productId))}`, baseUrl)
+    : '';
+  const reviewLinkHtml = productHref
+    ? `<div style="margin-top:4px;"><a href="${escapeHtml(productHref)}" style="font-size:11px;font-weight:600;color:#c82362;text-decoration:none;">Review this product &rarr;</a></div>`
+    : '';
+
+  const priceDisplay = item.isFreeGift && item.lineTotalPaise === 0
+    ? 'Free'
+    : formatPaise(item.lineTotalPaise || item.unitPricePaise * Math.max(1, item.quantity));
+
+  return `<tr>
+    <td style="padding:10px 0;vertical-align:middle;width:62px;">
+      <table role="presentation" width="56" cellpadding="0" cellspacing="0" border="0" style="width:56px;height:56px;border-radius:50%;background-color:${circleBg};">
+        <tr>
+          <td align="center" valign="middle" style="padding:0;width:56px;height:56px;text-align:center;">
+            ${thumbHtml}
+          </td>
+        </tr>
+      </table>
+    </td>
+    <td style="padding:10px 14px;vertical-align:middle;">
+      <div style="font-size:14px;line-height:1.35;font-weight:700;color:#111111;">${escapeHtml(item.productName)}${badgeHtml}</div>
+      <div style="margin-top:4px;font-size:12px;line-height:1.4;color:#86868b;">${buildItemOptionsLine(item)}</div>
+      ${reviewLinkHtml}
+    </td>
+    <td align="right" style="padding:10px 0;vertical-align:middle;white-space:nowrap;font-size:14px;font-weight:700;color:#111111;">
+      ${escapeHtml(priceDisplay)}
+    </td>
+  </tr>`;
+}
+
+function renderButtonsHtml(buttons: DetailButton[]): string {
+  if (buttons.length === 0) return '';
+  const links = buttons
+    .map((btn, idx) => {
+      const style = btn.primary
+        ? 'display:inline-block;background-color:#111111;color:#ffffff;text-decoration:none;padding:11px 22px;border-radius:980px;font-size:13px;font-weight:600;letter-spacing:-0.01em;'
+        : 'display:inline-block;background-color:#ffffff;color:#111111;border:1px solid #d2d2d7;text-decoration:none;padding:10px 20px;border-radius:980px;font-size:13px;font-weight:600;letter-spacing:-0.01em;';
+      const spacing = idx > 0 ? 'margin-left:10px;' : '';
+      return `<a href="${escapeHtml(btn.url)}" style="${style}${spacing}">${escapeHtml(btn.label)}</a>`;
+    })
+    .join('');
+  return `<div style="padding:18px 32px 0 32px;">${links}</div>`;
+}
+
+function renderDetailRowsHtml(rows: DetailRow[]): string {
+  if (rows.length === 0) return '';
+  const trs = rows
+    .map((row, idx) => {
+      const border = idx < rows.length - 1 ? 'border-bottom:1px solid #f2eff0;' : '';
+      const valHtml = row.linkUrl
+        ? `<a href="${escapeHtml(row.linkUrl)}" style="color:#0066cc;font-weight:600;text-decoration:none;word-break:break-all;">${escapeHtml(row.value)}</a>`
+        : escapeHtml(row.value);
+      return `<tr>
+        <td style="padding:9px 10px 9px 0;${border}font-size:12px;color:#76767c;vertical-align:top;width:44%;">${escapeHtml(row.label)}</td>
+        <td align="right" style="padding:9px 0 9px 10px;${border}font-size:12px;font-weight:700;color:#111111;vertical-align:top;word-break:break-word;">${valHtml}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<div style="padding:16px 32px 0 32px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${trs}</table>
+  </div>`;
+}
+
+function renderTotalBandHtml(
+  summaryRows: Array<{ label: string; value: string }>,
+  totalLabel: string,
+  totalValue: string,
+): string {
+  const breakdownHtml = summaryRows.length > 0
+    ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:10px;">
+        ${summaryRows
+      .map(
+        (r) => `<tr>
+              <td style="padding:3px 0;font-size:12px;color:#6e6e73;">${escapeHtml(r.label)}</td>
+              <td align="right" style="padding:3px 0;font-size:12px;font-weight:600;color:#2c2c2e;">${escapeHtml(r.value)}</td>
+            </tr>`,
+      )
+      .join('')}
+      </table>`
+    : '';
+
+  const infoBadge = `<span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background-color:#111111;color:#ffffff;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;font-size:12px;vertical-align:middle;margin-left:8px;">i</span>`;
+
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f8f4f5;">
+    <tr>
+      <td style="padding:16px 32px 18px 32px;">
+        ${breakdownHtml}
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td align="right" style="padding-top:${summaryRows.length > 0 ? '8px' : '0'};${summaryRows.length > 0 ? 'border-top:1px solid #ece4e7;' : ''}">
+              <span style="font-size:14px;font-weight:500;color:#3a3a3c;vertical-align:middle;">${escapeHtml(totalLabel)}</span>
+              <span style="font-size:21px;font-weight:800;color:#111111;vertical-align:middle;margin-left:6px;letter-spacing:-0.02em;">${escapeHtml(totalValue)}</span>${infoBadge}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>`;
+}
+
+function renderCardShellHtml(options: {
+  orderRef: string;
+  badgeDate: string;
+  heading: string;
+  highlightLabel: string;
+  highlightValue: string;
+  itemsHtml: string;
+  totalBandHtml: string;
+  detailRowsHtml: string;
+  noteHtml: string;
+  buttonsHtml: string;
+  closingAccent: string;
+  supportUrl: string;
+  storeName: string;
+  year: number;
+  customFooter: string;
+}): string {
+  const orderHeaderHtml = options.orderRef
+    ? `<div style="font-size:13px;line-height:1.3;color:#111111;"><strong style="font-weight:700;">Order#:</strong>&nbsp;&nbsp;<span style="font-weight:600;">${escapeHtml(options.orderRef)}</span></div>`
+    : `<div style="font-size:13px;line-height:1.3;font-weight:700;color:#111111;">${escapeHtml(options.storeName)}</div>`;
+
+  const dateHeaderHtml = options.badgeDate
+    ? `<div style="margin-top:4px;font-size:12px;color:#76767c;">${escapeHtml(options.badgeDate)}</div>`
+    : '';
+
+  const headingHtml = options.heading
+    ? `<div style="padding:0 32px 18px 32px;">
+        <h1 style="margin:0;font-size:24px;line-height:1.22;letter-spacing:-0.02em;font-weight:800;color:#111111;">${escapeHtml(options.heading)}</h1>
+      </div>`
+    : '';
+
+  const highlightHtml = options.highlightLabel && options.highlightValue
+    ? `<div style="padding:0 32px 18px 32px;">
+        <div style="font-size:12px;color:#8e8e93;margin-bottom:5px;">${escapeHtml(options.highlightLabel)}</div>
+        <div style="font-size:13px;line-height:1.5;font-weight:700;color:#111111;">${escapeHtml(options.highlightValue)}</div>
+      </div>`
+    : '';
+
+  const supportHtml = options.supportUrl
+    ? `<a href="${escapeHtml(options.supportUrl)}" style="color:#0066cc;font-size:12px;font-weight:500;text-decoration:none;">Need Help?</a>`
+    : `<span style="color:#8e8e93;font-size:12px;">Need Help?</span>`;
+
+  const customFooterHtml = options.customFooter
+    ? `<div style="padding:0 32px 20px 32px;font-size:11px;line-height:1.5;color:#8e8e93;">${escapeHtml(options.customFooter)}</div>`
+    : '';
+
+  return `<!doctype html>
+<html><body style="margin:0;padding:36px 16px;background-color:#fef2f4;background-image:radial-gradient(circle at 14% 26%,rgba(255,66,94,0.14) 0,rgba(255,66,94,0) 240px),radial-gradient(circle at 86% 78%,rgba(245,30,90,0.16) 0,rgba(245,30,90,0) 260px);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:580px;background-color:#ffffff;border-radius:16px;border:1px solid #f4e5e9;box-shadow:0 20px 50px rgba(200,35,98,0.09);overflow:hidden;">
+        <tr>
+          <td style="padding:30px 32px 18px 32px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td valign="top" style="padding:0;">${renderShoppingBagMarkHtml()}</td>
+                <td align="right" valign="top" style="padding:0;">${orderHeaderHtml}${dateHeaderHtml}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0;">
+            ${headingHtml}${highlightHtml}${options.itemsHtml}${options.totalBandHtml}${options.detailRowsHtml}${options.noteHtml}${options.buttonsHtml}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:22px 32px 14px 32px;">
+            <div style="font-size:18px;line-height:1.3;font-weight:700;letter-spacing:-0.01em;color:#c82362;">${escapeHtml(options.closingAccent)}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:10px 32px ${options.customFooter ? '12px' : '28px'} 32px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td style="padding:0;">${supportHtml}</td>
+                <td align="right" style="padding:0;font-size:12px;color:#8e8e93;">&copy; ${escapeHtml(options.storeName.toUpperCase())} ${options.year}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        ${customFooterHtml ? `<tr><td style="padding:0;">${customFooterHtml}</td></tr>` : ''}
+      </table>
+    </td>
+  </tr>
+</table>
+</body></html>`;
+}
+
 /**
  * Compose the HTML and plain-text versions of an email. The stored/default
- * template parts are already merged by the caller; a blank part falls back to
- * a sensible default here rather than sending a blank message.
+ * template parts are merged by the caller; when structured `detail` is
+ * provided for an order/payment/refund event, the card renders every field
+ * matching the transactional UI specification.
  */
 export function renderEmail(
   parts: EmailParts,
   values: Readonly<Record<string, string>>,
   baseUrl: string,
+  detail?: EmailOrderDetail | null,
 ): RenderedEmail {
   const subject = renderText(parts.subject, values, true) || 'Notification from Gadzio';
   const heading = renderText(parts.heading, values, true);
   const body = renderText(parts.body, values);
   const buttonLabel = renderText(parts.buttonLabel, values, true);
   const buttonUrl = safeEmailLink(renderText(parts.buttonUrl, values, true), baseUrl);
-  const footer = parts.footer
-    ? renderText(parts.footer, values)
-    : defaultFooter(values);
-
+  const footer = parts.footer ? renderText(parts.footer, values) : defaultFooter(values);
   const storeName = values.store_name || 'Gadzio';
-  const logoUrl = safeEmailLink('/gadzio_logo.png', baseUrl);
-  const logoHtml = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(storeName)}" height="28" style="display:block;height:28px;width:auto;border:0" />`
-    : `<span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;color:#111111">${escapeHtml(storeName)}</span>`;
+  const supportUrl = safeEmailLink('/support', baseUrl);
+  const year = new Date().getUTCFullYear();
 
-  const bodyHtml = escapeHtml(body).replace(/\n/g, '<br>');
-  const buttonHtml = buttonUrl && buttonLabel
-    ? `<div style="margin:24px 0 4px"><a href="${escapeHtml(buttonUrl)}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:980px;font-size:14px;font-weight:600;letter-spacing:-0.01em">${escapeHtml(buttonLabel)}</a></div>`
+  if (detail) {
+    const view = buildDetailView(detail, heading, baseUrl);
+    const itemsHtml = view.showItems && detail.items.length > 0
+      ? `<div style="padding:4px 32px 16px 32px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            ${detail.items.map((item, i) => renderItemRowHtml(item, i, detail.event, baseUrl)).join('')}
+          </table>
+        </div>`
+      : '';
+
+    const totalBandHtml = renderTotalBandHtml(view.summaryRows, view.totalLabel, view.totalValue);
+    const detailRowsHtml = renderDetailRowsHtml(view.rows);
+
+    const customBodyHtml = parts.isCustom && body
+      ? `<p style="font-size:13px;line-height:1.6;margin:0 0 10px 0;color:#2c2c2e;">${escapeHtml(body).replace(/\n/g, '<br>')}</p>`
+      : '';
+    const noteTextHtml = view.note
+      ? `<p style="font-size:13px;line-height:1.6;margin:0;color:#55555a;">${escapeHtml(view.note)}</p>`
+      : '';
+    const noteHtml = customBodyHtml || noteTextHtml
+      ? `<div style="padding:16px 32px 0 32px;">${customBodyHtml}${noteTextHtml}</div>`
+      : '';
+
+    // Preserve any admin-configured custom CTA button if the admin edited buttonLabel/buttonUrl
+    const buttons = parts.isCustom && buttonLabel && buttonUrl
+      ? [{ label: buttonLabel, url: buttonUrl, primary: true }, ...view.buttons.filter((b) => b.url !== buttonUrl)]
+      : view.buttons;
+
+    const html = renderCardShellHtml({
+      orderRef: detail.orderNumber || detail.txnid,
+      badgeDate: view.badgeDate,
+      heading: view.heading,
+      highlightLabel: view.highlightLabel,
+      highlightValue: view.highlightValue,
+      itemsHtml,
+      totalBandHtml,
+      detailRowsHtml,
+      noteHtml,
+      buttonsHtml: renderButtonsHtml(buttons),
+      closingAccent: view.closingAccent,
+      supportUrl,
+      storeName,
+      year,
+      customFooter: parts.footer ? footer : '',
+    });
+
+    const itemLines = view.showItems && detail.items.length > 0
+      ? detail.items.map((it) => `- ${it.productName} x ${it.quantity}: ${it.isFreeGift && it.lineTotalPaise === 0 ? 'Free' : formatPaise(it.lineTotalPaise || it.unitPricePaise * it.quantity)}`).join('\n')
+      : '';
+    const detailLines = view.rows.map((r) => `${r.label}: ${r.value}`).join('\n');
+    const summaryLines = view.summaryRows.map((s) => `${s.label}: ${s.value}`).join('\n');
+    const buttonLines = buttons.map((b) => `${b.label}: ${b.url}`).join('\n');
+
+    const textParts = [
+      view.heading,
+      view.highlightLabel && view.highlightValue ? `${view.highlightLabel} ${view.highlightValue}` : '',
+      itemLines,
+      summaryLines,
+      `${view.totalLabel} ${view.totalValue}`,
+      detailLines,
+      parts.isCustom && body ? body : '',
+      view.note,
+      buttonLines,
+      view.closingAccent,
+      footer,
+    ].filter(Boolean);
+
+    return { subject, text: textParts.join('\n\n'), html };
+  }
+
+  // Fallback / staff / direct 3-argument render path: uses exact same blush-card visual shell
+  const summaryRows: DetailRow[] = [];
+  if (values.order_number) summaryRows.push({ label: 'Order', value: values.order_number });
+  if (values.tracking_number) summaryRows.push({ label: 'Tracking', value: values.tracking_number });
+
+  const totalValue = values.refund_amount || values.order_total || '';
+  const totalLabel = values.refund_amount ? 'Refund:' : 'Total:';
+  const totalBandHtml = totalValue ? renderTotalBandHtml([], totalLabel, totalValue) : '';
+
+  const noteHtml = body
+    ? `<div style="padding:0 32px 16px 32px;"><p style="font-size:14px;line-height:1.65;margin:0;color:#2c2c2e;">${escapeHtml(body).replace(/\n/g, '<br>')}</p></div>`
     : '';
 
-  const headingHtml = heading
-    ? `<h1 style="font-size:28px;line-height:1.15;letter-spacing:-0.03em;font-weight:800;margin:24px 0 18px;color:#111111">${escapeHtml(heading)}</h1>`
-    : '';
-  const bodyBlock = body
-    ? `<p style="font-size:15px;line-height:1.65;margin:0 0 22px;color:#2c2c2e">${bodyHtml}</p>`
-    : '';
+  const fallbackButtons: DetailButton[] = buttonUrl && buttonLabel
+    ? [{ label: buttonLabel, url: buttonUrl, primary: true }]
+    : [];
 
-  const summaryRows: Array<[string, string, boolean]> = [];
-  if (values.order_number) summaryRows.push(['Order', values.order_number, false]);
-  if (values.carrier) summaryRows.push(['Carrier', values.carrier, false]);
-  if (values.tracking_number) summaryRows.push(['Tracking', values.tracking_number, false]);
-  if (values.refund_amount) summaryRows.push(['Refund', values.refund_amount, true]);
-  else if (values.order_total) summaryRows.push(['Total', values.order_total, true]);
-
-  const summaryHtml = summaryRows.length > 0
-    ? `<div style="background:#f7f7f8;border-radius:12px;padding:18px 22px;margin:0 0 24px">
-        <p style="margin:0 0 12px;font-size:14px;font-weight:700;color:#111111">Order summary</p>
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-          ${summaryRows
-            .map(([label, val, bold], idx) => {
-              const border = idx < summaryRows.length - 1 ? 'border-bottom:1px solid #e5e5ea;' : '';
-              const weight = bold ? 'font-weight:700;color:#111111;font-size:15px;' : 'font-weight:500;color:#3a3a3c;font-size:14px;';
-              const labelWeight = bold ? 'font-weight:700;color:#111111;font-size:15px;' : 'font-weight:400;color:#6e6e73;font-size:14px;';
-              return `<tr>
-                <td style="padding:10px 0;${border}${labelWeight}">${escapeHtml(label)}</td>
-                <td align="right" style="padding:10px 0;${border}${weight}">${escapeHtml(val)}</td>
-              </tr>`;
-            })
-            .join('')}
-        </table>
-      </div>`
-    : '';
-
-  const html = `<!doctype html>
-<html><body style="margin:0;padding:32px 16px;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-  <tr>
-    <td align="center">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:16px;border:1px solid #ececef">
-        <tr>
-          <td style="padding:36px 36px 28px">
-            ${logoHtml}${headingHtml}${bodyBlock}${summaryHtml}${buttonHtml}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:16px 36px 28px;border-top:1px solid #f0f0f3">
-            <p style="font-size:12px;line-height:1.55;margin:0;color:#8e8e93">${escapeHtml(footer)}</p>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
-</body></html>`;
+  const html = renderCardShellHtml({
+    orderRef: values.order_number || '',
+    badgeDate: '',
+    heading: heading || 'Notification',
+    highlightLabel: '',
+    highlightValue: '',
+    itemsHtml: '',
+    totalBandHtml,
+    detailRowsHtml: renderDetailRowsHtml(summaryRows),
+    noteHtml,
+    buttonsHtml: renderButtonsHtml(fallbackButtons),
+    closingAccent: 'Thanks for shopping with us!',
+    supportUrl,
+    storeName,
+    year,
+    customFooter: parts.footer ? footer : '',
+  });
 
   const textParts = [heading, body, buttonUrl, footer].filter(Boolean);
-
   return { subject, text: textParts.join('\n\n'), html };
 }
 
@@ -369,29 +1055,29 @@ const STAFF = 'staff' as const;
 const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<NotificationAudience, Copy>>>> = {
   order_placed: {
     [CUSTOMER]: {
-      subject: 'Order {{order_number}} received',
-      heading: 'Thank you for your order',
-      body: 'Hi {{customer_name}},\n\nWe have received order {{order_number}} for {{order_total}}.\n\nWe will email you again when it is on the way.',
-      sms: '{{store_name}}: order {{order_number}} received. Total {{order_total}}.',
-      buttonLabel: 'View your order',
+      subject: 'Order Accepted — #{{order_number}}',
+      heading: 'Order Accepted!',
+      body: 'Hi {{customer_name}},\n\nYour order {{order_number}} for {{order_total}} has been accepted.\n\nWe will email you again when it is on the way.',
+      sms: '{{store_name}}: order {{order_number}} accepted. Total {{order_total}}.',
+      buttonLabel: 'View Order',
       buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
-      subject: 'New order {{order_number}}',
-      heading: 'New order received',
-      body: 'Order {{order_number}} for {{order_total}} ({{item_count}} item(s)) was placed.',
-      sms: '{{store_name}}: new order {{order_number}} for {{order_total}}.',
+      subject: 'Order accepted: {{order_number}}',
+      heading: 'Order accepted',
+      body: 'Order {{order_number}} for {{order_total}} ({{item_count}} item(s)) was accepted.',
+      sms: '{{store_name}}: order {{order_number}} accepted ({{order_total}}).',
       buttonLabel: 'Open in Store Admin',
       buttonUrl: '{{admin_link}}',
     },
   },
   payment_received: {
     [CUSTOMER]: {
-      subject: 'Payment received for {{order_number}}',
-      heading: 'Payment received',
-      body: 'Hi {{customer_name}},\n\nWe have received {{order_total}} for order {{order_number}}. Your order is confirmed.',
+      subject: 'Payment Successful — Order #{{order_number}}',
+      heading: 'Payment Successful!',
+      body: 'Hi {{customer_name}},\n\nWe have received {{order_total}} for order {{order_number}}. Your payment is confirmed.',
       sms: '{{store_name}}: payment of {{order_total}} received for {{order_number}}.',
-      buttonLabel: 'View your order',
+      buttonLabel: 'View Order',
       buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
@@ -405,10 +1091,12 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   processing: {
     [CUSTOMER]: {
-      subject: 'Order {{order_number}} is being prepared',
-      heading: 'We are preparing your order',
+      subject: 'Order #{{order_number}} is Being Processed',
+      heading: 'Order is Processing!',
       body: 'Hi {{customer_name}},\n\nOrder {{order_number}} is being prepared for dispatch.',
       sms: '{{store_name}}: order {{order_number}} is being prepared.',
+      buttonLabel: 'Customer Support',
+      buttonUrl: '/support',
     },
     [STAFF]: {
       subject: 'Order {{order_number}} in processing',
@@ -421,11 +1109,11 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   shipped: {
     [CUSTOMER]: {
-      subject: 'Order {{order_number}} has shipped',
-      heading: 'Your order is on the way',
+      subject: 'Order #{{order_number}} Has Shipped',
+      heading: 'Your Order Has Shipped!',
       body: 'Hi {{customer_name}},\n\nOrder {{order_number}} has shipped.\n\nTracking number: {{tracking_number}}',
       sms: '{{store_name}}: order {{order_number}} shipped. Tracking {{tracking_number}}.',
-      buttonLabel: 'Track shipment',
+      buttonLabel: 'Track Shipment',
       buttonUrl: '{{tracking_link}}',
     },
     [STAFF]: {
@@ -439,11 +1127,11 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   delivered: {
     [CUSTOMER]: {
-      subject: 'Order {{order_number}} delivered',
-      heading: 'Delivered',
+      subject: 'Order #{{order_number}} Delivered',
+      heading: 'Order Delivered!',
       body: 'Hi {{customer_name}},\n\nOrder {{order_number}} was delivered. If something is wrong, contact us within {{return_window_days}} days.',
       sms: '{{store_name}}: order {{order_number}} delivered.',
-      buttonLabel: 'View your order',
+      buttonLabel: 'View Order',
       buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
@@ -457,10 +1145,12 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   cancelled: {
     [CUSTOMER]: {
-      subject: 'Order {{order_number}} cancelled',
-      heading: 'Order cancelled',
-      body: 'Hi {{customer_name}},\n\nOrder {{order_number}} has been cancelled. If a payment was taken, any refund follows the store refund policy.',
+      subject: 'Order #{{order_number}} Cancelled',
+      heading: 'Order Cancelled',
+      body: 'Hi {{customer_name}},\n\nOrder {{order_number}} has been cancelled. If a payment was taken, any eligible refund follows the store refund policy.',
       sms: '{{store_name}}: order {{order_number}} cancelled.',
+      buttonLabel: 'View Order',
+      buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
       subject: 'Order {{order_number}} cancelled',
@@ -489,10 +1179,12 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   refund_completed: {
     [CUSTOMER]: {
-      subject: 'Refund completed for {{order_number}}',
-      heading: 'Refund completed',
-      body: 'Hi {{customer_name}},\n\nA refund of {{refund_amount}} for order {{order_number}} has been completed. It may take a few days to appear in your account.',
+      subject: 'Refund Successful — Order #{{order_number}}',
+      heading: 'Refund Successful!',
+      body: 'Hi {{customer_name}},\n\nA refund of {{refund_amount}} for order {{order_number}} has been completed. Please allow 3–7 business days for your bank to reflect it.',
       sms: '{{store_name}}: refund of {{refund_amount}} completed for {{order_number}}.',
+      buttonLabel: 'View Order',
+      buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
       subject: 'Refund completed: {{order_number}}',
@@ -585,10 +1277,12 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   payment_failed: {
     [CUSTOMER]: {
-      subject: 'Payment could not be completed for {{order_number}}',
-      heading: 'Payment not completed',
-      body: 'Hi {{customer_name}},\n\nWe could not confirm a successful payment for order {{order_number}}. No order will be dispatched.\n\nIf your bank shows a debit, contact us at {{support_email}} before trying again. Otherwise you can return to the store and start a new checkout while stock lasts.',
+      subject: 'Payment Failed — Order #{{order_number}}',
+      heading: 'Payment Failed',
+      body: 'Hi {{customer_name}},\n\nWe could not confirm a successful payment for order {{order_number}}. No order will be dispatched.\n\nIf your bank shows a debit, contact us at {{support_email}} before trying again. Otherwise you can retry checkout.',
       sms: '{{store_name}}: payment for {{order_number}} did not complete. If your bank shows a debit, contact support before retrying.',
+      buttonLabel: 'Retry Payment',
+      buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
       subject: 'Payment failed: {{order_number}}',
@@ -619,10 +1313,12 @@ const EVENT_COPY: Readonly<Record<NotificationEvent, Readonly<Record<Notificatio
   },
   refund_pending: {
     [CUSTOMER]: {
-      subject: 'A refund is pending for {{order_number}}',
-      heading: 'Refund being arranged',
-      body: 'Hi {{customer_name}},\n\nA payment of {{refund_amount}} was received for order {{order_number}} after the reserved stock was no longer available. We have recorded the refund and our team will complete it under the store refund policy. We will email you when it is completed.',
-      sms: '{{store_name}}: refund of {{refund_amount}} is pending for {{order_number}}.',
+      subject: 'Refund Initiated — Order #{{order_number}}',
+      heading: 'Refund Initiated!',
+      body: 'Hi {{customer_name}},\n\nA refund of {{refund_amount}} has been initiated for order {{order_number}} and submitted to the payment provider. It typically completes in 5–7 business days.',
+      sms: '{{store_name}}: refund of {{refund_amount}} initiated for {{order_number}}.',
+      buttonLabel: 'View Order',
+      buttonUrl: '{{admin_link}}',
     },
     [STAFF]: {
       subject: 'Refund owed: {{order_number}}',

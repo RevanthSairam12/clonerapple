@@ -589,6 +589,37 @@
   color: #000;
 }
 
+.auth-terms-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #424245;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.auth-terms-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: #1d1d1f;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.auth-terms-row a {
+  color: #1d1d1f;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.auth-terms-row a:hover {
+  color: #000;
+}
+
 .auth-notice {
   background: #f0fdf4;
   border: 1px solid #bbf7d0;

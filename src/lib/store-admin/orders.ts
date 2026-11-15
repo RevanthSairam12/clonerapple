@@ -10,11 +10,12 @@ import {
   FULFILMENT_TRANSITIONS,
   mapSaleState,
   parseOrderTestFilter,
+  validateOrderSerialNumbers,
   validateTestOrderReason,
   type FulfilmentStatus,
   type OrderTestFilter,
 } from './order-rules';
-export { mapSaleState, parseOrderTestFilter, validateTestOrderReason } from './order-rules';
+export { mapSaleState, parseOrderTestFilter, validateOrderSerialNumbers, validateTestOrderReason } from './order-rules';
 export { FULFILMENT_TRANSITIONS, type FulfilmentStatus, type OrderTestFilter } from './order-rules';
 
 import { orderRevenuePaise } from './amount';
@@ -142,6 +143,7 @@ function parseItems(value: unknown): OrderItem[] {
       variantId: nullableText(row.variantId ?? row.variant_id),
       variantSku: nullableText(row.variantSku ?? row.variant_sku),
       variantLabel: nullableText(row.variantLabel ?? row.variant_label),
+      serialNumber: nullableText(row.serialNumber ?? row.serial_number),
       quantity,
       unitPricePaise,
       referencePricePaise:
@@ -238,6 +240,7 @@ export interface OrderItem {
   variantId?: string | null;
   variantSku?: string | null;
   variantLabel?: string | null;
+  serialNumber?: string | null;
   quantity: number;
   /** The price actually charged. */
   unitPricePaise: number;
@@ -797,7 +800,8 @@ export async function getOrderDetail(
                to_jsonb(order_items)->>'image_alt' as image_alt,
                to_jsonb(order_items)->>'is_free_gift' as is_free_gift,
                to_jsonb(order_items)->>'free_gift_badge' as free_gift_badge,
-               to_jsonb(order_items)->>'free_gift_source' as free_gift_source
+               to_jsonb(order_items)->>'free_gift_source' as free_gift_source,
+               to_jsonb(order_items)->>'serial_number' as serial_number
         from order_items
         where order_id = ${orderId}
         order by line_number asc
@@ -857,6 +861,7 @@ export async function getOrderDetail(
             variantLabel: nullableText(row.variant_label),
             imageUrl: nullableText(row.image_url),
           }) ?? nullableText(row.variant_label),
+          serialNumber: nullableText(row.serial_number),
           imageUrl: nullableText(row.image_url),
           imageAlt: nullableText(row.image_alt),
           quantity: integer(row.quantity) || 1,
@@ -1407,4 +1412,128 @@ export async function setOrderTestFlag(input: {
     return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
   }
   return setOrderTestFlagUsing(sql, input);
+}
+
+export type SaveSerialNumbersResult =
+  | {
+      ok: true;
+      orderId: string;
+      txnid: string;
+      itemCount: number;
+      invoiceNumber: string;
+      invoiceIssuedAt: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | 'unavailable'
+        | 'not-found'
+        | 'payment-required'
+        | 'invalid-transition'
+        | 'invalid-input'
+        | 'migration-pending';
+      error: string;
+    };
+
+/**
+ * Save a serial number for every line item in an order and issue the invoice
+ * inside the same transaction.
+ */
+export async function saveOrderSerialNumbersUsing(
+  sql: postgres.Sql,
+  input: { txnid: string; serialNumbers: unknown; staffId: string },
+): Promise<SaveSerialNumbersResult> {
+  const key = input.txnid.trim();
+  if (!key) {
+    return { ok: false, reason: 'not-found', error: 'Order not found.' };
+  }
+
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = (await tx`
+        select id, txnid, status, fulfilment_status
+        from orders
+        where txnid = ${key}
+        for update
+      `) as Row[];
+      const order = rows[0];
+      if (!order) {
+        return { ok: false as const, reason: 'not-found' as const, error: 'Order not found.' };
+      }
+
+      if (text(order.status).toUpperCase() !== 'PAID') {
+        return {
+          ok: false as const,
+          reason: 'payment-required' as const,
+          error: 'Only paid orders can have serial numbers and an invoice generated.',
+        };
+      }
+
+      if (['CANCELED', 'CANCELLED'].includes(text(order.fulfilment_status).toUpperCase())) {
+        return {
+          ok: false as const,
+          reason: 'invalid-transition' as const,
+          error: 'Cannot generate an invoice for a canceled order.',
+        };
+      }
+
+      const orderId = text(order.id);
+      const itemRows = (await tx`
+        select line_number, product_id, product_name
+        from order_items
+        where order_id = ${orderId}
+        order by line_number asc
+        for update
+      `) as Row[];
+
+      const check = validateOrderSerialNumbers(
+        input.serialNumbers,
+        itemRows.map((row) => integer(row.line_number)),
+      );
+      if (!check.ok) {
+        return { ok: false as const, reason: 'invalid-input' as const, error: check.error };
+      }
+
+      for (const [lineNumber, serialNumber] of check.byLineNumber.entries()) {
+        await tx`
+          update order_items
+          set serial_number = ${serialNumber}
+          where order_id = ${orderId} and line_number = ${lineNumber}
+        `;
+      }
+
+      const issued = await ensureInvoiceIssuedInTx(tx, orderId, input.staffId);
+
+      return {
+        ok: true as const,
+        orderId,
+        txnid: text(order.txnid),
+        itemCount: itemRows.length,
+        invoiceNumber: issued.number,
+        invoiceIssuedAt: issued.issuedAt,
+      };
+    });
+  } catch (error) {
+    if ((error as { code?: string })?.code === '42703') {
+      return {
+        ok: false,
+        reason: 'migration-pending',
+        error: 'Apply pending migration 0074_order_item_serial_numbers.sql before saving serial numbers.',
+      };
+    }
+    console.warn('[store-admin/orders] saving order serial numbers failed');
+    return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  }
+}
+
+export async function saveOrderSerialNumbers(input: {
+  txnid: string;
+  serialNumbers: unknown;
+  staffId: string;
+}): Promise<SaveSerialNumbersResult> {
+  const sql = getSql();
+  if (!sql) {
+    return { ok: false, reason: 'unavailable', error: 'Order records are not available.' };
+  }
+  return saveOrderSerialNumbersUsing(sql, input);
 }

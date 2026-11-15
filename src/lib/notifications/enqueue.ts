@@ -6,6 +6,7 @@ import { getAppBaseUrl } from '@/lib/payu/config';
 import { maskCustomerEmail, maskCustomerPhone } from '@/lib/store-admin/masking';
 import type { StoreSettings } from '@/lib/store-admin/settings-rules';
 
+import { loadEmailOrderDetail } from './order-email-data';
 import { dedupeKey, uniqueRecipients } from './rules';
 import { readNotificationSettings } from './settings';
 import {
@@ -17,6 +18,7 @@ import {
 } from './templates';
 import {
   isNotificationEvent,
+  type EmailOrderDetail,
   type NotificationAudience,
   type NotificationChannel,
   type NotificationContext,
@@ -156,6 +158,10 @@ function buildParts(
   const automatedMessage = automated.get(channel);
 
   if (channel === 'email') {
+    const isCustom = Boolean(
+      (storedEmail?.body && storedEmail.body.trim())
+      || (automatedMessage?.body && automatedMessage.body.trim()),
+    );
     return {
       subject: firstNonEmpty(storedEmail?.subject, automatedMessage?.subject, fallback.subject),
       heading: firstNonEmpty(storedEmail?.heading, fallback.heading),
@@ -163,6 +169,7 @@ function buildParts(
       buttonLabel: firstNonEmpty(storedEmail?.buttonLabel, fallback.buttonLabel),
       buttonUrl: firstNonEmpty(storedEmail?.buttonUrl, fallback.buttonUrl),
       footer: firstNonEmpty(storedEmail?.footer, fallback.footer),
+      ...(isCustom ? { isCustom: true } : {}),
     };
   }
 
@@ -324,6 +331,25 @@ export async function enqueueNotification(
     )) && context.staffEmail === undefined && context.staffPhone === undefined;
     const owners = needsOwners ? await readOwners(sql) : [];
 
+    const needsCustomerOrderEmail = Boolean(context.txnid) && matrix.some((row) => (
+      row.audience === 'customer' && String(row.channel ?? '') === 'email'
+    ));
+    let customerOrderDetail: EmailOrderDetail | null = null;
+    if (needsCustomerOrderEmail && context.txnid) {
+      try {
+        customerOrderDetail = await loadEmailOrderDetail({
+          sql,
+          txnid: context.txnid,
+          event,
+          context,
+          supportEmail: settings.email,
+          supportPhone: settings.phone,
+        });
+      } catch {
+        customerOrderDetail = null;
+      }
+    }
+
     let queued = 0;
     let skipped = 0;
     let duplicates = 0;
@@ -404,7 +430,8 @@ export async function enqueueNotification(
       let body = '';
       if (status !== 'SKIPPED') {
         if (channel === 'email') {
-          const rendered = renderEmail(parts, values, resolvedNotificationBaseUrl());
+          const emailDetail = audience === 'customer' ? customerOrderDetail : null;
+          const rendered = renderEmail(parts, values, resolvedNotificationBaseUrl(), emailDetail);
           subject = rendered.subject;
           body = rendered.html;
         } else if (channel === 'sms') {

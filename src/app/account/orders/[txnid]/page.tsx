@@ -3,8 +3,10 @@ import { notFound } from 'next/navigation';
 import { AccountFrame } from '@/components/account/AccountFrame';
 import { LiveOrderPoller } from '@/components/account/LiveOrderPoller';
 import { OrderRequestButtons } from '@/components/account/OrderRequestButtons';
+import { RequestBillForm } from '@/components/account/RequestBillForm';
 import { OrderStatusChip } from '@/components/account/OrderStatusChip';
 import { requireAccountPageSession } from '@/lib/account/auth';
+import { listBillReasons } from '@/lib/account/bill-requests';
 import { getCustomerOrderDetail } from '@/lib/account/orders';
 import { getCustomerDocumentState } from '@/lib/orders/document-data';
 import { optionSnapshotLabel } from '@/lib/orders/option-snapshot';
@@ -27,6 +29,7 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
   const order = await getCustomerOrderDetail(session.userId, txnid);
   if (!order) notFound();
   const documentState = await getCustomerDocumentState(order.id);
+  const billReasons = documentState.canRequestBill ? await listBillReasons() : [];
 
   const inFlight = isInFlightAccountOrderStatus(order.status);
   const shipmentStarted = hasShipmentStarted(order.fulfilmentStatus, order.history);
@@ -61,11 +64,9 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
             )}
           </div>
           {(documentState.canViewInvoice || documentState.canViewReceipt) && <Link prefetch={false} href={`/account/orders/${encodeURIComponent(order.txnid)}/receipt${documentState.canViewInvoice ? '?document=invoice' : ''}`} className="rounded-full border border-[#d2d2d7] px-4 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#1d1d1f]">
-            {documentState.canViewInvoice ? 'View / Print invoice' : 'View Payment receipt'}
+            {documentState.canViewInvoice ? 'Download invoice' : 'View Payment receipt'}
           </Link>}
         </div>
-
-        <OrderDocumentStatus state={documentState} currency={order.currency} customer />
 
         <section aria-label="Fulfilment progress" className="rounded-3xl border border-[#e5e5ea] bg-white p-5">
           <h3 className="font-semibold">{fulfilmentLabel(order.fulfilmentStatus, shipmentStarted ? order.deliveryMethod : null)}</h3>
@@ -73,6 +74,10 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
             {FULFILMENT_STEPS.map((step) => fulfilmentLabel(step, shipmentStarted ? order.deliveryMethod : null)).join(' → ')}
           </p>
         </section>
+
+        {documentState.canRequestBill && (
+          <RequestBillForm txnid={order.txnid} reasons={billReasons} />
+        )}
 
         <OrderRequestButtons
           txnid={order.txnid}
@@ -100,6 +105,11 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
                     </h4>
                     {optionSnapshotLabel(item) && <p className="text-sm text-[#6e6e73]">{optionSnapshotLabel(item)}</p>}
                     {item.variantSku && <p className="text-xs text-[#6e6e73]">SKU: {item.variantSku}</p>}
+                    {item.serialNumber && (
+                      <p className="text-xs text-[#6e6e73]">
+                        Serial No: <span className="font-mono text-[#1d1d1f]">{item.serialNumber}</span>
+                      </p>
+                    )}
                     <p className="mt-1 text-sm text-[#6e6e73]">
                       {item.isFreeGift ? (
                         <>
@@ -137,6 +147,20 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
               )}
               <div className="flex justify-between text-lg font-semibold"><span>Total</span><span>₹{order.amount.toLocaleString('en-IN')}</span></div>
             </div>
+            <details className="group mt-4 border-t border-[#e5e5ea] pt-3">
+              <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold text-[#6e6e73] select-none hover:text-[#1d1d1f] [&::-webkit-details-marker]:hidden">
+                <span>Status information only</span>
+                <span
+                  aria-hidden="true"
+                  className="inline-block text-sm transition-transform duration-200 group-open:rotate-180"
+                >
+                  ▾
+                </span>
+              </summary>
+              <div className="mt-3">
+                <OrderDocumentStatus state={documentState} currency={order.currency} customer />
+              </div>
+            </details>
           </section>
 
           <aside className="space-y-5">

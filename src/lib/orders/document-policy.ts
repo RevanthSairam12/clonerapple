@@ -55,14 +55,16 @@ export function parseCustomerDocumentMode(value: unknown): CustomerDocumentMode 
 export function projectCustomerDocumentState(state: DocumentState, mode?: CustomerDocumentMode): CustomerDocumentState {
   const settled = state.paymentSettled === true && state.paymentStatus === 'PAID';
   const canViewReceipt = settled && state.capturedPaise > 0;
-  const canViewInvoice = settled && state.orderStatus === 'DELIVERED' &&
+  const hasDeliveredInvoice = settled && state.orderStatus === 'DELIVERED' &&
     Boolean(state.invoiceNumber && state.invoiceIssuedAt);
+  const canRequestBill = hasDeliveredInvoice && !state.billRequested;
+  const canViewInvoice = hasDeliveredInvoice && Boolean(state.billRequested);
   const invoice = mode === 'invoice' || (mode === undefined && canViewInvoice);
   const canViewBill = invoice ? canViewInvoice : canViewReceipt;
   const kind = canViewBill ? (invoice ? 'invoice' : 'receipt') : 'status';
   return {
     ...state, kind, canViewInvoice, canViewReceipt, canViewBill,
-    canRequestBill: false, billRequested: false,
+    canRequestBill, billRequested: false,
     invoiceNumber: kind === 'invoice' ? state.invoiceNumber : null,
     invoiceIssuedAt: kind === 'invoice' ? state.invoiceIssuedAt : null,
     isPaymentProof: canViewBill && state.totalPaise > 0 && state.orderStatus !== 'CANCELLED' &&

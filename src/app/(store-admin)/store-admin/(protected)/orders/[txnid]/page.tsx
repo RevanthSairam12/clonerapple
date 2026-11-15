@@ -31,6 +31,7 @@ import { VerifyWithPayUButton } from '@/components/store-admin/VerifyWithPayUBut
 import { OrderDetailTabs, type DetailTab } from '@/components/store-admin/OrderDetailTabs';
 import { OrderNoteForm } from '@/components/store-admin/OrderNoteForm';
 import { OrderEditForm } from '@/components/store-admin/OrderEditForm';
+import { OrderSerialNumbersForm } from '@/components/store-admin/OrderSerialNumbersForm';
 import { OrderTestToggleForm } from '@/components/store-admin/OrderTestToggleForm';
 
 export const dynamic = 'force-dynamic';
@@ -305,6 +306,7 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
                       {item.productName}{item.isFreeGift && <span className="sa-badge sa-badge-ok ml-2">{item.freeGiftBadge || 'FREE GIFT'}</span>}
                       {item.variantLabel && <span className="sa-row-sub">{item.variantLabel}</span>}
                       {item.variantSku && <span className="sa-row-sub">SKU: {item.variantSku}</span>}
+                      {item.serialNumber && <span className="sa-row-sub sa-mono">Serial No: {item.serialNumber}</span>}
                       <span className="sa-row-sub">{item.productId || `Line ${item.lineNumber}`}</span>
                       {item.referencePricePaise !== null &&
                       item.referencePricePaise !== item.unitPricePaise ? (
@@ -326,6 +328,14 @@ export default async function StoreAdminOrderDetailPage({ params }: Props) {
             </table>
           </div>
           {order.items.length === 0 ? <p className="sa-empty">No item snapshot is available.</p> : null}
+          <OrderSerialNumbersForm
+            txnid={order.txnid}
+            paymentStatus={order.paymentStatus}
+            fulfilmentStatus={order.fulfilmentStatus}
+            invoiceNumber={documentState.invoiceNumber}
+            items={order.items}
+            canEdit={canEdit}
+          />
         </section>
       ),
     },

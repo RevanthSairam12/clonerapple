@@ -58,6 +58,30 @@ export default async function TermsPage() {
           </header>
 
           <div className="mt-8 space-y-8 text-[15px] leading-relaxed text-[#333336]">
+            <section
+              aria-label="Incorporated Policies"
+              className="rounded-2xl border border-[#e5e5ea] bg-[#f5f5f7]/70 p-4 text-sm text-[#1d1d1f]"
+            >
+              <p>
+                Our{' '}
+                <Link href="/privacy" className="font-semibold underline underline-offset-2">
+                  Privacy Policy
+                </Link>
+                ,{' '}
+                <Link href="/shipping-policy" className="font-semibold underline underline-offset-2">
+                  Shipping Policy
+                </Link>
+                , and{' '}
+                <Link href="/return-refund" className="font-semibold underline underline-offset-2">
+                  Return &amp; Refund Policy
+                </Link>{' '}
+                are incorporated by reference into and form an integral part of these Terms &amp;
+                Conditions. By creating an account or agreeing to these Terms &amp; Conditions, you
+                confirm that you have read and agree to these Terms &amp; Conditions together with
+                all three policies.
+              </p>
+            </section>
+
             {customSections.length > 0 ? (
               customSections.map((section, idx) => (
                 <section key={idx} className="space-y-3">

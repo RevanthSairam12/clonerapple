@@ -44,6 +44,7 @@ export interface AccountOrderItem {
   variantId?: string | null;
   variantSku?: string | null;
   variantLabel?: string | null;
+  serialNumber?: string | null;
   /** The exact option and photo as they were when the order was placed. */
   deviceModelName?: string | null;
   colourName?: string | null;
@@ -148,6 +149,7 @@ type ItemRow = {
   variant_colour_hex: string | null;
   image_url: string | null;
   image_alt: string | null;
+  serial_number?: string | null;
 };
 
 function parseItems(value: unknown): Array<Omit<AccountOrderItem, 'image'>> {
@@ -168,40 +170,44 @@ function parseItems(value: unknown): Array<Omit<AccountOrderItem, 'image'>> {
     const unitPrice = Number(row.unitPrice);
     const totalPrice = Number(row.totalPrice);
     if (!id || !name || !Number.isFinite(quantity) || !Number.isFinite(unitPrice) || !Number.isFinite(totalPrice)) return [];
-    return [{ id, name, quantity, unitPrice, totalPrice,
+    return [{
+      id, name, quantity, unitPrice, totalPrice,
       variantId: typeof row.variantId === 'string' ? row.variantId : null,
       variantSku: typeof row.variantSku === 'string' ? row.variantSku : null,
-      variantLabel: typeof row.variantLabel === 'string' ? row.variantLabel : null }];
+      variantLabel: typeof row.variantLabel === 'string' ? row.variantLabel : null,
+      serialNumber: typeof row.serialNumber === 'string' ? row.serialNumber : typeof row.serial_number === 'string' ? row.serial_number : null
+    }];
   });
 }
 
 function mapItems(rows: ItemRow[], snapshot: unknown): AccountOrderItem[] {
   const parsed = rows.length > 0
     ? rows.map((row) => ({
-        id: row.product_id,
-        name: row.product_name,
-        variantId: row.variant_id,
-        variantSku: row.variant_sku,
-        variantLabel: row.variant_label,
-        deviceModelName: row.variant_device_model_name,
-        colourName: row.variant_colour_name,
-        colourHex: row.variant_colour_hex,
-        imageAlt: row.image_alt,
-        quantity: Number(row.quantity),
-        unitPrice: Number(row.unit_price_paise) / 100,
-        totalPrice: Number(row.line_total_paise) / 100,
-        referencePricePaise:
-          row.reference_price_paise == null ? null : Number(row.reference_price_paise),
-        isFreeGift: Boolean(row.is_free_gift),
-        freeGiftBadge: row.free_gift_badge ? String(row.free_gift_badge) : null,
-        freeGiftSource:
-          row.free_gift_source === 'spin_wheel'
-            ? ('spin_wheel' as const)
-            : row.free_gift_source === 'threshold'
-              ? ('threshold' as const)
-              : null,
-        imageUrl: row.image_url,
-      }))
+      id: row.product_id,
+      name: row.product_name,
+      variantId: row.variant_id,
+      variantSku: row.variant_sku,
+      variantLabel: row.variant_label,
+      serialNumber: row.serial_number ? String(row.serial_number) : null,
+      deviceModelName: row.variant_device_model_name,
+      colourName: row.variant_colour_name,
+      colourHex: row.variant_colour_hex,
+      imageAlt: row.image_alt,
+      quantity: Number(row.quantity),
+      unitPrice: Number(row.unit_price_paise) / 100,
+      totalPrice: Number(row.line_total_paise) / 100,
+      referencePricePaise:
+        row.reference_price_paise == null ? null : Number(row.reference_price_paise),
+      isFreeGift: Boolean(row.is_free_gift),
+      freeGiftBadge: row.free_gift_badge ? String(row.free_gift_badge) : null,
+      freeGiftSource:
+        row.free_gift_source === 'spin_wheel'
+          ? ('spin_wheel' as const)
+          : row.free_gift_source === 'threshold'
+            ? ('threshold' as const)
+            : null,
+      imageUrl: row.image_url,
+    }))
     : parseItems(snapshot);
   return parsed.map((item): AccountOrderItem => {
     const snapshotImage = 'imageUrl' in item && typeof item.imageUrl === 'string' ? item.imageUrl : null;
@@ -421,7 +427,8 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
            to_jsonb(order_items)->>'variant_colour_name' as variant_colour_name,
            to_jsonb(order_items)->>'variant_colour_hex' as variant_colour_hex,
            to_jsonb(order_items)->>'image_url' as image_url,
-           to_jsonb(order_items)->>'image_alt' as image_alt
+           to_jsonb(order_items)->>'image_alt' as image_alt,
+           to_jsonb(order_items)->>'serial_number' as serial_number
     from order_items where order_id = ${order.id} order by line_number asc
   `;
   const addressRows = await sql<Array<{
@@ -485,14 +492,14 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     deliverySlot: delivery?.deliverySlot ?? null,
     address: addressRows[0]
       ? {
-          name: addressRows[0].full_name,
-          phone: addressRows[0].phone,
-          line1: addressRows[0].line1,
-          line2: addressRows[0].line2 || '',
-          city: addressRows[0].city,
-          state: addressRows[0].state,
-          pincode: addressRows[0].postal_code,
-        }
+        name: addressRows[0].full_name,
+        phone: addressRows[0].phone,
+        line1: addressRows[0].line1,
+        line2: addressRows[0].line2 || '',
+        city: addressRows[0].city,
+        state: addressRows[0].state,
+        pincode: addressRows[0].postal_code,
+      }
       : null,
     items: mapItems(itemRows, order.items),
     history: historyRows.map((row) => ({

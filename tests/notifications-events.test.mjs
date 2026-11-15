@@ -166,12 +166,12 @@ test('each option crosses its own threshold independently', () => {
 });
 
 test('fulfilment statuses map only to real matrix topics', () => {
+  assert.equal(fulfilmentNotificationEvent('ACCEPTED'), 'order_placed');
   assert.equal(fulfilmentNotificationEvent('PROCESSING'), 'processing');
   assert.equal(fulfilmentNotificationEvent('ON_THE_WAY'), 'shipped');
   assert.equal(fulfilmentNotificationEvent('DELIVERED'), 'delivered');
   assert.equal(fulfilmentNotificationEvent('CANCELED'), 'cancelled');
 
-  // No matrix topic exists for these, so they must not send misleading copy.
+  // No matrix topic exists for PENDING, so it must not send misleading copy.
   assert.equal(fulfilmentNotificationEvent('PENDING'), null);
-  assert.equal(fulfilmentNotificationEvent('ACCEPTED'), null);
 });

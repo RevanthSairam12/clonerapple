@@ -39,16 +39,15 @@ export default async function AccountReceiptPage({ params, searchParams }: {
     </AccountFrame>;
   }
   const address = order.address ? {
-    type: 'shipping', fullName: order.address.name, phone: order.address.phone,
-    line1: order.address.line1, line2: order.address.line2 || null,
-    city: order.address.city, state: order.address.state,
-    postalCode: order.address.pincode, country: 'IN',
+    type: 'shipping', fullName: order.address.name, phone: '',
+    line1: '', line2: null, city: '', state: '', postalCode: '', country: '',
   } : null;
   const items = order.items.map((item, index) => ({
     lineNumber: index + 1, productName: item.name, productId: item.id,
     variantId: item.variantId, variantSku: item.variantSku,
     // The snapshot label ("iPhone 16 · Red") replaces the live row label.
     variantLabel: optionSnapshotLabel(item) ?? item.variantLabel,
+    serialNumber: item.serialNumber ?? null,
     imageUrl: item.image, imageAlt: item.imageAlt ?? item.name,
     quantity: item.quantity, unitPricePaise: Math.round(item.unitPrice * 100),
     lineTotalPaise: Math.round(item.totalPrice * 100), currency: order.currency,
@@ -59,7 +58,7 @@ export default async function AccountReceiptPage({ params, searchParams }: {
     <div className="mx-auto max-w-4xl space-y-5">
       <div className="mb-4 flex justify-between gap-3 print:hidden">
         {back}
-        <PrintButton />
+        <PrintButton label={state.kind === 'invoice' ? 'Download invoice' : 'Download receipt'} />
       </div>
       <OrderDocument customer state={state} totals={totals} order={{
         txnid: order.txnid, createdAt: order.createdAt.toISOString(), currency: order.currency,

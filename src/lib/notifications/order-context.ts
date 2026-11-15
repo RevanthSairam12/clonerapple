@@ -98,11 +98,11 @@ export async function queueOrderEventByTxnid(
 }
 
 /**
- * Fulfilment moves that have a matching matrix topic. ACCEPTED is deliberately
- * absent: the matrix has no "accepted" topic, and pretending it is
- * "processing" would send the customer the wrong copy.
+ * Fulfilment moves that map to customer/staff notification events. ACCEPTED
+ * triggers the `order_placed` ("Order Accepted!") notification.
  */
 const FULFILMENT_EVENTS: Partial<Record<FulfilmentStatus, NotificationEvent>> = {
+  ACCEPTED: 'order_placed',
   PROCESSING: 'processing',
   ON_THE_WAY: 'shipped',
   DELIVERED: 'delivered',

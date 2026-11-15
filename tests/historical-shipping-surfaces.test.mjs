@@ -108,7 +108,7 @@ function mocksFor(order, settings = {}) {
       React.createElement('header', null, title, kicker) },
   };
   for (const name of ['PrintButton', 'OrderControls', 'OrderCancelForm', 'RefundForm', 'ReturnForm',
-    'CustomerRevealForm', 'OrderPaymentControls', 'OrderNoteForm', 'OrderEditForm', 'OrderTestToggleForm']) {
+    'CustomerRevealForm', 'OrderPaymentControls', 'OrderNoteForm', 'OrderEditForm', 'OrderSerialNumbersForm', 'OrderTestToggleForm']) {
     mocks[`@/components/store-admin/${name}`] = { [name]: Null };
   }
   for (const name of ['PrintButton', 'LiveOrderPoller', 'OrderRequestButtons', 'OrderStatusChip']) {

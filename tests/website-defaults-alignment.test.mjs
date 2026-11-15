@@ -180,3 +180,14 @@ test('opt-in sections remain hidden on no-op save', () => {
   const hero = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection.tsx'), 'utf8');
   assert.match(hero, /video\?\.enabled === true/);
 });
+
+test('new UI showcase hero tile keeps 0.5 top spacing and removes bottom white gap', () => {
+  const hero = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection.tsx'), 'utf8');
+  const home = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage.tsx'), 'utf8');
+  assert.match(hero, /className\s*=\s*'mb-\[12px\] grid grid-cols-1 gap-\[12px\] text-center'/);
+  assert.match(hero, /<section className=\{className\}>/);
+  assert.match(
+    home,
+    /<HeroSection[\s\S]*?baseTiles=\{NEW_UI_HERO_TILES\}[\s\S]*?className="mt-0\.5 mb-0 grid grid-cols-1 gap-\[12px\] text-center"/,
+  );
+});

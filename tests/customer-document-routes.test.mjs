@@ -17,9 +17,12 @@ function load(file, mocks = {}) {
   const filename = path.join(root, file);
   const module = { exports: {} };
   vm.runInNewContext(ts.transpileModule(readFileSync(filename, 'utf8'), {
-    fileName: filename, compilerOptions: { module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
-  }).outputText, { module, exports: module.exports, console, Response,
+    fileName: filename, compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true
+    },
+  }).outputText, {
+    module, exports: module.exports, console, Response,
     require(name) {
       if (Object.hasOwn(mocks, name)) return mocks[name];
       if (name === 'react/jsx-runtime') return nativeRequire(name);
@@ -31,8 +34,10 @@ function load(file, mocks = {}) {
   return module.exports;
 }
 const policy = load('src/lib/orders/document-policy.ts');
-const base = { paymentStatus: 'PAID', fulfilmentStatus: 'ON_THE_WAY', totalPaise: 10000,
-  capturedPaise: 10000, invoiceNumber: 'PRIVATE-INVOICE', invoiceIssuedAt: 'PRIVATE-DATE', billRequested: true };
+const base = {
+  paymentStatus: 'PAID', fulfilmentStatus: 'ON_THE_WAY', totalPaise: 10000,
+  capturedPaise: 10000, invoiceNumber: 'PRIVATE-INVOICE', invoiceIssuedAt: 'PRIVATE-DATE', billRequested: true
+};
 const session = { userId: 'owner' };
 const receiptFile = 'src/app/account/orders/[txnid]/receipt/page.tsx';
 function pageFixture(facts = base, { owned = true, signedIn = true } = {}) {
@@ -66,21 +71,21 @@ test('customer receipt page is session/ownership gated before document facts or 
 });
 
 test('direct invoice URL before delivery returns unavailable without constructing or substituting document', async () => {
-  for (const fulfilmentStatus of ['PENDING','ACCEPTED','PROCESSING','ON_THE_WAY','CANCELED']) {
+  for (const fulfilmentStatus of ['PENDING', 'ACCEPTED', 'PROCESSING', 'ON_THE_WAY', 'CANCELED']) {
     const fixture = pageFixture({ ...base, fulfilmentStatus });
     const html = await fixture.render('invoice');
     assert.match(html, /Document unavailable/);
     assert.doesNotMatch(html, /PRIVATE-INVOICE|PRIVATE-DATE|PRINT|receipt/);
-    assert.deepEqual(fixture.calls, ['session','owner','state']);
+    assert.deepEqual(fixture.calls, ['session', 'owner', 'state']);
   }
 });
 
 test('unpaid and reviewed direct documents are unavailable even with delivered identity and old request', async () => {
-  for (const paymentStatus of ['CREATED','PENDING','PROCESSING','FAILED','CANCELLED','PAID']) {
-    for (const mode of [undefined,'receipt','invoice']) {
+  for (const paymentStatus of ['CREATED', 'PENDING', 'PROCESSING', 'FAILED', 'CANCELLED', 'PAID']) {
+    for (const mode of [undefined, 'receipt', 'invoice']) {
       const fixture = pageFixture({ ...base, fulfilmentStatus: 'DELIVERED', paymentStatus, paymentReviewRequired: paymentStatus === 'PAID' });
       assert.match(await fixture.render(mode), /Document unavailable/);
-      assert.deepEqual(fixture.calls, ['session','owner','state']);
+      assert.deepEqual(fixture.calls, ['session', 'owner', 'state']);
     }
   }
 });
@@ -91,7 +96,7 @@ test('default paid page is a receipt before delivery and invoice after; explicit
   assert.match(html, /&quot;kind&quot;:&quot;receipt&quot;/);
   assert.doesNotMatch(html, /PRIVATE-INVOICE|PRIVATE-DATE/);
   assert.match(html, /PRINT/);
-  for (const mode of [undefined,'invoice','receipt']) {
+  for (const mode of [undefined, 'invoice', 'receipt']) {
     const after = pageFixture({ ...base, fulfilmentStatus: 'DELIVERED' });
     const html = await after.render(mode);
     if (mode === 'receipt') assert.doesNotMatch(html, /PRIVATE-INVOICE|PRIVATE-DATE/);
@@ -104,57 +109,87 @@ test('legacy delivered invoice mode is unavailable but default remains a safe re
   const facts = { ...base, fulfilmentStatus: 'DELIVERED', invoiceNumber: null, invoiceIssuedAt: null };
   const explicit = pageFixture(facts);
   assert.match(await explicit.render('invoice'), /Document unavailable/);
-  assert.deepEqual(explicit.calls, ['session','owner','state']);
+  assert.deepEqual(explicit.calls, ['session', 'owner', 'state']);
   assert.match(await pageFixture(facts).render(undefined), /&quot;kind&quot;:&quot;receipt&quot;/);
 });
 
 test('invalid and duplicate modes fail closed after ownership but before eligibility or DTO construction', async () => {
-  for (const mode of ['', 'bill', 'INVOICE', ['invoice'], ['invoice','receipt']]) {
+  for (const mode of ['', 'bill', 'INVOICE', ['invoice'], ['invoice', 'receipt']]) {
     const fixture = pageFixture();
     await assert.rejects(fixture.render(mode), /NOT_FOUND/);
-    assert.deepEqual(fixture.calls, ['session','owner']);
+    assert.deepEqual(fixture.calls, ['session', 'owner']);
   }
 });
 
-const billService = load('src/lib/account/bill-requests.ts', { '@/lib/platform/db': { getSql: () => { throw new Error('Unexpected app pool'); } } });
-function ownedSql(owned, queries) {
-  return async (strings, ...values) => {
-    const query = strings.join('?'); queries.push({ query, values });
-    assert.match(query, /^select id from orders where txnid=\? and user_id=\?$/);
-    return owned ? [{ id: 'owned-order' }] : [];
+const billService = load('src/lib/account/bill-requests.ts', {
+  '@/lib/platform/db': { getSql: () => null },
+  'node:crypto': nativeRequire('node:crypto'),
+});
+
+test('reason list returns default fallback choices when database is unavailable and reads active DB rows when available', async () => {
+  const fallback = await billService.listBillReasons();
+  assert.ok(fallback.length >= 4);
+  const fromDb = await billService.listBillReasonsUsing(async () => [{ id: 'warranty', label: 'Warranty claim' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(fromDb)), [{ id: 'warranty', label: 'Warranty claim' }]);
+});
+
+test('delivered invoice reason service enforces ownership, delivered invoice eligibility, and valid reason before saving', async () => {
+  const unownedSql = async () => [];
+  await assert.rejects(
+    billService.requestBillUsing(unownedSql, 'owner', 'ORDER/1', { reasonId: 'warranty' }),
+    (error) => error instanceof billService.BillRequestError && error.status === 404,
+  );
+
+  const ineligibleSql = async () => [{ id: 'owned', status: 'PAID', fulfilment_status: 'ON_THE_WAY', payment_review_required: false, invoice_number: 'INV1', invoice_issued_at: '2026-11-02' }];
+  await assert.rejects(
+    billService.requestBillUsing(ineligibleSql, 'owner', 'ORDER/1', { reasonId: 'warranty' }),
+    (error) => error instanceof billService.BillRequestError && error.status === 409,
+  );
+
+  const inserted = [];
+  const eligibleSql = async (strings, ...values) => {
+    const query = strings.join('?');
+    if (query.includes('from orders')) {
+      return [{ id: 'owned', status: 'PAID', fulfilment_status: 'DELIVERED', payment_review_required: false, invoice_number: 'INV1', invoice_issued_at: '2026-11-02' }];
+    }
+    if (query.includes('from bill_request_reasons')) {
+      return [{ id: 'warranty', label: 'Warranty claim' }];
+    }
+    if (query.includes('insert into bill_requests')) {
+      inserted.push(values);
+      return [];
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
   };
-}
-test('retired reason list no longer reads the database or offers new choices', async () => {
-  assert.equal((await billService.listBillReasons()).length,0);
+  const ok = await billService.requestBillUsing(eligibleSql, 'owner', 'ORDER/1', { reasonId: 'warranty' });
+  assert.deepEqual(JSON.parse(JSON.stringify(ok)), { ok: true });
+  assert.equal(inserted.length, 1);
 });
 
-test('retired service is read-only, checks exact ownership, denies old existing-request shortcut and ignores invalid reasons', async () => {
-  for (const owned of [false, true]) for (const input of [undefined, null, {reasonId:'active'}, {reasonId:'other',otherText:'x'.repeat(301)}]) {
-    const queries = [];
-    await assert.rejects(billService.requestBillUsing(ownedSql(owned, queries), 'owner', 'ORDER/1', input), error => error instanceof billService.BillRequestError && error.status === (owned ? 410 : 404));
-    assert.deepEqual(queries[0].values, ['ORDER/1','owner']);
-    assert.equal(queries.length, 1, 'no transaction, request lookup, reason, audit or mutation query');
-  }
-});
-
-test('retired API checks origin, account session and ownership before 410; does not parse obsolete body', async () => {
-  for (const state of ['origin','session','foreign','missing','owned','unavailable']) {
+test('bill-request API checks origin, session, service validation and returns 200 when accepted', async () => {
+  for (const state of ['origin', 'session', 'foreign', 'ineligible', 'unavailable', 'ok']) {
     const calls = [];
-    const service = { ...billService, requestBill: async (...args) => {
-      calls.push('ownership'); assert.deepEqual(args, ['owner','ORDER/1']);
-      if (['foreign','missing'].includes(state)) throw new billService.BillRequestError('Order not found.',404);
-      if (state === 'unavailable') throw new Error('private failure');
-      throw new billService.BillRequestError('Retired',410);
-    } };
+    const service = {
+      ...billService, requestBill: async (userId, txnid, body) => {
+        calls.push('ownership');
+        assert.equal(userId, 'owner');
+        assert.equal(txnid, 'ORDER/1');
+        assert.deepEqual(body, { reasonId: 'warranty' });
+        if (state === 'foreign') throw new billService.BillRequestError('Order not found.', 404);
+        if (state === 'ineligible') throw new billService.BillRequestError('Not delivered', 409);
+        if (state === 'unavailable') throw new Error('private failure');
+        return { ok: true };
+      }
+    };
     const { POST } = load('src/app/api/account/orders/[txnid]/bill-request/route.ts', {
       'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
-      '@/lib/platform/api-guard': { assertSameOrigin: () => { calls.push('origin'); return state === 'origin' ? new Response(null,{status:403}) : null; } },
-      '@/lib/account/auth': { requireAccountSessionApi: async () => { calls.push('session'); return state === 'session' ? {ok:false,response:new Response(null,{status:401})} : {ok:true,session}; } },
+      '@/lib/platform/api-guard': { assertSameOrigin: () => { calls.push('origin'); return state === 'origin' ? new Response(null, { status: 403 }) : null; } },
+      '@/lib/account/auth': { requireAccountSessionApi: async () => { calls.push('session'); return state === 'session' ? { ok: false, response: new Response(null, { status: 401 }) } : { ok: true, session }; } },
       '@/lib/account/bill-requests': service,
     });
-    const response = await POST({ json: () => { throw new Error('obsolete body must not be parsed'); } }, { params: Promise.resolve({txnid:'ORDER/1'}) });
-    assert.equal(response.status, {origin:403,session:401,foreign:404,missing:404,owned:410,unavailable:503}[state]);
-    assert.deepEqual(calls, state === 'origin' ? ['origin'] : state === 'session' ? ['origin','session'] : ['origin','session','ownership']);
+    const response = await POST({ json: async () => ({ reasonId: 'warranty' }) }, { params: Promise.resolve({ txnid: 'ORDER/1' }) });
+    assert.equal(response.status, { origin: 403, session: 401, foreign: 404, ineligible: 409, unavailable: 503, ok: 200 }[state]);
+    assert.deepEqual(calls, state === 'origin' ? ['origin'] : state === 'session' ? ['origin', 'session'] : ['origin', 'session', 'ownership']);
     assert.doesNotMatch(await response.text(), /private failure/);
   }
 });
@@ -163,45 +198,59 @@ test('customer data loader projects invoice metadata away without any write or i
   let queries = 0;
   const sql = async strings => {
     queries++; assert.match(strings.join('?'), /select o.status/);
-    return [{ status:'PAID',fulfilment_status:'ON_THE_WAY',channel:'web',payment_review_required:false,
-      total_paise:10000,amount:100,invoice_number:'INTERNAL-ONLY',invoice_issued_at:'INTERNAL-DATE',shipped:true,captured:'10000',refunded:'0',pending_refund:'0',refund_due:'0',bill_requested:true }];
+    return [{
+      status: 'PAID', fulfilment_status: 'ON_THE_WAY', channel: 'web', payment_review_required: false,
+      total_paise: 10000, amount: 100, invoice_number: 'INTERNAL-ONLY', invoice_issued_at: 'INTERNAL-DATE', shipped: true, captured: '10000', refunded: '0', pending_refund: '0', refund_due: '0', bill_requested: true
+    }];
   };
-  const data = load('src/lib/orders/document-data.ts', { '@/lib/platform/db': {getSql: () => {throw new Error('unexpected app pool');}}, './document-policy':policy });
+  const data = load('src/lib/orders/document-data.ts', { '@/lib/platform/db': { getSql: () => { throw new Error('unexpected app pool'); } }, './document-policy': policy });
   const state = await data.getCustomerDocumentStateUsing(sql, 'owned-order');
-  assert.equal(state.kind,'receipt'); assert.equal(state.invoiceNumber,null); assert.equal(state.invoiceIssuedAt,null); assert.equal(state.billRequested,false);
+  assert.equal(state.kind, 'receipt'); assert.equal(state.invoiceNumber, null); assert.equal(state.invoiceIssuedAt, null); assert.equal(state.billRequested, false);
   assert.doesNotMatch(JSON.stringify(state), /INTERNAL-ONLY|INTERNAL-DATE/);
-  assert.equal(queries,1);
+  assert.equal(queries, 1);
 });
 
 
-test('account detail exposes only eligible explicit invoice or payment receipt actions and no retired reason dependencies', async () => {
-  for (const facts of [base,{...base,fulfilmentStatus:'DELIVERED'},
-    {...base,fulfilmentStatus:'DELIVERED',invoiceNumber:null,invoiceIssuedAt:null},
-    {...base,paymentStatus:'FAILED'},{...base,paymentReviewRequired:true}]) {
+test('account detail exposes invoice only after reason submission and shows RequestBillForm when delivered invoice needs a reason', async () => {
+  for (const facts of [
+    base,
+    { ...base, fulfilmentStatus: 'DELIVERED', billRequested: false },
+    { ...base, fulfilmentStatus: 'DELIVERED', billRequested: true },
+    { ...base, fulfilmentStatus: 'DELIVERED', invoiceNumber: null, invoiceIssuedAt: null },
+    { ...base, paymentStatus: 'FAILED' }, { ...base, paymentReviewRequired: true },
+  ]) {
     const state = policy.projectCustomerDocumentState(policy.deriveDocumentState(facts));
     const Null = () => null;
     const Page = load('src/app/account/orders/[txnid]/page.tsx', {
-      '@/lib/account/auth': {requireAccountPageSession:async()=>session},
-      '@/lib/account/orders': {getCustomerOrderDetail:async()=>({id:'owned',txnid:'ORDER/1',currency:'INR',status:'PAID',
-        fulfilmentStatus:facts.fulfilmentStatus,createdAt:new Date('2026-11-01'),history:[],items:[],requests:[],refunds:[],amount:100,subtotalPaise:10000,discountPaise:0,shippingPaise:0})},
-      '@/lib/orders/document-data': {getCustomerDocumentState:async()=>state},
-      '@/lib/account/order-live': {isInFlightAccountOrderStatus:()=>false,accountOrderHistoryLabel:()=>null},
-      '@/lib/orders/fulfilment': {FULFILMENT_STEPS:[],fulfilmentLabel:x=>x,hasShipmentStarted:()=>false},
-      '@/lib/orders/option-snapshot': {optionSnapshotLabel:s=>[s.deviceModelName,s.colourName].filter(Boolean).join(' · ')||s.variantLabel||null},
-      '@/lib/store-admin/delivery': {validateHttpsTrackingUrl:()=>null},
-      '@/components/account/AccountFrame': {AccountFrame:({children})=>children},
-      '@/components/account/LiveOrderPoller': {LiveOrderPoller:Null},
-      '@/components/account/OrderRequestButtons': {OrderRequestButtons:Null},
-      '@/components/account/OrderStatusChip': {OrderStatusChip:Null},
-      '@/components/orders/OrderDocument': {OrderDocumentStatus:({state})=>React.createElement('span',null,JSON.stringify(state))},
+      '@/lib/account/auth': { requireAccountPageSession: async () => session },
+      '@/lib/account/orders': {
+        getCustomerOrderDetail: async () => ({
+          id: 'owned', txnid: 'ORDER/1', currency: 'INR', status: 'PAID',
+          fulfilmentStatus: facts.fulfilmentStatus, createdAt: new Date('2026-11-01'), history: [], items: [], requests: [], refunds: [], amount: 100, subtotalPaise: 10000, discountPaise: 0, shippingPaise: 0
+        })
+      },
+      '@/lib/orders/document-data': { getCustomerDocumentState: async () => state },
+      '@/lib/account/bill-requests': { listBillReasons: async () => [{ id: 'warranty', label: 'Warranty claim' }] },
+      '@/lib/account/order-live': { isInFlightAccountOrderStatus: () => false, accountOrderHistoryLabel: () => null },
+      '@/lib/orders/fulfilment': { FULFILMENT_STEPS: [], fulfilmentLabel: x => x, hasShipmentStarted: () => false },
+      '@/lib/orders/option-snapshot': { optionSnapshotLabel: s => [s.deviceModelName, s.colourName].filter(Boolean).join(' · ') || s.variantLabel || null },
+      '@/lib/store-admin/delivery': { validateHttpsTrackingUrl: () => null },
+      '@/components/account/AccountFrame': { AccountFrame: ({ children }) => children },
+      '@/components/account/LiveOrderPoller': { LiveOrderPoller: Null },
+      '@/components/account/OrderRequestButtons': { OrderRequestButtons: Null },
+      '@/components/account/RequestBillForm': { RequestBillForm: () => React.createElement('div', null, 'RequestBillForm') },
+      '@/components/account/OrderStatusChip': { OrderStatusChip: Null },
+      '@/components/orders/OrderDocument': { OrderDocumentStatus: ({ state }) => React.createElement('span', null, JSON.stringify(state)) },
     }).default;
     const html = renderToStaticMarkup(await Page({params:Promise.resolve({txnid:'ORDER/1'})}));
-    if (state.canViewInvoice) {assert.match(html,/receipt\?document=invoice/);assert.match(html,/View \/ Print invoice/);}
+    if (state.canViewInvoice) {assert.match(html,/receipt\?document=invoice/);assert.match(html,/Download invoice/);assert.doesNotMatch(html,/View \/ Print invoice|Print invoice|RequestBillForm/);}
     else {
-      assert.doesNotMatch(html,/PRIVATE-INVOICE|PRIVATE-DATE|View \/ Print invoice|document=invoice/);
+      assert.doesNotMatch(html,/PRIVATE-INVOICE|PRIVATE-DATE|Download invoice|View \/ Print invoice|document=invoice/);
+      if (state.canRequestBill) assert.match(html,/RequestBillForm/);
+      else assert.doesNotMatch(html,/RequestBillForm/);
       if (state.canViewReceipt) assert.match(html,/View Payment receipt/);
       else assert.doesNotMatch(html,/\/receipt/);
     }
-    assert.doesNotMatch(html,/RequestBillForm|Choose a reason|Request a bill/);
+    assert.match(html, /Status information only/);
   }
 });

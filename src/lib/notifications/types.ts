@@ -105,3 +105,72 @@ export interface NotificationEntity {
   /** txnid, request id, product id — stable enough for a dedupe key. */
   id: string;
 }
+
+export interface EmailOrderItem {
+  productId?: string | null;
+  productName: string;
+  quantity: number;
+  unitPricePaise: number;
+  lineTotalPaise: number;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
+  deviceModelName?: string | null;
+  colourName?: string | null;
+  variantLabel?: string | null;
+  isFreeGift?: boolean;
+  freeGiftBadge?: string | null;
+}
+
+export interface EmailOrderAddress {
+  fullName?: string | null;
+  phone?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postalCode?: string | null;
+}
+
+export interface EmailOrderDetail {
+  event: NotificationEvent;
+  txnid: string;
+  orderNumber: string;
+  hasCustomerAccount?: boolean;
+  orderDate?: string | null;
+  currency?: string | null;
+  orderStatus?: string | null;
+  fulfilmentStatus?: string | null;
+  subtotalPaise: number;
+  discountPaise: number;
+  shippingPaise: number;
+  totalPaise: number;
+  couponCode?: string | null;
+  paymentMethod?: string | null;
+  paymentStatus?: string | null;
+  transactionId?: string | null;
+  paymentDate?: string | null;
+  paidAmountPaise?: number | null;
+  paymentFailureReason?: string | null;
+  items: EmailOrderItem[];
+  shippingAddress?: EmailOrderAddress | null;
+  estimatedDelivery?: string | null;
+  processingStatus?: string | null;
+  expectedDispatch?: string | null;
+  courierPartner?: string | null;
+  trackingId?: string | null;
+  trackingUrl?: string | null;
+  dispatchDate?: string | null;
+  deliveredDate?: string | null;
+  cancellationReason?: string | null;
+  refundEligibility?: string | null;
+  refundAmountPaise?: number | null;
+  refundStatus?: string | null;
+  refundId?: string | null;
+  refundReference?: string | null;
+  refundMethod?: string | null;
+  refundInitiationDate?: string | null;
+  refundProcessingDate?: string | null;
+  refundExpectedTime?: string | null;
+  supportEmail?: string | null;
+  supportPhone?: string | null;
+}

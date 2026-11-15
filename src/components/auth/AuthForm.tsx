@@ -31,6 +31,7 @@ export function AuthForm({
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const isForCheckout = redirectTo.includes('/checkout');
 
@@ -49,10 +50,15 @@ export function AuthForm({
     setError('');
     setPassword('');
     setShowPassword(false);
+    setAgreedToTerms(false);
   }, []);
 
   const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (mode === 'signup' && !agreedToTerms) {
+      setError('Please agree to the Terms & Conditions to create an account.');
+      return;
+    }
     const form = e.currentTarget;
     const data = new FormData(form);
     setBusy(true);
@@ -88,6 +94,7 @@ export function AuthForm({
             password: String(data.get('password') ?? ''),
             firstName: String(data.get('firstName') ?? ''),
             lastName: String(data.get('lastName') ?? ''),
+            agreeToTerms: agreedToTerms,
           }),
         });
         const json = await res.json().catch(() => ({}));
@@ -103,7 +110,7 @@ export function AuthForm({
       setError('Network error — please try again.');
       setBusy(false);
     }
-  }, [mode, redirectTo]);
+  }, [mode, redirectTo, agreedToTerms]);
 
   if (success) {
     return (
@@ -333,10 +340,32 @@ export function AuthForm({
           </div>
         )}
 
+        {mode === 'signup' && (
+          <label className="auth-terms-row">
+            <input
+              type="checkbox"
+              name="agreeToTerms"
+              checked={agreedToTerms}
+              onChange={(e) => setAgreedToTerms(e.target.checked)}
+              required
+            />
+            <span>
+              I agree to the{' '}
+              <a href="/terms" target="_blank" rel="noreferrer">
+                Terms &amp; Conditions
+              </a>
+            </span>
+          </label>
+        )}
+
         <button
           type="submit"
           className="auth-submit"
-          disabled={busy || (mode === 'signup' && password.length > 0 && (!allRulesValid || passwordTooLong))}
+          disabled={
+            busy ||
+            (mode === 'signup' && !agreedToTerms) ||
+            (mode === 'signup' && password.length > 0 && (!allRulesValid || passwordTooLong))
+          }
           aria-busy={busy}
         >
           {busy && <span className="auth-submit-spinner" />}

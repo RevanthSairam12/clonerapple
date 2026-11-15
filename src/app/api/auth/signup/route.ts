@@ -19,6 +19,7 @@ export async function POST(request: Request) {
     password?: string;
     firstName?: string;
     lastName?: string;
+    agreeToTerms?: unknown;
   };
   try {
     body = await request.json();
@@ -47,6 +48,13 @@ export async function POST(request: Request) {
   const passwordCheck = validatePassword(password);
   if (!passwordCheck.ok) {
     return NextResponse.json({ error: passwordCheck.error }, { status: 400 });
+  }
+
+  if (body.agreeToTerms !== true) {
+    return NextResponse.json(
+      { error: 'Please agree to the Terms & Conditions to create an account.' },
+      { status: 400 },
+    );
   }
 
   const result = await signUp(email, password, firstName, lastName);

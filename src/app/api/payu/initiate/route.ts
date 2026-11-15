@@ -444,12 +444,8 @@ export async function POST(req: NextRequest) {
     // Availability changed when tracked stock was claimed.
     if (created.stockClaimed) revalidateCatalog();
 
-    // The order transaction has committed. The matrix decides whether a
-    // message exists; queueNotification never waits for the provider.
-    // Resuming an identical active attempt does not send a second placement email.
-    if (!created.resumed) {
-      queueOrderEvent('order_placed', created.order, { orderStatus: 'CREATED' });
-    }
+    // The order transaction has committed. Order Accepted notification waits
+    // until payment auto-confirmation or explicit acceptance in Store Admin.
 
     // This checkout returned stock from checkout(s) whose window had already
     // closed. Tell those customers the worker would have told them, so a

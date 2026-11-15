@@ -12,6 +12,7 @@ export function HeroSection({
   video,
   baseTiles = HERO_TILES,
   enableVideo = true,
+  className = 'mb-[12px] grid grid-cols-1 gap-[12px] text-center',
 }: {
   tiles?: TileOverride[];
   /** Admin overrides for the Back to School video stage (tile 1). */
@@ -20,11 +21,13 @@ export function HeroSection({
   baseTiles?: Tile[];
   /** Whether tile 0 may render the optional video stage. */
   enableVideo?: boolean;
+  /** Optional class override for the section wrapper. */
+  className?: string;
 } = {}) {
   const tiles = mergeTiles(baseTiles, tilesOverride);
 
   return (
-    <section className="mb-[12px] grid grid-cols-1 gap-[12px] text-center">
+    <section className={className}>
       {tiles.map((tile, i) => (
         <TileCard key={tile.index} tile={tile} priority={enableVideo && i === 0}>
           {enableVideo && i === 0 && tile.startFrame && video?.enabled === true ? (

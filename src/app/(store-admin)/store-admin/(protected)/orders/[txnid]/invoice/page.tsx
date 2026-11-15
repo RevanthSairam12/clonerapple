@@ -48,7 +48,7 @@ export default async function OrderInvoicePage({ params }: Props) {
       <Link className="sa-back sa-back-inline" href={`/store-admin/orders/${encodeURIComponent(order.txnid)}`}>← Back to order</Link>
       <div className="sa-doc-bar-actions">
         <Link className="sa-btn sa-btn-quiet" prefetch={false} href={`/store-admin/orders/${encodeURIComponent(order.txnid)}/packing-slip`}>Packing slip</Link>
-        <PrintButton label={`Print ${documentTitle(state).toLowerCase()}`} />
+        <PrintButton label={`Download ${documentTitle(state).toLowerCase()}`} />
       </div>
     </div>
     <OrderDocument state={state} settings={settings} totals={orderTotals(order)} order={{

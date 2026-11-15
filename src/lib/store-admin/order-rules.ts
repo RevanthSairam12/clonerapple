@@ -92,3 +92,51 @@ export function validateTestOrderReason(
   }
   return { ok: true, reason };
 }
+
+export function validateOrderSerialNumbers(
+  input: unknown,
+  expectedLineNumbers: readonly number[],
+): { ok: true; byLineNumber: Map<number, string> } | { ok: false; error: string } {
+  if (expectedLineNumbers.length === 0) {
+    return { ok: false, error: 'Order has no line items.' };
+  }
+
+  const rawByLine = new Map<number, string>();
+  if (Array.isArray(input)) {
+    for (const entry of input) {
+      if (!entry || typeof entry !== 'object') continue;
+      const lineNumber = Number((entry as { lineNumber?: unknown }).lineNumber);
+      const rawSerial = (entry as { serialNumber?: unknown }).serialNumber;
+      if (Number.isInteger(lineNumber) && lineNumber > 0 && typeof rawSerial === 'string') {
+        rawByLine.set(lineNumber, rawSerial.trim());
+      }
+    }
+  } else if (input && typeof input === 'object') {
+    for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+      const lineNumber = Number(key);
+      if (Number.isInteger(lineNumber) && lineNumber > 0 && typeof value === 'string') {
+        rawByLine.set(lineNumber, value.trim());
+      }
+    }
+  }
+
+  const byLineNumber = new Map<number, string>();
+  for (const lineNumber of expectedLineNumbers) {
+    const serial = rawByLine.get(lineNumber) ?? '';
+    if (!serial) {
+      return {
+        ok: false,
+        error: 'Enter a serial number for every product in this order to generate the invoice.',
+      };
+    }
+    if (serial.length > 120 || /[\u0000-\u001f\u007f]/.test(serial)) {
+      return {
+        ok: false,
+        error: 'Serial numbers must be 1–120 printable characters.',
+      };
+    }
+    byLineNumber.set(lineNumber, serial);
+  }
+
+  return { ok: true, byLineNumber };
+}
