@@ -196,10 +196,33 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
   const paymentReceipt = state.kind === 'receipt';
   const showInvoiceIdentity = !customer || (showBill && state.kind === 'invoice');
   const rowClass = customer ? 'flex justify-between gap-4 py-1' : 'sa-doc-total-row';
-  const barcodeValue = showBill ? buildOrderBarcodeValue(order.txnid, order.createdAt) : '';
+  const barcodeValue =
+    showBill && !paymentReceipt ? buildOrderBarcodeValue(order.txnid, order.createdAt) : '';
+  const receiptNotice =
+    'This is a payment receipt only and cannot be used for any warranty claim or any other purpose.';
   return (
-    <article className={customer ? 'rounded-3xl border border-[#e5e5ea] bg-white p-6 shadow-sm sm:p-10' : 'sa-doc-sheet'}>
-      <DocumentHeader settings={settings} customer={customer} title={showBill ? documentTitle(state) : 'Order / payment status'} badge={showBill ? (paymentReceipt ? 'Payment record' : 'Bill of supply') : 'Status only'} kicker={showBill ? (paymentReceipt ? 'Verified payment with current order and refund status.' : 'No tax collected — the business is not GST-registered.') : 'This is not proof of payment.'} />
+    <article
+      data-order-document="true"
+      className={
+        customer
+          ? 'rounded-3xl border border-[#e5e5ea] bg-white p-6 shadow-sm sm:p-10 print:rounded-none print:border-0 print:p-0 print:shadow-none'
+          : 'sa-doc-sheet'
+      }
+    >
+      <DocumentHeader
+        settings={settings}
+        customer={customer}
+        showBusinessDetails={showBill && !paymentReceipt}
+        title={showBill ? documentTitle(state) : 'Order / payment status'}
+        badge={showBill ? (paymentReceipt ? 'Payment record' : 'Bill of supply') : 'Status only'}
+        kicker={
+          showBill
+            ? paymentReceipt
+              ? receiptNotice
+              : 'No tax collected — the business is not GST-registered.'
+            : 'This is not proof of payment.'
+        }
+      />
       <OrderDocumentStatus state={state} currency={order.currency} customer={customer} />
       <div className={customer ? 'my-6 grid gap-6 sm:grid-cols-2' : 'sa-doc-parties'}>
         {showBill && (
@@ -243,8 +266,13 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
       </> : <p className={customer ? 'text-sm text-[#6e6e73]' : 'sa-doc-muted'}>The current order and payment state does not permit a payment receipt.</p>}
       <footer className={customer ? 'mt-8 text-sm text-[#6e6e73]' : 'sa-doc-note'}>
         {settings?.receipt_footer?.trim() && <p>{settings.receipt_footer.trim()}</p>}
+        {showBill && paymentReceipt && (
+          <p className={customer ? 'font-medium text-[#1d1d1f]' : undefined}>{receiptNotice}</p>
+        )}
         {showBill && !paymentReceipt && <p>This document is a bill of supply for a non-GST-registered business. It is not a tax invoice and no GST has been charged.</p>}
-        {showBill && barcodeValue && <OrderBarcode code={barcodeValue} customer={customer} />}
+        {showBill && !paymentReceipt && barcodeValue && (
+          <OrderBarcode code={barcodeValue} customer={customer} />
+        )}
       </footer>
     </article>
   );

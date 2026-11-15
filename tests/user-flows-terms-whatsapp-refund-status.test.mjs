@@ -281,9 +281,36 @@ test('terms page incorporates Privacy, Shipping, and Return & Refund policies in
   assert.match(html, /agree to these Terms &amp; Conditions together with all three policies/i);
 });
 
-test('download invoice controls show Download wording only without Print text', () => {
+test('download invoice controls show Download wording only and AccountFrame hides chrome during print/PDF download', async () => {
   const { PrintButton } = load('src/components/account/PrintButton.tsx');
   const btnHtml = renderToStaticMarkup(React.createElement(PrintButton, { label: 'Download invoice' }));
   assert.match(btnHtml, />Download invoice<\/button>/);
   assert.doesNotMatch(btnHtml, /Print/i);
+
+  const { AccountFrame } = load('src/components/account/AccountFrame.tsx', {
+    '@/components/header/GadzioHeader': {
+      GadzioHeader: () => React.createElement('header', null, 'SITE_HEADER'),
+    },
+    '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter': {
+      GlobalFooter: () => React.createElement('footer', null, 'SITE_FOOTER'),
+    },
+    '@/lib/account/messages': { getUnreadMessageCount: async () => 0 },
+  });
+
+  const frameHtml = renderToStaticMarkup(
+    await AccountFrame({
+      session: { userId: 'u1', firstName: 'Aarav', email: 'a@example.com' },
+      active: '/account/orders',
+      children: React.createElement('article', { 'data-order-document': 'true' }, 'DOC_SHEET'),
+    }),
+  );
+
+  assert.match(frameHtml, /<div class="print:hidden"><header>SITE_HEADER<\/header><\/div>/);
+  assert.match(frameHtml, /<div class="[^"]*print:hidden[^"]*"><div><p[^>]*>Gadzio account<\/p>/);
+  assert.match(frameHtml, /<nav aria-label="Account" class="print:hidden /);
+  assert.match(frameHtml, /<div class="print:hidden"><footer>SITE_FOOTER<\/footer><\/div>/);
+  assert.match(frameHtml, /data-order-document="true"/);
+
+  const printBtnSrc = readFileSync(path.join(root, 'src/components/account/PrintButton.tsx'), 'utf8');
+  assert.match(printBtnSrc, /\[data-order-document="true"\]/);
 });

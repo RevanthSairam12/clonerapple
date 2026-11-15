@@ -13,10 +13,18 @@ interface Props {
   badge?: string;
   kicker?: string;
   customer?: boolean;
+  showBusinessDetails?: boolean;
 }
 
-/** Brand block shared by the printable invoice and packing slip. */
-export function DocumentHeader({ settings, title, badge, kicker, customer = false }: Props) {
+/** Brand block shared by the printable invoice, receipt, and packing slip. */
+export function DocumentHeader({
+  settings,
+  title,
+  badge,
+  kicker,
+  customer = false,
+  showBusinessDetails = true,
+}: Props) {
   const tradeName = settings?.trade_name?.trim() || 'Gadzio';
   const legalName = settings?.legal_name?.trim() || DEFAULT_LEGAL_BUSINESS_NAME;
   const address = settings?.address?.trim() || DEFAULT_BUSINESS_ADDRESS;
@@ -32,11 +40,15 @@ export function DocumentHeader({ settings, title, badge, kicker, customer = fals
           alt={tradeName}
           className="mb-2 h-10 w-auto object-contain"
         />
-        <strong className="block text-base text-[#1d1d1f]">{tradeName}</strong>
-        <p className="mt-0.5 text-xs font-semibold text-[#1d1d1f]">{legalName}</p>
-        {address && <p className="mt-1 whitespace-pre-line">{address}</p>}
-        {(phone || email) && <p className="mt-1">{[phone, email].filter(Boolean).join(' · ')}</p>}
-        <p className="mt-1 text-xs font-medium text-[#1d1d1f]">MSME Udyam: {udyamNumber}</p>
+        {showBusinessDetails && (
+          <>
+            <strong className="block text-base text-[#1d1d1f]">{tradeName}</strong>
+            <p className="mt-0.5 text-xs font-semibold text-[#1d1d1f]">{legalName}</p>
+            {address && <p className="mt-1 whitespace-pre-line">{address}</p>}
+            {(phone || email) && <p className="mt-1">{[phone, email].filter(Boolean).join(' · ')}</p>}
+            <p className="mt-1 text-xs font-medium text-[#1d1d1f]">MSME Udyam: {udyamNumber}</p>
+          </>
+        )}
       </div>
       <div className="sm:text-right">
         {badge && <p className="text-xs font-semibold uppercase tracking-wide text-[#6e6e73]">{badge}</p>}
@@ -54,19 +66,23 @@ export function DocumentHeader({ settings, title, badge, kicker, customer = fals
           alt={tradeName}
           className="mb-2 h-10 w-auto object-contain"
         />
-        <span className="sa-doc-logo">
-          <strong className="sa-doc-brand-name">{tradeName}</strong>
-        </span>
-        <span className="sa-doc-brand-meta"><strong>{legalName}</strong></span>
-        {address ? <span className="sa-doc-brand-meta">{address}</span> : null}
-        {phone || email ? (
-          <span className="sa-doc-brand-meta">
-            {phone ? `Phone: ${phone}` : ''}
-            {phone && email ? ' · ' : ''}
-            {email ? email : ''}
-          </span>
-        ) : null}
-        <span className="sa-doc-brand-meta">MSME Udyam: {udyamNumber}</span>
+        {showBusinessDetails && (
+          <>
+            <span className="sa-doc-logo">
+              <strong className="sa-doc-brand-name">{tradeName}</strong>
+            </span>
+            <span className="sa-doc-brand-meta"><strong>{legalName}</strong></span>
+            {address ? <span className="sa-doc-brand-meta">{address}</span> : null}
+            {phone || email ? (
+              <span className="sa-doc-brand-meta">
+                {phone ? `Phone: ${phone}` : ''}
+                {phone && email ? ' · ' : ''}
+                {email ? email : ''}
+              </span>
+            ) : null}
+            <span className="sa-doc-brand-meta">MSME Udyam: {udyamNumber}</span>
+          </>
+        )}
       </div>
 
       <div className="sa-doc-heading">

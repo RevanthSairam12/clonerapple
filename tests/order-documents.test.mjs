@@ -131,12 +131,21 @@ test('status-only customer and staff documents do not render an itemized bill', 
   }
 });
 
-test('customer paid receipt needs no historical request and uses no invoice or bill wording', () => {
+test('customer paid receipt keeps logo and warranty/purpose disclaimer without business details', () => {
   const html = renderDocument({ ...baseFacts, billRequested: true }, true);
   assert.match(html, /PRIVATE ITEM SNAPSHOT/);
   assert.match(html, /IMMUTABLE-SKU/);
   assert.match(html, /Original model \/ Blue/);
   assert.match(html, /Payment receipt/);
+  assert.match(html, /\/gadzio_logo\.png/);
+  assert.match(
+    html,
+    /This is a payment receipt only and cannot be used for any warranty claim or any other purpose\./,
+  );
+  assert.doesNotMatch(
+    html,
+    /RUPEEDO TECHNOLOGIES|UDYAM-AP-12-0109134|SAI NIVAS|support@gadzio\.co\.in|\+916304859367|Order verification barcode|data-order-barcode/,
+  );
   assert.doesNotMatch(html, /invoice|bill|provisional|request/i);
   assert.doesNotMatch(html, /<dt>Invoice ref|<dt>Invoice issued/);
 });

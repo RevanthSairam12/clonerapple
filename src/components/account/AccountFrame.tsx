@@ -28,15 +28,17 @@ export async function AccountFrame({
   const unreadMessagesCount = await getUnreadMessageCount(session.userId);
 
   return (
-    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
-      <GadzioHeader
-        accountHref="/account"
-        bannerVisible={false}
-        unreadMessagesCount={unreadMessagesCount}
-        customerFirstName={session.firstName}
-      />
-      <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-        <div className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
+    <div className="gz-storefront-page min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#ffe100] selection:text-black print:min-h-0 print:bg-white" style={{ fontFamily: 'transducer, sans-serif' }}>
+      <div className="print:hidden">
+        <GadzioHeader
+          accountHref="/account"
+          bannerVisible={false}
+          unreadMessagesCount={unreadMessagesCount}
+          customerFirstName={session.firstName}
+        />
+      </div>
+      <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-8 lg:py-12 print:max-w-none print:p-0">
+        <div className="mb-8 flex flex-wrap items-baseline justify-between gap-4 print:hidden">
           <div>
             <p className="text-sm font-semibold text-[#6e6e73]">Gadzio account</p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -52,7 +54,7 @@ export async function AccountFrame({
             </Link>
           )}
         </div>
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start print:block">
           {/* Sticky on `lg` only: below that the nav is a horizontal strip above
               the content and sticking it would eat the viewport. The offset is
               the sticky header's own height, measured in gadzio.css as
@@ -60,7 +62,7 @@ export async function AccountFrame({
               accessory pages pin their sticky sidebars to. */}
           <nav
             aria-label="Account"
-            className="min-w-0 rounded-3xl border border-[#e5e5ea] bg-white p-2 shadow-sm lg:sticky lg:top-[calc(var(--gz-nav-height,56px)_+_1.5rem)] lg:max-h-[calc(100dvh_-_var(--gz-nav-height,56px)_-_3rem)] lg:overflow-y-auto"
+            className="print:hidden min-w-0 rounded-3xl border border-[#e5e5ea] bg-white p-2 shadow-sm lg:sticky lg:top-[calc(var(--gz-nav-height,56px)_+_1.5rem)] lg:max-h-[calc(100dvh_-_var(--gz-nav-height,56px)_-_3rem)] lg:overflow-y-auto"
           >
             <div className="flex gap-2 overflow-x-auto lg:block lg:space-y-1">
               {links.map(([href, label]) => {
@@ -93,7 +95,9 @@ export async function AccountFrame({
           <section className="min-w-0">{children}</section>
         </div>
       </main>
-      <GlobalFooter />
+      <div className="print:hidden">
+        <GlobalFooter />
+      </div>
     </div>
   );
 }
