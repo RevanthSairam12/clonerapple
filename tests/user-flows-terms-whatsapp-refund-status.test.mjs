@@ -151,18 +151,29 @@ test('OrderRequestButtons sends Request cancellation to WhatsApp and includes Re
     '@/lib/whatsapp': whatsapp,
   });
 
-  const html = renderToStaticMarkup(
+  const beforeDeliveryHtml = renderToStaticMarkup(
     React.createElement(OrderRequestButtons, {
       txnid: 'ORDER-99',
       canCancel: true,
-      canReturn: true,
+      canReturn: false,
     }),
   );
 
-  assert.match(html, /href="https:\/\/wa\.me\/916304859367\?text=/);
-  assert.match(html, />Request cancellation<\/a>/);
-  assert.match(html, /href="\/return-refund"[^>]*>Refund<\/a>/);
-  assert.match(html, />Request return<\/button>/);
+  assert.match(beforeDeliveryHtml, /href="https:\/\/wa\.me\/916304859367\?text=/);
+  assert.match(beforeDeliveryHtml, />Request cancellation<\/a>/);
+  assert.match(beforeDeliveryHtml, /href="\/return-refund"[^>]*>Refund<\/a>/);
+  assert.doesNotMatch(beforeDeliveryHtml, /Request return/);
+
+  const deliveredHtml = renderToStaticMarkup(
+    React.createElement(OrderRequestButtons, {
+      txnid: 'ORDER-99',
+      canCancel: false,
+      canReturn: true,
+    }),
+  );
+  assert.doesNotMatch(deliveredHtml, /Request cancellation/);
+  assert.match(deliveredHtml, />Request return<\/button>/);
+  assert.match(deliveredHtml, /href="\/return-refund"[^>]*>Refund<\/a>/);
 
   const terminalHtml = renderToStaticMarkup(
     React.createElement(OrderRequestButtons, {
@@ -171,8 +182,39 @@ test('OrderRequestButtons sends Request cancellation to WhatsApp and includes Re
       canReturn: false,
     }),
   );
-  assert.doesNotMatch(terminalHtml, /Request cancellation/);
+  assert.doesNotMatch(terminalHtml, /Request cancellation|Request return/);
   assert.match(terminalHtml, /href="\/return-refund"[^>]*>Refund<\/a>/);
+});
+
+test('OrderSerialNumbersForm disables serial-number submission before DELIVERED and enables it when PAID and DELIVERED', () => {
+  const { OrderSerialNumbersForm } = load('src/components/store-admin/OrderSerialNumbersForm.tsx');
+  const items = [{ lineNumber: 1, productName: 'Phone', quantity: 1 }];
+
+  const beforeDeliveredHtml = renderToStaticMarkup(
+    React.createElement(OrderSerialNumbersForm, {
+      txnid: 'ORDER-99',
+      paymentStatus: 'PAID',
+      fulfilmentStatus: 'ON_THE_WAY',
+      invoiceNumber: null,
+      items,
+      canEdit: true,
+    }),
+  );
+  assert.match(beforeDeliveredHtml, /Order must be marked as Delivered before entering product serial numbers and generating the invoice\./);
+  assert.match(beforeDeliveredHtml, /<button[^>]*disabled=""[^>]*>Save serial numbers &amp; generate invoice<\/button>/);
+
+  const deliveredHtml = renderToStaticMarkup(
+    React.createElement(OrderSerialNumbersForm, {
+      txnid: 'ORDER-99',
+      paymentStatus: 'PAID',
+      fulfilmentStatus: 'DELIVERED',
+      invoiceNumber: null,
+      items,
+      canEdit: true,
+    }),
+  );
+  assert.doesNotMatch(deliveredHtml, /Order must be marked as Delivered/);
+  assert.match(deliveredHtml, /<button type="submit" class="sa-btn sa-btn-primary">Save serial numbers &amp; generate invoice<\/button>/);
 });
 
 test('account order page places Status information only inside Items section below Total with collapsible arrow', async () => {

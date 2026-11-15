@@ -181,14 +181,17 @@ function parseItems(value: unknown): Array<Omit<AccountOrderItem, 'image'>> {
 }
 
 function mapItems(rows: ItemRow[], snapshot: unknown): AccountOrderItem[] {
+  const snapshotItems = parseItems(snapshot);
   const parsed = rows.length > 0
-    ? rows.map((row) => ({
+    ? rows.map((row, index) => ({
       id: row.product_id,
       name: row.product_name,
       variantId: row.variant_id,
       variantSku: row.variant_sku,
       variantLabel: row.variant_label,
-      serialNumber: row.serial_number ? String(row.serial_number) : null,
+      serialNumber: row.serial_number
+        ? String(row.serial_number)
+        : snapshotItems[index]?.serialNumber ?? null,
       deviceModelName: row.variant_device_model_name,
       colourName: row.variant_colour_name,
       colourHex: row.variant_colour_hex,
@@ -208,7 +211,7 @@ function mapItems(rows: ItemRow[], snapshot: unknown): AccountOrderItem[] {
             : null,
       imageUrl: row.image_url,
     }))
-    : parseItems(snapshot);
+    : snapshotItems;
   return parsed.map((item): AccountOrderItem => {
     const snapshotImage = 'imageUrl' in item && typeof item.imageUrl === 'string' ? item.imageUrl : null;
     return {
@@ -472,7 +475,11 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
   const deliveredAt = shipmentStarted
     ? delivery?.deliveredAt
       ? new Date(delivery.deliveredAt)
-      : deliveredHistory ? new Date(deliveredHistory.created_at) : null
+      : deliveredHistory
+        ? new Date(deliveredHistory.created_at)
+        : fulfilmentStatus === 'DELIVERED'
+          ? toDate(order.updated_at)
+          : null
     : null;
   const returnWindowDays = await readReturnWindowDays();
   const requests = toRequestSnapshots(requestRows);
@@ -511,8 +518,8 @@ export async function getCustomerOrderDetail(userId: string, txnid: string): Pro
     requests,
     refunds,
     refundedPaise: Number(refundTotalRows[0]?.total) || 0,
-    canRequestCancellation: fulfilmentStatus === 'PENDING' || fulfilmentStatus === 'ACCEPTED',
-    canRequestReturn: fulfilmentStatus === 'DELIVERED' && isWithinReturnWindow(deliveredAt, new Date(), returnWindowDays),
+    canRequestCancellation: !isCancelledOrder && order.status !== 'FAILED' && fulfilmentStatus !== 'DELIVERED',
+    canRequestReturn: !isCancelledOrder && fulfilmentStatus === 'DELIVERED' && isWithinReturnWindow(deliveredAt, new Date(), returnWindowDays),
     live: {
       txnid: order.txnid,
       status: base.status,

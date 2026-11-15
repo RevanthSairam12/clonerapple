@@ -846,8 +846,9 @@ export async function getOrderDetail(
       `,
     ]);
 
+    const snapshotItems = parseItems(order.items);
     const items = (itemRows as Row[]).length
-      ? (itemRows as Row[]).map((row) => ({
+      ? (itemRows as Row[]).map((row, index) => ({
           lineNumber: integer(row.line_number),
           productId: text(row.product_id),
           productName: text(row.product_name),
@@ -861,7 +862,7 @@ export async function getOrderDetail(
             variantLabel: nullableText(row.variant_label),
             imageUrl: nullableText(row.image_url),
           }) ?? nullableText(row.variant_label),
-          serialNumber: nullableText(row.serial_number),
+          serialNumber: nullableText(row.serial_number) ?? snapshotItems[index]?.serialNumber ?? null,
           imageUrl: nullableText(row.image_url),
           imageAlt: nullableText(row.image_alt),
           quantity: integer(row.quantity) || 1,
@@ -875,7 +876,7 @@ export async function getOrderDetail(
           lineTotalPaise: integer(row.line_total_paise),
           currency: text(row.currency) || 'INR',
         }))
-      : parseItems(order.items);
+      : snapshotItems;
     const history: OrderHistoryEntry[] = (historyRows as Row[]).map((row) => ({
       id: text(row.id),
       domain: text(row.domain),
@@ -1091,10 +1092,6 @@ async function transitionFulfilmentInTx(
       ${text(order.id)}, 'fulfilment', 'system', ${current}, ${input.target}
     )
   `;
-
-  if (input.target === 'ON_THE_WAY') {
-    await ensureInvoiceIssuedInTx(tx, text(order.id), input.staffId);
-  }
 
   // A cancellation from this screen must give stock back exactly like the
   // dedicated cancel action: a paid order through the sale ledger, an unpaid
@@ -1474,6 +1471,14 @@ export async function saveOrderSerialNumbersUsing(
           ok: false as const,
           reason: 'invalid-transition' as const,
           error: 'Cannot generate an invoice for a canceled order.',
+        };
+      }
+
+      if (text(order.fulfilment_status).toUpperCase() !== 'DELIVERED') {
+        return {
+          ok: false as const,
+          reason: 'invalid-transition' as const,
+          error: 'Order must be delivered before entering serial numbers and generating the invoice.',
         };
       }
 

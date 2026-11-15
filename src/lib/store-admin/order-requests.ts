@@ -128,7 +128,12 @@ export async function createCustomerOrderRequest(userId: string, txnid: string, 
   const sql = getSql();
   if (!sql) throw new Error('Database is not configured.');
   const orderRows = await sql<Array<{ id: string; fulfilment_status: string; delivered_at: string | Date | null }>>`
-    select o.id, o.fulfilment_status, d.delivered_at
+    select o.id, o.fulfilment_status,
+      coalesce(
+        d.delivered_at,
+        (select h.created_at from order_status_history h where h.order_id = o.id and h.domain = 'fulfilment' and h.to_status = 'DELIVERED' order by h.created_at desc limit 1),
+        o.updated_at
+      ) as delivered_at
     from orders o left join order_deliveries d on d.order_id = o.id
     where o.txnid = ${txnid} and o.user_id = ${userId} limit 1
   `;

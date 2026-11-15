@@ -57,8 +57,10 @@ export function projectCustomerDocumentState(state: DocumentState, mode?: Custom
   const canViewReceipt = settled && state.capturedPaise > 0;
   const hasDeliveredInvoice = settled && state.orderStatus === 'DELIVERED' &&
     Boolean(state.invoiceNumber && state.invoiceIssuedAt);
-  const canRequestBill = hasDeliveredInvoice && !state.billRequested;
-  const canViewInvoice = hasDeliveredInvoice && Boolean(state.billRequested);
+  const alreadyUnlocked = 'canViewInvoice' in state && Boolean((state as CustomerDocumentState).canViewInvoice);
+  const billUnlocked = Boolean(state.billRequested) || alreadyUnlocked;
+  const canRequestBill = hasDeliveredInvoice && !billUnlocked;
+  const canViewInvoice = hasDeliveredInvoice && billUnlocked;
   const invoice = mode === 'invoice' || (mode === undefined && canViewInvoice);
   const canViewBill = invoice ? canViewInvoice : canViewReceipt;
   const kind = canViewBill ? (invoice ? 'invoice' : 'receipt') : 'status';

@@ -188,7 +188,7 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
   // Defense in depth for callers still holding internal staff document facts.
   if (customer) {
     const mode = state.kind === 'receipt' ? 'receipt'
-      : 'canViewInvoice' in state && state.kind === 'status' ? 'invoice' : undefined;
+      : 'canViewInvoice' in state && (state.kind === 'invoice' || state.kind === 'status') ? 'invoice' : undefined;
     state = projectCustomerDocumentState(state, mode);
   }
   const money = (value: number, currency = order.currency) => currency === 'INR' ? formatPaise(value) : formatRupees(value, currency);
@@ -196,6 +196,9 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
   const paymentReceipt = state.kind === 'receipt';
   const showInvoiceIdentity = !customer || (showBill && state.kind === 'invoice');
   const rowClass = customer ? 'flex justify-between gap-4 py-1' : 'sa-doc-total-row';
+  const serialNumbers = order.items
+    .map((item) => item.serialNumber?.trim())
+    .filter((value): value is string => Boolean(value));
   const barcodeValue =
     showBill && !paymentReceipt ? buildOrderBarcodeValue(order.txnid, order.createdAt) : '';
   const receiptNotice =
@@ -237,6 +240,12 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
             <div className={rowClass}><dt>Order ref</dt><dd className="font-mono">{order.txnid}</dd></div>
             {showInvoiceIdentity && state.invoiceNumber && <div className={rowClass}><dt>Invoice ref</dt><dd className="font-mono">{state.invoiceNumber}</dd></div>}
             {showInvoiceIdentity && state.invoiceIssuedAt && <div className={rowClass}><dt>Invoice issued</dt><dd>{formatDate(state.invoiceIssuedAt)}</dd></div>}
+            {showInvoiceIdentity && serialNumbers.length > 0 && (
+              <div className={rowClass}>
+                <dt>{serialNumbers.length === 1 ? 'Serial number' : 'Serial numbers'}</dt>
+                <dd className="font-mono">{serialNumbers.join(', ')}</dd>
+              </div>
+            )}
             <div className={rowClass}><dt>Order date</dt><dd>{formatDate(order.createdAt)}</dd></div>
             {order.channel && <div className={rowClass}><dt>Channel</dt><dd>{order.channel === 'pos' ? 'Point of sale' : 'Online store'}</dd></div>}
             {order.paymentLabel && <div className={rowClass}><dt>Payment method</dt><dd>{order.paymentLabel}</dd></div>}
@@ -251,7 +260,7 @@ export function OrderDocument({ order, totals, state, settings = null, customer 
             <thead><tr className={customer ? 'border-b border-[#e5e5ea]' : undefined}><th className="py-3">#</th><th>Item</th><th className="text-right">Qty</th><th className="text-right">Rate</th><th className="text-right">Amount</th></tr></thead>
             <tbody>{order.items.map((item) => <tr key={item.lineNumber} className={customer ? 'border-b border-[#e5e5ea]' : undefined}>
               <td className="py-3">{item.lineNumber}</td>
-              <td>{item.imageUrl && <img src={item.imageUrl} alt={item.imageAlt ?? item.productName} className="mr-2 inline-block h-10 w-10 rounded object-contain align-middle" />}{item.productName}{item.isFreeGift && <span className={customer ? 'ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900' : 'sa-badge sa-badge-ok ml-2'}>{item.freeGiftBadge || 'FREE GIFT'}</span>}{item.variantLabel && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.variantLabel}</span>}{item.variantSku && <span className="sa-row-sub block text-xs text-[#6e6e73]">SKU: {item.variantSku}</span>}{item.serialNumber && <span className="sa-row-sub block text-xs font-medium text-[#1d1d1f]">Serial No: <span className="font-mono">{item.serialNumber}</span></span>}{item.productId && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.productId}</span>}{item.isFreeGift && item.referencePricePaise != null && item.referencePricePaise > 0 ? <span className="sa-row-sub block text-xs text-[#6e6e73]">Regular value <span className="line-through">{money(item.referencePricePaise, item.currency)}</span></span> : item.referencePricePaise != null && item.referencePricePaise !== item.unitPricePaise ? <span className="sa-row-sub block text-xs text-[#6e6e73]">List price at sale {money(item.referencePricePaise, item.currency)}</span> : null}</td>
+              <td>{item.imageUrl && <img src={item.imageUrl} alt={item.imageAlt ?? item.productName} className="mr-2 inline-block h-10 w-10 rounded object-contain align-middle" />}{item.productName}{item.isFreeGift && <span className={customer ? 'ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900' : 'sa-badge sa-badge-ok ml-2'}>{item.freeGiftBadge || 'FREE GIFT'}</span>}{item.variantLabel && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.variantLabel}</span>}{item.variantSku && <span className="sa-row-sub block text-xs text-[#6e6e73]">SKU: {item.variantSku}</span>}{!paymentReceipt && item.serialNumber && <span className="sa-row-sub block text-xs font-medium text-[#1d1d1f]">Serial No: <span className="font-mono">{item.serialNumber}</span></span>}{item.productId && <span className="sa-row-sub block text-xs text-[#6e6e73]">{item.productId}</span>}{item.isFreeGift && item.referencePricePaise != null && item.referencePricePaise > 0 ? <span className="sa-row-sub block text-xs text-[#6e6e73]">Regular value <span className="line-through">{money(item.referencePricePaise, item.currency)}</span></span> : item.referencePricePaise != null && item.referencePricePaise !== item.unitPricePaise ? <span className="sa-row-sub block text-xs text-[#6e6e73]">List price at sale {money(item.referencePricePaise, item.currency)}</span> : null}</td>
               <td className="sa-num text-right">{item.quantity}</td><td className="sa-num text-right">{item.isFreeGift ? 'FREE' : money(item.unitPricePaise, item.currency)}</td><td className="sa-num text-right">{item.isFreeGift ? `FREE (${money(0, item.currency)})` : money(item.lineTotalPaise, item.currency)}</td>
             </tr>)}{order.items.length === 0 && <tr><td colSpan={5} className="sa-doc-muted py-3">No item snapshot is available for this order.</td></tr>}</tbody>
           </table>

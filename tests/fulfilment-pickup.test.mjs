@@ -80,9 +80,10 @@ test('repository refuses pickup before delivery is saved and writes status/histo
   const pickedUp = await attempt({ delivery_method: 'courier', courier_name: 'Fixture courier', tracking_number: 'FIX123', tracking_url: 'https://courier.example/FIX123', delivery_scheduled_for: '2025-01-01', delivery_slot: '10:00-13:00' });
   assert.equal(pickedUp.result.ok, true);
   assert.equal(pickedUp.result.currentStatus, 'ON_THE_WAY');
-  assert.equal(pickedUp.writes.length, 6);
-  assert.ok(pickedUp.writes.some(({ text }) => text.includes('update invoice_number_counters')));
-  assert.ok(pickedUp.writes.some(({ text }) => text.includes('insert into store_admin_audit')));
+  assert.equal(pickedUp.writes.length, 3);
+  assert.equal(pickedUp.writes.some(({ text }) => text.includes('update invoice_number_counters')), false);
+  assert.ok(pickedUp.writes.some(({ text }) => text.includes('update orders')));
+  assert.ok(pickedUp.writes.some(({ text }) => text.includes('update order_deliveries')));
   assert.ok(pickedUp.writes.some(({ text }) => text.includes('insert into order_status_history')));
 });
 

@@ -318,16 +318,17 @@ test('invoice renders Shipped to user name only (no address) and unique order+da
   assert.ok(html.indexOf('Order verification barcode') > html.indexOf('Order total'));
 });
 
-test('saveOrderSerialNumbersUsing saves serial numbers for every item and issues the invoice', async () => {
+test('saveOrderSerialNumbersUsing requires DELIVERED, saves serial numbers for every item, and issues the invoice', async () => {
   const { saveOrderSerialNumbersUsing } = await jiti.import(
     path.join(here, '..', 'src/lib/store-admin/orders.ts'),
   );
+  let currentFulfilmentStatus = 'PROCESSING';
   const queries = [];
   const fakeSql = async (strings, ...values) => {
     const query = strings.join('?').replace(/\s+/g, ' ').trim().toLowerCase();
     queries.push({ query, values });
     if (query.startsWith('select id, txnid, status')) {
-      return [{ id: 'ord-sn-1', txnid: 'GDZ000010', status: 'PAID', fulfilment_status: 'PROCESSING' }];
+      return [{ id: 'ord-sn-1', txnid: 'GDZ000010', status: 'PAID', fulfilment_status: currentFulfilmentStatus }];
     }
     if (query.startsWith('select line_number, product_id')) {
       return [
@@ -345,6 +346,18 @@ test('saveOrderSerialNumbersUsing saves serial numbers for every item and issues
   fakeSql.begin = async (fn) => fn(fakeSql);
   fakeSql.json = (v) => v;
 
+  const beforeDelivered = await saveOrderSerialNumbersUsing(fakeSql, {
+    txnid: 'GDZ000010',
+    serialNumbers: [
+      { lineNumber: 1, serialNumber: 'SN-1' },
+      { lineNumber: 2, serialNumber: 'SN-2' },
+    ],
+    staffId: 'staff-1',
+  });
+  assert.equal(beforeDelivered.ok, false);
+  assert.equal(beforeDelivered.reason, 'invalid-transition');
+
+  currentFulfilmentStatus = 'DELIVERED';
   const missing = await saveOrderSerialNumbersUsing(fakeSql, {
     txnid: 'GDZ000010',
     serialNumbers: [{ lineNumber: 1, serialNumber: 'SN-1' }],
@@ -367,4 +380,49 @@ test('saveOrderSerialNumbersUsing saves serial numbers for every item and issues
     queries.filter((q) => q.query.startsWith('update order_items set serial_number')).length,
     2,
   );
+});
+
+test('already-projected customer invoice state stays an invoice and never renders payment receipt text', () => {
+  const derived = deriveDocumentState({
+    ...baseFacts,
+    fulfilmentStatus: 'DELIVERED',
+    billRequested: true,
+    invoiceNumber: 'INV000123',
+    invoiceIssuedAt: '2026-11-02T00:00:00Z',
+  });
+  const orderWithSerial = {
+    ...documentOrder,
+    items: documentOrder.items.map((item) => ({
+      ...item,
+      serialNumber: 'SN-DELIVERED-999',
+    })),
+  };
+  for (const projectedState of [
+    projectCustomerDocumentState(derived),
+    projectCustomerDocumentState(derived, 'invoice'),
+  ]) {
+    const html = renderToStaticMarkup(createElement(OrderDocument, {
+      order: orderWithSerial,
+      totals: documentTotals,
+      state: projectedState,
+      customer: true,
+    }));
+    assert.match(html, />Invoice<\/h1>/);
+    assert.match(html, /Bill of supply/);
+    assert.match(html, /INV000123/);
+    assert.match(html, /Serial number/);
+    assert.match(html, /Serial No:/);
+    assert.match(html, /SN-DELIVERED-999/);
+    assert.match(html, /RUPEEDO TECHNOLOGIES/);
+    assert.match(html, /UDYAM-AP-12-0109134/);
+    assert.match(html, /Order verification barcode GZ-/);
+    assert.doesNotMatch(html, /Payment receipt|This is a payment receipt only/);
+  }
+  const receiptHtml = renderToStaticMarkup(createElement(OrderDocument, {
+    order: orderWithSerial,
+    totals: documentTotals,
+    state: projectCustomerDocumentState(derived, 'receipt'),
+    customer: true,
+  }));
+  assert.doesNotMatch(receiptHtml, /SN-DELIVERED-999|Serial No:/);
 });

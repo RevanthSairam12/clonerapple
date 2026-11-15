@@ -42,11 +42,14 @@ export function OrderSerialNumbersForm({
 
   const isPaid = paymentStatus.toUpperCase() === 'PAID';
   const isCancelled = ['CANCELED', 'CANCELLED'].includes(fulfilmentStatus.toUpperCase());
+  const isDelivered = fulfilmentStatus.toUpperCase() === 'DELIVERED';
   const blockedReason = !isPaid
     ? 'Payment must be settled (PAID) before saving serial numbers and generating an invoice.'
     : isCancelled
       ? 'Serial numbers and invoices cannot be generated for a canceled order.'
-      : '';
+      : !isDelivered
+        ? 'Order must be marked as Delivered before entering product serial numbers and generating the invoice.'
+        : '';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -91,8 +94,9 @@ export function OrderSerialNumbersForm({
     <section className="sa-detail-card mt-5">
       <h2 className="sa-card-title">Product serial numbers &amp; invoice generation</h2>
       <p className="sa-note">
-        Enter a serial number for every product in this order. Saving serial numbers for all
-        products generates the invoice and prints the serial number on each product line.
+        Once the order is delivered, enter a serial number for every product in this order. Saving
+        serial numbers for all products generates the invoice and prints the serial number on each
+        product line.
       </p>
       {invoiceNumber ? (
         <p className="sa-notice" role="status">
