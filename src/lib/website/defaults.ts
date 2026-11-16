@@ -85,10 +85,16 @@ function responsiveImageDefaults(image: Tile['image']): Record<string, string> {
     imageSrc: '',
     imageSmallSrc: '',
     imageSmall2xSrc: '',
+    imageSquareSrc: '',
+    imageCompactSrc: '',
     imageMediumSrc: '',
     imageMedium2xSrc: '',
+    imageMediumTallSrc: '',
+    imageMediumTall2xSrc: '',
     imageLargeSrc: '',
     imageLarge2xSrc: '',
+    imageLargeTallSrc: '',
+    imageLargeTall2xSrc: '',
     ...(image ? {} : {}),
   };
 }
@@ -97,23 +103,30 @@ function responsiveImageDefaults(image: Tile['image']): Record<string, string> {
  * The original artwork per size slot (display-only "Currently" preview in the
  * editor). Each slot shows its bucket's 1x/2x source; the all-sizes shortcut
  * shows the plain <img> src. Buckets follow the site's breakpoints:
- * small ≤734px, medium ≤1068px (incl. mediumtall), large wider (incl. largetall).
+ * small ≤734px, medium ≤1068px (regular & tall), large wider (regular & tall).
  */
 function responsiveImageCurrentArt(image: Tile['image']): Record<string, string> {
-  const byBucket: Record<'small' | 'medium' | 'large', { src: string; src2x: string }> = {
+  const byBucket: Record<
+    'small' | 'medium' | 'mediumTall' | 'large' | 'largeTall',
+    { src: string; src2x: string }
+  > = {
     small: { src: '', src2x: '' },
     medium: { src: '', src2x: '' },
+    mediumTall: { src: '', src2x: '' },
     large: { src: '', src2x: '' },
+    largeTall: { src: '', src2x: '' },
   };
   if (image) {
     for (const source of image.sources) {
       const bucket = /\(max-width:\s*734px\)/.test(source.media)
         ? 'small'
         : /\(max-width:\s*1068px\)/.test(source.media)
-          ? 'medium'
-          : 'large';
-      // First source in a bucket wins — the site lists the most specific
-      // (tall-variant) art first, which is what the editor should preview.
+          ? /\(min-height:\s*734px\)/.test(source.media)
+            ? 'mediumTall'
+            : 'medium'
+          : /\(min-height:\s*776px\)/.test(source.media)
+            ? 'largeTall'
+            : 'large';
       if (!byBucket[bucket].src) byBucket[bucket].src = source.src;
       if (!byBucket[bucket].src2x && source.src2x) byBucket[bucket].src2x = source.src2x;
     }
@@ -122,10 +135,16 @@ function responsiveImageCurrentArt(image: Tile['image']): Record<string, string>
     imageSrc: image?.img.src ?? '',
     imageSmallSrc: byBucket.small.src,
     imageSmall2xSrc: byBucket.small.src2x,
+    imageSquareSrc: byBucket.small.src,
+    imageCompactSrc: byBucket.medium.src,
     imageMediumSrc: byBucket.medium.src,
     imageMedium2xSrc: byBucket.medium.src2x,
+    imageMediumTallSrc: byBucket.mediumTall.src,
+    imageMediumTall2xSrc: byBucket.mediumTall.src2x,
     imageLargeSrc: byBucket.large.src,
     imageLarge2xSrc: byBucket.large.src2x,
+    imageLargeTallSrc: byBucket.largeTall.src,
+    imageLargeTall2xSrc: byBucket.largeTall.src2x,
   };
 }
 
@@ -180,10 +199,16 @@ const APPLE_GALLERY_DEFAULTS = {
     imageSrc: '',
     imageSmallSrc: '',
     imageSmall2xSrc: '',
+    imageSquareSrc: '',
+    imageCompactSrc: '',
     imageMediumSrc: '',
     imageMedium2xSrc: '',
+    imageMediumTallSrc: '',
+    imageMediumTall2xSrc: '',
     imageLargeSrc: '',
     imageLarge2xSrc: '',
+    imageLargeTallSrc: '',
+    imageLargeTall2xSrc: '',
   })),
 };
 
@@ -194,10 +219,16 @@ const APPLE_HERO_VIDEO_DEFAULTS = {
   imageSrc: '',
   imageSmallSrc: '',
   imageSmall2xSrc: '',
+  imageSquareSrc: '',
+  imageCompactSrc: '',
   imageMediumSrc: '',
   imageMedium2xSrc: '',
+  imageMediumTallSrc: '',
+  imageMediumTall2xSrc: '',
   imageLargeSrc: '',
   imageLarge2xSrc: '',
+  imageLargeTallSrc: '',
+  imageLargeTall2xSrc: '',
   // The three autoplaying clips with their measured positions.
   clips: HERO_INLINE_MEDIA.clips.map((clip) => ({
     src: clip.src,

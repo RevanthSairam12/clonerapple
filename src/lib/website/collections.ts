@@ -108,17 +108,24 @@ const colorField = (path: string, label: string, hint?: string): FieldSchema => 
 
 /**
  * The art-directed image size slots, matching the site's <picture> breakpoints:
- * small (≤734px), medium (≤1068px), large (wider) — each with an optional @2x
- * retina variant. Plus imageSrc, the "one image at every size" shortcut.
+ * small (≤734px), square/compact, medium (≤1068px, regular & tall), and large
+ * (>1068px, regular & tall) — each with its optional @2x retina variant, plus
+ * imageSrc as the "one image at every size" shortcut.
  */
 const RESPONSIVE_IMAGE_FIELDS = (prefix = ''): FieldSchema[] => [
   image(`${prefix}imageSrc`, 'Image (all sizes)', 'Upload one image and it is used at every breakpoint. Use the size fields below for crisper per-breakpoint art.'),
-  image(`${prefix}imageSmallSrc`, 'Small (≤734px)'),
-  image(`${prefix}imageSmall2xSrc`, 'Small @2x (retina)'),
-  image(`${prefix}imageMediumSrc`, 'Medium (≤1068px)'),
-  image(`${prefix}imageMedium2xSrc`, 'Medium @2x (retina)'),
-  image(`${prefix}imageLargeSrc`, 'Large (>1068px)'),
-  image(`${prefix}imageLarge2xSrc`, 'Large @2x (retina)'),
+  image(`${prefix}imageSmallSrc`, 'Small — 734 × 500 px (≤734px)'),
+  image(`${prefix}imageSmall2xSrc`, 'Small @2x — 1468 × 1000 px (retina)'),
+  image(`${prefix}imageSquareSrc`, 'Square — 800 × 800 px'),
+  image(`${prefix}imageCompactSrc`, 'Compact — 940 × 528 px'),
+  image(`${prefix}imageMediumSrc`, 'Medium — 1068 × 570 px (≤1068px, height ≤733px)'),
+  image(`${prefix}imageMedium2xSrc`, 'Medium @2x — 2136 × 1140 px (retina)'),
+  image(`${prefix}imageMediumTallSrc`, 'Medium Tall — 1068 × 650 px (≤1068px, height ≥734px)'),
+  image(`${prefix}imageMediumTall2xSrc`, 'Medium Tall @2x — 2136 × 1300 px (retina)'),
+  image(`${prefix}imageLargeSrc`, 'Large — 3008 × 580 px (>1068px, height ≤775px)'),
+  image(`${prefix}imageLarge2xSrc`, 'Large @2x — 6016 × 1160 px (retina)'),
+  image(`${prefix}imageLargeTallSrc`, 'Large Tall — 3008 × 692 px (>1068px, height ≥776px)'),
+  image(`${prefix}imageLargeTall2xSrc`, 'Large Tall @2x — 6016 × 1384 px (retina)'),
 ];
 
 /* --------------------------------------------------------- Gadzio storefront */

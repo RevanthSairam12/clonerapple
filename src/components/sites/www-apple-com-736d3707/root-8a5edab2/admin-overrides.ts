@@ -14,56 +14,91 @@ import type { NavItem } from './data/nav';
 /**
  * The art-directed size slots the admin panel exposes. They map onto the
  * breakpoints the site's <picture> sources use:
- *   small   — (max-width: 734px)        small2x — its @2x variant
- *   medium  — (max-width: 1068px)       medium2x — its @2x variant
- *   large   — everything wider          large2x  — its @2x variant
- * Hero tiles additionally carry mediumtall/largetall variants; those fall in
- * the medium/large buckets respectively (same width class).
+ *   small      — (max-width: 734px)                    small2x      — @2x variant
+ *   square     — 800 × 800 px                          compact      — 940 × 528 px
+ *   medium     — (max-width: 1068px, max-height: 733)  medium2x     — @2x variant
+ *   mediumTall — (max-width: 1068px, min-height: 734)  mediumTall2x — @2x variant
+ *   large      — (>1068px, max-height: 775)            large2x      — @2x variant
+ *   largeTall  — (>1068px, min-height: 776)            largeTall2x  — @2x variant
  */
 export interface ResponsiveImageOverride {
   imageSrc?: string;
   imageSmallSrc?: string;
   imageSmall2xSrc?: string;
+  imageSquareSrc?: string;
+  imageCompactSrc?: string;
   imageMediumSrc?: string;
   imageMedium2xSrc?: string;
+  imageMediumTallSrc?: string;
+  imageMediumTall2xSrc?: string;
   imageLargeSrc?: string;
   imageLarge2xSrc?: string;
+  imageLargeTallSrc?: string;
+  imageLargeTall2xSrc?: string;
 }
 
+type MediaBucket = 'small' | 'medium' | 'mediumTall' | 'large' | 'largeTall';
+
 /** Which breakpoint bucket a media query belongs to. */
-function mediaBucket(media: string): 'small' | 'medium' | 'large' {
-  // "max-width:734px" → small; "max-width:1068px" (any height variant) →
-  // medium; min-width:0px / everything else → large.
+function mediaBucket(media: string): MediaBucket {
   if (/\(max-width:\s*734px\)/.test(media)) return 'small';
-  if (/\(max-width:\s*1068px\)/.test(media)) return 'medium';
-  return 'large';
+  if (/\(max-width:\s*1068px\)/.test(media)) {
+    return /\(min-height:\s*734px\)/.test(media) ? 'mediumTall' : 'medium';
+  }
+  return /\(min-height:\s*776px\)/.test(media) ? 'largeTall' : 'large';
 }
 
 /**
- * Merge per-size image uploads onto an art-directed PictureData. Each of the
- * six slots replaces only the sources in its bucket; blank/unset slots keep
- * the originals, so an unedited picture is untouched. When any slot is set
- * the plain <img> fallback src takes the large 1x value (or the first set
- * slot) so every browser gets something.
+ * Merge per-size image uploads onto an art-directed PictureData. Each size
+ * slot replaces only the sources in its bucket (with fallbacks to sibling
+ * variants when a tall/optional slot is left blank); completely unset
+ * overrides keep the originals untouched.
  */
 export function applyResponsiveImage(
   base: PictureData | null,
   o: ResponsiveImageOverride | undefined,
 ): PictureData | null {
   if (!o) return base;
-  const byBucket: Record<'small' | 'medium' | 'large', { src?: string; src2x?: string }> = {
-    small: { src: o.imageSmallSrc || undefined, src2x: o.imageSmall2xSrc || undefined },
-    medium: { src: o.imageMediumSrc || undefined, src2x: o.imageMedium2xSrc || undefined },
-    large: { src: o.imageLargeSrc || undefined, src2x: o.imageLarge2xSrc || undefined },
+  const byBucket: Record<MediaBucket, { src?: string; src2x?: string }> = {
+    small: {
+      src: o.imageSmallSrc || o.imageSquareSrc || undefined,
+      src2x: o.imageSmall2xSrc || undefined,
+    },
+    medium: {
+      src: o.imageMediumSrc || o.imageCompactSrc || undefined,
+      src2x: o.imageMedium2xSrc || undefined,
+    },
+    mediumTall: {
+      src: o.imageMediumTallSrc || o.imageMediumTall2xSrc || o.imageMediumSrc || o.imageCompactSrc || undefined,
+      src2x: o.imageMediumTall2xSrc || o.imageMedium2xSrc || undefined,
+    },
+    large: {
+      src: o.imageLargeSrc || undefined,
+      src2x: o.imageLarge2xSrc || undefined,
+    },
+    largeTall: {
+      src: o.imageLargeTallSrc || o.imageLargeSrc || o.imageLargeTall2xSrc || undefined,
+      src2x: o.imageLargeTall2xSrc || o.imageLarge2xSrc || undefined,
+    },
   };
   // The legacy single-src field replaces every bucket's 1x slot (and 2x when
   // nothing more specific is given) — the "one image everywhere" shortcut.
-  const anyBucketSet = Object.values(byBucket).some((b) => b.src || b.src2x);
+  const anyBucketSet =
+    Object.values(byBucket).some((b) => b.src || b.src2x) ||
+    Boolean(o.imageSquareSrc || o.imageCompactSrc);
   if (!anyBucketSet && !o.imageSrc) return base;
 
   if (!base) {
     // No original picture (shouldn't happen for tiles, but be safe).
-    const src = o.imageSrc ?? o.imageLargeSrc ?? o.imageMediumSrc ?? o.imageSmallSrc ?? '';
+    const src =
+      o.imageSrc ??
+      o.imageLargeTallSrc ??
+      o.imageLargeSrc ??
+      o.imageMediumSrc ??
+      o.imageCompactSrc ??
+      o.imageSmallSrc ??
+      o.imageSquareSrc ??
+      '';
     if (!src) return base;
     return {
       sources: [{ media: '(min-width:0px)', src, src2x: null }],
@@ -80,7 +115,17 @@ export function applyResponsiveImage(
     return { ...source, src, src2x };
   });
   const imgSrc =
-    o.imageLargeSrc || o.imageSrc || o.imageMediumSrc || o.imageSmallSrc || base.img.src;
+    o.imageLargeTallSrc ||
+    o.imageLargeSrc ||
+    o.imageSrc ||
+    o.imageMediumSrc ||
+    o.imageMediumTallSrc ||
+    o.imageMediumTall2xSrc ||
+    o.imageLargeTall2xSrc ||
+    o.imageCompactSrc ||
+    o.imageSmallSrc ||
+    o.imageSquareSrc ||
+    base.img.src;
   return { sources, img: { ...base.img, src: imgSrc, width: null, height: null } };
 }
 

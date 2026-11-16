@@ -180,12 +180,22 @@ export const NEW_UI_HERO_TILES: Tile[] = [
           "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/6_cases_iph_small_2x.jpg"
         },
         {
-          "media": "(max-width:1068px)",
+          "media": "(max-width:1068px) and (min-height:734px)",
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (8).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (8).jpg"
+        },
+        {
+          "media": "(max-width:1068px) and (max-height:733px)",
           "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/3_iph_case_medium.jpg",
           "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/2_iph_case__medium_2x.jpg"
         },
         {
-          "media": "(min-width:0px)",
+          "media": "(min-width:0px) and (min-height:776px)",
+          "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (4).jpg",
+          "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/12_Untitled (2136 x 1140 px) (9).jpg"
+        },
+        {
+          "media": "(min-width:0px) and (max-height:775px)",
           "src": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/1_iph_case_large.jpg",
           "src2x": "/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles/5_iph_case_large_2x.jpg"
         }
