@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   // otherwise rejects them as cross-origin. The scheme-less patterns match
   // any quick tunnel of either provider.
   allowedDevOrigins: ['*.trycloudflare.com', '*.ngrok-free.app'],
+  experimental: {
+    agentUpgrade: 'security',
+  },
   redirects() {
     return [
       { source: '/admin', destination: '/store-admin/website', permanent: true },
