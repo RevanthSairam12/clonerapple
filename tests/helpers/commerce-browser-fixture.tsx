@@ -89,6 +89,7 @@ function installSyntheticFetch() {
     if (url.pathname === '/api/auth/me' && method === 'GET') return respond({ authenticated: true, user });
     if (url.pathname === '/api/account/addresses' && method === 'GET') return respond({ addresses: [address] });
     if (url.pathname === '/api/account/buy-again/fixture-case' && method === 'GET') return respond({ product: reorderItems[0] });
+    if (url.pathname === '/api/free-gifts/evaluate' && method === 'POST') return respond({ ok: true, evaluation: null });
     // This endpoint is ONLY an in-memory conflict response, never a payment initiation.
     if (url.pathname === '/api/payu/initiate' && method === 'POST') {
       fixture.initiates.push(body);
