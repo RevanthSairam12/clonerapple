@@ -66,12 +66,14 @@ def add_button(page):
 
 
 def choose(page, option='fixture-variant-0'):
-    selector = page.get_by_label('Model / specification', exact=True)
-    selector.select_option(option)
+    labels = {'fixture-variant-0': 'Phone A', 'fixture-variant-1': 'Phone B'}
+    label = labels[option]
+    radio = page.get_by_role('radio', name=label, exact=True)
+    radio.click()
     # Wait for the selection's mount-time availability read before injecting a hold/failure.
     page.wait_for_function("() => window.__commerceFixture.requests.some(r=>r.url.startsWith('/api/catalog/availability') && decodeURIComponent(r.url).includes('" + option + "'))")
-    expect(selector).to_have_value(option)
-    return selector
+    expect(radio).to_have_attribute('aria-checked', 'true')
+    return radio
 
 
 def assert_clean(page):
@@ -82,7 +84,7 @@ def assert_clean(page):
 
 
 def pdp_explicit(page, kind, width):
-    expect(page.get_by_label('Model / specification', exact=True)).to_have_value('')
+    expect(page.get_by_role('radiogroup', name='Model').locator('[role="radio"][aria-checked="true"]')).to_have_count(0)
     add_button(page).click()
     expect(page.get_by_role('alert').filter(has_text=re.compile('Choose', re.I))).to_be_visible()
     check(cart(page)['items'] == [], 'No default variant enters bag')
@@ -106,7 +108,7 @@ def pdp_repeat(page, kind, width):
     add_button(page).click()
     page.wait_for_function("() => window.__commerceFixture.cart.stockNotice && /Stock not available/.test(window.__commerceFixture.cart.stockNotice)")
     check(bag_json(page) == before, 'Repeated exact variant add beyond cap cannot mutate bag')
-    expect(page.get_by_role('alert').filter(has_text=re.compile('Stock not available', re.I))).to_be_visible()
+    expect(page.get_by_role('alert').filter(has_text=re.compile('Stock not available|Out of stock for this option', re.I))).to_be_visible()
     expect(page.get_by_text('Item added to your Bag!', exact=True)).not_to_be_visible()
     check(page.evaluate('window.__commerceFixture.navigation.length') == 0, 'Rejected add cannot navigate')
 
@@ -145,7 +147,7 @@ def pdp_stale(page, kind, width, buy=False):
     else:
         add_button(page).click()
     page.wait_for_function('() => window.__commerceFixture.pending>0')
-    selector.select_option('fixture-variant-1')
+    page.get_by_role('radio', name='Phone B', exact=True).click()
     page.evaluate('window.__commerceFixture.release()')
     wait_idle(page)
     # Drain the response and React microtasks without arbitrary sleeps.
@@ -176,7 +178,7 @@ def cart_ui(page, kind, width):
     expect(page.locator('[data-testid="surface"]')).to_contain_text('₹1,299')
     before = bag_json(page)
     page.get_by_role('button', name='Increase quantity', exact=True).click()
-    expect(page.get_by_role('alert').filter(has_text=re.compile('Stock not available', re.I))).to_be_visible()
+    expect(page.get_by_role('alert').filter(has_text=re.compile('Stock not available|Out of stock for this option', re.I))).to_be_visible()
     check(bag_json(page) == before, 'Real cart quantity control respects exact variant cap')
     check(page.evaluate('document.documentElement.scrollWidth<=innerWidth+2'), 'Cart has no page-wide horizontal overflow')
     screenshot(page, f'cart-{width}')

@@ -20,8 +20,9 @@ const aliases = Object.fromEntries(['next/navigation', 'next/link',
   '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalNav',
   '@/components/sites/www-apple-com-736d3707/root-8a5edab2/GlobalFooter',
   '@/components/trust/GadzioTrustBar', '@/lib/search/searchTracker', '@/lib/checkout/useCheckoutRefresh'].map(name => [`${name}$`, mocks]));
-const allowedLibs = new Set(['cart/CartContext.tsx', 'cart/cart-id.ts', 'cart/useCoupon.ts', 'storefront/selection.ts',
-  'storefront/use-availability.ts', 'storefront/availability-rules.ts', 'storefront/use-purchase-action.ts', 'checkout/client-quote.ts', 'checkout/payment-recovery.ts',
+const allowedLibs = new Set(['cart/CartContext.tsx', 'cart/cart-id.ts', 'cart/useCoupon.ts', 'free-gifts/useCartFreeGifts.ts', 'free-gifts/rules.ts',
+  'storefront/selection.ts', 'storefront/use-availability.ts', 'storefront/availability-rules.ts', 'storefront/use-purchase-action.ts',
+  'storefront/pincode.ts', 'storefront/option-selection.ts', 'checkout/client-quote.ts', 'checkout/payment-recovery.ts',
   'checkout/checkout-decision.ts', 'checkout/shipping-rules.ts', 'checkout/india-validation.ts', 'store-admin/money.ts', 'catalog/product-description.ts']);
 const modules = new Set();
 const base = {
