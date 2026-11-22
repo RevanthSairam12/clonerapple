@@ -11,10 +11,14 @@ import {
 } from './catalog';
 import { InsufficientStockError } from './stock';
 import {
+  hasAggregatedQuantityOverOne,
   priceCartLines,
+  SaleStateUnavailableError,
+  validateSaleModeQuantities,
   type CartPricingInput,
   type CatalogPriceRow,
   type PricedCart,
+  type SaleQuantityLine,
 } from './db-pricing';
 
 /**
@@ -242,16 +246,23 @@ export async function resolveCartItemsFromDb(
 
   const ids = knownBaseIds(cartItems);
   let read: PricingRead;
+  let saleLive = false;
   try {
     const sale = await readSaleState();
+    if (sale.unreadable) {
+      throw new SaleStateUnavailableError();
+    }
+    saleLive = sale.live;
     read = await loadPricingRows(ids, sale.live);
-  } catch {
+  } catch (error) {
+    if (error instanceof SaleStateUnavailableError) throw error;
     // Never fall back to a code price after a database failure: the whole
     // point of this module is that the amount and the catalogue row agree.
     throw new Error('Checkout pricing is temporarily unavailable. Please try again.');
   }
 
   const cart = priceCartLines(cartItems, read.rows);
+  validateSaleModeQuantities(cart.items, saleLive);
 
   // Normal mode: the shop has marked this untracked product unavailable.
   // Sale mode deliberately does not block on it; the locked claim at Pay still
@@ -265,21 +276,72 @@ export async function resolveCartItemsFromDb(
   return cart;
 }
 
-/** Resolve payment prices on the order's connection, after its stock locks. */
+/** Resolve payment prices on the order's connection, after authoritative sale state. */
 export async function resolveCartItemsFromDbUsing(
   sql: postgres.Sql | postgres.TransactionSql,
   cartItems: ReadonlyArray<CartPricingInput>,
   options?: { cacheKey?: object | null },
 ): Promise<PricedCart> {
-  const sale = await readSaleStateUsing(sql, { authoritative: true });
+  let sale;
+  try {
+    sale = await readSaleStateUsing(sql, { authoritative: true });
+  } catch {
+    throw new SaleStateUnavailableError();
+  }
+  if (sale.unreadable) {
+    throw new SaleStateUnavailableError();
+  }
   const read = await loadPricingRows(knownBaseIds(cartItems), sale.live, sql, options?.cacheKey);
   const cart = priceCartLines(cartItems, read.rows);
+  // Enforce Sale Mode 1-unit-per-product/variant rule on resolved DB product/variant identities.
+  validateSaleModeQuantities(cart.items, sale.live);
   if (read.unavailable.length > 0) {
     throw new InsufficientStockError(
       `Out of stock: ${read.unavailable[0]}. Remove it from your bag to continue.`,
     );
   }
   return cart;
+}
+
+const saleSettingsSupportBySql = new WeakMap<object, boolean>();
+
+/**
+ * Post-lock authoritative check invoked inside the order-creation transaction
+ * whenever any requested product/variant exceeds quantity 1. Ensures that a
+ * transaction blocked on locks cannot bypass a newly started Sale Mode window,
+ * and allows legacy `createOrderUsing` callers on full databases to enforce the
+ * same one-unit rule while remaining compatible with minimal schemas without `sale_settings`.
+ */
+export async function verifyAuthoritativeSaleQuantitiesUsing(
+  sql: postgres.Sql | postgres.TransactionSql,
+  lines: ReadonlyArray<SaleQuantityLine>,
+  options?: { required?: boolean; cacheKey?: object | null },
+): Promise<void> {
+  if (!hasAggregatedQuantityOverOne(lines)) return;
+
+  if (!options?.required) {
+    const keyObj = (options?.cacheKey ?? sql) as unknown as object;
+    let hasSaleSettings = saleSettingsSupportBySql.get(keyObj);
+    if (hasSaleSettings === undefined) {
+      const [probe] = await sql<Array<{ present: boolean }>>`
+        select (to_regclass('sale_settings') is not null) as present
+      `;
+      hasSaleSettings = probe?.present === true;
+      saleSettingsSupportBySql.set(keyObj, hasSaleSettings);
+    }
+    if (!hasSaleSettings) return;
+  }
+
+  let sale;
+  try {
+    sale = await readSaleStateUsing(sql, { authoritative: true });
+  } catch {
+    throw new SaleStateUnavailableError();
+  }
+  if (sale.unreadable) {
+    throw new SaleStateUnavailableError();
+  }
+  validateSaleModeQuantities(lines, sale.live);
 }
 
 /**

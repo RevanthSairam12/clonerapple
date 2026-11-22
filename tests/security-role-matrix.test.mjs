@@ -55,6 +55,8 @@ const SENSITIVE_ROUTES = {
   'orders/[txnid]/void/route.ts': 'store_owner',
   'orders/[txnid]/refund/route.ts': 'store_admin',
   'expenses/route.ts': 'store_admin',
+  'expenses/receipts/route.ts': 'store_admin',
+  'expenses/[id]/receipt/route.ts': 'store_admin',
   'media/route.ts': 'store_admin',
   'media/[id]/route.ts': 'store_admin',
   // Staff identity and the audit trail.

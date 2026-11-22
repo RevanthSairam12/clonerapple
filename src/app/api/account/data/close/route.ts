@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { closeCustomerAccount } from '@/lib/account/data-management';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,14 +13,16 @@ export async function POST(request: NextRequest) {
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
 
-  const limited = checkRateLimit(`account-close:${auth.session.userId}`, {
+  const limited = await checkDistributedRateLimit({
+    scope: 'account_data_close_user',
+    key: auth.session.userId,
     limit: 5,
     windowMs: 60 * 60 * 1000,
   });
   if (!limited.allowed) {
     return NextResponse.json(
       { error: 'Too many attempts. Please try again later.' },
-      { status: 429 },
+      { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },
     );
   }
 

@@ -36,12 +36,29 @@ export async function GET(
 
   try {
     const rows = await sql`
-      select filename, mime_type, storage_path from store_media
-      where id = ${id} and deleted_at is null
+      select
+        filename,
+        mime_type,
+        storage_path,
+        coalesce(to_jsonb(m)->>'bucket', 'media') as bucket,
+        exists (
+          select 1 from expenses e where e.attachment_media_id = m.id
+        ) as is_expense_attachment
+      from store_media m
+      where m.id = ${id} and m.deleted_at is null
       limit 1
     `;
     const row = rows[0];
-    if (!row?.storage_path) return new Response('Not found', { status: 404 });
+    if (
+      !row?.storage_path
+      || (row.bucket != null && row.bucket !== 'media')
+      || row.is_expense_attachment === true
+    ) {
+      return new Response('Not found', {
+        status: 404,
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    }
 
     const storagePath = String(row.storage_path);
     const isSvg = row.mime_type === 'image/svg+xml' || storagePath.toLowerCase().endsWith('.svg');

@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { requireAccountSessionApi } from '@/lib/account/auth';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 import { executeSpinDraw } from '@/lib/spin-wheel/store';
 import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 
@@ -25,7 +25,9 @@ export async function POST(request: NextRequest) {
 
   const ip = clientIpFromRequest(request);
   if (ip) {
-    const ipRate = checkRateLimit(`spin-wheel-ip:${ip}`, {
+    const ipRate = await checkDistributedRateLimit({
+      scope: 'spin_wheel_ip',
+      key: ip,
       limit: 15,
       windowMs: 60 * 1000,
     });
@@ -37,7 +39,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const userRate = checkRateLimit(`spin-wheel-user:${auth.session.userId}`, {
+  const userRate = await checkDistributedRateLimit({
+    scope: 'spin_wheel_user',
+    key: auth.session.userId,
     limit: 10,
     windowMs: 60 * 1000,
   });

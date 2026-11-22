@@ -24,8 +24,8 @@ import {
   restoreFreeGiftAfterLatePayment,
 } from '@/lib/free-gifts/store';
 import type { FreeGiftRuleRecord } from '@/lib/free-gifts/rules';
-import { resolveCartItemsFromDbUsing } from './db-catalog';
-import type { CartPricingInput, PricedCart } from './db-pricing';
+import { resolveCartItemsFromDbUsing, verifyAuthoritativeSaleQuantitiesUsing } from './db-catalog';
+import { hasAggregatedQuantityOverOne, type CartPricingInput, type PricedCart } from './db-pricing';
 import {
   formatOrderNumber,
   ORDER_NUMBER_COUNTER,
@@ -112,6 +112,34 @@ export class GatewayIdentityConflictError extends Error {
     super('Gateway payment identity conflicts with the order.');
     this.name = 'GatewayIdentityConflictError';
   }
+}
+
+/**
+ * Raised when a guest checkout already holds an active unpaid reservation
+ * matching the submitted email or phone and cannot safely resume or replace
+ * it without risking stock hoarding or cross-actor interference.
+ */
+export class GuestReservationLimitError extends Error {
+  readonly code = 'active_reservation_exists' as const;
+  readonly retryAfterSec: number;
+
+  constructor(retryAfterSec = 60) {
+    super(
+      'An active checkout reservation already exists. Please complete your pending payment or wait before trying again.',
+    );
+    this.name = 'GuestReservationLimitError';
+    this.retryAfterSec = Math.max(1, Math.min(3600, Math.trunc(retryAfterSec || 60)));
+  }
+}
+
+export function isGuestReservationLimitError(error: unknown): error is GuestReservationLimitError {
+  if (error instanceof GuestReservationLimitError) return true;
+  return (
+    typeof error === 'object'
+    && error !== null
+    && (error as { name?: unknown }).name === 'GuestReservationLimitError'
+    && (error as { code?: unknown }).code === 'active_reservation_exists'
+  );
 }
 
 /** Postgres unique-violation code (`23505`). */
@@ -528,6 +556,22 @@ function cleanText(value: string | null | undefined): string {
   return (value ?? '').trim().replace(/\s+/g, ' ');
 }
 
+function sameShippingAddress(
+  a: CheckoutAttemptIdentity['shippingAddress'],
+  b: CheckoutAttemptIdentity['shippingAddress'],
+): boolean {
+  if (!a || !b) return false;
+  return (
+    cleanText(a.name).toLowerCase() === cleanText(b.name).toLowerCase()
+    && cleanText(a.phone) === cleanText(b.phone)
+    && cleanText(a.line1).toLowerCase() === cleanText(b.line1).toLowerCase()
+    && cleanText(a.line2).toLowerCase() === cleanText(b.line2).toLowerCase()
+    && cleanText(a.city).toLowerCase() === cleanText(b.city).toLowerCase()
+    && cleanText(a.state).toLowerCase() === cleanText(b.state).toLowerCase()
+    && cleanText(a.pincode) === cleanText(b.pincode)
+  );
+}
+
 /**
  * Pure comparison deciding whether an active checkout attempt is identical to
  * a new checkout request (same cart items/quantities/variants, same coupon,
@@ -855,12 +899,27 @@ export async function createOrderUsing(
 
     // Lock affected existing orders before any inventory row. Include every line
     // of those orders in the sorted stock lock set, because expiry and supersede
-    // release whole orders atomically. When a signed-in user checks out, serialize
-    // concurrent attempts for that user with a transaction advisory lock so two
-    // tabs or double clicks cannot create two orders.
+    // release whole orders atomically. When a signed-in user or web guest checks
+    // out, serialize concurrent attempts for that identity with a transaction
+    // advisory lock so parallel requests cannot create multiple active holds.
     const candidateUserId = params.userId ?? null;
+    const isGuestWeb = candidateUserId === null && Boolean(web);
+    const guestEmailKey = isGuestWeb ? cleanText(params.customerEmail).toLowerCase() : '';
+    const guestPhoneKey = isGuestWeb ? cleanText(params.customerPhone) : '';
     if (candidateUserId) {
       await tx`select pg_advisory_xact_lock(513032, hashtext(${candidateUserId}))`;
+    } else if (isGuestWeb) {
+      const guestLockKeys = [
+        ...new Set(
+          [
+            guestEmailKey ? `email:${guestEmailKey}` : '',
+            guestPhoneKey ? `phone:${guestPhoneKey}` : '',
+          ].filter(Boolean),
+        ),
+      ].sort();
+      for (const lockKey of guestLockKeys) {
+        await tx`select pg_advisory_xact_lock(513033, hashtext(${lockKey}))`;
+      }
     }
     const affectedOrders = await tx<Array<{id:string}>>`
       select o.id from orders o where o.reservation_state='ACTIVE'
@@ -879,13 +938,35 @@ export async function createOrderUsing(
             and o.user_id = ${candidateUserId}
             and o.status <> 'PAID'
           )
+          or (
+            ${isGuestWeb}::boolean
+            and o.user_id is null
+            and o.status <> 'PAID'
+            and o.reservation_expires_at > now()
+            and (
+              (${guestEmailKey} <> '' and lower(btrim(o.customer_email)) = ${guestEmailKey})
+              or (${guestPhoneKey} <> '' and btrim(o.customer_phone) = ${guestPhoneKey})
+            )
+          )
         )
       order by o.id for update of o`;
     const affectedLines = affectedOrders.length ? await tx<Array<{product_id:string;variant_id:string|null}>>`
       select distinct product_id,variant_id from order_items where order_id=any(${affectedOrders.map(row=>row.id)}::text[])` : [];
     const initialStockRows = await lockStockIdentities(tx,[...requestedIdentities,...affectedLines.map(row=>({productId:row.product_id,variantId:row.variant_id}))]);
 
+    // Re-check authoritative purchase quantity rules after stock/order locks
+    // are acquired so a concurrent multi-unit attempt cannot cross into an
+    // active campaign window while waiting for locks. Only queries the DB when
+    // aggregated quantity for at least one line exceeds 1.
+    if (hasAggregatedQuantityOverOne(paidRequestedIdentities)) {
+      await verifyAuthoritativeSaleQuantitiesUsing(tx, paidRequestedIdentities, {
+        required: Boolean(web),
+        cacheKey: sql,
+      });
+    }
+
     const supersededOrders: SupersededOrderSummary[] = [];
+    let effectiveReservationSeconds = reservationSeconds;
 
     // Handle this customer's own active unpaid reservations under the row lock:
     // - If the latest active CREATED/PENDING order has identical cart, address,
@@ -1046,6 +1127,201 @@ export async function createOrderUsing(
             previousStatus,
             stockReleased,
           });
+        }
+      }
+    } else if (affectedOrders.length > 0 && isGuestWeb && productIds.length > 0 && (guestEmailKey || guestPhoneKey)) {
+      const activeGuestOrders = await tx<Array<RawOrderRow & { remaining_sec?: number | string | null }>>`
+        select o.*, extract(epoch from (o.reservation_expires_at - now())) as remaining_sec
+        from orders o
+        where o.user_id is null
+          and o.reservation_state = 'ACTIVE'
+          and o.reservation_expires_at > now()
+          and o.status in ('CREATED', 'PENDING', 'PROCESSING', 'FAILED', 'CANCELLED')
+          and (
+            (${guestEmailKey} <> '' and lower(btrim(o.customer_email)) = ${guestEmailKey})
+            or (${guestPhoneKey} <> '' and btrim(o.customer_phone) = ${guestPhoneKey})
+          )
+        order by o.created_at desc, o.id desc
+        for update
+      `;
+
+      if (activeGuestOrders.length > 0) {
+        const guestAddrRows = await tx<
+          Array<{
+            order_id: string;
+            full_name: string;
+            phone: string;
+            line1: string;
+            line2: string | null;
+            city: string;
+            state: string;
+            postal_code: string;
+          }>
+        >`
+          select order_id, full_name, phone, line1, line2, city, state, postal_code
+          from order_addresses
+          where order_id = any(${activeGuestOrders.map((row) => String(row.id))}::text[])
+            and address_type = 'shipping'
+        `;
+        const guestAddressMap = new Map<string, CheckoutAttemptIdentity['shippingAddress']>();
+        for (const addrRow of guestAddrRows) {
+          guestAddressMap.set(String(addrRow.order_id), {
+            name: String(addrRow.full_name ?? ''),
+            phone: String(addrRow.phone ?? ''),
+            line1: String(addrRow.line1 ?? ''),
+            line2: addrRow.line2 ? String(addrRow.line2) : '',
+            city: String(addrRow.city ?? ''),
+            state: String(addrRow.state ?? ''),
+            pincode: String(addrRow.postal_code ?? ''),
+          });
+        }
+
+        const matchesGuestIdentity = (row: RawOrderRow): boolean => {
+          const emailOk = cleanText(String(row.customer_email ?? '')).toLowerCase() === guestEmailKey;
+          const phoneOk = cleanText(String(row.customer_phone ?? '')) === guestPhoneKey;
+          const addrOk = sameShippingAddress(
+            guestAddressMap.get(String(row.id)) ?? null,
+            params.shippingAddress ?? null,
+          );
+          return emailOk && phoneOk && addrOk;
+        };
+
+        const maxRemainingSec = activeGuestOrders.reduce((max, row) => {
+          const sec = Math.ceil(Number(row.remaining_sec ?? 0));
+          return Number.isFinite(sec) && sec > max ? sec : max;
+        }, 60);
+
+        const latestOpen = activeGuestOrders.find(
+          (row) => row.status === 'CREATED' || row.status === 'PENDING',
+        );
+        if (latestOpen && matchesGuestIdentity(latestOpen)) {
+          const mappedExisting = mapRowToOrder(latestOpen);
+          const existingAddress = guestAddressMap.get(mappedExisting.id) ?? null;
+          const identical = isIdenticalCheckoutAttempt(
+            {
+              items: mappedExisting.items
+                .filter((it) => !it.isFreeGift)
+                .map((it) => ({
+                  productId: normalizeCartLineId(it.id).baseId || it.id,
+                  variantId: it.variantId ?? null,
+                  quantity: it.quantity,
+                })),
+              couponCode: mappedExisting.couponCode,
+              customerEmail: mappedExisting.customerEmail,
+              customerPhone: mappedExisting.customerPhone,
+              shippingAddress: existingAddress,
+            },
+            {
+              items: paidRequestedIdentities,
+              couponCode: params.coupon?.code ?? null,
+              customerEmail: params.customerEmail,
+              customerPhone: params.customerPhone,
+              shippingAddress: params.shippingAddress,
+            },
+          );
+          const expected = web?.expectedTotalPaise ?? params.coupon?.expectedTotalPaise;
+          const expectedMatches =
+            expected === undefined || expected === null || expected === mappedExisting.totalPaise;
+
+          if (identical && expectedMatches) {
+            for (const other of activeGuestOrders) {
+              if (String(other.id) === mappedExisting.id) continue;
+              if (!matchesGuestIdentity(other)) continue;
+              if (other.status !== 'FAILED' && other.status !== 'CANCELLED') continue;
+              await releaseClaimedStock(tx, String(other.id), {
+                alreadyLocked: true,
+                orderAlreadyLocked: true,
+              });
+              await releaseCouponInTx(tx, String(other.id), 'superseded by a new checkout');
+              await releaseFreeGiftInTx(tx, String(other.id), 'superseded by a new checkout');
+              await tx`
+                update orders
+                set reservation_state = 'RELEASED',
+                    reservation_released_at = now(),
+                    reservation_released_reason = 'superseded by a new checkout',
+                    next_reconcile_at = null,
+                    updated_at = now()
+                where id = ${String(other.id)} and reservation_state = 'ACTIVE'
+              `;
+            }
+            return {
+              order: mappedExisting,
+              stockClaimed: false,
+              resumed: true,
+              supersededOrders: [],
+              expiredReservations: [],
+            };
+          }
+        }
+
+        // Refuse whenever an existing active hold is still in PROCESSING or belongs to
+        // a different contact/shipping identity (prevents guest stock hoarding via
+        // alternate addresses/phones or cancelling another customer's hold).
+        const hasBlockingGuestHold = activeGuestOrders.some(
+          (row) => row.status === 'PROCESSING' || !matchesGuestIdentity(row),
+        );
+        if (hasBlockingGuestHold) {
+          throw new GuestReservationLimitError(maxRemainingSec);
+        }
+
+        // Same guest (exact email + phone + shipping address) updating cart/coupon or
+        // retrying after a FAILED/CANCELLED attempt: supersede atomically without
+        // extending open CREATED/PENDING reservation expiry windows.
+        let minOpenRemainingSec: number | null = null;
+        for (const row of activeGuestOrders) {
+          if (row.status === 'CREATED' || row.status === 'PENDING') {
+            const rem = Math.max(1, Math.floor(Number(row.remaining_sec ?? 0)));
+            minOpenRemainingSec = minOpenRemainingSec === null ? rem : Math.min(minOpenRemainingSec, rem);
+          }
+        }
+        if (minOpenRemainingSec !== null && effectiveReservationSeconds > 0) {
+          effectiveReservationSeconds = Math.max(
+            1,
+            Math.min(effectiveReservationSeconds, minOpenRemainingSec),
+          );
+        }
+
+        for (const row of activeGuestOrders) {
+          const orderId = String(row.id);
+          const previousStatus = String(row.status) as OrderStatus;
+          const stockReleased = await releaseClaimedStock(tx, orderId, {
+            alreadyLocked: true,
+            orderAlreadyLocked: true,
+          });
+          await releaseCouponInTx(tx, orderId, 'superseded by a new checkout');
+          await releaseFreeGiftInTx(tx, orderId, 'superseded by a new checkout');
+          const wasOpen =
+            previousStatus === 'CREATED'
+            || previousStatus === 'PENDING'
+            || previousStatus === 'PROCESSING';
+          const nextStatus: OrderStatus = wasOpen ? 'CANCELLED' : previousStatus;
+          const releaseReason = wasOpen
+            ? 'SUPERSEDED: replaced by a new checkout'
+            : 'superseded by a new checkout';
+          await tx`
+            update orders
+            set status = ${nextStatus},
+                reservation_state = 'RELEASED',
+                reservation_released_at = now(),
+                reservation_released_reason = ${releaseReason},
+                cancelled_at = case when ${wasOpen} then coalesce(cancelled_at, now()) else cancelled_at end,
+                cancel_reason = case when ${wasOpen} then coalesce(cancel_reason, ${releaseReason}) else cancel_reason end,
+                processing_deadline = null,
+                next_reconcile_at = null,
+                updated_at = now()
+            where id = ${orderId} and reservation_state = 'ACTIVE' and status <> 'PAID'
+          `;
+          if (wasOpen) {
+            await tx`
+              insert into order_status_history (order_id, domain, actor, from_status, to_status, note)
+              values (${orderId}, 'payment', 'system', ${previousStatus}, 'CANCELLED', 'SUPERSEDED')
+            `;
+            supersededOrders.push({
+              txnid: String(row.txnid),
+              previousStatus,
+              stockReleased,
+            });
+          }
         }
       }
     }
@@ -1390,9 +1666,9 @@ export async function createOrderUsing(
           ${params.customerName},
           ${params.customerEmail},
           ${params.customerPhone},
-          ${reservationSeconds > 0 ? 'ACTIVE' : 'NONE'},
-          now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
-          now() + ${reservationSeconds > 0 ? `${reservationSeconds} seconds` : null}::interval,
+          ${effectiveReservationSeconds > 0 ? 'ACTIVE' : 'NONE'},
+          now() + ${effectiveReservationSeconds > 0 ? `${effectiveReservationSeconds} seconds` : null}::interval,
+          now() + ${effectiveReservationSeconds > 0 ? `${effectiveReservationSeconds} seconds` : null}::interval,
           now(),
           now()
         )
@@ -2382,6 +2658,100 @@ export async function findActiveReservationForUser(
     `;
     const row = rows[0];
     if (!row) return null;
+    return {
+      txnid: String(row.txnid),
+      status: row.status,
+      expiresAt: dateOrNull(row.reservation_expires_at),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Finds an active open guest reservation that matches the submitted contact AND
+ * full shipping address so pre-verification can detect `already_paid` without
+ * revealing any order identifiers across mismatched addresses or callers.
+ */
+export async function findActiveReservationForGuest(
+  customerEmail: string,
+  customerPhone: string,
+  shippingAddress: {
+    name: string;
+    phone: string;
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    pincode: string;
+  },
+  sqlOverride?: postgres.Sql,
+): Promise<{
+  txnid: string;
+  status: OrderStatus;
+  expiresAt: Date | null;
+} | null> {
+  const emailKey = cleanText(customerEmail).toLowerCase();
+  const phoneKey = cleanText(customerPhone);
+  if (!emailKey || !phoneKey) return null;
+
+  const sql = sqlOverride ?? getSql();
+  if (!sql) return null;
+  try {
+    const rows = await sql<
+      Array<{
+        id: string;
+        txnid: string;
+        status: OrderStatus;
+        reservation_expires_at: string | Date | null;
+        full_name: string | null;
+        addr_phone: string | null;
+        line1: string | null;
+        line2: string | null;
+        city: string | null;
+        state: string | null;
+        postal_code: string | null;
+      }>
+    >`
+      select
+        o.id,
+        o.txnid,
+        o.status,
+        o.reservation_expires_at,
+        a.full_name,
+        a.phone as addr_phone,
+        a.line1,
+        a.line2,
+        a.city,
+        a.state,
+        a.postal_code
+      from orders o
+      left join order_addresses a
+        on a.order_id = o.id and a.address_type = 'shipping'
+      where o.user_id is null
+        and o.reservation_state = 'ACTIVE'
+        and o.status in ('CREATED', 'PENDING', 'PROCESSING')
+        and o.reservation_expires_at > now()
+        and lower(btrim(o.customer_email)) = ${emailKey}
+        and btrim(o.customer_phone) = ${phoneKey}
+      order by o.created_at desc
+      limit 1
+    `;
+    const row = rows[0];
+    if (!row || !row.line1) return null;
+    const sameAddr = sameShippingAddress(
+      {
+        name: String(row.full_name ?? ''),
+        phone: String(row.addr_phone ?? ''),
+        line1: String(row.line1 ?? ''),
+        line2: row.line2 ? String(row.line2) : '',
+        city: String(row.city ?? ''),
+        state: String(row.state ?? ''),
+        pincode: String(row.postal_code ?? ''),
+      },
+      shippingAddress,
+    );
+    if (!sameAddr) return null;
     return {
       txnid: String(row.txnid),
       status: row.status,

@@ -3,15 +3,25 @@ import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { normalizeName } from '@/lib/auth/validation';
 import { updateUserProfile } from '@/lib/user-auth';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 
 export async function PATCH(request: NextRequest) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
-  const limited = checkRateLimit(`account-profile:${auth.session.userId}`, { limit: 10, windowMs: 10 * 60 * 1000 });
-  if (!limited.allowed) return NextResponse.json({ error: 'Too many profile changes. Please try again later.' }, { status: 429 });
+  const limited = await checkDistributedRateLimit({
+    scope: 'account_profile_user',
+    key: auth.session.userId,
+    limit: 10,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: 'Too many profile changes. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },
+    );
+  }
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const firstName = normalizeName(body?.firstName);
   const lastName = normalizeName(body?.lastName);

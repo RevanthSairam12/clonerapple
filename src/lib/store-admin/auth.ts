@@ -87,6 +87,19 @@ const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
  * the other panel.
  */
 const attempts = new Map<string, AttemptRecord>();
+const MAX_FALLBACK_ENTRIES = 5_000;
+
+function pruneFallbackMap(map: Map<string, AttemptRecord>, now: number): void {
+  if (map.size < MAX_FALLBACK_ENTRIES) return;
+  for (const [k, v] of map.entries()) {
+    if (v.lockedUntil > 0 && v.lockedUntil <= now) map.delete(k);
+  }
+  while (map.size >= MAX_FALLBACK_ENTRIES) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
 
 function attemptKeys(email: string, ip: string): [string, string] {
   return [`store-admin:email:${email}`, `store-admin:ip:${ip}`];
@@ -101,6 +114,7 @@ function isLocked(email: string, ip: string, now: number): boolean {
 }
 
 function recordFailure(email: string, ip: string, now: number): void {
+  pruneFallbackMap(attempts, now);
   for (const key of attemptKeys(email, ip)) {
     const record = attempts.get(key) ?? { failures: 0, lockedUntil: 0 };
     record.failures += 1;
@@ -108,6 +122,7 @@ function recordFailure(email: string, ip: string, now: number): void {
       record.lockedUntil = now + LOCKOUT_MS;
       record.failures = 0;
     }
+    attempts.delete(key);
     attempts.set(key, record);
   }
 }
@@ -136,6 +151,7 @@ function isTotpLocked(email: string, now: number): boolean {
 }
 
 function recordTotpFailure(email: string, now: number): void {
+  pruneFallbackMap(totpAttempts, now);
   const key = totpKey(email);
   const record = totpAttempts.get(key) ?? { failures: 0, lockedUntil: 0 };
   record.failures += 1;
@@ -143,6 +159,7 @@ function recordTotpFailure(email: string, now: number): void {
     record.lockedUntil = now + LOCKOUT_MS;
     record.failures = 0;
   }
+  totpAttempts.delete(key);
   totpAttempts.set(key, record);
 }
 

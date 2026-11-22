@@ -3,32 +3,29 @@
 Accepted or deferred items from the audit. Each entry says what the risk is, why
 it was not fixed now, and what would close it.
 
-## L-9 — Expense receipts live in the public `media` bucket (accepted for now)
+## L-9 — Expense receipts live in the public `media` bucket (remediated in SEC-005)
 
-**Risk.** Expense receipts are uploaded through the media library and stored as
-`store_media` rows in the public Supabase Storage `media` bucket. The object URL
-is public and unguessable-ish (uuid path) but not authenticated: anyone who
-obtains the URL can fetch the receipt without a store-admin session. Receipts
-can contain supplier names, amounts and bank or card fragments — financial data
-that belongs to the store, not to the internet.
+**Risk.** Expense receipts previously shared the `store_media` pipeline and public
+Supabase Storage `media` bucket, so anyone holding the CDN object URL could read
+a receipt without a Store Admin session.
 
-**Why it is not fixed now.** Receipts share the `media` bucket with product
-photographs, which must stay public for the storefront. Splitting them means a
-private bucket, a signed-URL read path in the expense detail page, and a
-one-time move of existing objects — a storage migration, deliberately out of
-scope for a code-only remediation pass.
-
-**Interim controls.**
-- The URL is only rendered in the store-admin expense pages (staff session +
-  `requireStoreRole`), never sent to the storefront API.
-- The media library is staff-only; the bucket cannot be listed with the public
-  key (only known paths resolve).
-- Archiving the media row now deletes the object (L-8), so removing a receipt
-  from the library does end its public availability.
-
-**What would close it.** A private `expense-receipts` bucket, uploads routed
-there for `attachment_media_id`, and signed-URL downloads issued per request
-after the role check. Track as its own migration + storage move.
+**Remediation (SEC-005).**
+- Added private bucket support (`expense-receipts`) and `bucket` column on
+  `store_media` in `migrations/0075_private_expense_receipts.sql`, preserving
+  public `media` bucket access for product images.
+- Added dedicated upload route `POST /api/store-admin/expenses/receipts`
+  storing receipts strictly in `expense-receipts` with `url = ''` and
+  `Cache-Control: private, no-store` (supporting raster images, videos, and
+  sniffed `%PDF-` documents).
+- Added authenticated download route `GET /api/store-admin/expenses/[id]/receipt`
+  requiring `requireStoreRole('store_admin')`, distributed rate limiting,
+  short-lived (60s) signed URLs, `Cache-Control: private, no-store`, and
+  `store_admin_audit` logging without leaking signed URLs.
+- Hardened `GET /api/media/[id]` and `listMedia()` so private-bucket objects and
+  expense attachments return `404` and stay hidden from the public media library.
+- Existing legacy receipts in `media` must be migrated with
+  `node scripts/migrate-receipts-to-private.mjs --apply` after creating the
+  private `expense-receipts` bucket in Supabase Storage.
 
 ## Informational findings (no code change)
 

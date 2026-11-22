@@ -82,6 +82,34 @@ export function sniffMime(bytes: Uint8Array): MediaMime | null {
   return null;
 }
 
+export const ALLOWED_RECEIPT_TYPES = [
+  ...ALLOWED_MEDIA_TYPES,
+  'application/pdf',
+] as const;
+export type ReceiptMime = (typeof ALLOWED_RECEIPT_TYPES)[number];
+
+export const RECEIPT_EXTENSIONS: Record<ReceiptMime, string> = {
+  ...MEDIA_EXTENSIONS,
+  'application/pdf': 'pdf',
+};
+
+/** Sniff raster/video media OR PDF documents (`%PDF-`) for private expense receipts. */
+export function sniffReceiptMime(bytes: Uint8Array): ReceiptMime | null {
+  const media = sniffMime(bytes);
+  if (media) return media;
+  if (
+    bytes.length >= 5 &&
+    bytes[0] === 0x25 && // %
+    bytes[1] === 0x50 && // P
+    bytes[2] === 0x44 && // D
+    bytes[3] === 0x46 && // F
+    bytes[4] === 0x2d    // -
+  ) {
+    return 'application/pdf';
+  }
+  return null;
+}
+
 /** Pixel dimensions for common raster formats. `null` when unknown (SVG, video). */
 export function imageDimensions(bytes: Uint8Array): { width: number; height: number } | null {
   // PNG: IHDR width/height are big-endian at offsets 16 and 20.

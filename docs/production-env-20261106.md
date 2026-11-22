@@ -41,8 +41,11 @@ meet a per-IP bucket. Skipping the bucket is deliberate: with no trustworthy add
 shared "unknown" bucket would let a single caller lock out everyone else. The per-actor limits are the
 fallback.
 
-**Choose by asking one question:** *does a proxy I control overwrite `X-Forwarded-For` before the
-request reaches Node?* Yes → set it. No → leave it unset.
+**Choose by asking one question:** *does a proxy I control append or overwrite forwarding headers before the request reaches Node?* Yes → set `TRUST_PROXY=1`. No → leave it unset.
+
+**Proxy header precedence and anti-spoofing (`SEC-004`).** `clientIpFromHeaders()` validates every candidate with `net.isIP()` and never trusts leftmost caller-authored `X-Forwarded-For` hops:
+1. **Verified Cloudflare chain (optional):** `CF-Connecting-IP` is honored **only** when `TRUST_PROXY=1`, `TRUST_PROXY_CHAIN=cloudflare` (or `cloudflare-vercel`), AND `X-CF-Origin-Secret` matches `CLOUDFLARE_ORIGIN_SECRET` in constant time. Without origin authentication (for instance if `*.vercel.app` can still be reached directly), `CF-Connecting-IP` is ignored.
+2. **Vercel / reverse-proxy headers:** `X-Vercel-Forwarded-For` (rightmost valid IP) → `X-Real-IP` → `X-Forwarded-For` rightmost trusted hop (`TRUST_PROXY_HOPS`, default `1`, clamped `1..5`). Any invalid or malformed value yields `''` rather than falling back to client-supplied left entries.
 
 **Boot warning.** In production, a `TRUST_PROXY` value that is set but unrecognised (e.g.
 `TRUST_PROXY=proxy` or `=localhost`) logs:

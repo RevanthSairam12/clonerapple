@@ -1211,7 +1211,18 @@ export async function executeSpinDrawUsing(
         };
       }
 
-      // 4. Pipelined per-IP cap check + lock-free active segment/daily-count read.
+      // 4. Serialize concurrent same-IP draws per store day so multiple accounts
+      //    from the same IP cannot bypass `max_spins_per_ip_per_day`, then read
+      //    today's IP count alongside active segments and daily segment counts.
+      if (input.ipHash) {
+        await tx`
+          select pg_advisory_xact_lock(
+            614203,
+            hashtext(${`${dayInfo.storeDay}:${input.ipHash}`})
+          )
+        `;
+      }
+
       const [ipRows, segmentRows] = await Promise.all([
         input.ipHash
           ? (tx`

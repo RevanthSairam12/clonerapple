@@ -1,15 +1,5 @@
 /**
- * CSRF guard behind a tunnel.
- *
- * `assertSameOrigin` used to compare the Origin header with
- * `new URL(request.url).host` only. A dev tunnel (cloudflared, ngrok) or any
- * reverse proxy makes those disagree: the browser's Origin is the public
- * hostname, while Next builds `request.url` from the address it listens on.
- * Every same-origin request through the tunnel was therefore answered with
- * "Cross-origin request rejected." — including checkout and the coupon box.
- *
- * These tests pin that the Host the browser actually addressed is accepted,
- * while a genuine cross-site Origin is still refused.
+ * CSRF / Same-Origin guard tests (tunnel compatibility + SEC-010 hardening).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,8 +15,8 @@ const jiti = createJiti(import.meta.url, {
 });
 const { assertSameOrigin } = await jiti.import(path.join(root, 'src', 'lib', 'platform', 'api-guard.ts'));
 
-function post(headers) {
-  return new Request('http://localhost:3000/api/payu/initiate', {
+function post(headers, url = 'http://localhost:3000/api/payu/initiate') {
+  return new Request(url, {
     method: 'POST',
     headers,
   });
@@ -42,18 +32,44 @@ test('a request proxied under its public host is same-origin', () => {
   assert.equal(result, null, 'the Host header the browser addressed must be accepted');
 });
 
-test('a rewritten Host is recovered from X-Forwarded-Host', () => {
-  const result = assertSameOrigin(
-    post({
-      origin: 'https://shop.example.test',
-      host: '10.0.0.7:3000',
-      'x-forwarded-host': 'shop.example.test',
-    }),
+test('a rewritten Host is recovered from X-Forwarded-Host outside production or when TRUST_PROXY=1', () => {
+  assert.equal(
+    assertSameOrigin(
+      post({
+        origin: 'https://shop.example.test',
+        host: '10.0.0.7:3000',
+        'x-forwarded-host': 'shop.example.test',
+      }),
+      { NODE_ENV: 'development' },
+    ),
+    null,
   );
-  assert.equal(result, null);
+  assert.equal(
+    assertSameOrigin(
+      post({
+        origin: 'https://shop.example.test',
+        host: '10.0.0.7:3000',
+        'x-forwarded-host': 'shop.example.test',
+      }),
+      { NODE_ENV: 'production', TRUST_PROXY: '1' },
+    ),
+    null,
+  );
 });
 
-test('a cross-site Origin is still refused through the tunnel', async () => {
+test('SEC-010: X-Forwarded-Host is NOT trusted in production when TRUST_PROXY is unset', () => {
+  const res = assertSameOrigin(
+    post({
+      origin: 'https://evil.example',
+      host: 'gadzio.co.in',
+      'x-forwarded-host': 'evil.example',
+    }),
+    { NODE_ENV: 'production' },
+  );
+  assert.equal(res?.status, 403);
+});
+
+test('a cross-site Origin is refused through the tunnel', async () => {
   const result = assertSameOrigin(
     post({
       origin: 'https://evil.example',
@@ -82,14 +98,107 @@ test('Referer stands in when the request has no Origin', () => {
   );
 });
 
-test('a malformed Origin is refused, not ignored', () => {
+test('a malformed or null Origin is refused, not ignored', () => {
   assert.equal(assertSameOrigin(post({ origin: 'not a url', host: 'abc.trycloudflare.com' }))?.status, 403);
+  assert.equal(assertSameOrigin(post({ origin: 'null', host: 'abc.trycloudflare.com' }))?.status, 403);
+  assert.equal(assertSameOrigin(post({ origin: '', host: 'abc.trycloudflare.com' }))?.status, 403);
+  assert.equal(assertSameOrigin(post({ referer: 'not a url', host: 'abc.trycloudflare.com' }))?.status, 403);
 });
 
-test('a plain request with neither header stays allowed', () => {
+test('a plain non-cookie request with neither Origin nor Referer stays allowed', () => {
   assert.equal(assertSameOrigin(post({ host: 'localhost:3000' })), null);
 });
 
-test('an Origin matching the listen address keeps working', () => {
-  assert.equal(assertSameOrigin(post({ origin: 'http://localhost:3000' })), null);
+test('an Origin matching the listen address keeps working case-insensitively', () => {
+  assert.equal(assertSameOrigin(post({ origin: 'http://LOCALHOST:3000' })), null);
+});
+
+test('SEC-010: Sec-Fetch-Site blocks cross-site requests and non-same-origin mutations', () => {
+  // Cross-site blocked even on GET
+  assert.equal(
+    assertSameOrigin(
+      new Request('https://gadzio.co.in/api/catalog/summary?fresh=1', {
+        method: 'GET',
+        headers: { host: 'gadzio.co.in', 'sec-fetch-site': 'cross-site' },
+      }),
+    )?.status,
+    403,
+  );
+
+  // same-site and none blocked on POST even if Origin/Referer missing
+  for (const sfs of ['cross-site', 'same-site', 'none', 'weird']) {
+    assert.equal(
+      assertSameOrigin(
+        post({ host: 'gadzio.co.in', 'sec-fetch-site': sfs }, 'https://gadzio.co.in/api/account/profile'),
+      )?.status,
+      403,
+      `expected 403 for Sec-Fetch-Site: ${sfs}`,
+    );
+  }
+
+  // same-origin passes
+  assert.equal(
+    assertSameOrigin(
+      post(
+        {
+          host: 'gadzio.co.in',
+          origin: 'https://gadzio.co.in',
+          'sec-fetch-site': 'same-origin',
+        },
+        'https://gadzio.co.in/api/account/profile',
+      ),
+    ),
+    null,
+  );
+});
+
+test('SEC-010: cookie-authenticated mutating requests without Origin/Referer require Sec-Fetch-Site: same-origin', () => {
+  assert.equal(
+    assertSameOrigin(
+      post(
+        {
+          host: 'gadzio.co.in',
+          cookie: 'user_session=secret',
+        },
+        'https://gadzio.co.in/api/account/password',
+      ),
+    )?.status,
+    403,
+  );
+
+  assert.equal(
+    assertSameOrigin(
+      post(
+        {
+          host: 'gadzio.co.in',
+          cookie: 'store_admin_session=secret',
+          'sec-fetch-site': 'same-origin',
+        },
+        'https://gadzio.co.in/api/store-admin/expenses',
+      ),
+    ),
+    null,
+  );
+});
+
+test('SEC-010: HTTPS request refuses HTTP scheme Origin or Referer downgrade', () => {
+  assert.equal(
+    assertSameOrigin(
+      post(
+        { host: 'gadzio.co.in', origin: 'http://gadzio.co.in' },
+        'https://gadzio.co.in/api/payu/initiate',
+      ),
+    )?.status,
+    403,
+  );
+  assert.equal(
+    assertSameOrigin(
+      post(
+        { host: 'gadzio.co.in', 'x-forwarded-proto': 'https', referer: 'http://gadzio.co.in/checkout' },
+        'http://10.0.0.1:3000/api/payu/initiate',
+      ),
+      { NODE_ENV: 'production', TRUST_PROXY: '1' },
+    )?.status,
+    403,
+  );
 });

@@ -218,6 +218,11 @@ async function main() {
       'order_edit_logs',
       'refunds',
       'payment_events',
+      'stock_movements',
+      'product_content_revisions',
+      'refund_requests',
+      'refund_request_events',
+      'bill_requests',
     ];
     const unguarded = requiredGuards.filter((table) => !guardedTables.has(table));
     check(

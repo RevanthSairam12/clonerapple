@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { createCustomerAddress, listCustomerAddresses } from '@/lib/account/addresses';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,8 +17,18 @@ export async function POST(request: NextRequest) {
   if (originViolation) return originViolation;
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
-  const limited = checkRateLimit(`account-address:${auth.session.userId}`, { limit: 20, windowMs: 10 * 60 * 1000 });
-  if (!limited.allowed) return NextResponse.json({ error: 'Too many address changes. Please try again later.' }, { status: 429 });
+  const limited = await checkDistributedRateLimit({
+    scope: 'account_address_user',
+    key: auth.session.userId,
+    limit: 20,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: 'Too many address changes. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },
+    );
+  }
   try {
     const address = await createCustomerAddress(auth.session.userId, await request.json());
     return NextResponse.json({ address }, { status: 201 });

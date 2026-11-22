@@ -60,7 +60,10 @@ export function ExpenseForm({ categories, expense }: Props) {
     const form = new FormData();
     form.set('file', file);
     form.set('alt', `Receipt for ${title || 'an expense'}`);
-    const response = await fetch('/api/store-admin/media', { method: 'POST', body: form });
+    const response = await fetch('/api/store-admin/expenses/receipts', {
+      method: 'POST',
+      body: form,
+    });
     const body = (await response.json().catch(() => null)) as
       | { media?: { id?: string; url?: string }; error?: string }
       | null;
@@ -68,7 +71,11 @@ export function ExpenseForm({ categories, expense }: Props) {
       throw new Error(body?.error || 'The receipt could not be uploaded.');
     }
     setAttachmentId(body.media.id);
-    setAttachmentUrl(body.media.url ?? '');
+    setAttachmentUrl(
+      expense
+        ? `/api/store-admin/expenses/${encodeURIComponent(expense.id)}/receipt`
+        : '',
+    );
     return body.media.id;
   }
 
@@ -216,7 +223,7 @@ export function ExpenseForm({ categories, expense }: Props) {
             id="expense-receipt"
             className="sa-input"
             type="file"
-            accept="image/*,video/*"
+            accept="image/*,video/*,application/pdf"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
           <p className="sa-hint">
@@ -225,7 +232,7 @@ export function ExpenseForm({ categories, expense }: Props) {
                 Current receipt
               </a>
             ) : (
-              'Optional photo or video, uploaded to the media library.'
+              'Optional receipt (photo, video, or PDF), stored privately outside the public media library.'
             )}
           </p>
         </div>

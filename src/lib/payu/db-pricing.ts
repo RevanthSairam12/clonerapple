@@ -12,10 +12,117 @@ import { normalizeCartLineId } from '@/lib/cart/cart-id';
 /** Text IDs include legacy seeded product/colour IDs, not just generated var_* IDs. */
 export const MAX_CHECKOUT_VARIANT_ID_LENGTH = 256;
 export const MAX_CHECKOUT_LINES = 50;
+export const SALE_ONE_UNIT_ERROR_MESSAGE =
+  'Only 1 quantity per item can be purchased per order during a sale.';
 
 export function isValidCheckoutVariantId(value: unknown): value is string | null | undefined {
   return value === undefined || value === null ||
     (typeof value === 'string' && value.trim().length > 0 && value.length <= MAX_CHECKOUT_VARIANT_ID_LENGTH);
+}
+
+/** Raised when aggregated paid quantity for a product/variant exceeds 1 during Sale Mode. */
+export class SaleQuantityLimitError extends Error {
+  readonly code = 'sale_quantity_limit' as const;
+  readonly productId: string;
+  readonly variantId: string | null;
+  readonly quantity: number;
+
+  constructor(productId: string, variantId: string | null = null, quantity: number = 2) {
+    super(SALE_ONE_UNIT_ERROR_MESSAGE);
+    this.name = 'SaleQuantityLimitError';
+    this.productId = productId.slice(0, 256);
+    this.variantId = variantId ? variantId.slice(0, MAX_CHECKOUT_VARIANT_ID_LENGTH) : null;
+    this.quantity = quantity;
+  }
+}
+
+/** Raised when authoritative sale state cannot be read (fail-closed enforcement). */
+export class SaleStateUnavailableError extends Error {
+  readonly code = 'sale_state_unavailable' as const;
+
+  constructor(message = 'Checkout sale settings are temporarily unavailable. Please try again.') {
+    super(message);
+    this.name = 'SaleStateUnavailableError';
+  }
+}
+
+export function isSaleQuantityLimitError(error: unknown): error is SaleQuantityLimitError {
+  return error instanceof SaleQuantityLimitError
+    || (error instanceof Error
+      && error.name === 'SaleQuantityLimitError'
+      && (error as { code?: unknown }).code === 'sale_quantity_limit');
+}
+
+export function isSaleStateUnavailableError(error: unknown): error is SaleStateUnavailableError {
+  return error instanceof SaleStateUnavailableError
+    || (error instanceof Error
+      && error.name === 'SaleStateUnavailableError'
+      && (error as { code?: unknown }).code === 'sale_state_unavailable');
+}
+
+export interface SaleQuantityLine {
+  id?: string;
+  productId?: string;
+  variantId?: string | null;
+  quantity: number;
+  isFreeGift?: boolean;
+}
+
+/**
+ * Aggregates quantities per canonical (productId, variantId) across lines,
+ * ignoring free gifts. Preserves distinct products and distinct variants of
+ * the same product as independent entries.
+ */
+export function aggregateQuantitiesByItem(
+  lines: ReadonlyArray<SaleQuantityLine>,
+): Array<{ productId: string; variantId: string | null; quantity: number }> {
+  const counts = new Map<string, { productId: string; variantId: string | null; quantity: number }>();
+
+  for (const line of lines) {
+    if (!line || line.isFreeGift) continue;
+    const rawId = typeof line.productId === 'string'
+      ? line.productId
+      : typeof line.id === 'string'
+        ? line.id
+        : '';
+    const baseId = (normalizeCartLineId(rawId).baseId || rawId).trim().toLowerCase();
+    if (!baseId) continue;
+    const variantId = typeof line.variantId === 'string' && line.variantId.trim()
+      ? line.variantId.trim()
+      : null;
+    const qty = Number(line.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+
+    const key = JSON.stringify([baseId, variantId]);
+    const existing = counts.get(key);
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      counts.set(key, { productId: baseId, variantId, quantity: qty });
+    }
+  }
+
+  return [...counts.values()];
+}
+
+export function hasAggregatedQuantityOverOne(lines: ReadonlyArray<SaleQuantityLine>): boolean {
+  return aggregateQuantitiesByItem(lines).some((entry) => entry.quantity > 1);
+}
+
+/**
+ * Enforces the Sale Mode one-unit-per-product/variant-per-order rule.
+ * When Sale Mode is inactive (`saleLive === false`), multi-quantity orders are permitted.
+ */
+export function validateSaleModeQuantities(
+  lines: ReadonlyArray<SaleQuantityLine>,
+  saleLive: boolean,
+): void {
+  if (!saleLive) return;
+  for (const entry of aggregateQuantitiesByItem(lines)) {
+    if (entry.quantity > 1) {
+      throw new SaleQuantityLimitError(entry.productId, entry.variantId, entry.quantity);
+    }
+  }
 }
 
 /** Only an exact eligible lookup miss is recoverable as a stale selection. */

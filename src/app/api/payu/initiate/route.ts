@@ -8,21 +8,44 @@ import {
 } from '@/lib/coupons/rules';
 import { getPayUConfig, checkPayUConfiguration, getPayUCallbackUrls } from '@/lib/payu/config';
 import { generateRequestHash } from '@/lib/payu/hash';
-import {
+import * as payuOrders from '@/lib/payu/orders';
+const {
   createOrder,
   findActiveReservationForUser,
   getOrderByTxnid,
   getOrderShippingAddress,
   isIdenticalCheckoutAttempt,
-} from '@/lib/payu/orders';
+} = payuOrders;
+
+function isGuestReservationLimitErr(
+  error: unknown,
+): error is { message: string; retryAfterSec: number; code: string } {
+  if (typeof payuOrders.isGuestReservationLimitError === 'function') {
+    return payuOrders.isGuestReservationLimitError(error);
+  }
+  return (
+    typeof error === 'object'
+    && error !== null
+    && (error as { name?: unknown }).name === 'GuestReservationLimitError'
+    && (error as { code?: unknown }).code === 'active_reservation_exists'
+  );
+}
 import { verifyExistingOrderWithPayU } from '@/lib/payu/process-response';
 import { InsufficientStockError } from '@/lib/payu/stock';
 import { GiftUnavailableError, recordGiftUnavailableAttempt } from '@/lib/free-gifts/store';
-import { isValidCheckoutVariantId, MAX_CHECKOUT_LINES, SelectionUnavailableError } from '@/lib/payu/db-pricing';
+import {
+  aggregateQuantitiesByItem,
+  isSaleQuantityLimitError,
+  isSaleStateUnavailableError,
+  isValidCheckoutVariantId,
+  MAX_CHECKOUT_LINES,
+  SALE_ONE_UNIT_ERROR_MESSAGE,
+  SelectionUnavailableError,
+} from '@/lib/payu/db-pricing';
 import { normalizeCartLineId } from '@/lib/cart/cart-id';
 import { queueOrderEvent } from '@/lib/notifications/order-context';
 import { getUserSession } from '@/lib/user-auth';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
 import { getCustomerAddress } from '@/lib/account/addresses';
 import { validateCheckoutContact, validateIndianAddress } from '@/lib/checkout/india-validation';
@@ -36,6 +59,7 @@ import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
 import { subscribeToNewsletter } from '@/lib/store-admin/subscribers';
 import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { revalidateCatalog } from '@/lib/storefront/revalidate';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 export const runtime = 'nodejs';
 
@@ -66,7 +90,12 @@ export async function POST(req: NextRequest) {
     // requests per 5 minutes. Without a trusted address the account limit below
     // is the control.
     const ipLimit = ip
-      ? checkRateLimit(`payu-init-ip:${ip}`, { limit: 20, windowMs: 5 * 60 * 1000 })
+      ? await checkDistributedRateLimit({
+          scope: 'payu_init_ip',
+          key: ip,
+          limit: 20,
+          windowMs: 5 * 60 * 1000,
+        })
       : null;
     if (ipLimit && !ipLimit.allowed) {
       return NextResponse.json(
@@ -116,11 +145,29 @@ export async function POST(req: NextRequest) {
     }
 
     if (userId) {
-      const userLimit = checkRateLimit(`payu-init-user:${userId}`, { limit: 10, windowMs: 5 * 60 * 1000 });
+      const userLimit = await checkDistributedRateLimit({
+        scope: 'payu_init_user',
+        key: userId,
+        limit: 10,
+        windowMs: 5 * 60 * 1000,
+      });
       if (!userLimit.allowed) {
         return NextResponse.json(
           { error: 'Too many payment attempts for this account. Please wait.' },
           { status: 429, headers: { 'Retry-After': String(userLimit.retryAfterSec) } }
+        );
+      }
+    } else if (ip) {
+      const guestIpLimit = await checkDistributedRateLimit({
+        scope: 'payu_guest_init_ip',
+        key: ip,
+        limit: 5,
+        windowMs: 10 * 60 * 1000,
+      });
+      if (!guestIpLimit.allowed) {
+        return NextResponse.json(
+          { error: 'Too many guest checkout requests. Please wait a few minutes or sign in.' },
+          { status: 429, headers: { 'Retry-After': String(guestIpLimit.retryAfterSec) } }
         );
       }
     }
@@ -144,6 +191,43 @@ export async function POST(req: NextRequest) {
       || !isValidCheckoutVariantId(item?.variantId)
       || !Number.isInteger(item?.quantity) || item.quantity < 1 || item.quantity > 50)) {
       return NextResponse.json({ error: 'Invalid cart item or quantity.' }, { status: 400 });
+    }
+    const aggregatedItems = aggregateQuantitiesByItem(rawItems);
+    const hasMultiQuantityItem = aggregatedItems.some((entry) => entry.quantity > 1);
+    if (hasMultiQuantityItem) {
+      let sale: { live: boolean; unreadable?: boolean };
+      try {
+        sale = await readSaleState();
+      } catch {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'sale_state_unavailable',
+            error: 'Checkout sale settings are temporarily unavailable. Please try again.',
+          },
+          { status: 503 },
+        );
+      }
+      if (sale.unreadable) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'sale_state_unavailable',
+            error: 'Checkout sale settings are temporarily unavailable. Please try again.',
+          },
+          { status: 503 },
+        );
+      }
+      if (sale.live) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'sale_quantity_limit',
+            error: SALE_ONE_UNIT_ERROR_MESSAGE,
+          },
+          { status: 400 },
+        );
+      }
     }
     // Resolve prices only inside the order transaction after stock is locked.
     // Display expectations are compared there, never used as charge amounts.
@@ -250,8 +334,13 @@ export async function POST(req: NextRequest) {
     //       * if PAID, send the customer to its success page;
     //       * if PayU is unreachable, fail closed with a clear retry message;
     //       * otherwise, `createOrder` supersedes it in the same transaction.
-    if (activeReservation) {
-      const existingOrder = await getOrderByTxnid(activeReservation.txnid).catch(() => null);
+    const effectiveActiveReservation = activeReservation
+      ?? (!userId && typeof payuOrders.findActiveReservationForGuest === 'function'
+        ? await payuOrders.findActiveReservationForGuest(rawEmail, phone, shippingAddress)
+        : null);
+
+    if (effectiveActiveReservation) {
+      const existingOrder = await getOrderByTxnid(effectiveActiveReservation.txnid).catch(() => null);
       const existingAddress = existingOrder
         ? await getOrderShippingAddress(existingOrder.id).catch(() => null)
         : null;
@@ -285,15 +374,15 @@ export async function POST(req: NextRequest) {
       );
 
       if (!canResumeWithoutVerify) {
-        const verified = await verifyExistingOrderWithPayU(activeReservation.txnid, 'customer');
+        const verified = await verifyExistingOrderWithPayU(effectiveActiveReservation.txnid, 'customer');
         if (verified.status === 'PAID') {
           return NextResponse.json(
             {
               success: false,
               code: 'already_paid',
               error: 'Your previous payment has already been confirmed.',
-              statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
-              redirectUrl: `/order/success?txnid=${encodeURIComponent(activeReservation.txnid)}&recovery=1`,
+              statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
+              redirectUrl: `/order/success?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}&recovery=1`,
             },
             { status: 409 },
           );
@@ -305,8 +394,8 @@ export async function POST(req: NextRequest) {
               code: 'verification_unavailable',
               retryable: true,
               error: 'We could not confirm your previous payment yet. Please try again in a minute.',
-              statusUrl: `/order/status?txnid=${encodeURIComponent(activeReservation.txnid)}`,
-              reservationExpiresAt: activeReservation.expiresAt?.toISOString() ?? null,
+              statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
+              reservationExpiresAt: effectiveActiveReservation.expiresAt?.toISOString() ?? null,
             },
             { status: 409 },
           );
@@ -353,6 +442,24 @@ export async function POST(req: NextRequest) {
         checkoutConfiguration,
       });
     } catch (error: unknown) {
+      if (isSaleQuantityLimitError(error)) {
+        return NextResponse.json(
+          { success: false, code: error.code, error: error.message },
+          { status: 400 },
+        );
+      }
+      if (isSaleStateUnavailableError(error)) {
+        return NextResponse.json(
+          { success: false, code: error.code, error: error.message },
+          { status: 503 },
+        );
+      }
+      if (isGuestReservationLimitErr(error)) {
+        return NextResponse.json(
+          { success: false, code: error.code, error: error.message },
+          { status: 409, headers: { 'Retry-After': String(Math.max(1, error.retryAfterSec)) } },
+        );
+      }
       if (error instanceof GiftUnavailableError) {
         if (error.reason === 'out_of_stock' || error.reason === 'cap_reached') {
           await recordGiftUnavailableAttempt(error.ruleId);

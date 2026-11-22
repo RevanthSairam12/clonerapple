@@ -106,21 +106,29 @@ export interface ExpenseListData {
 
 const EXPENSE_COLUMNS = `
   e.id, e.title, e.category_id, c.name as category_name, e.amount_paise,
-  e.spent_on, e.note, e.attachment_media_id, m.url as attachment_url,
+  e.spent_on, e.note, e.attachment_media_id, m.id as live_attachment_id,
   e.created_at, e.updated_at
 `;
 
+function receiptRouteUrl(expenseId: string, attachmentId: string | null): string | null {
+  if (!expenseId || !attachmentId) return null;
+  return `/api/store-admin/expenses/${encodeURIComponent(expenseId)}/receipt`;
+}
+
 function expenseFromRow(row: Row): ExpenseSummary {
+  const id = text(row.id);
+  const liveAttachmentId = nullableText(row.live_attachment_id);
+  const attachmentId = nullableText(row.attachment_media_id);
   return {
-    id: text(row.id),
+    id,
     title: text(row.title),
     categoryId: nullableText(row.category_id),
     categoryName: text(row.category_name) || 'Uncategorised',
     amountPaise: number(row.amount_paise),
     spentOn: iso(row.spent_on).slice(0, 10),
     note: text(row.note),
-    attachmentId: nullableText(row.attachment_media_id),
-    attachmentUrl: nullableText(row.attachment_url),
+    attachmentId,
+    attachmentUrl: receiptRouteUrl(id, liveAttachmentId),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
@@ -272,6 +280,20 @@ export async function createExpense(
       if (!categories[0]) return { ok: false, reason: 'invalid-input' };
     }
 
+    if (value.attachmentMediaId) {
+      const mediaRows = (await sql`
+        select m.id
+        from store_media m
+        where m.id = ${value.attachmentMediaId}
+          and m.deleted_at is null
+          and not exists (select 1 from product_images i where i.url = m.url and i.deleted_at is null)
+          and not exists (select 1 from brands b where b.logo_url = m.url and b.deleted_at is null)
+          and not exists (select 1 from expenses e where e.attachment_media_id = m.id)
+        limit 1
+      `) as Row[];
+      if (!mediaRows[0]) return { ok: false, reason: 'invalid-input' };
+    }
+
     const id = `exp_${randomBytes(8).toString('hex')}`;
     const rows = (await sql`
       insert into expenses (
@@ -327,6 +349,22 @@ export async function updateExpense(
         }
       }
 
+      if (value.attachmentMediaId) {
+        const mediaRows = (await tx`
+          select m.id
+          from store_media m
+          where m.id = ${value.attachmentMediaId}
+            and m.deleted_at is null
+            and not exists (select 1 from product_images i where i.url = m.url and i.deleted_at is null)
+            and not exists (select 1 from brands b where b.logo_url = m.url and b.deleted_at is null)
+            and not exists (select 1 from expenses e where e.attachment_media_id = m.id and e.id <> ${id.trim()})
+          limit 1
+        `) as Row[];
+        if (!mediaRows[0]) {
+          return { ok: false as const, reason: 'invalid-input' as const };
+        }
+      }
+
       await tx`
         update expenses
         set category_id = ${value.categoryId},
@@ -343,7 +381,7 @@ export async function updateExpense(
       const afterRows = (await tx`
         select e.id, e.title, e.category_id, c.name as category_name,
                e.amount_paise, e.spent_on, e.note, e.attachment_media_id,
-               m.url as attachment_url, e.created_at, e.updated_at
+               m.id as live_attachment_id, e.created_at, e.updated_at
         from expenses e
         left join expense_categories c on c.id = e.category_id
         left join store_media m on m.id = e.attachment_media_id and m.deleted_at is null

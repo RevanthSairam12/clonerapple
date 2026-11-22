@@ -38,7 +38,15 @@ import type { CollectionProduct } from '@/components/collection/types';
 
 import { isCatalogSchemaError, suppressManagedCatalog } from './catalog-rules';
 import { CATALOG_CACHE_TAG, productCacheTag } from './catalog-tags';
-import { readSaleState, type SaleState } from './sale-state';
+import * as saleStateModule from './sale-state';
+import type { SaleState } from './sale-state';
+
+const { readSaleState } = saleStateModule;
+const readCatalogCacheEpoch = (): number => {
+  const fn = (saleStateModule as { getCatalogCacheEpoch?: () => number }).getCatalogCacheEpoch;
+  if (typeof fn === 'function') return fn();
+  return (globalThis as { __gadzioCatalogEpoch?: number }).__gadzioCatalogEpoch ?? 0;
+};
 import {
   accessoryProductFromDatabase,
   caseProductFromDatabase,
@@ -71,19 +79,42 @@ interface CatalogState {
 }
 
 const CATALOG_SNAPSHOT_TTL_MS = 30_000;
+export const FRESH_CATALOG_ROUTE_TTL_MS = 2_000;
+const FRESH_CATALOG_FAILURE_COOLDOWN_MS = 2_000;
+
+interface FreshCatalogCacheSlot {
+  refs: StorefrontRefs;
+  at: number;
+  epoch: number;
+}
+
+interface FreshCatalogFailureSlot {
+  at: number;
+  epoch: number;
+}
 
 const globalForCatalog = globalThis as typeof globalThis & {
   __gadzioCatalogSnapshot?: { snapshot: StorefrontCatalogSnapshot; at: number } | null;
+  __gadzioFreshCatalogSnapshot?: FreshCatalogCacheSlot | null;
+  __gadzioFreshCatalogFailure?: FreshCatalogFailureSlot | null;
 };
 
 let inflightCatalogRead: Promise<StorefrontCatalogSnapshot | null> | null = null;
 let inflightCachedCatalog: Promise<StorefrontCatalogSnapshot | null> | null = null;
+let inflightFreshRefs: Promise<StorefrontRefs> | null = null;
 
 function readCatalogSingleflight(): Promise<StorefrontCatalogSnapshot | null> {
   if (inflightCatalogRead) return inflightCatalogRead;
-  const p = readStorefrontCatalog().finally(() => {
-    if (inflightCatalogRead === p) inflightCatalogRead = null;
-  });
+  const p = readStorefrontCatalog()
+    .then((snapshot) => {
+      if (snapshot) {
+        globalForCatalog.__gadzioCatalogSnapshot = { snapshot, at: Date.now() };
+      }
+      return snapshot;
+    })
+    .finally(() => {
+      if (inflightCatalogRead === p) inflightCatalogRead = null;
+    });
   inflightCatalogRead = p;
   return p;
 }
@@ -387,13 +418,65 @@ export const getProductDetail = cache(async (id: string): Promise<ProductDetail 
 
 /* --------------------------------------------------------- search / bag */
 
-/** Purchase admission must not use cross-request cached rows or outage fallback. */
+/**
+ * Purchase admission must not use stale 30s cached rows or static outage fallback.
+ * Coalesces concurrent callers onto one shared singleflight DB read and serves
+ * a bounded 2s micro-cache (cleared immediately on Store Admin mutations) so
+ * unauthenticated `?fresh=1` bursts cannot multiply expensive full-table reads.
+ */
 export async function getFreshStorefrontRefs(): Promise<StorefrontRefs> {
-  const [snapshot, sale] = await Promise.all([readStorefrontCatalog(), readSaleState()]);
-  if (!snapshot || sale.unreadable) throw new Error('Current catalogue pricing is unavailable.');
-  const categories = new Map(snapshot.categories.map(category => [category.id, category.name]));
-  return { products: snapshot.products.map(product => descriptionRef(applySaleDisplay(product, sale.live), categories.get(product.categoryId))),
-    saleLive: sale.live, source: 'db' };
+  const epoch = readCatalogCacheEpoch();
+  const now = Date.now();
+  const cached = globalForCatalog.__gadzioFreshCatalogSnapshot;
+  if (cached && cached.epoch === epoch && now - cached.at < FRESH_CATALOG_ROUTE_TTL_MS) {
+    return cached.refs;
+  }
+
+  const recentFailure = globalForCatalog.__gadzioFreshCatalogFailure;
+  if (
+    recentFailure
+    && recentFailure.epoch === epoch
+    && now - recentFailure.at < FRESH_CATALOG_FAILURE_COOLDOWN_MS
+  ) {
+    throw new Error('Current catalogue pricing is unavailable.');
+  }
+
+  if (inflightFreshRefs) return inflightFreshRefs;
+
+  const p = (async (): Promise<StorefrontRefs> => {
+    try {
+      const [snapshot, sale] = await Promise.all([readCatalogSingleflight(), readSaleState()]);
+      if (!snapshot || sale.unreadable) {
+        throw new Error('Current catalogue pricing is unavailable.');
+      }
+      const categories = new Map(snapshot.categories.map((category) => [category.id, category.name]));
+      const refs: StorefrontRefs = {
+        products: snapshot.products.map((product) =>
+          descriptionRef(applySaleDisplay(product, sale.live), categories.get(product.categoryId)),
+        ),
+        saleLive: sale.live,
+        source: 'db',
+      };
+      globalForCatalog.__gadzioFreshCatalogSnapshot = {
+        refs,
+        at: Date.now(),
+        epoch: readCatalogCacheEpoch(),
+      };
+      globalForCatalog.__gadzioFreshCatalogFailure = null;
+      return refs;
+    } catch (error) {
+      globalForCatalog.__gadzioFreshCatalogFailure = {
+        at: Date.now(),
+        epoch: readCatalogCacheEpoch(),
+      };
+      throw error;
+    }
+  })().finally(() => {
+    if (inflightFreshRefs === p) inflightFreshRefs = null;
+  });
+
+  inflightFreshRefs = p;
+  return p;
 }
 
 export interface StorefrontRefs {

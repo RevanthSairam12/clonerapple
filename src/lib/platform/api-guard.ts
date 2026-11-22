@@ -1,75 +1,140 @@
 import { NextResponse } from 'next/server';
 
-/**
- * Same-origin guard for every mutating admin API (Store Admin, and the legacy
- * panel until it is removed).
- *
- * The staff cookie is SameSite=Lax, which already blocks cross-site POSTs from
- * other origins, but Lax still allows top-level GET navigations, and older
- * browsers treat Lax loosely. Checking Origin (falling back to Referer) closes
- * the gap: a state-changing request whose Origin is not our own host is
- * rejected with 403.
- */
+import { trustProxy } from './client-ip';
 
 /**
- * Every host this request may legitimately have been addressed as.
+ * Hardened CSRF / Same-Origin guard for Store Admin, Customer Account, Auth,
+ * and Checkout API routes (SEC-010).
  *
- * Behind a tunnel or any reverse proxy, the browser's `Origin` names the
- * public hostname while Next can build `request.url` from its own listen
- * address. Comparing against `request.url` alone therefore rejects every
- * same-origin request that arrives through the proxy — the browser sees
- * "Cross-origin request rejected." on ordinary pages. `Host` carries what the
- * browser actually requested (cloudflared and ngrok preserve it), and a proxy
- * that rewrites `Host` puts the original in `X-Forwarded-Host`.
- *
- * A cross-site request cannot exploit this: the browser sets `Origin` itself,
- * so an attacker's page still presents its own host, which matches none of
- * these.
+ * Defenses layered together:
+ * 1. Fetch Metadata (`Sec-Fetch-Site`): blocks `'cross-site'` requests on all
+ *    methods and restricts browser state-changing methods to `'same-origin'`.
+ * 2. Host normalization + gated `X-Forwarded-Host`: `X-Forwarded-Host` is only
+ *    consulted when `TRUST_PROXY` is enabled (or outside production) so callers
+ *    cannot spoof allowed target hosts directly against origin hosts.
+ * 3. Strict `Origin` / `Referer` validation (rejects `Origin: null`, malformed
+ *    URLs, non-HTTP(S) schemes, host mismatches, and HTTPS->HTTP downgrades).
+ * 4. Cookie-authenticated mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`
+ *    carrying a `Cookie` header) with BOTH `Origin` and `Referer` absent are
+ *    rejected unless `Sec-Fetch-Site: same-origin` is explicitly present.
  */
-function candidateHosts(request: Request): Set<string> {
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function runtimeEnv(env?: Record<string, string | undefined>): Record<string, string | undefined> {
+  if (env) return env;
+  return typeof process !== 'undefined' && process.env ? process.env : {};
+}
+
+function firstToken(value: string | null): string {
+  return value?.split(',')[0]?.trim().toLowerCase() ?? '';
+}
+
+function candidateHosts(request: Request, env: Record<string, string | undefined>): Set<string> {
   const hosts = new Set<string>();
   try {
-    hosts.add(new URL(request.url).host);
+    const parsedHost = new URL(request.url).host.trim().toLowerCase();
+    if (parsedHost) hosts.add(parsedHost);
   } catch {
-    // A malformed url simply contributes no candidate.
+    // Malformed request.url contributes no host.
   }
-  for (const header of ['host', 'x-forwarded-host']) {
-    const value = request.headers.get(header)?.split(',')[0]?.trim();
-    if (value) hosts.add(value);
+
+  const directHost = firstToken(request.headers.get('host'));
+  if (directHost) hosts.add(directHost);
+
+  const allowForwarded = trustProxy(env) || env.NODE_ENV !== 'production';
+  if (allowForwarded) {
+    const forwardedHost = firstToken(request.headers.get('x-forwarded-host'));
+    if (forwardedHost) hosts.add(forwardedHost);
   }
+
   return hosts;
 }
 
-function sameOrigin(request: Request): boolean {
-  const hosts = candidateHosts(request);
-  const hostOf = (value: string): string | null => {
-    try {
-      return new URL(value).host;
-    } catch {
-      return null;
-    }
-  };
+function requestExpectsHttps(request: Request, env: Record<string, string | undefined>): boolean {
+  try {
+    if (new URL(request.url).protocol === 'https:') return true;
+  } catch {
+    // ignore malformed URL
+  }
+  const allowForwarded = trustProxy(env) || env.NODE_ENV !== 'production';
+  return allowForwarded && firstToken(request.headers.get('x-forwarded-proto')) === 'https';
+}
 
-  const origin = request.headers.get('origin');
-  if (origin) {
-    const host = hostOf(origin);
-    return host !== null && hosts.has(host);
+function parseHttpUrl(raw: string): URL | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.host) return null;
+    return parsed;
+  } catch {
+    return null;
   }
-  // No Origin header (same-origin fetches sometimes omit it, e.g. curl or
-  // same-host GET) — fall back to Referer.
-  const referer = request.headers.get('referer');
-  if (referer) {
-    const host = hostOf(referer);
-    return host !== null && hosts.has(host);
+}
+
+function matchesExpectedOrigin(
+  parsed: URL | null,
+  hosts: Set<string>,
+  requireHttps: boolean,
+): boolean {
+  if (!parsed) return false;
+  if (requireHttps && parsed.protocol !== 'https:') return false;
+  return hosts.has(parsed.host.trim().toLowerCase());
+}
+
+function sameOrigin(request: Request, env: Record<string, string | undefined>): boolean {
+  const method = (request.method || 'GET').toUpperCase();
+  const isSafe = SAFE_METHODS.has(method);
+  const isMutating = MUTATING_METHODS.has(method);
+
+  const secFetchSiteRaw = request.headers.get('sec-fetch-site');
+  const secFetchSite = secFetchSiteRaw === null ? '' : secFetchSiteRaw.trim().toLowerCase();
+
+  // 1. Fetch Metadata enforcement
+  if (secFetchSite === 'cross-site') {
+    return false;
   }
-  // No Origin and no Referer at all. Requests from a browser always carry one
-  // of the two; a request with neither is non-browser (server-side tooling)
-  // and cannot carry ambient cookie credentials in a CSRF attack.
+  if (isMutating && secFetchSite !== '' && secFetchSite !== 'same-origin') {
+    return false;
+  }
+
+  const hosts = candidateHosts(request, env);
+  const requireHttps = requestExpectsHttps(request, env);
+
+  // 2. Origin check (present header even if empty or 'null' must be valid & same-origin)
+  if (request.headers.has('origin')) {
+    const origin = (request.headers.get('origin') ?? '').trim();
+    if (!origin || origin.toLowerCase() === 'null') return false;
+    return matchesExpectedOrigin(parseHttpUrl(origin), hosts, requireHttps);
+  }
+
+  // 3. Referer fallback
+  if (request.headers.has('referer')) {
+    const referer = (request.headers.get('referer') ?? '').trim();
+    if (!referer) return false;
+    return matchesExpectedOrigin(parseHttpUrl(referer), hosts, requireHttps);
+  }
+
+  // 4. Both Origin and Referer are absent
+  if (isSafe) {
+    return true;
+  }
+
+  // Cookie-authenticated state changes with no Origin/Referer must carry Sec-Fetch-Site: same-origin.
+  const hasCookie = Boolean((request.headers.get('cookie') ?? '').trim());
+  if (hasCookie) {
+    return secFetchSite === 'same-origin';
+  }
+
   return true;
 }
 
-export function assertSameOrigin(request: Request): NextResponse | null {
-  if (!sameOrigin(request)) {
+export function assertSameOrigin(
+  request: Request,
+  env?: Record<string, string | undefined>,
+): NextResponse | null {
+  if (!sameOrigin(request, runtimeEnv(env))) {
     return NextResponse.json({ error: 'Cross-origin request rejected.' }, { status: 403 });
   }
   return null;

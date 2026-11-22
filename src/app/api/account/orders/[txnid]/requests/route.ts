@@ -4,15 +4,25 @@ import { queueOrderEventByTxnid } from '@/lib/notifications/order-context';
 import { requireAccountSessionApi } from '@/lib/account/auth';
 import { validateRequestType, type RequestType } from '@/lib/account/request-rules';
 import { createCustomerOrderRequest } from '@/lib/store-admin/order-requests';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 
 export async function POST(request: NextRequest, context: { params: Promise<{ txnid: string }> }) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
-  const limited = checkRateLimit(`account-order-request:${auth.session.userId}`, { limit: 10, windowMs: 15 * 60 * 1000 });
-  if (!limited.allowed) return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 });
+  const limited = await checkDistributedRateLimit({
+    scope: 'account_order_request_user',
+    key: auth.session.userId,
+    limit: 10,
+    windowMs: 15 * 60 * 1000,
+  });
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },
+    );
+  }
   const { txnid } = await context.params;
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!validateRequestType(body?.type)) return NextResponse.json({ error: 'Invalid request type.' }, { status: 400 });

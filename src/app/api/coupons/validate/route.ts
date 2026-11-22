@@ -19,7 +19,7 @@ import {
   resolveCouponFreeGiftPreviewUsing,
 } from '@/lib/free-gifts/store';
 import { resolveCartItemsFromDb } from '@/lib/payu/db-catalog';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
 import { requireStorefrontOpen } from '@/lib/storefront/maintenance-guard';
 import { getUserSession } from '@/lib/user-auth';
@@ -50,10 +50,14 @@ export async function POST(req: NextRequest) {
   if (closed) return closed;
 
   const ip = clientIpFromRequest(req);
-  const ipLimit = ip ? checkRateLimit(`coupon-validate-ip:${ip}`, {
-    limit: 10,
-    windowMs: 60 * 1000,
-  }) : null;
+  const ipLimit = ip
+    ? await checkDistributedRateLimit({
+        scope: 'coupon-validate-ip:',
+        key: ip,
+        limit: 10,
+        windowMs: 60 * 1000,
+      })
+    : null;
   if (ipLimit && !ipLimit.allowed) {
     return NextResponse.json(
       { valid: false, message: 'Too many attempts. Please wait a minute and try again.' },
@@ -69,7 +73,9 @@ export async function POST(req: NextRequest) {
   const session = await getUserSession();
   const userId = session?.userId ?? null;
   if (userId) {
-    const userLimit = checkRateLimit(`coupon-validate-user:${userId}`, {
+    const userLimit = await checkDistributedRateLimit({
+      scope: 'coupon-validate-user:',
+      key: userId,
       limit: 10,
       windowMs: 60 * 1000,
     });

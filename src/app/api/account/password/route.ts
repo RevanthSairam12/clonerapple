@@ -4,15 +4,25 @@ import { requireAccountSessionApi } from '@/lib/account/auth';
 import { queueNotification } from '@/lib/notifications/queue';
 import { passwordByteLength } from '@/lib/auth/validation';
 import { changeUserPassword } from '@/lib/user-auth';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 
 export async function POST(request: NextRequest) {
   const originViolation = assertSameOrigin(request);
   if (originViolation) return originViolation;
   const auth = await requireAccountSessionApi();
   if (!auth.ok) return auth.response;
-  const limited = checkRateLimit(`account-password:${auth.session.userId}`, { limit: 5, windowMs: 15 * 60 * 1000 });
-  if (!limited.allowed) return NextResponse.json({ error: 'Too many password changes. Please try again later.' }, { status: 429 });
+  const limited = await checkDistributedRateLimit({
+    scope: 'account_password_user',
+    key: auth.session.userId,
+    limit: 5,
+    windowMs: 15 * 60 * 1000,
+  });
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: 'Too many password changes. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },
+    );
+  }
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const currentPassword = typeof body?.currentPassword === 'string' ? body.currentPassword : '';
   const newPassword = typeof body?.newPassword === 'string' ? body.newPassword : '';

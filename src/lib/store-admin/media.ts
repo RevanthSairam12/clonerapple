@@ -1,5 +1,10 @@
 import { getSql } from '@/lib/platform/db';
 import { deleteFromStorage } from '@/lib/platform/storage';
+import {
+  PUBLIC_MEDIA_BUCKET,
+  PRIVATE_RECEIPT_BUCKET,
+  type StorageBucket,
+} from '@/lib/platform/storage';
 
 import type { CatalogWrite } from './catalog-writes';
 import { altError } from './media-rules';
@@ -84,6 +89,8 @@ export async function listMedia(): Promise<CatalogWrite<MediaRow[]>> {
               m.alt, m.uploaded_by, m.created_at, ${USAGE_SELECT}
        from store_media m
        where m.deleted_at is null
+         and coalesce(to_jsonb(m)->>'bucket', 'media') = 'media'
+         and not exists (select 1 from expenses e where e.attachment_media_id = m.id)
        order by m.created_at desc, m.id desc
        limit 300`,
     )) as Row[];
@@ -105,6 +112,7 @@ export async function createMedia(input: {
   alt: string;
   storagePath: string;
   uploadedBy: string;
+  bucket?: StorageBucket;
 }): Promise<CatalogWrite<{ id: string; url: string }>> {
   const sql = getSql();
   if (!sql) return fail('unavailable', 'The media library is not available.');
@@ -112,15 +120,27 @@ export async function createMedia(input: {
   if (problem) return fail('invalid-input', problem);
 
   try {
-    await sql`
-      insert into store_media (
-        id, filename, url, mime_type, size, width, height, alt, storage_path, uploaded_by
-      ) values (
-        ${input.id}, ${input.filename}, ${input.url}, ${input.mimeType}, ${input.size},
-        ${input.width}, ${input.height}, ${input.alt.trim()}, ${input.storagePath},
-        ${input.uploadedBy}
-      )
-    `;
+    if (input.bucket && input.bucket !== PUBLIC_MEDIA_BUCKET) {
+      await sql`
+        insert into store_media (
+          id, filename, url, mime_type, size, width, height, alt, storage_path, uploaded_by, bucket
+        ) values (
+          ${input.id}, ${input.filename}, ${input.url}, ${input.mimeType}, ${input.size},
+          ${input.width}, ${input.height}, ${input.alt.trim()}, ${input.storagePath},
+          ${input.uploadedBy}, ${input.bucket}
+        )
+      `;
+    } else {
+      await sql`
+        insert into store_media (
+          id, filename, url, mime_type, size, width, height, alt, storage_path, uploaded_by
+        ) values (
+          ${input.id}, ${input.filename}, ${input.url}, ${input.mimeType}, ${input.size},
+          ${input.width}, ${input.height}, ${input.alt.trim()}, ${input.storagePath},
+          ${input.uploadedBy}
+        )
+      `;
+    }
     return { ok: true, data: { id: input.id, url: input.url } };
   } catch {
     console.warn('[store-admin/media] could not save a media row');
@@ -187,10 +207,11 @@ export async function archiveMedia(
         select (
           (select count(*)::int from product_images where url = ${mediaUrl} and deleted_at is null)
           + (select count(*)::int from brands where logo_url = ${mediaUrl} and deleted_at is null)
+          + (select count(*)::int from expenses where attachment_media_id = ${id} and deleted_at is null)
         ) as usage_count
       `) as Row[];
       if (number(usageRows[0]?.usage_count) > 0) {
-        return fail('conflict', 'This file is still used by a product or brand.');
+        return fail('conflict', 'This file is still used by a product, brand, or expense.');
       }
 
       const updated = (await tx`
@@ -207,8 +228,14 @@ export async function archiveMedia(
 
   if (result.ok) {
     const storagePath = text(result.data.before.storage_path);
+    const bucket: StorageBucket =
+      result.data.before.bucket === PRIVATE_RECEIPT_BUCKET
+        ? PRIVATE_RECEIPT_BUCKET
+        : PUBLIC_MEDIA_BUCKET;
     if (storagePath) {
-      const removed = await deleteFromStorage(storagePath);
+      const removed = bucket === PUBLIC_MEDIA_BUCKET
+        ? await deleteFromStorage(storagePath)
+        : await deleteFromStorage(storagePath, { bucket });
       if (!removed) {
         console.warn('[store-admin/media] archived row still has its storage object');
       }

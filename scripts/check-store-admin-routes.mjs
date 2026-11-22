@@ -83,6 +83,8 @@ const EXPECTED_READ_ONLY_ROUTES = [
   'reports/coupon-usage/export/route.ts',
   // Spin wheel CSV export (masked customer email, writes only an audit row).
   'spin-wheel/export/route.ts',
+  // Authenticated private receipt signed-URL access for expense records.
+  'expenses/[id]/receipt/route.ts',
 ];
 
 /** The only mutation in the customer area: an owner-only, audited reveal. */
@@ -156,9 +158,10 @@ const EXPECTED_MUTATING_ROUTES = [
   'customers/settings/route.ts',
   'subscribers/route.ts',
   'subscribers/[id]/route.ts',
-  // Phase 8: the expense ledger and its categories.
+  // Phase 8: the expense ledger, private receipt uploads, and expense categories.
   'expenses/route.ts',
   'expenses/[id]/route.ts',
+  'expenses/receipts/route.ts',
   'expenses/categories/route.ts',
   // Phase 9: self-service profile, password and sessions.
   'profile/route.ts',

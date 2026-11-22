@@ -56,17 +56,21 @@ test('forwarded headers are ignored without a trusted proxy', () => {
   );
 });
 
-test('a trusted proxy yields the leftmost forwarded address', () => {
-  const headers = new Headers({ 'x-forwarded-for': ' 203.0.113.9 , 10.0.0.1' });
+test('a trusted proxy yields the rightmost validated forwarded address, never caller-prepended left hops', () => {
+  const headers = new Headers({ 'x-forwarded-for': ' 198.51.100.1 , 203.0.113.9' });
   assert.equal(clientIpFromHeaders(headers, { TRUST_PROXY: '1' }), '203.0.113.9');
   assert.equal(
     clientIpFromHeaders(new Headers({ 'x-real-ip': '203.0.113.7' }), { TRUST_PROXY: '1' }),
     '203.0.113.7',
   );
+  assert.equal(
+    clientIpFromHeaders(new Headers({ 'x-vercel-forwarded-for': '198.51.100.2, 203.0.113.8' }), { TRUST_PROXY: '1' }),
+    '203.0.113.8',
+  );
   assert.equal(clientIpFromHeaders(new Headers(), { TRUST_PROXY: '1' }), '');
 });
 
-test('no route parses X-Forwarded-For itself', async () => {
+test('no route parses forwarded client-IP headers itself', async () => {
   const offenders = [];
   async function walk(dir) {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -77,7 +81,7 @@ test('no route parses X-Forwarded-For itself', async () => {
       }
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
       const text = await readFile(full, 'utf8');
-      if (/x-forwarded-for|x-real-ip/i.test(text)) {
+      if (/x-forwarded-for|x-real-ip|x-vercel-forwarded-for|cf-connecting-ip/i.test(text)) {
         offenders.push(path.relative(root, full).split(path.sep).join('/'));
       }
     }
@@ -93,11 +97,11 @@ test('per-IP buckets are skipped, never shared, when the address is unknown', as
 
   const coupons = await source('src/app/api/coupons/validate/route.ts');
   assert.match(coupons, /const ip = clientIpFromRequest\(req\);/);
-  assert.match(coupons, /ip \? checkRateLimit\(/);
+  assert.match(coupons, /ip\s*\n?\s*\? await checkDistributedRateLimit\(/);
 
   const initiate = await source('src/app/api/payu/initiate/route.ts');
   assert.match(initiate, /const ip = clientIpFromRequest\(req\);/);
-  assert.match(initiate, /ip\s*\n?\s*\? checkRateLimit\(/);
+  assert.match(initiate, /ip\s*\n?\s*\? await checkDistributedRateLimit\(/);
 
   const webhook = await source('src/app/api/payu/webhook/route.ts');
   assert.match(webhook, /const ip = clientIpFromRequest\(req\);/);
@@ -105,8 +109,8 @@ test('per-IP buckets are skipped, never shared, when the address is unknown', as
 
   const reveal = await source('src/app/api/store-admin/customers/[id]/reveal/route.ts');
   assert.match(reveal, /const ip = clientIpFromRequest\(request\);/);
-  assert.match(reveal, /const ipLimit = ip\s*\n?\s*\? checkRateLimit\(/);
-  assert.match(reveal, /`store-reveal:actor:/);
+  assert.match(reveal, /\.\.\.\(ip\s*\n?\s*\? \[\{ scope: 'store_reveal_ip'/);
+  assert.match(reveal, /scope: 'store_reveal_actor'/);
 });
 
 test('user sign-in/up limits skip the IP key when the address is unknown', async () => {
@@ -115,7 +119,7 @@ test('user sign-in/up limits skip the IP key when the address is unknown', async
   assert.match(auth, /const ip = clientIpFromHeaders\(h\);/);
   assert.doesNotMatch(auth, /ip: ip \|\| 'unknown'/);
   assert.match(auth, /return ip \? \[`user-email:\$\{email\}`, `user-ip:\$\{ip\}`\] : \[`user-email:\$\{email\}`\];/);
-  assert.match(auth, /if \(ip\) \{\s*const ipResult = checkRateLimit\(`user-\$\{scope\}-ip:\$\{ip\}`/);
+  assert.match(auth, /\.\.\.\(ip \? \[\{ scope: `user_\$\{scope\}_ip`, key: ip, \.\.\.ipLimit \}\] : \[\]\)/);
 });
 
 test('the audit trail hashes only a trusted address', async () => {
@@ -124,8 +128,10 @@ test('the audit trail hashes only a trusted address', async () => {
   assert.match(audit, /ipHash: hashIdentifier\(ip\)/);
 });
 
-test('the in-memory limiter states its limits and exposes a shared-store seam', async () => {
+test('the distributed rate limiter backs security-sensitive routes and bounded fallback', async () => {
   const limiter = await source('src/lib/payu/rate-limit.ts');
+  const distributed = await source('src/lib/platform/distributed-rate-limit.ts');
   assert.match(limiter, /export interface RateLimitStore/);
-  assert.match(limiter, /TODO\(security\): before running more than one instance/);
+  assert.match(distributed, /auth_rate_limits/);
+  assert.match(distributed, /pg_advisory_xact_lock/);
 });

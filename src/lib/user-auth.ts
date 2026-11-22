@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { cookies, headers } from 'next/headers';
 import bcrypt from 'bcryptjs';
+import type postgres from 'postgres';
 import { getSql } from './platform/db';
 import {
   isValidEmail,
@@ -9,7 +10,12 @@ import {
   passwordByteLength,
   PASSWORD_MAX_BYTES,
 } from './auth/validation';
-import { checkRateLimit } from './payu/rate-limit';
+import {
+  checkDistributedRateLimits,
+  clearDistributedEvents,
+  countDistributedEvents,
+  recordDistributedEvents,
+} from './platform/distributed-rate-limit';
 import { clientIpFromHeaders } from './platform/client-ip';
 import { deviceLabel } from './store-admin/customer-rules';
 
@@ -48,8 +54,23 @@ interface AttemptRecord {
 
 const MAX_FAILURES = 8;
 const LOCKOUT_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_MEMORY_ATTEMPT_ENTRIES = 5_000;
 
+/** Bounded outage-only fallback counters; normal enforcement uses `auth_rate_limits`. */
 const attempts = new Map<string, AttemptRecord>();
+
+function pruneMemoryAttempts(now: number): void {
+  if (attempts.size < MAX_MEMORY_ATTEMPT_ENTRIES) return;
+  for (const [k, v] of attempts.entries()) {
+    if (v.lockedUntil <= now && v.failures === 0) attempts.delete(k);
+    else if (v.lockedUntil > 0 && v.lockedUntil <= now) attempts.delete(k);
+  }
+  while (attempts.size >= MAX_MEMORY_ATTEMPT_ENTRIES) {
+    const oldest = attempts.keys().next().value;
+    if (oldest === undefined) break;
+    attempts.delete(oldest);
+  }
+}
 
 /**
  * One key per identity, plus a per-IP key only when a trusted proxy supplied an
@@ -61,8 +82,7 @@ function attemptKeys(email: string, ip: string): string[] {
   return ip ? [`user-email:${email}`, `user-ip:${ip}`] : [`user-email:${email}`];
 }
 
-function isLocked(email: string, ip: string): boolean {
-  const now = Date.now();
+function isLockedInMemory(email: string, ip: string, now = Date.now()): boolean {
   for (const key of attemptKeys(email, ip)) {
     const record = attempts.get(key);
     if (record && record.lockedUntil > now) return true;
@@ -70,20 +90,37 @@ function isLocked(email: string, ip: string): boolean {
   return false;
 }
 
-function recordFailure(email: string, ip: string): void {
+function recordFailureInMemory(email: string, ip: string, now = Date.now()): void {
+  pruneMemoryAttempts(now);
   for (const key of attemptKeys(email, ip)) {
-    const record = attempts.get(key) ?? { failures: 0, lockedUntil: 0 };
+    const existing = attempts.get(key);
+    const record = existing
+      ? { failures: existing.lockedUntil > 0 && existing.lockedUntil <= now ? 0 : existing.failures, lockedUntil: existing.lockedUntil }
+      : { failures: 0, lockedUntil: 0 };
+    if (record.lockedUntil > now) {
+      attempts.delete(key);
+      attempts.set(key, record);
+      continue;
+    }
     record.failures += 1;
     if (record.failures >= MAX_FAILURES) {
-      record.lockedUntil = Date.now() + LOCKOUT_MS;
+      record.lockedUntil = now + LOCKOUT_MS;
       record.failures = 0;
     }
+    attempts.delete(key);
     attempts.set(key, record);
   }
 }
 
-function recordSuccess(email: string, ip: string): void {
+function recordSuccessInMemory(email: string, ip: string): void {
   for (const key of attemptKeys(email, ip)) attempts.delete(key);
+}
+
+export interface UserAuthCallOptions {
+  sql?: postgres.Sql | null;
+  ip?: string | null;
+  device?: string;
+  now?: Date;
 }
 
 interface RequestContext {
@@ -93,7 +130,16 @@ interface RequestContext {
   ipHash: string | null;
 }
 
-async function requestContext(): Promise<RequestContext> {
+async function requestContext(options: UserAuthCallOptions = {}): Promise<RequestContext> {
+  if (options.ip !== undefined || options.device !== undefined) {
+    const ip = (options.ip ?? '').trim();
+    const device = options.device ?? deviceLabel(null);
+    return {
+      ip,
+      device,
+      ipHash: ip ? createHash('sha256').update(ip).digest('hex') : null,
+    };
+  }
   const h = await headers();
   const ip = clientIpFromHeaders(h);
   return {
@@ -108,8 +154,9 @@ async function recordLoginEvent(
   userId: string,
   outcome: 'success' | 'failed' | 'blocked' | 'signup' | 'logout',
   device: string,
+  sqlOverride?: postgres.Sql | null,
 ): Promise<void> {
-  const sql = getSql();
+  const sql = sqlOverride ?? getSql();
   if (!sql) return;
   try {
     await sql`
@@ -122,8 +169,8 @@ async function recordLoginEvent(
 }
 
 /** New accounts start in the group chosen under Customers → Settings. */
-async function defaultCustomerGroup(): Promise<string> {
-  const sql = getSql();
+async function defaultCustomerGroup(sqlOverride?: postgres.Sql | null): Promise<string> {
+  const sql = sqlOverride ?? getSql();
   if (!sql) return 'retail';
   try {
     const rows = (await sql`
@@ -139,41 +186,33 @@ async function defaultCustomerGroup(): Promise<string> {
 }
 
 /**
- * Request rate limits, applied per client IP and per email address.
- *
- * `checkRateLimit` is the same in-memory sliding-window limiter used by the
- * PayU routes. It is per-process: a restart clears the counters and a
- * multi-instance deploy needs a shared store for a hard guarantee. The
- * failure lockout below (`MAX_FAILURES`) stays in place as a second layer.
+ * Distributed sliding-window request limits, applied per client IP (when supplied
+ * by a trusted proxy) and per email address via PostgreSQL `auth_rate_limits`.
  */
 const SIGNUP_IP_LIMIT = { limit: 10, windowMs: 10 * 60 * 1000 };
 const SIGNUP_EMAIL_LIMIT = { limit: 5, windowMs: 10 * 60 * 1000 };
 const SIGNIN_IP_LIMIT = { limit: 60, windowMs: 5 * 60 * 1000 };
 const SIGNIN_EMAIL_LIMIT = { limit: 20, windowMs: 5 * 60 * 1000 };
 
-function tooManyRequests(
+async function tooManyRequests(
   email: string,
   ip: string,
   scope: 'signup' | 'signin',
-): number | null {
-  const ipLimit =
-    scope === 'signup' ? SIGNUP_IP_LIMIT : SIGNIN_IP_LIMIT;
-  const emailLimit =
-    scope === 'signup' ? SIGNUP_EMAIL_LIMIT : SIGNIN_EMAIL_LIMIT;
+  options: { sql?: postgres.Sql | null; now?: Date } = {},
+): Promise<number | null> {
+  const ipLimit = scope === 'signup' ? SIGNUP_IP_LIMIT : SIGNIN_IP_LIMIT;
+  const emailLimit = scope === 'signup' ? SIGNUP_EMAIL_LIMIT : SIGNIN_EMAIL_LIMIT;
 
-  // The per-IP bucket only exists behind a trusted proxy (see client-ip.ts).
-  if (ip) {
-    const ipResult = checkRateLimit(`user-${scope}-ip:${ip}`, ipLimit);
-    if (!ipResult.allowed) return Math.max(1, ipResult.retryAfterSec);
-  }
+  const buckets = [
+    { scope: `user_${scope}_email`, key: email, ...emailLimit },
+    ...(ip ? [{ scope: `user_${scope}_ip`, key: ip, ...ipLimit }] : []),
+  ];
 
-  const emailResult = checkRateLimit(
-    `user-${scope}-email:${email}`,
-    emailLimit,
-  );
-  if (!emailResult.allowed) return Math.max(1, emailResult.retryAfterSec);
-
-  return null;
+  const result = await checkDistributedRateLimits(buckets, {
+    sql: options.sql,
+    now: options.now,
+  });
+  return result.allowed ? null : Math.max(1, result.retryAfterSec);
 }
 
 /* ---------------------------------------------------------- helpers */
@@ -189,17 +228,21 @@ export async function signUp(
   password: string,
   firstName: string,
   lastName: string,
+  options: UserAuthCallOptions = {},
 ): Promise<
   | { ok: true; token: string | null }
   | { ok: false; error: string; retryAfterSec?: number }
 > {
-  const sql = getSql();
+  const sql = options.sql === undefined ? getSql() : options.sql;
   if (!sql) return { ok: false, error: 'Database is not configured.' };
 
   const normalized = normalizeEmail(email);
-  const context = await requestContext();
+  const context = await requestContext(options);
 
-  const limited = tooManyRequests(normalized, context.ip, 'signup');
+  const limited = await tooManyRequests(normalized, context.ip, 'signup', {
+    sql,
+    now: options.now,
+  });
   if (limited !== null) {
     return {
       ok: false,
@@ -223,8 +266,8 @@ export async function signUp(
   const userId = randomBytes(16).toString('hex');
   const token = randomBytes(32).toString('hex');
   const tokenHash = hashToken(token);
-  const expires = new Date(Date.now() + SESSION_TTL_MS);
-  const group = await defaultCustomerGroup();
+  const expires = new Date((options.now?.getTime() ?? Date.now()) + SESSION_TTL_MS);
+  const group = await defaultCustomerGroup(sql);
 
   await sql`
     insert into users (
@@ -240,7 +283,7 @@ export async function signUp(
     values (${tokenHash}, ${userId}, ${expires}, ${context.device}, ${context.ipHash})
   `;
 
-  await recordLoginEvent(userId, 'signup', context.device);
+  await recordLoginEvent(userId, 'signup', context.device, sql);
 
   return { ok: true, token };
 }
@@ -250,19 +293,25 @@ export async function signUp(
 export async function signIn(
   email: string,
   password: string,
+  options: UserAuthCallOptions = {},
 ): Promise<
   // A successful sign-in always issues a token; only signUp can answer
   // "success" without one (the duplicate-address branch).
   | { ok: true; token: string }
   | { ok: false; error: string; retryAfterSec?: number }
 > {
-  const sql = getSql();
+  const sql = options.sql === undefined ? getSql() : options.sql;
   if (!sql) return { ok: false, error: 'Database is not configured.' };
 
   const normalized = normalizeEmail(email);
-  const context = await requestContext();
+  const context = await requestContext(options);
+  const now = options.now ?? new Date();
+  const nowMs = now.getTime();
 
-  const limited = tooManyRequests(normalized, context.ip, 'signin');
+  const limited = await tooManyRequests(normalized, context.ip, 'signin', {
+    sql,
+    now,
+  });
   if (limited !== null) {
     return {
       ok: false,
@@ -271,23 +320,35 @@ export async function signIn(
     };
   }
 
-  if (isLocked(normalized, context.ip)) {
+  const lockCheckBuckets = [
+    { scope: 'user_login_fail_email', key: normalized, limit: MAX_FAILURES, windowMs: LOCKOUT_MS },
+    ...(context.ip
+      ? [{ scope: 'user_login_fail_ip', key: context.ip, limit: MAX_FAILURES, windowMs: LOCKOUT_MS }]
+      : []),
+  ];
+  const distLock = await countDistributedEvents(lockCheckBuckets, { sql, now });
+  if (distLock.blocked || (distLock.backend === 'memory' && isLockedInMemory(normalized, context.ip, nowMs))) {
     return {
       ok: false,
       error: 'Too many failed attempts. Please try again in 10 minutes.',
-      retryAfterSec: LOCKOUT_MS / 1000,
+      retryAfterSec: distLock.blocked ? distLock.retryAfterSec : LOCKOUT_MS / 1000,
     };
   }
 
+  const failEntries = [
+    { scope: 'user_login_fail_email', key: normalized },
+    ...(context.ip ? [{ scope: 'user_login_fail_ip', key: context.ip }] : []),
+  ];
+
   // An address that cannot be an account, or a password bcrypt would truncate,
-  // can never match. Still pay for one bcrypt compare so the response time does
-  // not distinguish "impossible input" from "unknown account".
+  // can never match. Still pay for one bcrypt compare outside any DB lock.
   if (
     !isValidEmail(normalized) ||
     passwordByteLength(password) > PASSWORD_MAX_BYTES
   ) {
     await bcrypt.compare(password, DUMMY_HASH);
-    recordFailure(normalized, context.ip);
+    await recordDistributedEvents(failEntries, { sql, now });
+    recordFailureInMemory(normalized, context.ip, nowMs);
     return { ok: false, error: 'Invalid email or password.' };
   }
 
@@ -299,13 +360,14 @@ export async function signIn(
 
   const valid = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
   if (!user || !valid) {
-    recordFailure(normalized, context.ip);
-    if (user) await recordLoginEvent(String(user.id), 'failed', context.device);
+    await recordDistributedEvents(failEntries, { sql, now });
+    recordFailureInMemory(normalized, context.ip, nowMs);
+    if (user) await recordLoginEvent(String(user.id), 'failed', context.device, sql);
     return { ok: false, error: 'Invalid email or password.' };
   }
 
   if (user.is_blocked) {
-    await recordLoginEvent(String(user.id), 'blocked', context.device);
+    await recordLoginEvent(String(user.id), 'blocked', context.device, sql);
     return {
       ok: false,
       error: 'This account has been disabled. Please contact support.',
@@ -314,7 +376,7 @@ export async function signIn(
 
   const token = randomBytes(32).toString('hex');
   const tokenHash = hashToken(token);
-  const expires = new Date(Date.now() + SESSION_TTL_MS);
+  const expires = new Date(nowMs + SESSION_TTL_MS);
 
   await sql`
     insert into user_sessions (token_hash, user_id, expires_at, device, ip_hash)
@@ -324,8 +386,11 @@ export async function signIn(
   // Opportunistic cleanup
   await sql`delete from user_sessions where expires_at <= now()`;
 
-  await recordLoginEvent(String(user.id), 'success', context.device);
-  recordSuccess(normalized, context.ip);
+  await recordLoginEvent(String(user.id), 'success', context.device, sql);
+  // Clear this email's failed attempt history after verified login; keep IP
+  // failure history intact so a throwaway account cannot reset an IP attack counter.
+  await clearDistributedEvents([{ scope: 'user_login_fail_email', key: normalized }], { sql });
+  recordSuccessInMemory(normalized, '');
   return { ok: true, token };
 }
 

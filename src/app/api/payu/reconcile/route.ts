@@ -31,7 +31,8 @@ async function runReconcileJob(req: NextRequest, options: { requireSecret: boole
     const authorization = authorizeCronRequest({
       expectedSecret: process.env.CRON_SECRET,
       authorization: req.headers.get('authorization'),
-      querySecret: url.searchParams.get('secret'),
+      cronSecretHeader: req.headers.get('x-cron-secret'),
+      hasQuerySecret: url.searchParams.has('secret'),
       isProduction: options.requireSecret || process.env.NODE_ENV === 'production',
     });
     if (!authorization.ok) {

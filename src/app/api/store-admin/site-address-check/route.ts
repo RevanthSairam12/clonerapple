@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { checkSiteAddressHealth } from '@/lib/payu/config';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 
@@ -26,10 +26,11 @@ export async function POST(request: Request) {
   const guard = await requireStoreRole('store_owner');
   if (!guard.ok) return guard.response;
 
-  const limit = checkRateLimit(
-    `site-address-check:${guard.session.adminId}`,
-    SITE_ADDRESS_CHECK_LIMIT,
-  );
+  const limit = await checkDistributedRateLimit({
+    scope: 'store_site_address_check_actor',
+    key: guard.session.adminId,
+    ...SITE_ADDRESS_CHECK_LIMIT,
+  });
   if (!limit.allowed) {
     return NextResponse.json(
       { error: 'Too many checks. Try again later.', retryAfterSec: limit.retryAfterSec },

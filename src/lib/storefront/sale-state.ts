@@ -107,6 +107,9 @@ interface SaleCacheSlot {
 const globalForSaleState = globalThis as typeof globalThis & {
   __gadzioSaleStateCache?: SaleCacheSlot;
   __gadzioCatalogSnapshot?: unknown;
+  __gadzioFreshCatalogSnapshot?: unknown;
+  __gadzioFreshCatalogFailure?: unknown;
+  __gadzioCatalogEpoch?: number;
 };
 
 function saleCacheSlot(): SaleCacheSlot {
@@ -116,13 +119,20 @@ function saleCacheSlot(): SaleCacheSlot {
   return globalForSaleState.__gadzioSaleStateCache;
 }
 
-/** Clear the short in-memory sale switch cache immediately after a Store Admin write. */
+export function getCatalogCacheEpoch(): number {
+  return globalForSaleState.__gadzioCatalogEpoch ?? 0;
+}
+
+/** Clear the short in-memory sale switch & catalogue snapshot caches immediately after a Store Admin write. */
 export function clearSaleStateCache(): void {
   const slot = saleCacheSlot();
   slot.state = null;
   slot.at = 0;
   slot.inflight = null;
   globalForSaleState.__gadzioCatalogSnapshot = null;
+  globalForSaleState.__gadzioFreshCatalogSnapshot = null;
+  globalForSaleState.__gadzioFreshCatalogFailure = null;
+  globalForSaleState.__gadzioCatalogEpoch = (globalForSaleState.__gadzioCatalogEpoch ?? 0) + 1;
 }
 
 function advanceSaleState(cached: SaleState, elapsedMs: number): SaleState {

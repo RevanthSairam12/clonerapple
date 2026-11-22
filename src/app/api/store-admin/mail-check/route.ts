@@ -9,7 +9,7 @@ import {
   type CheckResult,
 } from '@/lib/notifications/diagnostics';
 import { readNotificationSettings } from '@/lib/notifications/settings';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimit } from '@/lib/platform/distributed-rate-limit';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { maskEmail, maskPhone, writeAudit } from '@/lib/store-admin/audit';
 
@@ -61,7 +61,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const limit = checkRateLimit(`mail-check:${guard.session.adminId}`, MAIL_CHECK_LIMIT);
+  const limit = await checkDistributedRateLimit({
+    scope: 'store_mail_check_actor',
+    key: guard.session.adminId,
+    ...MAIL_CHECK_LIMIT,
+  });
   if (!limit.allowed) {
     return NextResponse.json(
       { error: 'Too many checks. Try again later.', retryAfterSec: limit.retryAfterSec },

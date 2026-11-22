@@ -4,7 +4,7 @@ import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { isRevealField, revealCustomerField } from '@/lib/store-admin/customers';
-import { checkRateLimit } from '@/lib/payu/rate-limit';
+import { checkDistributedRateLimits } from '@/lib/platform/distributed-rate-limit';
 import { clientIpFromRequest } from '@/lib/platform/client-ip';
 
 /**
@@ -17,8 +17,7 @@ import { clientIpFromRequest } from '@/lib/platform/client-ip';
  * - `store_owner` role (admins and viewers are refused).
  * - Same-origin check on the mutation.
  * - A written reason is mandatory.
- * - Rate limited per account and per client IP. The limiter is in-memory
- *   (per process), the same trade-off as the rest of the panel.
+ * - Distributed PostgreSQL rate limits per actor and per client IP.
  */
 
 export const dynamic = 'force-dynamic';
@@ -77,22 +76,15 @@ export async function POST(
   // supplied an address (client-ip.ts). Without one a shared bucket would let a
   // single caller block every owner.
   const ip = clientIpFromRequest(request);
-  const actorLimit = checkRateLimit(`store-reveal:actor:${guard.session.adminId}`, {
-    limit: REVEAL_ACTOR_LIMIT,
-    windowMs: REVEAL_WINDOW_MS,
-  });
-  const ipLimit = ip
-    ? checkRateLimit(`store-reveal:ip:${ip}`, {
-        limit: REVEAL_IP_LIMIT,
-        windowMs: REVEAL_WINDOW_MS,
-      })
-    : null;
+  const revealLimit = await checkDistributedRateLimits([
+    { scope: 'store_reveal_actor', key: guard.session.adminId, limit: REVEAL_ACTOR_LIMIT, windowMs: REVEAL_WINDOW_MS },
+    ...(ip
+      ? [{ scope: 'store_reveal_ip', key: ip, limit: REVEAL_IP_LIMIT, windowMs: REVEAL_WINDOW_MS }]
+      : []),
+  ]);
 
-  if (!actorLimit.allowed || (ipLimit && !ipLimit.allowed)) {
-    const retryAfterSec = Math.max(
-      1,
-      !actorLimit.allowed ? actorLimit.retryAfterSec : (ipLimit?.retryAfterSec ?? 1),
-    );
+  if (!revealLimit.allowed) {
+    const retryAfterSec = Math.max(1, revealLimit.retryAfterSec);
     await writeAudit({
       actorId: guard.session.adminId,
       actorEmail: guard.session.email,
