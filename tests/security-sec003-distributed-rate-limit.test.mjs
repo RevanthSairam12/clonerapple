@@ -348,3 +348,99 @@ test('SEC-003: order PII reveal enforces distributed actor and IP rate limit and
   assert.equal(audits.at(-1)?.status, 'denied');
   assert.equal(audits.at(-1)?.reason, 'rate_limited');
 });
+
+test('SEC-003: memory fallback normalizes whitespace, deduplicates buckets, and skips blank keys identically to Postgres', async () => {
+  const rateLimitMod = await createJiti(import.meta.url, {
+    moduleCache: false,
+    alias: { '@': path.join(root, 'src') },
+  }).import(path.join(root, 'src/lib/payu/rate-limit.ts'));
+
+  async function loadFallbackLimiter(sqlImpl) {
+    const jiti = createJiti(import.meta.url, {
+      moduleCache: false,
+      alias: { '@': path.join(root, 'src') },
+      virtualModules: {
+        '@/lib/payu/rate-limit': rateLimitMod,
+        '@/lib/platform/db': { getSql: () => sqlImpl },
+      },
+    });
+    return jiti.import(path.join(root, 'src/lib/platform/distributed-rate-limit.ts'));
+  }
+
+  const failingSql = {
+    begin: async () => {
+      throw new Error('simulated pool outage');
+    },
+  };
+
+  const nullSqlLimiter = await loadFallbackLimiter(null);
+  const throwingSqlLimiter = await loadFallbackLimiter(failingSql);
+  const baseNow = new Date('2026-11-22T12:00:00Z');
+
+  rateLimitMod.clearRateLimitStoreForTests();
+  try {
+    // 1. Whitespace-padded keys share the same normalized bucket across null and failing-SQL fallbacks
+    const first = await nullSqlLimiter.checkDistributedRateLimits(
+      [{ scope: 'mem_norm_test', key: ' 203.0.113.9 ', limit: 2, windowMs: 60_000 }],
+      { sql: null, now: baseNow },
+    );
+    assert.equal(first.allowed, true);
+    assert.equal(first.backend, 'memory');
+    assert.equal(first.remaining, 1);
+
+    const second = await throwingSqlLimiter.checkDistributedRateLimits(
+      [{ scope: 'mem_norm_test', key: '203.0.113.9', limit: 2, windowMs: 60_000 }],
+      { now: baseNow },
+    );
+    assert.equal(second.allowed, true);
+    assert.equal(second.backend, 'memory');
+    assert.equal(second.remaining, 0);
+
+    const third = await nullSqlLimiter.checkDistributedRateLimits(
+      [{ scope: 'mem_norm_test', key: '203.0.113.9', limit: 2, windowMs: 60_000 }],
+      { sql: null, now: baseNow },
+    );
+    assert.equal(third.allowed, false);
+    assert.equal(third.backend, 'memory');
+    assert.equal(third.blockedScope, 'mem_norm_test');
+
+    // 2. Duplicate buckets within one call are deduplicated rather than double-charged
+    const dedup = await throwingSqlLimiter.checkDistributedRateLimits(
+      [
+        { scope: 'mem_dedup_test', key: 'actor_1', limit: 2, windowMs: 60_000 },
+        { scope: 'mem_dedup_test', key: ' actor_1 ', limit: 2, windowMs: 60_000 },
+      ],
+      { now: baseNow },
+    );
+    assert.equal(dedup.allowed, true);
+    assert.equal(dedup.remaining, 1);
+
+    const dedupSecond = await throwingSqlLimiter.checkDistributedRateLimits(
+      [{ scope: 'mem_dedup_test', key: 'actor_1', limit: 2, windowMs: 60_000 }],
+      { now: baseNow },
+    );
+    assert.equal(dedupSecond.allowed, true);
+    assert.equal(dedupSecond.remaining, 0);
+
+    // 3. Blank/whitespace-only keys are skipped cleanly (both alone and alongside a valid bucket)
+    for (let i = 0; i < 4; i += 1) {
+      const blankOnly = await throwingSqlLimiter.checkDistributedRateLimits(
+        [{ scope: 'mem_blank_test', key: '   ', limit: 1, windowMs: 60_000 }],
+        { now: baseNow },
+      );
+      assert.equal(blankOnly.allowed, true);
+
+      const mixed = await throwingSqlLimiter.checkDistributedRateLimits(
+        [
+          { scope: 'mem_mixed_valid', key: 'user_ok', limit: 5, windowMs: 60_000 },
+          { scope: 'mem_blank_test', key: '   ', limit: 1, windowMs: 60_000 },
+        ],
+        { now: baseNow },
+      );
+      assert.equal(mixed.allowed, true);
+      assert.equal(mixed.backend, 'memory');
+    }
+  } finally {
+    rateLimitMod.clearRateLimitStoreForTests();
+  }
+});

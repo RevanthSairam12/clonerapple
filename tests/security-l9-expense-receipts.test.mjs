@@ -354,3 +354,164 @@ test('SEC-005: listMedia excludes receipts and expenses.ts binds attachmentUrl t
   assert.match(expensesSrc, /\/api\/store-admin\/expenses\/\$\{encodeURIComponent\(expenseId\)\}\/receipt/);
   assert.doesNotMatch(expensesSrc, /m\.url as attachment_url/);
 });
+
+test('SEC-005: createExpense and updateExpense enforce private expense-receipts bucket on attachments', async () => {
+  const media = new Map([
+    ['media-public', { id: 'media-public', bucket: 'media', url: 'https://cdn.example/public.jpg', deleted_at: null }],
+    ['media-private', { id: 'media-private', bucket: 'expense-receipts', url: '', deleted_at: null }],
+    ['media-private-2', { id: 'media-private-2', bucket: 'expense-receipts', url: '', deleted_at: null }],
+  ]);
+  const expenses = new Map([
+    [
+      'exp_legacy',
+      {
+        id: 'exp_legacy',
+        title: 'Legacy expense',
+        category_id: null,
+        category_name: null,
+        amount_paise: 5000,
+        spent_on: '2026-11-20',
+        note: '',
+        attachment_media_id: 'media-public',
+        created_at: new Date('2026-11-20T10:00:00Z'),
+        updated_at: new Date('2026-11-20T10:00:00Z'),
+        deleted_at: null,
+      },
+    ],
+  ]);
+  const queries = [];
+
+  const sql = async (strings, ...values) => {
+    const q = strings.join('?').replace(/\s+/g, ' ').trim().toLowerCase();
+    queries.push(q);
+
+    if (q === 'select now() as now') {
+      return [{ now: new Date('2026-11-22T10:00:00Z') }];
+    }
+
+    if (q.includes('from store_settings')) {
+      return [];
+    }
+
+    if (q.includes('from store_media m') && q.includes('limit 1')) {
+      const mediaId = String(values[0]);
+      const m = media.get(mediaId);
+      if (!m || m.deleted_at !== null) return [];
+
+      const allowUnchanged = values.length >= 3 && values[1] === true;
+      const excludedExpenseId = values.length >= 3 ? String(values[2]) : null;
+      if (!allowUnchanged && (m.bucket ?? 'media') !== 'expense-receipts') return [];
+
+      const alreadyUsed = [...expenses.values()].some(
+        (e) => e.attachment_media_id === mediaId && e.id !== excludedExpenseId,
+      );
+      return alreadyUsed ? [] : [{ id: m.id }];
+    }
+
+    if (q.startsWith('insert into expenses')) {
+      const [id, categoryId, title, amountPaise, spentOn, note, attachmentMediaId] = values;
+      expenses.set(String(id), {
+        id: String(id),
+        category_id: categoryId,
+        title,
+        amount_paise: amountPaise,
+        spent_on: spentOn,
+        note,
+        attachment_media_id: attachmentMediaId,
+        created_at: new Date('2026-11-22T10:00:00Z'),
+        updated_at: new Date('2026-11-22T10:00:00Z'),
+        deleted_at: null,
+      });
+      return [{ id }];
+    }
+
+    if (q.includes('from expenses e') && q.includes('for update of e')) {
+      const e = expenses.get(String(values[0]));
+      return e && e.deleted_at === null ? [{ ...e }] : [];
+    }
+
+    if (q.startsWith('update expenses set')) {
+      const [categoryId, title, amountPaise, spentOn, note, attachmentMediaId, , id] = values;
+      const e = expenses.get(String(id));
+      if (!e) return [];
+      e.category_id = categoryId;
+      e.title = title;
+      e.amount_paise = amountPaise;
+      e.spent_on = spentOn;
+      e.note = note;
+      e.attachment_media_id = attachmentMediaId;
+      e.updated_at = new Date('2026-11-22T10:05:00Z');
+      return [];
+    }
+
+    if (q.includes('from expenses e') && q.includes('left join store_media m')) {
+      const id = String(values.at(-1));
+      const e = expenses.get(id);
+      if (!e || e.deleted_at !== null) return [];
+      const m = e.attachment_media_id ? media.get(e.attachment_media_id) : null;
+      return [{ ...e, live_attachment_id: m && m.deleted_at === null ? m.id : null }];
+    }
+
+    throw new Error(`Unexpected SQL in SEC-005 expenses test: ${q}`);
+  };
+  sql.unsafe = (fragment) => fragment;
+  sql.begin = async (fn) => fn(sql);
+
+  const jiti = createJiti(import.meta.url, {
+    moduleCache: false,
+    alias: { '@': path.join(root, 'src') },
+    virtualModules: {
+      '@/lib/platform/db': { getSql: () => sql },
+    },
+  });
+
+  const { createExpense, updateExpense } = await jiti.import(
+    path.join(root, 'src/lib/store-admin/expenses.ts'),
+  );
+
+  // 1. Public-bucket media ID is rejected on createExpense
+  const badCreate = await createExpense(
+    { title: 'Receipt', amount: '120.00', spentOn: '2026-11-22', attachmentMediaId: 'media-public' },
+    'adm-1',
+  );
+  assert.deepEqual(badCreate, { ok: false, reason: 'invalid-input' });
+  assert.ok(queries.some((q) => q.includes("to_jsonb(m)->>'bucket', 'media') = 'expense-receipts'")));
+
+  // 2. Private-bucket media ID succeeds on createExpense and links to authenticated receipt route
+  const okCreate = await createExpense(
+    { title: 'Receipt', amount: '120.00', spentOn: '2026-11-22', attachmentMediaId: 'media-private' },
+    'adm-1',
+  );
+  assert.equal(okCreate.ok, true);
+  assert.equal(okCreate.data.attachmentId, 'media-private');
+  assert.equal(
+    okCreate.data.attachmentUrl,
+    `/api/store-admin/expenses/${encodeURIComponent(okCreate.data.id)}/receipt`,
+  );
+
+  // 3. Keeping an unchanged legacy attachment when editing other fields still works
+  const keepLegacy = await updateExpense(
+    'exp_legacy',
+    { title: 'Legacy expense edited', amount: '50.00', spentOn: '2026-11-20', attachmentMediaId: 'media-public' },
+    'adm-1',
+  );
+  assert.equal(keepLegacy.ok, true);
+  assert.equal(keepLegacy.data.after.title, 'Legacy expense edited');
+
+  // 4. Switching an expense onto a public-bucket media ID is rejected
+  const switchToPublic = await updateExpense(
+    okCreate.data.id,
+    { title: 'Receipt', amount: '120.00', spentOn: '2026-11-22', attachmentMediaId: 'media-public' },
+    'adm-1',
+  );
+  assert.deepEqual(switchToPublic, { ok: false, reason: 'invalid-input' });
+
+  // 5. Switching to another unused private-bucket receipt succeeds
+  const switchToPrivate = await updateExpense(
+    okCreate.data.id,
+    { title: 'Receipt updated', amount: '135.00', spentOn: '2026-11-22', attachmentMediaId: 'media-private-2' },
+    'adm-1',
+  );
+  assert.equal(switchToPrivate.ok, true);
+  assert.equal(switchToPrivate.data.after.attachmentId, 'media-private-2');
+});

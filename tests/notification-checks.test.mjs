@@ -234,11 +234,11 @@ test('the route is owner-only, same-origin checked, rate limited and audited', (
   const source = read('src/app/api/store-admin/mail-check/route.ts');
   assert.match(source, /requireStoreRole\(\s*'store_owner'\s*\)/);
   assert.match(source, /assertSameOrigin\(request\)/);
-  assert.match(source, /checkRateLimit\(/);
+  assert.match(source, /checkDistributedRateLimit\(/);
   assert.match(source, /writeAudit\(/);
   assert.ok(source.indexOf('assertSameOrigin(request)') < source.indexOf('requireStoreRole('));
   assert.ok(
-    source.indexOf('requireStoreRole(') < source.indexOf('checkRateLimit('),
+    source.indexOf('requireStoreRole(') < source.indexOf('checkDistributedRateLimit('),
     'a viewer must not use up the limit',
   );
 });

@@ -218,7 +218,7 @@ test('owner-only site-address-check route is guarded, same-origin, rate-limited,
   );
   assert.match(routeSrc, /assertSameOrigin\(request\)/);
   assert.match(routeSrc, /requireStoreRole\(['"]store_owner['"]\)/);
-  assert.match(routeSrc, /checkRateLimit\(/);
+  assert.match(routeSrc, /checkDistributedRateLimit\(/);
   assert.match(routeSrc, /writeAudit\(/);
   assert.match(routeSrc, /payments\.check_site_address/);
 });

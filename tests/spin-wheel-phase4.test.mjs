@@ -106,8 +106,8 @@ test('storefront spin API routes enforce dynamic rendering, same-origin, auth, r
   assert.match(spinSrc, /requireStorefrontOpen/);
   assert.match(spinSrc, /requireAccountSessionApi/);
   assert.match(spinSrc, /clientIpFromRequest/);
-  assert.match(spinSrc, /checkRateLimit\(`spin-wheel-ip:/);
-  assert.match(spinSrc, /checkRateLimit\(`spin-wheel-user:/);
+  assert.match(spinSrc, /checkDistributedRateLimit[\s\S]*spin_wheel_ip/);
+  assert.match(spinSrc, /checkDistributedRateLimit[\s\S]*spin_wheel_user/);
   assert.match(spinSrc, /ip \? createHash\('sha256'\)\.update\(ip\)\.digest\('hex'\) : ''/);
   assert.match(spinSrc, /executeSpinDraw/);
   assert.match(spinSrc, /outcome\.reason === 'unauthorized'.*401/);

@@ -286,6 +286,7 @@ export async function createExpense(
         from store_media m
         where m.id = ${value.attachmentMediaId}
           and m.deleted_at is null
+          and coalesce(to_jsonb(m)->>'bucket', 'media') = 'expense-receipts'
           and not exists (select 1 from product_images i where i.url = m.url and i.deleted_at is null)
           and not exists (select 1 from brands b where b.logo_url = m.url and b.deleted_at is null)
           and not exists (select 1 from expenses e where e.attachment_media_id = m.id)
@@ -350,11 +351,15 @@ export async function updateExpense(
       }
 
       if (value.attachmentMediaId) {
+        const existingAttachmentId = nullableText(before.attachment_media_id);
+        const isUnchangedAttachment =
+          existingAttachmentId !== null && value.attachmentMediaId === existingAttachmentId;
         const mediaRows = (await tx`
           select m.id
           from store_media m
           where m.id = ${value.attachmentMediaId}
             and m.deleted_at is null
+            and (${isUnchangedAttachment}::boolean or coalesce(to_jsonb(m)->>'bucket', 'media') = 'expense-receipts')
             and not exists (select 1 from product_images i where i.url = m.url and i.deleted_at is null)
             and not exists (select 1 from brands b where b.logo_url = m.url and b.deleted_at is null)
             and not exists (select 1 from expenses e where e.attachment_media_id = m.id and e.id <> ${id.trim()})

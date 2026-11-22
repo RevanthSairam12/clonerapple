@@ -68,13 +68,12 @@ function warnFallback(context: string): void {
 }
 
 function checkMemoryFallback(
-  buckets: ReadonlyArray<DistributedRateLimitBucket>,
+  buckets: ReadonlyArray<NormalizedDistributedRateLimitBucket>,
   nowMs: number,
 ): DistributedRateLimitResult {
   let minRemaining = Number.POSITIVE_INFINITY;
   for (const bucket of buckets) {
-    const hash = hashBucketKey(bucket.scope, bucket.key);
-    const result = checkRateLimit(`dist:${bucket.scope}:${hash}`, {
+    const result = checkRateLimit(`dist:${bucket.scope}:${bucket.hash}`, {
       limit: bucket.limit,
       windowMs: bucket.windowMs,
       now: nowMs,
@@ -137,23 +136,19 @@ async function maybeOpportunisticPrune(sql: postgres.Sql, now: Date): Promise<vo
   }
 }
 
-function normalizeBuckets(
-  buckets: ReadonlyArray<DistributedRateLimitBucket>,
-): Array<{
+interface NormalizedDistributedRateLimitBucket {
   scope: string;
   hash: string;
   lockKey: string;
   limit: number;
   windowMs: number;
-}> {
+}
+
+function normalizeBuckets(
+  buckets: ReadonlyArray<DistributedRateLimitBucket>,
+): NormalizedDistributedRateLimitBucket[] {
   const seen = new Set<string>();
-  const normalized: Array<{
-    scope: string;
-    hash: string;
-    lockKey: string;
-    limit: number;
-    windowMs: number;
-  }> = [];
+  const normalized: NormalizedDistributedRateLimitBucket[] = [];
 
   for (const bucket of buckets) {
     const key = typeof bucket.key === 'string' ? bucket.key.trim() : '';
@@ -189,7 +184,7 @@ export async function checkDistributedRateLimits(
 
   const sql = await resolveSql(options.sql);
   if (!sql) {
-    return checkMemoryFallback(buckets, nowMs);
+    return checkMemoryFallback(normalized, nowMs);
   }
 
   const sortedLocks = [...normalized].sort((a, b) => a.lockKey.localeCompare(b.lockKey));
@@ -277,7 +272,7 @@ export async function checkDistributedRateLimits(
       throw new Error('Distributed rate limiter unavailable.');
     }
     warnFallback('check');
-    return checkMemoryFallback(buckets, nowMs);
+    return checkMemoryFallback(normalized, nowMs);
   }
 }
 

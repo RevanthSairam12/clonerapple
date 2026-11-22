@@ -27,6 +27,7 @@ const jiti = createJiti(import.meta.url, {
     '@/lib/platform/api-guard': { assertSameOrigin: () => null },
     '@/lib/storefront/maintenance-guard': { requireStorefrontOpen: async () => null },
     '@/lib/payu/rate-limit': { checkRateLimit: () => ({ allowed: true }) },
+    '@/lib/platform/distributed-rate-limit': { checkDistributedRateLimit: async () => ({ allowed: true, remaining: 10, retryAfterSec: 0, backend: 'memory' }) },
     '@/lib/store-admin/customer-settings': { readCustomerSettings: async () => ({ guest_checkout: 'on' }) },
     '@/lib/checkout/settings': { readCheckoutConfiguration: async () => ({ ok: true, settings: { payu_enabled: 'on' } }) },
     '@/lib/payu/config': {
@@ -122,3 +123,59 @@ for (const couponCode of [undefined, 'SAVE10']) {
     } finally { paymentConfigured = false; creationError = null; }
   });
 }
+
+test('real initiate limits each item to quantity 1 per order during a live sale', async () => {
+  let saleCreates = 0;
+  const saleJiti = createJiti(import.meta.url, {
+    moduleCache: false, alias: { '@': path.resolve('src') }, virtualModules: {
+      '@/lib/payu/db-pricing': pricing,
+      '@/lib/platform/db': { getSql: () => { throw new Error('Application DB forbidden in offline tests'); } },
+      '@/lib/storefront/sale-state': { readSaleState: async () => ({ live: true }) },
+      '@/lib/payu/orders': {
+        findActiveReservationForUser: async () => null,
+        getOrderByTxnid: async () => { throw new Error('Unexpected order read'); },
+        createOrder: async () => { saleCreates++; throw new Error('Unexpected order creation'); },
+      },
+      '@/lib/user-auth': { getUserSession: async () => ({ userId: 'owner' }) },
+      '@/lib/account/addresses': { getCustomerAddress: async () => null },
+      '@/lib/platform/api-guard': { assertSameOrigin: () => null },
+      '@/lib/storefront/maintenance-guard': { requireStorefrontOpen: async () => null },
+      '@/lib/payu/rate-limit': { checkRateLimit: () => ({ allowed: true }) },
+      '@/lib/platform/distributed-rate-limit': { checkDistributedRateLimit: async () => ({ allowed: true, remaining: 10, retryAfterSec: 0, backend: 'memory' }) },
+      '@/lib/store-admin/customer-settings': { readCustomerSettings: async () => ({ guest_checkout: 'on' }) },
+      '@/lib/checkout/settings': { readCheckoutConfiguration: async () => ({ ok: true, settings: { payu_enabled: 'on' } }) },
+      '@/lib/payu/config': {
+        checkPayUConfiguration: () => ({ ok: false, problem: { code: 'missing', message: 'Not configured', adminAction: 'Configure' } }),
+        getPayUConfig: () => ({}),
+        getPayUCallbackUrls: () => ({}),
+      },
+      '@/lib/payu/hash': { generateRequestHash: () => ({}) },
+      '@/lib/notifications/order-context': { queueOrderEvent: () => {} },
+      '@/lib/store-admin/subscribers': { subscribeToNewsletter: () => {} },
+      '@/lib/storefront/revalidate': { revalidateCatalog: () => {} },
+    },
+  });
+  const { POST: salePost } = await saleJiti.import(path.resolve('src/app/api/payu/initiate/route.ts'));
+  const postSale = async (items) => {
+    const res = await salePost(new NextRequest('http://localhost/api/payu/initiate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items, customer: contact, shippingAddress: address }),
+    }));
+    return { status: res.status, body: await res.json() };
+  };
+
+  const overQty = await postSale([{ id: 'charger', quantity: 2 }]);
+  assert.equal(overQty.status, 400);
+  assert.match(overQty.body.error, /Only 1 quantity per item/);
+
+  const duplicateLines = await postSale([{ id: 'charger', quantity: 1 }, { id: 'charger', quantity: 1 }]);
+  assert.equal(duplicateLines.status, 400);
+  assert.match(duplicateLines.body.error, /Only 1 quantity per item/);
+
+  // Distinct items each at quantity 1 pass the sale quantity check (reaching 503 unconfigured payment).
+  const distinct = await postSale([{ id: 'charger', quantity: 1 }, { id: 'cable', quantity: 1 }]);
+  assert.equal(distinct.status, 503);
+  assert.equal(distinct.body.code, 'payment_not_configured');
+  assert.equal(saleCreates, 0);
+});
