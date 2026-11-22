@@ -190,7 +190,13 @@ export async function readAvailabilityUsing(
       ? variants.find((variant) => variant.id === line.productId && variant.variantId === line.variantId)
       : products.find((product) => product.id === line.productId);
     const validScope = row?.inventory_mode === 'variant' ? Boolean(line.variantId) : !line.variantId;
-    const quantityAvailable = Boolean(validScope && selected && supportsQuantity(selected, requested.get(availabilityKey(line.productId, line.variantId)) ?? 0));
+    const requestedQty = requested.get(availabilityKey(line.productId, line.variantId)) ?? 0;
+    const quantityAvailable = Boolean(
+      validScope
+      && selected
+      && (!state.live || requestedQty <= 1)
+      && supportsQuantity(selected, requestedQty),
+    );
     if (selected) selected.quantityAvailable = quantityAvailable;
     else if (line.variantId) variants.push({ ...unavailable(line.productId, line.variantId), quantityAvailable: false });
   }

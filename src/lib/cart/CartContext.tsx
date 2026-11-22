@@ -256,7 +256,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       return reject({ status: 'invalid_quantity', message: 'Review your bag: up to 50 lines and 1–50 units per line.' });
     }
     setStockNotice(null);
-    const checked = await verifySelections(prospective.map(item => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity })), options?.signal);
+    const checked = await verifySelections(prospective.map(item => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity })), options?.signal, { allowOutOfStockOnSale: true });
     if (ticket !== quantityGeneration.current || currentItems.current !== source || options?.signal?.aborted) {
       return { status: 'stale', message: 'Your bag or selection changed. Please try again.' };
     }
@@ -286,10 +286,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setStockNotice(null);
     if (qty > item.quantity) {
       const valid = await verifyAvailabilityLines(source.map((entry) => ({ productId: entry.productId,
-        variantId: entry.variantId, quantity: entry.id === id ? qty : entry.quantity })));
+        variantId: entry.variantId, quantity: entry.id === id ? qty : entry.quantity })), { allowOutOfStockOnSale: true });
       if (ticket !== quantityGeneration.current || currentItems.current !== source) return;
       if (valid !== true) {
-        setStockNotice(valid === false ? 'Stock not available for the requested quantity.' : 'Could not verify stock. Please try again.');
+        setStockNotice(valid === false ? 'Out of stock for the requested quantity.' : 'Could not verify stock. Please try again.');
         return;
       }
     }

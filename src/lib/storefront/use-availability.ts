@@ -15,13 +15,26 @@ export interface UseAvailability extends AvailabilityState {
   refresh: () => Promise<AvailabilityState | null>;
 }
 
-/** Stock validation, not presentation: sale mode never bypasses this check. */
-export async function verifyAvailabilityLines(lines: AvailabilityLine[]): Promise<boolean | null> {
+/** Stock validation, not presentation: sale mode never bypasses this check unless allowOutOfStockOnSale is set for cart mutations. */
+export async function verifyAvailabilityLines(
+  lines: AvailabilityLine[],
+  options?: { allowOutOfStockOnSale?: boolean },
+): Promise<boolean | null> {
   if (!lines.length || lines.length > 50) return false;
   try {
     const response = await fetch(`/api/catalog/availability?lines=${encodeURIComponent(JSON.stringify(lines))}`, { cache: 'no-store' });
     if (!response.ok) return null;
     const body = await response.json() as PublicAvailabilityRead;
+    if (body.saleLive) {
+      const totals = new Map<string, number>();
+      for (const line of lines) {
+        const key = availabilityKey(line.productId, line.variantId);
+        const next = (totals.get(key) ?? 0) + line.quantity;
+        if (next > 1) return false;
+        totals.set(key, next);
+      }
+      if (options?.allowOutOfStockOnSale) return true;
+    }
     return lines.every((line) => {
       const row = (line.variantId ? body.variants : body.products)?.find((entry) =>
         availabilityKey(entry.id, entry.variantId) === availabilityKey(line.productId, line.variantId));

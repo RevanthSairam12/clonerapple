@@ -16,7 +16,7 @@ function load(relative, overrides = {}) {
     if (name === 'react') return {};
     if (name === '@/lib/platform/db') return { getSql: () => null };
     if (name === './sale-state' || name === '@/lib/storefront/sale-state') return {
-      readSaleStateUsing: async () => ({ live: false, databaseNow: '2026-11-02T00:00:00Z' }),
+      readSaleStateUsing: async () => ({ live: Boolean(overrides.saleLive), databaseNow: '2026-11-02T00:00:00Z' }),
     };
     if (name.startsWith('@/') || name.startsWith('.')) {
       const target = name.startsWith('@/') ? path.join(root, 'src', name.slice(2)) : path.resolve(path.dirname(filename), name);
@@ -153,6 +153,21 @@ test('availability checks exact siblings, sums duplicate stock-key demand and le
   assert.match(queries[1], /requires_compatibility/);
 });
 
+test('sale mode caps readAvailabilityUsing at quantity 1 per item', async () => {
+  const { sql } = fakeSql([
+    { id: 'p', inventory_mode: 'product', is_active: true, deleted_at: null, in_stock: true, track_inventory: true, on_hand: 10, reserved: 0 },
+    { id: 'other', inventory_mode: 'product', is_active: true, deleted_at: null, in_stock: true, track_inventory: true, on_hand: 10, reserved: 0 },
+  ], []);
+  const saleAvail = load('src/lib/storefront/availability-server.ts', { saleLive: true });
+  const result = await saleAvail.readAvailabilityUsing(sql, ['p', 'other'], [
+    { productId: 'p', quantity: 2 },
+    { productId: 'other', quantity: 1 },
+  ]);
+  assert.equal(result.saleLive, true);
+  assert.equal(result.products.find(row => row.id === 'p').quantityAvailable, false);
+  assert.equal(result.products.find(row => row.id === 'other').quantityAvailable, true);
+});
+
 test('click verification never treats sale presentation or failed responses as stock permission', async () => {
   let requested;
   const hook = load('src/lib/storefront/use-availability.ts', { fetch: async (url) => {
@@ -160,7 +175,13 @@ test('click verification never treats sale presentation or failed responses as s
     return { ok: true, json: async () => ({ saleLive: true, products: [], variants: [{ id: 'p', variantId: 'v1', inStock: false, quantityAvailable: false }] }) };
   } });
   assert.equal(await hook.verifyAvailabilityLines([{ productId: 'p', variantId: 'v1', quantity: 3 }]), false);
+  assert.equal(await hook.verifyAvailabilityLines([{ productId: 'p', variantId: 'v1', quantity: 1 }], { allowOutOfStockOnSale: true }), true);
+  assert.equal(await hook.verifyAvailabilityLines([{ productId: 'p', variantId: 'v1', quantity: 3 }], { allowOutOfStockOnSale: true }), false);
   assert.match(decodeURIComponent(requested), /"variantId":"v1","quantity":3/);
+  const normalHook = load('src/lib/storefront/use-availability.ts', { fetch: async () => ({
+    ok: true, json: async () => ({ saleLive: false, products: [], variants: [{ id: 'p', variantId: 'v1', inStock: false, quantityAvailable: false }] }),
+  }) });
+  assert.equal(await normalHook.verifyAvailabilityLines([{ productId: 'p', variantId: 'v1', quantity: 3 }], { allowOutOfStockOnSale: true }), false);
   const failed = load('src/lib/storefront/use-availability.ts', { fetch: async () => { throw new Error('offline'); } });
   assert.equal(await failed.verifyAvailabilityLines([{ productId: 'p', quantity: 1 }]), null);
 });

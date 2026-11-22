@@ -302,6 +302,18 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       setErrorMessage(`Remove ${unavailableNames || 'the unavailable item'} from your order before paying.`);
       return;
     }
+    if (saleLive) {
+      const saleTotals = new Map<string, number>();
+      for (const item of items) {
+        const key = JSON.stringify([baseProductId(item).trim().toLowerCase(), item.variantId?.trim() || null]);
+        const next = (saleTotals.get(key) ?? 0) + item.quantity;
+        if (next > 1) {
+          setErrorMessage('Only 1 quantity per item can be purchased per order during a sale.');
+          return;
+        }
+        saleTotals.set(key, next);
+      }
+    }
 
     const contactValidation = validateCheckoutContact(contactForCheckout);
     const addressValidation = validateIndianAddress(addressForCheckout);
@@ -322,7 +334,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       const stockValid = await verifyAvailabilityLines(items.map((item) => ({ productId: baseProductId(item), variantId: item.variantId, quantity: item.quantity })));
       if (stockValid !== true) {
         setIsSubmitting(false);
-        setErrorMessage(stockValid === false ? 'Stock not available for the selected quantity. Review your bag.' : 'Could not verify stock. Please try again.');
+        setErrorMessage(stockValid === false ? 'Out of stock for the selected quantity. Review your bag.' : 'Could not verify stock. Please try again.');
         return;
       }
       // Re-check the code against the cart as it stands right now. If it no

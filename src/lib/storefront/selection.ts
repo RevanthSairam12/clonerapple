@@ -2,7 +2,7 @@
 
 import { priceCartLines, type PriceRef } from '@/lib/checkout/client-quote';
 import { verifyAvailabilityLines } from './use-availability';
-import type { AvailabilityLine } from './availability-rules';
+import { availabilityKey, type AvailabilityLine } from './availability-rules';
 
 export interface SelectionPrice {
   price: number;
@@ -22,7 +22,11 @@ export function selectionPrice(unitPaise: number, regularPaise?: number | null):
 }
 
 /** Fresh advisory prices + quantity checks. Only transactional checkout reserves units. */
-export async function verifySelections(lines: AvailabilityLine[], signal?: AbortSignal): Promise<SelectionResult> {
+export async function verifySelections(
+  lines: AvailabilityLine[],
+  signal?: AbortSignal,
+  options?: { allowOutOfStockOnSale?: boolean },
+): Promise<SelectionResult> {
   if (signal?.aborted) return { status: 'stale', message: 'Selection changed. Please try again.' };
   if (!lines.length || lines.length > 50 || lines.some(line => !line.productId ||
     (line.variantId !== undefined && (typeof line.variantId !== 'string' || !line.variantId.trim() || line.variantId.length > 256)) ||
@@ -36,10 +40,23 @@ export async function verifySelections(lines: AvailabilityLine[], signal?: Abort
     if (body.source !== 'db' || typeof body.saleLive !== 'boolean' || !Array.isArray(body.products)) throw new Error('Invalid catalogue');
     const priced = priceCartLines(lines.map(line => ({ ...line, id: line.productId })), body.products as PriceRef[], body.saleLive);
     if (priced.some(line => !line.available)) return { status: 'unavailable', message: 'This selection is no longer available. Choose options again.' };
-    const valid = await verifyAvailabilityLines(lines);
-    if (signal?.aborted) return { status: 'stale', message: 'Selection changed. Please try again.' };
-    if (valid !== true) return { status: valid === false ? 'unavailable' : 'verification_failed',
-      message: valid === false ? 'Stock not available for the requested quantity.' : 'Could not verify stock. Please try again.' };
+    if (body.saleLive) {
+      const totals = new Map<string, number>();
+      for (const line of lines) {
+        const key = availabilityKey(line.productId, line.variantId);
+        const next = (totals.get(key) ?? 0) + line.quantity;
+        if (next > 1) {
+          return { status: 'unavailable', message: 'Only 1 quantity per item can be purchased per order during a sale.' };
+        }
+        totals.set(key, next);
+      }
+    }
+    if (!(options?.allowOutOfStockOnSale && body.saleLive)) {
+      const valid = await verifyAvailabilityLines(lines);
+      if (signal?.aborted) return { status: 'stale', message: 'Selection changed. Please try again.' };
+      if (valid !== true) return { status: valid === false ? 'unavailable' : 'verification_failed',
+        message: valid === false ? 'Out of stock for the requested quantity.' : 'Could not verify stock. Please try again.' };
+    }
     return { status: 'ready', prices: priced.map(line => selectionPrice(line.unitPaise, line.regularPrice ? Math.round(line.regularPrice * 100) : null)) };
   } catch {
     return { status: signal?.aborted ? 'stale' : 'verification_failed', message: signal?.aborted ? 'Selection changed. Please try again.' : 'Could not verify current pricing. Please try again.' };

@@ -44,7 +44,7 @@ export default async function CheckoutPage({ searchParams }: Props) {
   }
 
   const productId = rawProductId;
-  const parsedQty = parseCheckoutQuantity(qty);
+  const parsedQty = saleLive ? 1 : parseCheckoutQuantity(qty);
   const requestedProduct = productId ? products.find((product) => product.id.toLowerCase() === productId.trim().toLowerCase()) ?? null : null;
   // A productId in the URL that resolves to nothing is an unavailable state,
   // but only if the customer has nothing in their bag. The live bag is read on

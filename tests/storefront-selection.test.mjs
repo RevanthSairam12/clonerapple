@@ -157,3 +157,78 @@ test('fresh summary has no-store and no fallback on authoritative failure; legac
   assert.equal(success.body.saleLive, true);
   assert.equal(success.headers['Cache-Control'], 'no-store');
 });
+
+function cartHarnessWithFixture(fixture) {
+  const slots = []; let cursor = 0;
+  const react = { createContext: () => ({ Provider: 'provider' }), useContext() {}, useEffect() {},
+    useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
+      return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }]; },
+    useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
+    useMemo: fn => fn(), useCallback: fn => fn,
+  };
+  const helper = selection(fixture);
+  const avail = load('src/lib/storefront/use-availability.ts', { react: {} }, { fetch: fixture.fetch });
+  const { CartProvider } = load('src/lib/cart/CartContext.tsx', { react,
+    '@/lib/storefront/selection': helper,
+    '@/lib/storefront/use-availability': avail,
+  });
+  return () => { cursor = 0; return CartProvider({ children: null }).props.value; };
+}
+
+test('sale mode lets out-of-stock items be added to cart at qty 1, caps each item at 1, and blocks at checkout; normal mode still allows >1 in-stock and blocks out-of-stock', async () => {
+  const saleOut = fetchFixture({ saleLive: true, available: false, products: [{ ...product, inStock: false }, { ...product, id: 'other', inStock: false }] });
+  const saleHelper = selection(saleOut);
+
+  // Sale Mode: cart addition allows out-of-stock active products at qty 1 without showing an error.
+  const saleAddCheck = await saleHelper.verifySelections([line], undefined, { allowOutOfStockOnSale: true });
+  assert.equal(saleAddCheck.status, 'ready');
+  assert.equal(saleAddCheck.prices[0].price, 10);
+
+  // Sale Mode: checkout / Buy Now without allowOutOfStockOnSale still rejects with Out of stock.
+  const saleCheckoutCheck = await saleHelper.verifySelections([line]);
+  assert.equal(saleCheckoutCheck.status, 'unavailable');
+  assert.equal(saleCheckoutCheck.message, 'Out of stock for the requested quantity.');
+
+  // Sale Mode: unknown or missing variant still fails even with allowOutOfStockOnSale.
+  const variantOut = fetchFixture({
+    saleLive: true,
+    available: false,
+    products: [{ ...product, inventoryMode: 'variant', purchasableVariants: [{ id: 'v', pricePaise: 1200, inStock: false }] }],
+  });
+  assert.equal((await selection(variantOut).verifySelections([line], undefined, { allowOutOfStockOnSale: true })).status, 'unavailable');
+  assert.equal((await selection(variantOut).verifySelections([{ ...line, variantId: 'v' }], undefined, { allowOutOfStockOnSale: true })).status, 'ready');
+
+  // Normal Mode: allowOutOfStockOnSale does NOT bypass stock validation.
+  const normalOut = fetchFixture({ saleLive: false, available: false, products: [{ ...product, inStock: false }] });
+  assert.equal((await selection(normalOut).verifySelections([line], undefined, { allowOutOfStockOnSale: true })).status, 'unavailable');
+
+  // Normal Mode: in-stock item allows quantity > 1.
+  const normalIn = fetchFixture({ saleLive: false, available: true, products: [{ ...product, inStock: true }] });
+  const renderNormalInCart = cartHarnessWithFixture(normalIn);
+  assert.equal((await renderNormalInCart().addItem({ ...input, quantity: 2 })).status, 'added');
+  assert.equal(renderNormalInCart().items[0].quantity, 2);
+
+  // End-to-end CartProvider.addItem in Sale Mode: qty 1 succeeds, second add of same item (qty 2) is rejected, different item at qty 1 succeeds.
+  const renderSaleCart = cartHarnessWithFixture(saleOut);
+  const saleResult = await renderSaleCart().addItem(input);
+  assert.equal(saleResult.status, 'added');
+  assert.equal(renderSaleCart().items.length, 1);
+  assert.equal(renderSaleCart().items[0].quantity, 1);
+  assert.equal(renderSaleCart().stockNotice, null);
+
+  const duplicateSaleResult = await renderSaleCart().addItem(input);
+  assert.equal(duplicateSaleResult.status, 'unavailable');
+  assert.match(duplicateSaleResult.message, /Only 1 quantity per item/);
+  assert.equal(renderSaleCart().items.length, 1);
+  assert.equal(renderSaleCart().items[0].quantity, 1);
+
+  const otherSaleResult = await renderSaleCart().addItem({ ...input, productId: 'other' });
+  assert.equal(otherSaleResult.status, 'added');
+  assert.equal(renderSaleCart().items.length, 2);
+
+  const renderNormalCart = cartHarnessWithFixture(normalOut);
+  const normalResult = await renderNormalCart().addItem(input);
+  assert.equal(normalResult.status, 'unavailable');
+  assert.equal(renderNormalCart().items.length, 0);
+  assert.ok(renderNormalCart().stockNotice);
+});
