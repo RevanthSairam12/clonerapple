@@ -15,6 +15,7 @@ import {
   decideCallbackOutcome,
   failureReleaseAt,
   failureReleaseDecision,
+  isInitiatedOnlyVerification,
   nextReconcileAt,
   nextReconcileDelaySeconds,
   parseReservationPolicy,
@@ -80,6 +81,38 @@ test('only a verified capture is a paid payment', () => {
   assert.equal(classifyVerification({ verified: false, error: 'network' }), 'unknown');
   assert.equal(classifyVerification(null), 'unknown');
   assert.equal(classifyVerification(undefined), 'unknown');
+});
+
+test('PayU initiated-only shells with no payment mode are abandoned rather than real pending', () => {
+  assert.equal(
+    isInitiatedOnlyVerification({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: '-' }),
+    true,
+  );
+  assert.equal(
+    isInitiatedOnlyVerification({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: null }),
+    true,
+  );
+  assert.equal(
+    classifyVerification({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: '-' }),
+    'abandoned',
+  );
+  assert.equal(
+    classifyVerification({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: null }),
+    'abandoned',
+  );
+  // Real payment instrument or active bank/UPI stage stays pending
+  assert.equal(
+    isInitiatedOnlyVerification({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: 'UPI' }),
+    false,
+  );
+  assert.equal(
+    classifyVerification({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: 'UPI' }),
+    'pending',
+  );
+  assert.equal(
+    classifyVerification({ verified: false, status: 'pending', unmappedstatus: 'in progress', mode: 'UPI' }),
+    'pending',
+  );
 });
 
 test('a success claim the server cannot verify stays processing, never failed', () => {

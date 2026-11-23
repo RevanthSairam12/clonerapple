@@ -331,7 +331,7 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
     setIsSubmitting(true);
 
     try {
-      const stockValid = await verifyAvailabilityLines(items.map((item) => ({ productId: baseProductId(item), variantId: item.variantId, quantity: item.quantity })));
+      const stockValid = await verifyAvailabilityLines(items.map((item) => ({ productId: baseProductId(item), variantId: item.variantId || undefined, quantity: item.quantity })));
       if (stockValid !== true) {
         setIsSubmitting(false);
         setErrorMessage(stockValid === false ? 'Out of stock for the selected quantity. Review your bag.' : 'Could not verify stock. Please try again.');

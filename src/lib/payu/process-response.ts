@@ -20,6 +20,7 @@
 import type postgres from 'postgres';
 
 import {
+  classifyVerification,
   decideCallbackOutcome,
   parseReservationPolicy,
   type ReservationPolicy,
@@ -93,6 +94,10 @@ export interface ProcessResult {
   /** Absolute URL on the validated site base; null when the base is unusable. */
   redirectUrl: string | null;
   reason?: string;
+  /** True when PayU returned a transaction record for this txnid (even if initiated/unpaid). */
+  gatewaySeen?: boolean;
+  /** True when PayU reports a real in-flight pending payment beyond mere checkout load. */
+  inFlightBankPayment?: boolean;
 }
 
 export type CallbackSource = Exclude<PaymentEventSource, 'admin' | 'customer'>;
@@ -641,6 +646,48 @@ export async function verifyExistingOrderWithPayU(
     return rejection(order, key, mismatch.code);
   }
 
+  const verificationUnavailable = !verification
+    || ['UNKNOWN', 'NETWORK_ERROR'].includes(String(verification.status).toUpperCase());
+  const gatewayNotFound = Boolean(
+    verification && !verification.verified && (status === 'not_found' || unmapped === 'no_record'),
+  );
+  const gatewaySeen = !verificationUnavailable && !gatewayNotFound;
+  const inFlightBankPayment = Boolean(
+    verification && !verification.verified && classifyVerification(verification) === 'pending',
+  );
+
+  // When a customer retries while their CREATED reservation has zero PayU
+  // record yet, keep the active CREATED hold without promoting it to
+  // PROCESSING so safe idempotent resume remains possible.
+  if (
+    source === 'customer'
+    && order.status === 'CREATED'
+    && gatewayNotFound
+    && order.reservationState === 'ACTIVE'
+  ) {
+    await recordPaymentEvent({
+      orderId: order.id,
+      txnid: key,
+      source,
+      payuStatus,
+      outcome: 'pending',
+      reason: 'no gateway record yet',
+      sql: options.sql,
+    });
+    return {
+      ok: true,
+      rejected: false,
+      retryable: false,
+      status: 'CREATED',
+      txnid: key,
+      order,
+      redirectUrl: buildPayURedirectUrl(pageForStatus('CREATED', key))?.toString() ?? null,
+      reason: 'no gateway record yet',
+      gatewaySeen: false,
+      inFlightBankPayment: false,
+    };
+  }
+
   const result = await settleOrder({
     order,
     source,
@@ -653,9 +700,12 @@ export async function verifyExistingOrderWithPayU(
     mode: verification?.mode ?? null,
     options,
   });
-  const verificationUnavailable = !verification
-    || ['UNKNOWN', 'NETWORK_ERROR'].includes(String(verification.status).toUpperCase());
-  return { ...result, retryable: result.status !== 'PAID' && verificationUnavailable };
+  return {
+    ...result,
+    retryable: result.status !== 'PAID' && verificationUnavailable,
+    gatewaySeen,
+    inFlightBankPayment,
+  };
 }
 
 /**

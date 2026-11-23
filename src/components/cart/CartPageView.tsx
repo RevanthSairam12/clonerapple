@@ -78,7 +78,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
     }
     if (checkingStock.current) return;
     checkingStock.current = true;
-    const valid = await verifyAvailabilityLines(items.map((item) => ({ productId: item.productId, variantId: item.variantId, quantity: item.quantity })));
+    const valid = await verifyAvailabilityLines(items.map((item) => ({ productId: item.productId, variantId: item.variantId || undefined, quantity: item.quantity })));
     checkingStock.current = false;
     if (valid !== true) {
       setCheckoutNotice(valid === false ? 'Out of stock for the selected quantity. Review your bag.' : 'Could not verify stock. Please try again.');

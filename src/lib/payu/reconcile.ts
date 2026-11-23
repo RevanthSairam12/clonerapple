@@ -289,6 +289,26 @@ export async function reconcileOrderUsing(
   };
   if (mismatch) {
     await reject(mismatch.code, mismatch.detail);
+    if (
+      order.status !== 'PAID'
+      && order.reservationState === 'ACTIVE'
+      && order.reservationExpiresAt
+      && order.reservationExpiresAt.getTime() <= now.getTime()
+    ) {
+      const release = await releaseOrderReservation(
+        {
+          txnid: order.txnid,
+          state: 'EXPIRED',
+          reason: `Payment verification rejected (${mismatch.code}) after reservation expired; stock released for review.`,
+          cancelOrder: false,
+        },
+        sql,
+      );
+      if (release.stockReleased) {
+        summary.released += 1;
+        if (sideEffects) revalidateCatalog();
+      }
+    }
     return;
   }
   const outcome: PaymentOutcome = classifyVerification(verification);
@@ -501,11 +521,13 @@ export async function reconcileOrderUsing(
   }
 
   const isProcessing = order.status === 'PROCESSING';
+  const isRecovering = isProcessing || (order.status === 'PENDING' && Boolean(order.processingDeadline));
   const recoveryWindowClosed = unresolvedWindowClosed(order.processingDeadline, now);
 
   if (outcome === 'abandoned') {
-    // No gateway record. For a flash-sale row this is the abandoned checkout
-    // case: cancel and return the claim. For a legacy row the owner's
+    // No gateway record (or initiated-only shell with no payment attempt).
+    // For a flash-sale row this is the abandoned checkout case: cancel and
+    // return the claim once its hold expires. For a legacy row the owner's
     // auto-cancel setting still decides.
     if (order.reservationState === 'ACTIVE') {
       const release = await releaseOrderReservation(
@@ -526,28 +548,30 @@ export async function reconcileOrderUsing(
             orderStatus: 'CANCELLED',
           });
         }
-      } else if (!release.order) {
+      } else if (!release.order || release.outcome === 'not-due') {
         summary.unchanged += 1;
       }
       await recordReconcileResult(
         {
           txnid: order.txnid,
-          nextAt: null,
+          nextAt: release.outcome === 'not-due' ? order.reservationExpiresAt : null,
           consecutiveFailures: 0,
         },
         sql,
       );
-      await recordPaymentEvent({
-        orderId: order.id,
-        txnid: order.txnid,
-        source: 'reconcile',
-        payuStatus: verificationStatus(verification),
-        outcome: release.statusChanged ? 'cancelled' : 'unchanged',
-        reason: release.statusChanged
-          ? 'the checkout window closed before payment was confirmed'
-          : `No change; order is ${release.order?.status ?? order.status}.`,
-        sql,
-      });
+      if (release.outcome !== 'not-due') {
+        await recordPaymentEvent({
+          orderId: order.id,
+          txnid: order.txnid,
+          source: 'reconcile',
+          payuStatus: verificationStatus(verification),
+          outcome: release.statusChanged ? 'cancelled' : 'unchanged',
+          reason: release.statusChanged
+            ? 'the checkout window closed before payment was confirmed'
+            : `No change; order is ${release.order?.status ?? order.status}.`,
+          sql,
+        });
+      }
       return;
     }
 
@@ -623,7 +647,7 @@ export async function reconcileOrderUsing(
 
   // An unresolved or pending outcome. The safe recovery window is bounded: it
   // may hold the claim, then release and flag rather than keep stock forever.
-  if (isProcessing && recoveryWindowClosed) {
+  if (isRecovering && recoveryWindowClosed) {
     const release = await releaseOrderReservation(
       {
         txnid: order.txnid,

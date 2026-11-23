@@ -74,15 +74,34 @@ export interface VerificationLike {
   verified: boolean;
   status?: string | null;
   unmappedstatus?: string | null;
+  mode?: string | null;
   error?: string | null;
+}
+
+/**
+ * PayU creates a transaction shell as soon as its Hosted Checkout loads with
+ * `status=pending`, `unmappedstatus=initiated`, and `mode='-'` (or empty) before
+ * any bank/UPI/card attempt occurs. Without an actual payment mode or active
+ * gateway stage (`in progress` / `auth` / `pending`), treat it as abandoned
+ * once its reservation expires rather than holding inventory for 70 minutes.
+ */
+export function isInitiatedOnlyVerification(
+  result: VerificationLike | null | undefined,
+): boolean {
+  if (!result || result.verified) return false;
+  const status = String(result.status ?? '').trim().toLowerCase();
+  const unmapped = String(result.unmappedstatus ?? '').trim().toLowerCase();
+  const mode = String(result.mode ?? '').trim();
+  return status === 'pending' && unmapped === 'initiated' && (mode === '' || mode === '-');
 }
 
 /**
  * Classify the trusted server-to-server verification result.
  *
  * Only a verified capture is `paid`. A `failure` from PayU's verify API is a
- * definitive failed payment. `NOT_FOUND` means PayU has no transaction for
- * that id, which is the abandoned-checkout case (never a client redirect).
+ * definitive failed payment. `NOT_FOUND` (or an initiated-only shell with no
+ * payment mode) means no payment attempt reached settlement, which is the
+ * abandoned-checkout case (never a client redirect).
  * Everything else — network error, HTTP error, parse error, pending, a
  * success claim that the amount check rejected — is `unknown` and must keep
  * the order in processing rather than fail it.
@@ -97,6 +116,7 @@ export function classifyVerification(result: VerificationLike | null | undefined
   if (status === 'not_found' || unmapped === 'no_record') return 'abandoned';
   if (isExplicitCancellation(status, unmapped)) return 'cancelled';
   if (status === 'failure' || status === 'failed') return 'failed';
+  if (isInitiatedOnlyVerification(result)) return 'abandoned';
   if (status === 'pending' || unmapped === 'pending' || unmapped === 'pending_payment') {
     return 'pending';
   }

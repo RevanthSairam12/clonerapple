@@ -42,14 +42,15 @@ after(() => {
 
 // Deliberately narrow SQL double: this suite tests dependency routing, not SQL
 // correctness. The opt-in integration suite runs real locks/indexes/ledgers.
-function fixture({ conflict = false, lateReview = false, activeReservation = false } = {}) {
+function fixture({ conflict = false, lateReview = false, activeReservation = false, status = 'CREATED', expiresAt = null } = {}) {
+  let stockRestored = 0;
   let row = {
-    id: 'ord_fixture', txnid: 'FIXTURE', status: 'CREATED', amount: '500.00',
+    id: 'ord_fixture', txnid: 'FIXTURE', status, amount: '500.00',
     total_paise: 50000, currency: 'INR', items: [],
     user_id: null, customer_name: '', customer_email: '', customer_phone: '',
     payu_mihpayid: null, payu_mode: null, payu_raw_response: null,
     reservation_state: activeReservation ? 'ACTIVE' : lateReview ? 'RELEASED' : 'NONE',
-    reservation_expires_at: activeReservation ? new Date(Date.now() + 600_000) : null,
+    reservation_expires_at: activeReservation ? (expiresAt ?? new Date(Date.now() + 600_000)) : null,
     processing_deadline: null,
     created_at: new Date(), updated_at: new Date(), paid_at: null,
   };
@@ -65,6 +66,14 @@ function fixture({ conflict = false, lateReview = false, activeReservation = fal
     if (text.startsWith('select * from orders where payu_mihpayid')) return [];
     if (text.startsWith('select * from orders where id')) return [{ ...row }];
     if (text.startsWith('select id from orders where id')) return [{ id: row.id }];
+    if (text.startsWith('update orders set reservation_state =')) {
+      row.reservation_state = values[0];
+      row.reservation_released_reason = values[1];
+      row.processing_deadline = null;
+      row.next_reconcile_at = null;
+      row.status = values[2];
+      return [];
+    }
     if (text.startsWith('update orders set status')) {
       if (conflict) throw Object.assign(new Error('duplicate mihpayid'), { code: '23505', constraint_name: 'idx_orders_mihpayid_unique' });
       row.status = values[0];
@@ -83,7 +92,14 @@ function fixture({ conflict = false, lateReview = false, activeReservation = fal
     if (text.includes('to_regclass')) return [{ present: false }];
     if (text.includes('from store_settings')) return [{ key: 'auto_confirm', value: 'off' }, { key: 'default_fulfilment_status', value: 'PENDING' }];
     if (text.includes('from stock_movements')) {
+      if (text.includes('coalesce(sum(case when reason=\'sale\'')) {
+        return activeReservation ? [{ product_id: 'p_expired', variant_id: null, claimed: 1, released: 0 }] : [];
+      }
       return lateReview ? [{ product_id: 'gone-product', released: 1, reclaimed: 0, quantity: 1 }] : [];
+    }
+    if (text.includes('with restored as')) {
+      stockRestored += 1;
+      return [{ id: 'stk_1' }];
     }
     if (text.includes('from stock') || text.includes('from order_items')) return [];
     if (text.includes('refund_obligations')) {
@@ -97,7 +113,7 @@ function fixture({ conflict = false, lateReview = false, activeReservation = fal
     try { return await fn(sql); } catch (error) { row = snapshot; throw error; }
   };
   sql.json = (value) => value;
-  return { sql, events, queries, row: () => row };
+  return { sql, events, queries, row: () => row, stockRestored: () => stockRestored };
 }
 
 const policy = { reservationSeconds: 600, failureGraceSeconds: 0, unresolvedMinutes: 60 };
@@ -431,4 +447,78 @@ test('missing site address still settles safely without a Location header', asyn
     assert.equal(response.headers.get('location'), null);
     assert.equal(f.row().status, 'PAID');
   } finally { process.env.APP_BASE_URL = base; }
+});
+
+test('PROCESSING order never downgrades back to PENDING on pending/initiated verification', async () => {
+  const f = fixture({ status: 'PROCESSING', activeReservation: true });
+  const result = await verifyExistingOrderWithPayU(
+    'FIXTURE',
+    'customer',
+    options(f, verifier({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: '-' })),
+  );
+  assert.equal(result.status, 'PROCESSING');
+  assert.equal(f.row().status, 'PROCESSING');
+  assert.equal(result.gatewaySeen, true);
+  assert.equal(result.inFlightBankPayment, false);
+});
+
+test('customer check on CREATED active order with NOT_FOUND keeps CREATED and exposes gatewaySeen=false', async () => {
+  const f = fixture({ status: 'CREATED', activeReservation: true });
+  const result = await verifyExistingOrderWithPayU(
+    'FIXTURE',
+    'customer',
+    options(f, verifier({ verified: false, status: 'NOT_FOUND', unmappedstatus: 'NO_RECORD', mihpayid: null, mode: null, amount: null, amountPaise: null })),
+  );
+  assert.equal(result.status, 'CREATED');
+  assert.equal(f.row().status, 'CREATED');
+  assert.equal(result.gatewaySeen, false);
+  assert.equal(result.inFlightBankPayment, false);
+});
+
+test('in-flight UPI/bank pending sets inFlightBankPayment=true whereas initiated shell sets false', async () => {
+  const f1 = fixture({ status: 'CREATED', activeReservation: true });
+  const initiated = await verifyExistingOrderWithPayU(
+    'FIXTURE',
+    'customer',
+    options(f1, verifier({ verified: false, status: 'pending', unmappedstatus: 'initiated', mode: '-' })),
+  );
+  assert.equal(initiated.gatewaySeen, true);
+  assert.equal(initiated.inFlightBankPayment, false);
+
+  const f2 = fixture({ status: 'CREATED', activeReservation: true });
+  const inProgress = await verifyExistingOrderWithPayU(
+    'FIXTURE',
+    'customer',
+    options(f2, verifier({ verified: false, status: 'pending', unmappedstatus: 'in progress', mode: 'UPI' })),
+  );
+  assert.equal(inProgress.gatewaySeen, true);
+  assert.equal(inProgress.inFlightBankPayment, true);
+});
+
+test('reconcile releases expired ACTIVE reservation even when verification fails with gateway_identity_mismatch', async () => {
+  const f = fixture({
+    status: 'PENDING',
+    activeReservation: true,
+    expiresAt: new Date('2026-01-01T11:50:00Z'),
+  });
+  f.row().payu_mihpayid = 'original-gateway-id';
+  const summary = { flagged: 0, unchanged: 0, released: 0 };
+  await reconcileOrderUsing(
+    f.sql,
+    await getOrderByTxnid('FIXTURE', f.sql),
+    {
+      policy,
+      autoCancelHours: 0,
+      verifier: verifier({ verified: false, status: 'failure', unmappedstatus: 'bounced', mihpayid: 'new-gateway-id', mode: '-' }),
+      now: new Date('2026-01-01T12:00:00Z'),
+      sideEffects: false,
+      summary,
+    },
+  );
+  assert.equal(f.row().payment_review_required, true);
+  assert.equal(f.row().status, 'PENDING');
+  assert.equal(f.row().reservation_state, 'EXPIRED');
+  assert.equal(f.stockRestored(), 1);
+  assert.equal(summary.released, 1);
+  assert.equal(summary.flagged, 1);
 });

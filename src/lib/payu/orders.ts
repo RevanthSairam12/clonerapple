@@ -258,12 +258,12 @@ export function buildOrderItemLines(
       currency,
       ...(item.isFreeGift
         ? {
-            isFreeGift: true,
-            freeGiftRuleId: item.freeGiftRuleId ?? null,
-            freeGiftBadge: item.freeGiftBadge ?? 'FREE',
-            freeGiftSource: item.freeGiftSource ?? 'threshold',
-            referencePricePaise: item.referencePricePaise ?? null,
-          }
+          isFreeGift: true,
+          freeGiftRuleId: item.freeGiftRuleId ?? null,
+          freeGiftBadge: item.freeGiftBadge ?? 'FREE',
+          freeGiftSource: item.freeGiftSource ?? 'threshold',
+          referencePricePaise: item.referencePricePaise ?? null,
+        }
         : {}),
     };
   });
@@ -463,6 +463,11 @@ export interface CreateOrderParams {
    * no reservation: stock is still claimed, but no timed hold is recorded.
    */
   reservationSeconds?: number;
+  /**
+   * Force superseding any existing open reservation and allocating a fresh
+   * order/txnid (for example when PayU already saw the previous txnid).
+   */
+  forceNewOrder?: boolean;
   /** Explicit customer acknowledgement to proceed without an unavailable threshold gift. */
   confirmWithoutGift?: boolean;
   shippingAddress: {
@@ -716,7 +721,7 @@ export async function releaseExpiredReservationsForProducts(
   options: { alreadyLocked?: boolean } = {},
 ): Promise<LazilyExpiredReservation[]> {
   const ids = [...new Set(productIds.filter(Boolean))];
-  const requested = (identities || ids.map(productId => ({productId,variantId:null}))).map(line => ({product_id:line.productId,variant_id:line.variantId || null}));
+  const requested = (identities || ids.map(productId => ({ productId, variantId: null }))).map(line => ({ product_id: line.productId, variant_id: line.variantId || null }));
   if (ids.length === 0) return [];
 
   const rows = await tx<Array<{ id: string; txnid: string; status: string; coupon_id: string | null }>>`
@@ -811,12 +816,12 @@ export async function createOrderUsing(
   }
   const lockIds = web
     ? web.cartItems.map((item) => {
-        const baseId = normalizeCartLineId(item?.id).baseId;
-        if (!baseId || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 50) {
-          throw new Error('Invalid cart item or quantity.');
-        }
-        return baseId;
-      })
+      const baseId = normalizeCartLineId(item?.id).baseId;
+      if (!baseId || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 50) {
+        throw new Error('Invalid cart item or quantity.');
+      }
+      return baseId;
+    })
     : buildOrderItemLines(legacy!.items).map((line) => line.productId);
   const reservationSeconds = Math.max(0, Math.trunc(params.reservationSeconds ?? 0));
 
@@ -878,10 +883,10 @@ export async function createOrderUsing(
     const hasFreeGiftSchema = await freeGiftTablesPresent(tx);
     const candidateGifts = hasFreeGiftSchema
       ? await resolveCandidateGiftStockIdentitiesInTx(tx, {
-          lines: eligibleSubtotalLines,
-          couponCode: params.coupon?.code ?? null,
-          confirmWithoutGift: params.confirmWithoutGift === true,
-        })
+        lines: eligibleSubtotalLines,
+        couponCode: params.coupon?.code ?? null,
+        confirmWithoutGift: params.confirmWithoutGift === true,
+      })
       : { identities: [], thresholdRuleIds: [] };
 
     const requestedIdentities = [
@@ -921,7 +926,7 @@ export async function createOrderUsing(
         await tx`select pg_advisory_xact_lock(513033, hashtext(${lockKey}))`;
       }
     }
-    const affectedOrders = await tx<Array<{id:string}>>`
+    const affectedOrders = await tx<Array<{ id: string }>>`
       select o.id from orders o where o.reservation_state='ACTIVE'
         and (
           (
@@ -950,9 +955,9 @@ export async function createOrderUsing(
           )
         )
       order by o.id for update of o`;
-    const affectedLines = affectedOrders.length ? await tx<Array<{product_id:string;variant_id:string|null}>>`
-      select distinct product_id,variant_id from order_items where order_id=any(${affectedOrders.map(row=>row.id)}::text[])` : [];
-    const initialStockRows = await lockStockIdentities(tx,[...requestedIdentities,...affectedLines.map(row=>({productId:row.product_id,variantId:row.variant_id}))]);
+    const affectedLines = affectedOrders.length ? await tx<Array<{ product_id: string; variant_id: string | null }>>`
+      select distinct product_id,variant_id from order_items where order_id=any(${affectedOrders.map(row => row.id)}::text[])` : [];
+    const initialStockRows = await lockStockIdentities(tx, [...requestedIdentities, ...affectedLines.map(row => ({ productId: row.product_id, variantId: row.variant_id }))]);
 
     // Re-check authoritative purchase quantity rules after stock/order locks
     // are acquired so a concurrent multi-unit attempt cannot cross into an
@@ -977,8 +982,9 @@ export async function createOrderUsing(
     //   coupon in this same transaction so the customer's own held units never
     //   make an item look sold out to them.
     if (affectedOrders.length > 0 && params.userId && productIds.length > 0) {
-      const activeUserOrders = await tx<RawOrderRow[]>`
-        select o.* from orders o
+      const activeUserOrders = await tx<Array<RawOrderRow & { remaining_sec?: number | string | null }>>`
+        select o.*, extract(epoch from (o.reservation_expires_at - now())) as remaining_sec
+        from orders o
         where o.user_id = ${params.userId}
           and o.reservation_state = 'ACTIVE'
           and o.reservation_expires_at > now()
@@ -996,9 +1002,11 @@ export async function createOrderUsing(
         for update
       `;
 
-      const latestOpen = activeUserOrders.find(
-        (row) => row.status === 'CREATED' || row.status === 'PENDING',
-      );
+      const latestOpen = !params.forceNewOrder
+        ? activeUserOrders.find(
+            (row) => row.status === 'CREATED' && !row.payu_mihpayid,
+          )
+        : undefined;
       if (latestOpen) {
         const mappedExisting = mapRowToOrder(latestOpen);
         const [addrRow] = await tx<
@@ -1019,14 +1027,14 @@ export async function createOrderUsing(
         `;
         const existingAddress = addrRow
           ? {
-              name: String(addrRow.full_name ?? ''),
-              phone: String(addrRow.phone ?? ''),
-              line1: String(addrRow.line1 ?? ''),
-              line2: addrRow.line2 ? String(addrRow.line2) : '',
-              city: String(addrRow.city ?? ''),
-              state: String(addrRow.state ?? ''),
-              pincode: String(addrRow.postal_code ?? ''),
-            }
+            name: String(addrRow.full_name ?? ''),
+            phone: String(addrRow.phone ?? ''),
+            line1: String(addrRow.line1 ?? ''),
+            line2: addrRow.line2 ? String(addrRow.line2) : '',
+            city: String(addrRow.city ?? ''),
+            state: String(addrRow.state ?? ''),
+            pincode: String(addrRow.postal_code ?? ''),
+          }
           : null;
 
         const identical = isIdenticalCheckoutAttempt(
@@ -1085,6 +1093,24 @@ export async function createOrderUsing(
             expiredReservations: [],
           };
         }
+      }
+
+      let minOpenRemainingSec: number | null = null;
+      for (const row of activeUserOrders) {
+        if (row.status === 'CREATED' || row.status === 'PENDING' || row.status === 'PROCESSING') {
+          const rawRemaining = row.remaining_sec;
+          if (rawRemaining === undefined || rawRemaining === null || rawRemaining === '') continue;
+          const parsed = Number(rawRemaining);
+          if (!Number.isFinite(parsed)) continue;
+          const rem = Math.max(1, Math.floor(parsed));
+          minOpenRemainingSec = minOpenRemainingSec === null ? rem : Math.min(minOpenRemainingSec, rem);
+        }
+      }
+      if (minOpenRemainingSec !== null && effectiveReservationSeconds > 0) {
+        effectiveReservationSeconds = Math.max(
+          1,
+          Math.min(effectiveReservationSeconds, minOpenRemainingSec),
+        );
       }
 
       for (const row of activeUserOrders) {
@@ -1191,10 +1217,12 @@ export async function createOrderUsing(
           return Number.isFinite(sec) && sec > max ? sec : max;
         }, 60);
 
-        const latestOpen = activeGuestOrders.find(
-          (row) => row.status === 'CREATED' || row.status === 'PENDING',
-        );
-        if (latestOpen && matchesGuestIdentity(latestOpen)) {
+        const latestOpen = !params.forceNewOrder
+          ? activeGuestOrders.find(
+              (row) => row.status === 'CREATED' && !row.payu_mihpayid && matchesGuestIdentity(row),
+            )
+          : undefined;
+        if (latestOpen) {
           const mappedExisting = mapRowToOrder(latestOpen);
           const existingAddress = guestAddressMap.get(mappedExisting.id) ?? null;
           const identical = isIdenticalCheckoutAttempt(
@@ -1437,12 +1465,12 @@ export async function createOrderUsing(
         );
         const spinStockLine = spinSnapshot
           ? {
-              productId: spinSnapshot.productId,
-              variantId: spinSnapshot.variantId,
-              requiresStockRow: Boolean(spinSnapshot.variantId),
-              quantity: 1,
-              productName: spinSnapshot.productName,
-            }
+            productId: spinSnapshot.productId,
+            variantId: spinSnapshot.variantId,
+            requiresStockRow: Boolean(spinSnapshot.variantId),
+            quantity: 1,
+            productName: spinSnapshot.productName,
+          }
           : null;
         const spinStockCheck = spinStockLine
           ? planStockClaim([...itemLines, spinStockLine], stockRows)
@@ -1660,8 +1688,8 @@ export async function createOrderUsing(
           ${couponDefinition?.id ?? null},
           ${couponDefinition?.code ?? null},
           ${couponDefinition && couponEvaluation
-            ? tx.json(couponSnapshot(couponDefinition, discountPaise) as any)
-            : null},
+        ? tx.json(couponSnapshot(couponDefinition, discountPaise) as any)
+        : null},
           ${tx.json(pricingSnapshot as any)},
           ${params.customerName},
           ${params.customerEmail},
@@ -2166,6 +2194,16 @@ export async function transitionOrderStatusUsing(
     // If already in target status, return idempotently. A repeated PROCESSING
     // decision must not extend the recovery window.
     if (previousStatus === params.targetStatus) {
+      return noopTransition(previousStatus, current);
+    }
+
+    // Never downgrade PROCESSING back to CREATED/PENDING: once payment
+    // verification is underway or extended, an initiated/pending status
+    // must not rewind the state machine or make the txnid resumable.
+    if (
+      previousStatus === 'PROCESSING'
+      && (params.targetStatus === 'CREATED' || params.targetStatus === 'PENDING')
+    ) {
       return noopTransition(previousStatus, current);
     }
 

@@ -179,3 +179,191 @@ test('real initiate limits each item to quantity 1 per order during a live sale'
   assert.equal(distinct.body.code, 'payment_not_configured');
   assert.equal(saleCreates, 0);
 });
+
+test('real initiate verifies active reservations and never reuses a PayU-seen txnid', async () => {
+  let existingOrder = null;
+  let verifyResult = {
+    ok: true,
+    rejected: false,
+    retryable: false,
+    status: 'CREATED',
+    txnid: 'GDZ_PREV',
+    order: null,
+    redirectUrl: null,
+    gatewaySeen: false,
+    inFlightBankPayment: false,
+  };
+  let capturedCreateParams = null;
+
+  const activeJiti = createJiti(import.meta.url, {
+    moduleCache: false,
+    alias: { '@': path.resolve('src') },
+    virtualModules: {
+      '@/lib/payu/db-pricing': pricing,
+      '@/lib/platform/db': { getSql: () => { throw new Error('Application DB forbidden in offline tests'); } },
+      '@/lib/payu/orders': {
+        findActiveReservationForUser: async () => ({
+          txnid: 'GDZ_PREV',
+          status: existingOrder?.status ?? 'CREATED',
+          expiresAt: new Date(Date.now() + 300_000),
+        }),
+        getOrderByTxnid: async () => existingOrder,
+        getOrderShippingAddress: async () => ({ ...address, name: 'Asha Rao' }),
+        isIdenticalCheckoutAttempt: () => true,
+        createOrder: async (params) => {
+          capturedCreateParams = params;
+          return {
+            order: {
+              txnid: params.forceNewOrder ? 'GDZ_FRESH' : 'GDZ_PREV',
+              totalPaise: 50000,
+              reservationExpiresAt: new Date(Date.now() + 300_000),
+              items: [{ name: 'Charger', quantity: 1 }],
+            },
+            stockClaimed: !params.forceNewOrder,
+            resumed: !params.forceNewOrder,
+            supersededOrders: [],
+            expiredReservations: [],
+          };
+        },
+      },
+      '@/lib/payu/process-response': {
+        verifyExistingOrderWithPayU: async () => verifyResult,
+      },
+      '@/lib/user-auth': { getUserSession: async () => ({ userId: 'owner' }) },
+      '@/lib/account/addresses': { getCustomerAddress: async () => null },
+      '@/lib/platform/api-guard': { assertSameOrigin: () => null },
+      '@/lib/storefront/maintenance-guard': { requireStorefrontOpen: async () => null },
+      '@/lib/payu/rate-limit': { checkRateLimit: () => ({ allowed: true }) },
+      '@/lib/platform/distributed-rate-limit': {
+        checkDistributedRateLimit: async () => ({ allowed: true, remaining: 10, retryAfterSec: 0, backend: 'memory' }),
+      },
+      '@/lib/store-admin/customer-settings': { readCustomerSettings: async () => ({ guest_checkout: 'on' }) },
+      '@/lib/checkout/settings': {
+        readCheckoutConfiguration: async () => ({
+          ok: true,
+          settings: { payu_enabled: 'on', reservation_seconds: '600', mail_status: 'off' },
+        }),
+      },
+      '@/lib/payu/config': {
+        checkPayUConfiguration: () => ({ ok: true, appBaseUrl: 'https://shop.example' }),
+        getPayUConfig: () => ({ key: 'k', salt: 's', paymentUrl: 'https://pay.example/payment' }),
+        getPayUCallbackUrls: () => ({
+          surl: 'https://shop.example/s',
+          furl: 'https://shop.example/f',
+          curl: 'https://shop.example/c',
+        }),
+      },
+      '@/lib/payu/hash': { generateRequestHash: () => ({ hash: 'h' }) },
+      '@/lib/notifications/order-context': { queueOrderEvent: () => {} },
+      '@/lib/store-admin/subscribers': { subscribeToNewsletter: () => {} },
+      '@/lib/storefront/revalidate': { revalidateCatalog: () => {} },
+    },
+  });
+
+  const { POST: activePost } = await activeJiti.import(path.resolve('src/app/api/payu/initiate/route.ts'));
+  const postInitiate = async () => {
+    capturedCreateParams = null;
+    const res = await activePost(new NextRequest('http://localhost/api/payu/initiate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [{ id: 'charger', quantity: 1 }], customer: contact, shippingAddress: address }),
+    }));
+    return { status: res.status, body: await res.json() };
+  };
+
+  existingOrder = {
+    id: 'ord_prev',
+    txnid: 'GDZ_PREV',
+    status: 'CREATED',
+    payuMihpayid: null,
+    items: [{ id: 'charger', quantity: 1 }],
+    couponCode: null,
+    customerEmail: contact.email,
+    customerPhone: '9876543210',
+  };
+
+  // 1. Gateway saw txnid (pending/initiated) -> forces fresh txnid (never reuses PayU-seen txnid)
+  verifyResult = {
+    ok: true,
+    rejected: false,
+    retryable: false,
+    status: 'PENDING',
+    txnid: 'GDZ_PREV',
+    order: existingOrder,
+    redirectUrl: null,
+    gatewaySeen: true,
+    inFlightBankPayment: false,
+  };
+  const seenRes = await postInitiate();
+  assert.equal(seenRes.status, 200);
+  assert.equal(capturedCreateParams?.forceNewOrder, true);
+  assert.equal(seenRes.body.fields.txnid, 'GDZ_FRESH');
+
+  // 2. Real in-flight bank payment -> returns 409 reservation_active without creating order
+  verifyResult = {
+    ok: true,
+    rejected: false,
+    retryable: false,
+    status: 'PROCESSING',
+    txnid: 'GDZ_PREV',
+    order: existingOrder,
+    redirectUrl: null,
+    gatewaySeen: true,
+    inFlightBankPayment: true,
+  };
+  const inFlightRes = await postInitiate();
+  assert.equal(inFlightRes.status, 409);
+  assert.equal(inFlightRes.body.code, 'reservation_active');
+  assert.equal(capturedCreateParams, null);
+
+  // 3. Gateway has NOT seen CREATED txnid yet -> allows safe resume
+  verifyResult = {
+    ok: true,
+    rejected: false,
+    retryable: false,
+    status: 'CREATED',
+    txnid: 'GDZ_PREV',
+    order: existingOrder,
+    redirectUrl: null,
+    gatewaySeen: false,
+    inFlightBankPayment: false,
+  };
+  const unseenRes = await postInitiate();
+  assert.equal(unseenRes.status, 200);
+  assert.equal(capturedCreateParams?.forceNewOrder, false);
+  assert.equal(unseenRes.body.fields.txnid, 'GDZ_PREV');
+
+  // 4. Previous order already PAID -> returns 409 already_paid
+  verifyResult = {
+    ok: true,
+    rejected: false,
+    retryable: false,
+    status: 'PAID',
+    txnid: 'GDZ_PREV',
+    order: existingOrder,
+    redirectUrl: null,
+    gatewaySeen: true,
+    inFlightBankPayment: false,
+  };
+  const paidRes = await postInitiate();
+  assert.equal(paidRes.status, 409);
+  assert.equal(paidRes.body.code, 'already_paid');
+  assert.equal(capturedCreateParams, null);
+
+  // 5. Verification rejected (integrity mismatch) -> returns 409 verification_unavailable
+  verifyResult = {
+    ok: false,
+    rejected: true,
+    retryable: false,
+    status: 'CREATED',
+    txnid: 'GDZ_PREV',
+    order: existingOrder,
+    redirectUrl: null,
+    gatewaySeen: true,
+    inFlightBankPayment: false,
+  };
+  const rejectedRes = await postInitiate();
+  assert.equal(rejectedRes.status, 409);
+  assert.equal(rejectedRes.body.code, 'verification_unavailable');
+  assert.equal(capturedCreateParams, null);
+});

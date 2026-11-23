@@ -91,11 +91,11 @@ export async function POST(req: NextRequest) {
     // is the control.
     const ipLimit = ip
       ? await checkDistributedRateLimit({
-          scope: 'payu_init_ip',
-          key: ip,
-          limit: 20,
-          windowMs: 5 * 60 * 1000,
-        })
+        scope: 'payu_init_ip',
+        key: ip,
+        limit: 20,
+        windowMs: 5 * 60 * 1000,
+      })
       : null;
     if (ipLimit && !ipLimit.allowed) {
       return NextResponse.json(
@@ -339,21 +339,23 @@ export async function POST(req: NextRequest) {
         ? await payuOrders.findActiveReservationForGuest(rawEmail, phone, shippingAddress)
         : null);
 
+    let forceNewOrder = false;
     if (effectiveActiveReservation) {
       const existingOrder = await getOrderByTxnid(effectiveActiveReservation.txnid).catch(() => null);
       const existingAddress = existingOrder
         ? await getOrderShippingAddress(existingOrder.id).catch(() => null)
         : null;
-      const canResumeWithoutVerify = Boolean(
+      const identicalAttempt = Boolean(
         existingOrder
-        && (existingOrder.status === 'CREATED' || existingOrder.status === 'PENDING')
         && isIdenticalCheckoutAttempt(
           {
-            items: existingOrder.items.map((it) => ({
-              productId: normalizeCartLineId(it.id).baseId || it.id,
-              variantId: it.variantId ?? null,
-              quantity: it.quantity,
-            })),
+            items: existingOrder.items
+              .filter((it) => !it.isFreeGift)
+              .map((it) => ({
+                productId: normalizeCartLineId(it.id).baseId || it.id,
+                variantId: it.variantId ?? null,
+                quantity: it.quantity,
+              })),
             couponCode: existingOrder.couponCode,
             customerEmail: existingOrder.customerEmail,
             customerPhone: existingOrder.customerPhone,
@@ -373,33 +375,53 @@ export async function POST(req: NextRequest) {
         ),
       );
 
-      if (!canResumeWithoutVerify) {
-        const verified = await verifyExistingOrderWithPayU(effectiveActiveReservation.txnid, 'customer');
-        if (verified.status === 'PAID') {
-          return NextResponse.json(
-            {
-              success: false,
-              code: 'already_paid',
-              error: 'Your previous payment has already been confirmed.',
-              statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
-              redirectUrl: `/order/success?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}&recovery=1`,
-            },
-            { status: 409 },
-          );
-        }
-        if (verified.retryable) {
-          return NextResponse.json(
-            {
-              success: false,
-              code: 'verification_unavailable',
-              retryable: true,
-              error: 'We could not confirm your previous payment yet. Please try again in a minute.',
-              statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
-              reservationExpiresAt: effectiveActiveReservation.expiresAt?.toISOString() ?? null,
-            },
-            { status: 409 },
-          );
-        }
+      const verified = await verifyExistingOrderWithPayU(effectiveActiveReservation.txnid, 'customer');
+      if (verified.status === 'PAID') {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'already_paid',
+            error: 'Your previous payment has already been confirmed.',
+            statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
+            redirectUrl: `/order/success?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}&recovery=1`,
+          },
+          { status: 409 },
+        );
+      }
+      if (verified.retryable || verified.rejected) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'verification_unavailable',
+            retryable: true,
+            error: 'We could not confirm your previous payment yet. Please try again in a minute.',
+            statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
+            reservationExpiresAt: effectiveActiveReservation.expiresAt?.toISOString() ?? null,
+          },
+          { status: 409 },
+        );
+      }
+      if (verified.inFlightBankPayment) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'reservation_active',
+            error: 'A payment is already in progress for your previous checkout attempt. Please complete or check it first.',
+            statusUrl: `/order/status?txnid=${encodeURIComponent(effectiveActiveReservation.txnid)}`,
+            reservationExpiresAt: effectiveActiveReservation.expiresAt?.toISOString() ?? null,
+          },
+          { status: 409 },
+        );
+      }
+      const canSafeResume = Boolean(
+        identicalAttempt
+        && existingOrder
+        && existingOrder.status === 'CREATED'
+        && !existingOrder.payuMihpayid
+        && verified.gatewaySeen === false,
+      );
+      if (!canSafeResume) {
+        forceNewOrder = true;
       }
     }
 
@@ -427,10 +449,10 @@ export async function POST(req: NextRequest) {
         currency: 'INR',
         coupon: couponCode
           ? {
-              code: couponCode,
-              customerGroup: null,
-              expectedTotalPaise,
-            }
+            code: couponCode,
+            customerGroup: null,
+            expectedTotalPaise,
+          }
           : null,
         customerName: firstname,
         customerEmail: rawEmail,
@@ -438,6 +460,7 @@ export async function POST(req: NextRequest) {
         paymentMethod: 'payu',
         shippingAddress,
         reservationSeconds: reservationPolicy.reservationSeconds,
+        forceNewOrder,
         confirmWithoutGift: body.confirmWithoutGift === true,
         checkoutConfiguration,
       });
