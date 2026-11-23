@@ -86,7 +86,7 @@ interface Props {
   couponsEnabled?: boolean;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy: serverPolicy, initialProducts, saleClock, paymentNote = '', saleLive = false, couponsEnabled = true }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy: serverPolicy, initialProducts, saleClock, saleLive = false, couponsEnabled = true }: Props) {
   const { items: bagItems, removeItem, syncPrices, isHydrated } = useCart();
   useCheckoutRefresh(saleClock);
   const [recovery, setRecovery] = useState<{ key: string; quote: PriceChangedQuote; couponCode: string | null } | null>(null);
@@ -1049,9 +1049,19 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
           </button>
         </div>
 
-        <div className="text-center text-xs text-[#6e6e73] pt-2">
+        <div className="flex items-center justify-center gap-1.5 pt-2 text-center text-xs text-[#6e6e73]">
+          <svg
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <rect x="5" y="11" width="14" height="10" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M8 11V7a4 4 0 018 0v4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           <span>Secure online payment</span>
-          {paymentNote && !/payu/i.test(paymentNote) ? <span className="block mt-1">{paymentNote}</span> : null}
         </div>
         </div>
       </form>

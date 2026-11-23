@@ -15,10 +15,11 @@ const jiti = createJiti(import.meta.url, { moduleCache: false, jsx: { runtime: '
   '@/components/cart/CouponBox': { CouponBox: () => createElement('div', null, 'Coupon box') },
 } });
 const { CheckoutForm } = await jiti.import(path.join(root, 'src/components/checkout/CheckoutForm.tsx'));
-function render() { return renderToStaticMarkup(createElement(CheckoutForm, {
+function render(extraProps = {}) { return renderToStaticMarkup(createElement(CheckoutForm, {
   initialItems: [{ id: 'charger', productId: 'charger', name: 'Charger', variantId: 'usb', variantLabel: 'USB-C 30W', image: '/sample.png', price: 1299, quantity: 1 }],
   productIdFromQuery: 'charger', initialProducts: [{ id: 'charger', name: 'Charger', inventoryMode: 'variant', pricePaise: 129900, inStock: true, purchasableVariants: [{ id: 'usb', label: 'USB-C 30W', pricePaise: 129900, inStock: true }] }],
   shippingPolicy: { enabled: true, chargePaise: 0, freeShippingThresholdPaise: null }, couponsEnabled: true,
+  ...extraProps,
 })); }
 test('checkout markup has left summary/right form grid and mobile accessible disclosure', () => {
   const html = render();
@@ -30,6 +31,11 @@ test('checkout markup has left summary/right form grid and mobile accessible dis
   assert.match(html, /width="48" height="48"/);
   assert.match(html, /Pay Rs 1,299/);
   assert.ok(!/PayU/i.test(html));
+});
+test('checkout renders lock icon and Secure online payment without stray paymentNote text', () => {
+  const html = render({ paymentNote: 'ter' });
+  assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<rect[^>]*x="5"[^>]*y="11"[\s\S]*?<\/svg>\s*<span>Secure online payment<\/span>/);
+  assert.doesNotMatch(html, />ter</);
 });
 test('every checkout field has an associated label and state dropdown has all Indian regions', () => {
   const html = render();

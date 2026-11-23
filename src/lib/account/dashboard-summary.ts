@@ -5,7 +5,6 @@ import {
   type AccountOrderStatus,
 } from '@/lib/account/order-live';
 import { getCustomerCouponCount } from '@/lib/account/coupons';
-import { getStoreSettings } from '@/lib/store-admin/settings';
 
 export interface AccountDashboardSummary {
   user: {
@@ -78,7 +77,7 @@ export async function getAccountDashboardSummary(
   if (!sql) return null;
 
   // Batched queries in 2 minimal parallel roundtrips
-  const [userQuery, aggregatesQuery, couponCount, storeSettingsRes] = await Promise.all([
+  const [userQuery, aggregatesQuery, couponCount] = await Promise.all([
     // 1. User details & active sessions
     sql<Array<{
       first_name: string;
@@ -196,16 +195,12 @@ export async function getAccountDashboardSummary(
 
     // 3. Available private coupons count
     getCustomerCouponCount(userId),
-
-    // 4. Store contact info
-    getStoreSettings(),
   ]);
 
   const user = userQuery[0];
   if (!user) return null;
 
   const agg = aggregatesQuery[0];
-  const settings = storeSettingsRes.ok ? storeSettingsRes.settings : null;
 
   // Password change prompt check: if password has not been changed in > 90 days or never set
   const passwordChangedAt = user.password_changed_at ? new Date(user.password_changed_at) : null;
@@ -301,8 +296,8 @@ export async function getAccountDashboardSummary(
       unreadCount: agg?.unread_messages ?? 0,
     },
     support: {
-      phone: settings?.phone || '+91 80000 12345',
-      email: settings?.email || 'support@gadzio.in',
+      phone: '+916304859367',
+      email: 'support@gadzio.co.in',
     },
   };
 }

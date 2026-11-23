@@ -19,6 +19,10 @@ test('dashboard summary: aggregates all 8 cards in bounded queries', async () =>
   // Must batch in parallel queries, not per-card fan-out
   assert.match(summaryModule, /Promise\.all\(\[/);
   assert.match(summaryModule, /maskAccountEmail/);
+
+  // Support card must match /support contact details
+  assert.match(summaryModule, /phone:\s*'\+916304859367'/);
+  assert.match(summaryModule, /email:\s*'support@gadzio\.co\.in'/);
 });
 
 test('dashboard page: renders responsive grid of 8 cards and grouped links', async () => {
