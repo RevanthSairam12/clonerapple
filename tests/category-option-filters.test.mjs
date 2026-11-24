@@ -415,3 +415,37 @@ test('archived, inactive and draft products can never enter a category payload',
   assert.match(source, /where p\.deleted_at is null[\s\S]*and p\.is_active/);
   assert.match(source, /and c\.deleted_at is null[\s\S]*and c\.is_active/);
 });
+
+test('non-colour variants do not emit fake colour swatches while colour variants and shared links do', () => {
+  const modelOnly = low.snapshotFromLoad(catalogLoad({
+    variants: [
+      { id: 'v1', product_id: 'p', sku: 'S1', option_name: 'Model', option_value: 'iPhone 12 Pro', option_hex: null, is_active: true, is_purchasable: true, sort_order: 0 },
+      { id: 'v2', product_id: 'p', sku: 'S2', option_name: 'Model', option_value: 'iPhone 12 Pro Max', option_hex: null, is_active: true, is_purchasable: true, sort_order: 1 },
+    ],
+  })).products[0];
+  assert.deepEqual(modelOnly.colors, []);
+
+  const legacyColour = low.snapshotFromLoad(catalogLoad({
+    variants: [
+      { id: 'v1', product_id: 'p', sku: 'S1', option_name: 'Colour', option_value: 'Midnight', option_hex: null, is_active: true, is_purchasable: true, sort_order: 0 },
+      { id: 'v2', product_id: 'p', sku: 'S2', option_name: 'Colour', option_value: 'Clear', option_hex: '#E5E5EA', is_active: true, is_purchasable: true, sort_order: 1 },
+      { id: 'v3', product_id: 'p', sku: 'S3', option_name: 'Colour', option_value: 'Retired', option_hex: '#000000', is_active: true, retired_at: '2026-01-01', is_purchasable: true, sort_order: 2 },
+    ],
+  })).products[0];
+  assert.deepEqual(legacyColour.colors, [
+    { name: 'Midnight', hex: '#1d1d1f' },
+    { name: 'Clear', hex: '#E5E5EA' },
+  ]);
+
+  const linked = low.snapshotFromLoad(catalogLoad({
+    variants: [
+      { id: 'v1', product_id: 'p', sku: 'S1', option_name: 'Model / Colour', option_value: 'iPhone 17 / Blue', option_hex: null, is_active: true, is_purchasable: true, sort_order: 0 },
+      { id: 'v2', product_id: 'p', sku: 'S2', option_name: 'Model / Colour', option_value: 'iPhone 17 / Old', option_hex: null, is_active: false, is_purchasable: true, sort_order: 1 },
+    ],
+    variantColours: [
+      { variant_id: 'v1', product_id: 'p', colour_id: 'c_blue', colour_name: 'Blue', colour_hex: '#0071E3' },
+      { variant_id: 'v2', product_id: 'p', colour_id: 'c_old', colour_name: 'Old', colour_hex: '#999999' },
+    ],
+  })).products[0];
+  assert.deepEqual(linked.colors, [{ id: 'c_blue', name: 'Blue', hex: '#0071E3' }]);
+});

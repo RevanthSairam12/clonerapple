@@ -57,11 +57,13 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
   const selectedVariant = resolveOptionVariant(variants, selection);
   const selectedVariantId = selectedVariant?.id ?? '';
   const price = optionPrice(variants, selection, Math.round(sourceProduct.price * 100));
-  const selectionProduct = variantMode && variants.length > 0 ? { ...sourceProduct,
+  const selectionProduct = variantMode && variants.length > 0 ? {
+    ...sourceProduct,
     price: price.unitPaise / 100,
     priceDisplay: formatOptionPaise(price.unitPaise),
     regularPrice: price.onSale && price.regularPaise ? price.regularPaise / 100 : undefined,
-    wasPriceDisplay: price.onSale && price.regularPaise ? formatOptionPaise(price.regularPaise) : undefined } : sourceProduct;
+    wasPriceDisplay: price.onSale && price.regularPaise ? formatOptionPaise(price.regularPaise) : undefined
+  } : sourceProduct;
   const [selectedColorIndex, setSelectedColorIndex] = useState(0);
   const purchase = usePurchaseAction(JSON.stringify([sourceProduct.id, selectedVariantId, selection.modelKey, selection.colourKey, sourceProduct.inventoryMode, selectionProduct.price, selectionProduct.regularPrice, selectedVariant?.label]));
   const product = { ...selectionProduct, ...purchase.priceOverride };
@@ -126,8 +128,14 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  const missingOptionLabel = steps.showModel && steps.showColour
+    ? `${steps.modelLabel.toLowerCase()} and colour`
+    : steps.showModel
+      ? steps.modelLabel.toLowerCase()
+      : 'colour';
+
   const handleBuyNow = async () => {
-    if (variantMode && !selectedVariant) { setAvailabilityNotice(`Choose your ${steps.modelLabel.toLowerCase()} and colour before buying.`); return; }
+    if (variantMode && !selectedVariant) { setAvailabilityNotice(`Choose your ${missingOptionLabel} before buying.`); return; }
     await purchase.run(async (signal) => {
       const checked = await verifySelections([{ productId: product.id, variantId: selectedVariant?.id, quantity: 1 }], signal);
       if (checked.status !== 'ready') {
@@ -160,7 +168,7 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
 
   const handleAddToBag = async () => {
     if (variantMode && !selectedVariant) {
-      setAvailabilityNotice(`Choose your ${steps.modelLabel.toLowerCase()} and colour before adding to your bag.`);
+      setAvailabilityNotice(`Choose your ${missingOptionLabel} before adding to your bag.`);
       return;
     }
     if (unavailable) {
@@ -200,7 +208,7 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
     : [currentColor.name, product.subtitle].filter(Boolean).join(' • ');
 
   return (
-    <div className="gz-storefront-page min-h-screen bg-[#fff] text-[#1d1d1f] antialiased selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
+    <div className="gz-storefront-page min-h-screen overflow-x-clip bg-[#fff] text-[#1d1d1f] antialiased selection:bg-[#ffe100] selection:text-black" style={{ fontFamily: 'transducer, sans-serif' }}>
       {/* Global Navigation */}
       <GlobalNav bannerVisible={false} />
 
@@ -210,31 +218,29 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
           hidden it slides up behind the header, which shares the same top
           edge and has a higher z-index. */}
       <div
-        className={`fixed left-0 right-0 top-14 anav:top-24 z-40 bg-white/85 backdrop-blur-md border-b border-[#e5e5ea] transition-all duration-300 ${
-          showStickyBar ? 'opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
-        }`}
+        className={`fixed left-0 right-0 top-14 anav:top-24 z-40 bg-white/85 backdrop-blur-md border-b border-[#e5e5ea] transition-all duration-300 ${showStickyBar ? 'opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
+          }`}
       >
-        <div className="max-w-6xl mx-auto px-4 sm:px-8 h-14 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <span className="font-semibold text-sm truncate">{product.name}</span>
             <span className="text-xs text-[#86868b] hidden sm:inline">• {stickyMeta}</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5 sm:gap-4 shrink-0">
             {product.wasPriceDisplay ? (
-              <s className="text-xs text-[#86868b]">{product.wasPriceDisplay}</s>
+              <s className="text-xs text-[#86868b] whitespace-nowrap">{product.wasPriceDisplay}</s>
             ) : null}
-            <span className="font-semibold text-sm text-[#1d1d1f]">{product.priceDisplay}</span>
+            <span className="font-semibold text-sm text-[#1d1d1f] whitespace-nowrap">{product.priceDisplay}</span>
             <button
               type="button"
               onClick={handleAddToBag}
               disabled={isAddingToBag || unavailable}
-              className={`text-xs font-semibold px-5 py-2 rounded-xl transition-all active:scale-95 shadow-sm ${
-                unavailable
-                  ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
-                  : isAdded
-                    ? 'bg-[#34c759] text-white cursor-pointer'
-                    : 'bg-[#ffe100] hover:bg-[#ffea33] text-black font-black uppercase tracking-wider cursor-pointer'
-              }`}
+              className={`text-xs font-semibold px-3.5 sm:px-5 py-2 rounded-xl whitespace-nowrap transition-all active:scale-95 shadow-sm ${unavailable
+                ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
+                : isAdded
+                  ? 'bg-[#34c759] text-white cursor-pointer'
+                  : 'bg-[#ffe100] hover:bg-[#ffea33] text-black font-black uppercase tracking-wider cursor-pointer'
+                }`}
             >
               {unavailable ? STOCK_NOT_AVAILABLE : isAdded ? 'Added ✓' : 'Add to Bag'}
             </button>
@@ -265,7 +271,7 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-start">
 
           {/* Left Column: Visual Product Stage */}
-          <div className="lg:col-span-7 flex flex-col items-center">
+          <div className="lg:col-span-7 min-w-0 w-full flex flex-col items-center">
             {/* Main Stage Frame */}
             <div className="relative w-full aspect-square bg-[#f5f5f7] rounded-[28px] overflow-hidden flex items-center justify-center p-8 sm:p-12 transition-all duration-300">
               {imgError ? (
@@ -295,9 +301,8 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
                       setImgError(false);
                     }}
                     aria-pressed={idx === activeImage}
-                    className={`w-16 h-16 rounded-xl bg-[#f5f5f7] border overflow-hidden flex items-center justify-center p-2 transition-all ${
-                      idx === activeImage ? 'border-[#0071e3] ring-1 ring-[#0071e3]' : 'border-[#e5e5ea] hover:border-[#86868b]'
-                    }`}
+                    className={`w-16 h-16 rounded-xl bg-[#f5f5f7] border overflow-hidden flex items-center justify-center p-2 transition-all ${idx === activeImage ? 'border-[#0071e3] ring-1 ring-[#0071e3]' : 'border-[#e5e5ea] hover:border-[#86868b]'
+                      }`}
                     aria-label={`Show photo ${idx + 1}: ${photo.alt}`}
                   >
                     <img src={photo.url} alt="" className="max-h-full max-w-full object-contain" />
@@ -333,7 +338,7 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
           </div>
 
           {/* Right Column: Buying Sidebar */}
-          <div className="lg:col-span-5 flex flex-col">
+          <div className="lg:col-span-5 min-w-0 w-full flex flex-col">
             {/* Header Titles */}
             <div className="mb-6">
               <span className="text-xs font-semibold text-[#86868b] uppercase tracking-wider block mb-1">
@@ -342,7 +347,7 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
               <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#1d1d1f] leading-tight mb-2">
                 {product.name}
               </h1>
-            {product.shortDescription != null && <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap">{product.shortDescription}</p>}
+              {product.shortDescription != null && <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap">{product.shortDescription}</p>}
               <p className="text-sm text-[#86868b]">{product.category}</p>
             </div>
 
@@ -353,7 +358,7 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
 
             {/* Price Row */}
             <div className="pb-6 border-b border-[#e5e5ea] mb-6">
-              <div className="flex items-baseline gap-2">
+              <div className="flex flex-wrap items-baseline gap-2">
                 {product.wasPriceDisplay ? (
                   <s className="text-lg text-[#86868b]">{product.wasPriceDisplay}</s>
                 ) : null}
@@ -382,11 +387,10 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
                       key={color.name}
                       type="button"
                       onClick={() => setSelectedColorIndex(idx)}
-                      className={`group relative flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all ${
-                        idx === selectedColorIndex
-                          ? 'border-[#0071e3] bg-[#0071e3]/5 text-[#1d1d1f] ring-1 ring-[#0071e3]'
-                          : 'border-[#d2d2d7] hover:border-[#86868b] text-[#6e6e73]'
-                      }`}
+                      className={`group relative flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all ${idx === selectedColorIndex
+                        ? 'border-[#0071e3] bg-[#0071e3]/5 text-[#1d1d1f] ring-1 ring-[#0071e3]'
+                        : 'border-[#d2d2d7] hover:border-[#86868b] text-[#6e6e73]'
+                        }`}
                     >
                       <span
                         className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0 shadow-xs"
@@ -459,13 +463,12 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
               type="button"
               onClick={handleAddToBag}
               disabled={isAddingToBag || unavailable}
-              className={`w-full py-3.5 rounded-xl text-[15px] font-semibold transition-all active:scale-[0.99] shadow-sm mb-3 flex items-center justify-center ${
-                unavailable
-                  ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
-                  : isAdded
-                    ? 'bg-[#34c759] text-white cursor-pointer'
-                    : 'bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black font-black uppercase tracking-wider cursor-pointer'
-              }`}
+              className={`w-full py-3.5 rounded-xl text-[15px] font-semibold transition-all active:scale-[0.99] shadow-sm mb-3 flex items-center justify-center ${unavailable
+                ? 'bg-[#e8e8ed] text-[#6e6e73] cursor-not-allowed'
+                : isAdded
+                  ? 'bg-[#34c759] text-white cursor-pointer'
+                  : 'bg-[#ffe100] hover:bg-[#ffea33] active:bg-[#ffd900] text-black font-black uppercase tracking-wider cursor-pointer'
+                }`}
             >
               {unavailable ? (
                 <span>{STOCK_NOT_AVAILABLE}</span>
@@ -554,161 +557,161 @@ export function AccessoryDetailPage({ product: sourceProduct, saleLive = false, 
         {/* Collapsible Sections: Product Information & Compatibility */}
         <section className="mt-20 pt-8 border-t border-[#d2d2d7]">
           {product.descriptionSections != null ? <ProductDescriptionSections sections={product.descriptionSections} className="!mt-0 !border-t-0" /> : <>
-          {/* Section 1: Product Information */}
-          <div className="pb-8">
-            <button
-              type="button"
-              onClick={() => setIsProductInfoOpen(!isProductInfoOpen)}
-              className="w-full flex items-center justify-between text-left py-2 group cursor-pointer focus:outline-none"
-              aria-expanded={isProductInfoOpen}
-            >
-              <h2 className="text-xl sm:text-[22px] font-semibold text-[#1d1d1f] tracking-tight">
-                Product Information
-              </h2>
-              <span className="text-[#6e6e73] group-hover:text-[#1d1d1f] transition-colors">
-                <svg
-                  className={`w-5 h-5 transition-transform duration-200 ${isProductInfoOpen ? 'rotate-180' : 'rotate-0'}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </span>
-            </button>
+            {/* Section 1: Product Information */}
+            <div className="pb-8">
+              <button
+                type="button"
+                onClick={() => setIsProductInfoOpen(!isProductInfoOpen)}
+                className="w-full flex items-center justify-between text-left py-2 group cursor-pointer focus:outline-none"
+                aria-expanded={isProductInfoOpen}
+              >
+                <h2 className="text-xl sm:text-[22px] font-semibold text-[#1d1d1f] tracking-tight">
+                  Product Information
+                </h2>
+                <span className="text-[#6e6e73] group-hover:text-[#1d1d1f] transition-colors">
+                  <svg
+                    className={`w-5 h-5 transition-transform duration-200 ${isProductInfoOpen ? 'rotate-180' : 'rotate-0'}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
+              </button>
 
-            {isProductInfoOpen && (
-              <div className="mt-8 transition-opacity duration-200">
-                {/* Overview Row */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
-                  <div className="md:col-span-3 lg:col-span-3">
-                    <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">Overview</h3>
-                  </div>
-                  <div className="md:col-span-9 lg:col-span-9 max-w-3xl space-y-4 text-[13.5px] sm:text-[14px] leading-[1.65] text-[#1d1d1f]">
-                    <p>{product.description}</p>
-                    {product.highlights.length > 0 && (
-                      <ul className="space-y-2.5 pt-1">
-                        {product.highlights.map((hl) => (
-                          <li key={hl.title} className="flex items-start gap-2.5">
-                            <svg className="w-4 h-4 mt-0.5 text-[#0071e3] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                            <span>
-                              <span className="font-semibold">{hl.title}.</span> {hl.desc}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-
-                {/* Inner divider */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8 my-8 sm:my-10">
-                  <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
-                  <div className="md:col-span-9 lg:col-span-9">
-                    <div className="border-t border-[#e5e5ea]" />
-                  </div>
-                </div>
-
-                {/* Specifications Row */}
-                {product.specs.length > 0 && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
-                      <div className="md:col-span-3 lg:col-span-3">
-                        <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">Specifications</h3>
-                      </div>
-                      <div className="md:col-span-9 lg:col-span-9 max-w-3xl text-[13.5px] sm:text-[14px] text-[#1d1d1f]">
-                        {/* One specification per line, as points — the same
-                            shape the structured Specifications section uses. */}
-                        <ul className="list-disc space-y-2 pl-5">
-                          {product.specs.map((spec) => (
-                            <li key={spec.label} className="break-words">
-                              <span className="font-semibold">{spec.label}</span>
-                              <span aria-hidden="true">: </span>
-                              <span>{spec.value}</span>
+              {isProductInfoOpen && (
+                <div className="mt-8 transition-opacity duration-200">
+                  {/* Overview Row */}
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
+                    <div className="md:col-span-3 lg:col-span-3">
+                      <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">Overview</h3>
+                    </div>
+                    <div className="md:col-span-9 lg:col-span-9 max-w-3xl space-y-4 text-[13.5px] sm:text-[14px] leading-[1.65] text-[#1d1d1f]">
+                      <p>{product.description}</p>
+                      {product.highlights.length > 0 && (
+                        <ul className="space-y-2.5 pt-1">
+                          {product.highlights.map((hl) => (
+                            <li key={hl.title} className="flex items-start gap-2.5">
+                              <svg className="w-4 h-4 mt-0.5 text-[#0071e3] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                              <span>
+                                <span className="font-semibold">{hl.title}.</span> {hl.desc}
+                              </span>
                             </li>
                           ))}
                         </ul>
-                      </div>
+                      )}
                     </div>
-
-                    {/* Inner divider */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8 my-8 sm:my-10">
-                      <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
-                      <div className="md:col-span-9 lg:col-span-9">
-                        <div className="border-t border-[#e5e5ea]" />
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* What's In the Box Row */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
-                  <div className="md:col-span-3 lg:col-span-3">
-                    <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">What’s in the Box</h3>
                   </div>
-                  <div className="md:col-span-9 lg:col-span-9 text-[13.5px] sm:text-[14px] leading-[1.65] text-[#1d1d1f]">
-                    <ul className="space-y-1.5">
-                      {product.inTheBox.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
+
+                  {/* Inner divider */}
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8 my-8 sm:my-10">
+                    <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
+                    <div className="md:col-span-9 lg:col-span-9">
+                      <div className="border-t border-[#e5e5ea]" />
+                    </div>
+                  </div>
+
+                  {/* Specifications Row */}
+                  {product.specs.length > 0 && (
+                    <>
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
+                        <div className="md:col-span-3 lg:col-span-3">
+                          <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">Specifications</h3>
+                        </div>
+                        <div className="md:col-span-9 lg:col-span-9 max-w-3xl text-[13.5px] sm:text-[14px] text-[#1d1d1f]">
+                          {/* One specification per line, as points — the same
+                            shape the structured Specifications section uses. */}
+                          <ul className="list-disc space-y-2 pl-5">
+                            {product.specs.map((spec) => (
+                              <li key={spec.label} className="break-words">
+                                <span className="font-semibold">{spec.label}</span>
+                                <span aria-hidden="true">: </span>
+                                <span>{spec.value}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Inner divider */}
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8 my-8 sm:my-10">
+                        <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
+                        <div className="md:col-span-9 lg:col-span-9">
+                          <div className="border-t border-[#e5e5ea]" />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* What's In the Box Row */}
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
+                    <div className="md:col-span-3 lg:col-span-3">
+                      <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#1d1d1f]">What’s in the Box</h3>
+                    </div>
+                    <div className="md:col-span-9 lg:col-span-9 text-[13.5px] sm:text-[14px] leading-[1.65] text-[#1d1d1f]">
+                      <ul className="space-y-1.5">
+                        {product.inTheBox.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* Full-width Divider */}
-          <div className="border-t border-[#d2d2d7]" />
+            {/* Full-width Divider */}
+            <div className="border-t border-[#d2d2d7]" />
 
           </>}
 
           {/* Section 2: Compatibility */}
           {product.compatibility.length > 0 && (
-          <div className="py-8">
-            <button
-              type="button"
-              onClick={() => setIsCompatibilityOpen(!isCompatibilityOpen)}
-              className="w-full flex items-center justify-between text-left py-2 group cursor-pointer focus:outline-none"
-              aria-expanded={isCompatibilityOpen}
-            >
-              <h2 className="text-xl sm:text-[22px] font-semibold text-[#1d1d1f] tracking-tight">
-                Compatibility
-              </h2>
-              <span className="text-[#6e6e73] group-hover:text-[#1d1d1f] transition-colors">
-                <svg
-                  className={`w-5 h-5 transition-transform duration-200 ${isCompatibilityOpen ? 'rotate-180' : 'rotate-0'}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </span>
-            </button>
+            <div className="py-8">
+              <button
+                type="button"
+                onClick={() => setIsCompatibilityOpen(!isCompatibilityOpen)}
+                className="w-full flex items-center justify-between text-left py-2 group cursor-pointer focus:outline-none"
+                aria-expanded={isCompatibilityOpen}
+              >
+                <h2 className="text-xl sm:text-[22px] font-semibold text-[#1d1d1f] tracking-tight">
+                  Compatibility
+                </h2>
+                <span className="text-[#6e6e73] group-hover:text-[#1d1d1f] transition-colors">
+                  <svg
+                    className={`w-5 h-5 transition-transform duration-200 ${isCompatibilityOpen ? 'rotate-180' : 'rotate-0'}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
+              </button>
 
-            {isCompatibilityOpen && (
-              <div className="mt-8 transition-opacity duration-200">
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
-                  <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
-                  <div className="md:col-span-9 lg:col-span-9">
-                    <h3 className="text-[14px] sm:text-[15px] font-semibold text-[#1d1d1f] mb-1.5">
-                      Compatible devices
-                    </h3>
-                    <div className="text-[13.5px] sm:text-[14px] text-[#1d1d1f] space-y-1">
-                      {product.compatibility.map((c) => (
-                        <p key={c}>{c}</p>
-                      ))}
+              {isCompatibilityOpen && (
+                <div className="mt-8 transition-opacity duration-200">
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-y-4 md:gap-x-8">
+                    <div className="hidden md:block md:col-span-3 lg:col-span-3" aria-hidden="true" />
+                    <div className="md:col-span-9 lg:col-span-9">
+                      <h3 className="text-[14px] sm:text-[15px] font-semibold text-[#1d1d1f] mb-1.5">
+                        Compatible devices
+                      </h3>
+                      <div className="text-[13.5px] sm:text-[14px] text-[#1d1d1f] space-y-1">
+                        {product.compatibility.map((c) => (
+                          <p key={c}>{c}</p>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
           )}
 

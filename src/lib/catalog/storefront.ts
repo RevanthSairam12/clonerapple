@@ -448,9 +448,15 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
 
   // Active variants are the colour swatches the detail page renders. Shared
   // colour links win; a pre-0059 variant keeps its free-text value as a
-  // display-only swatch.
+  // display-only swatch only when it actually represents a colour/finish.
   if (colors.length === 0) {
+    const inactiveVariantIds = new Set(
+      variants
+        .filter((variant) => !variant.is_active || Boolean(variant.retired_at))
+        .map((variant) => text(variant.id)),
+    );
     const linked = variantColours
+      .filter((entry) => !inactiveVariantIds.has(text(entry.variant_id)))
       .map((entry) => ({
         id: text(entry.colour_id),
         name: text(entry.colour_name),
@@ -460,7 +466,15 @@ function mapProduct(aggregate: ProductAggregate, saleLive: boolean): StorefrontP
     const unique = new Map<string, StorefrontColor>();
     for (const color of linked) unique.set(color.id || color.name, color);
     const variantColors = variants
-      .filter((variant) => Boolean(variant.is_active))
+      .filter(
+        (variant) =>
+          Boolean(variant.is_active)
+          && !variant.retired_at
+          && (
+            Boolean(text(variant.option_hex).trim())
+            || /^(?:colou?r|finish)$/i.test(text(variant.option_name).trim())
+          ),
+      )
       .sort((a, b) => number(a.sort_order) - number(b.sort_order))
       .map((variant) => ({
         name: text(variant.option_value),

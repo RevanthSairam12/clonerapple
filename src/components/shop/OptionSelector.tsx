@@ -153,7 +153,11 @@ export function OptionSelector({ variants, selection, onChange, saleLive, liveSt
 
       <p className="sr-only" aria-live="polite">{announcement}</p>
       {steps.showModel && !selection.modelKey ? (
-        <p className="text-xs text-[#86868b]">Choose a {steps.modelLabel.toLowerCase()} to see its colours and stock.</p>
+        <p className="text-xs text-[#86868b]">
+          {steps.showColour
+            ? `Choose a ${steps.modelLabel.toLowerCase()} to see its colours and stock.`
+            : `Choose a ${steps.modelLabel.toLowerCase()} to see its stock.`}
+        </p>
       ) : null}
       {steps.showColour && selection.modelKey && !selection.colourKey ? (
         <p className="text-xs text-[#86868b]">Choose a colour to see its photo and price.</p>

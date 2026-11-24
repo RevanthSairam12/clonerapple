@@ -293,6 +293,16 @@ test('a chosen model with a single unlinked row has no empty colour step', () =>
   assert.match(html, /aria-live="polite">iPhone 16, ₹100\.00, in stock/);
 });
 
+test('a model-only product with multiple unlinked models does not mention colours before selection', () => {
+  const variants = [
+    { id: 'm1', sku: 'SKU-1', label: 'iPhone 12 Pro', deviceModelId: 'ip12p', deviceModelName: 'iPhone 12 Pro', pricePaise: 120000, regularPricePaise: 120000, inStock: true },
+    { id: 'm2', sku: 'SKU-2', label: 'iPhone 12 Pro Max', deviceModelId: 'ip12pm', deviceModelName: 'iPhone 12 Pro Max', pricePaise: 120000, regularPricePaise: 120000, inStock: true },
+  ];
+  const html = render({ variants, selection: { modelKey: null, colourKey: null } });
+  assert.match(html, /Choose a model to see its stock\./);
+  assert.doesNotMatch(html, /colours/);
+});
+
 test('the page reserves gallery space, preloads the next photo and syncs the URL', () => {
   const source = readFileSync(path.join(root, 'src/components/shop/ProductDetailPage.tsx'), 'utf8');
   // The main image keeps the same box while photos differ in size.
