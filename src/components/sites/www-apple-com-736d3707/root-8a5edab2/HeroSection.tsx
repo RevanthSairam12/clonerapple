@@ -12,6 +12,7 @@ export function HeroSection({
   video,
   baseTiles = HERO_TILES,
   enableVideo = true,
+  responsiveBanner = false,
   className = 'mb-[12px] grid grid-cols-1 gap-[12px] text-center',
 }: {
   tiles?: TileOverride[];
@@ -21,6 +22,8 @@ export function HeroSection({
   baseTiles?: Tile[];
   /** Whether tile 0 may render the optional video stage. */
   enableVideo?: boolean;
+  /** Size banner images proportionally to viewport width with zero cropping. */
+  responsiveBanner?: boolean;
   /** Optional class override for the section wrapper. */
   className?: string;
 } = {}) {
@@ -29,7 +32,12 @@ export function HeroSection({
   return (
     <section className={className}>
       {tiles.map((tile, i) => (
-        <TileCard key={tile.index} tile={tile} priority={enableVideo && i === 0}>
+        <TileCard
+          key={tile.index}
+          tile={tile}
+          priority={enableVideo && i === 0}
+          responsiveBanner={responsiveBanner}
+        >
           {enableVideo && i === 0 && tile.startFrame && video?.enabled === true ? (
             <HeroInlineMedia
               startFrame={tile.startFrame}

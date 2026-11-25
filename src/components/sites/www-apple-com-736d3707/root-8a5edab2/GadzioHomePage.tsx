@@ -172,6 +172,7 @@ export function GadzioHomePage({
                 baseTiles={NEW_UI_HERO_TILES}
                 tiles={overrides?.showcaseHeroTiles}
                 enableVideo={false}
+                responsiveBanner
                 className="mt-0.5 mb-0 grid grid-cols-1 gap-[12px] text-center"
               />
             ) : null}

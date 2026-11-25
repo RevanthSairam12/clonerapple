@@ -52,6 +52,8 @@ interface TileCardProps {
   children?: ReactNode;
   /** First tile above the fold — load its art eagerly. */
   priority?: boolean;
+  /** Render image at natural width-driven aspect ratio without horizontal cropping. */
+  responsiveBanner?: boolean;
 }
 
 /**
@@ -62,153 +64,193 @@ interface TileCardProps {
  * art-directed background absolutely filling the tile underneath and a
  * full-bleed link on top of everything except the CTAs.
  */
-export function TileCard({ tile, children, priority = false }: TileCardProps) {
+export function TileCard({
+  tile,
+  children,
+  priority = false,
+  responsiveBanner = false,
+}: TileCardProps) {
   const isHero = tile.group === 'hero';
   const isDark = tile.theme === 'dark';
   const Headline = isHero ? 'h2' : 'h3';
+  const hasHeadline = Boolean(tile.headlineLogo || tile.headline?.trim());
+  const hasSubhead = tile.subhead.some((segment) => segment.value.trim().length > 0);
+  const hasCtas = tile.ctas.length > 0;
+  const hasOverlayContent = hasHeadline || hasSubhead || hasCtas;
 
   return (
     <div
       className={cn(
-        'relative flex justify-center overflow-clip rounded-[0.01rem]',
+        'relative overflow-clip rounded-[0.01rem]',
         isDark ? 'gz-theme-dark bg-black' : (tile.index === 0 && isHero ? 'bg-white' : 'bg-[#f5f5f7]'),
-        isHero
-          ? 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[650px] am:pt-[61px] am:pb-[69px] al:min-h-[692px] al:pt-[56px] al:pb-[63px]'
-          : 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[490px] am:pt-[44px] am:pb-[48px] al:min-h-[580px] al:pt-[53px] al:pb-[60px]',
+        responsiveBanner
+          ? cn('w-full', !tile.image && 'flex justify-center py-[40px]')
+          : cn(
+              'flex justify-center',
+              isHero
+                ? 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[650px] am:pt-[61px] am:pb-[69px] al:min-h-[692px] al:pt-[56px] al:pb-[63px]'
+                : 'min-h-[500px] pt-[39px] pb-[43px] am:min-h-[490px] am:pt-[44px] am:pb-[48px] al:min-h-[580px] al:pt-[53px] al:pb-[60px]',
+            ),
       )}
     >
-      {/* .tile-image-wrapper — absolute, painted below the copy */}
-      <div className="absolute inset-0">
-        {tile.image ? (
-          <ArtDirectedPicture
-            data={tile.image}
-            imgClassName="absolute left-1/2 h-full w-auto max-w-none -translate-x-1/2 object-cover"
-            imgStyle={{
-              objectPosition: isHero
-                ? (tile.index === 0 ? '50% 100%' : (tile.index === 1 ? '50% 50%' : '50% 30%'))
-                : '50% 50%',
-            }}
-            fetchPriority={priority ? 'high' : undefined}
-            loading={priority ? 'eager' : 'lazy'}
-          />
-        ) : null}
-        {children}
-      </div>
+      {/* .tile-image-wrapper */}
+      {responsiveBanner ? (
+        tile.image ? (
+          <div className="relative w-full">
+            <ArtDirectedPicture
+              data={tile.image}
+              className="block w-full"
+              imgClassName="block h-auto w-full"
+              fetchPriority={priority ? 'high' : undefined}
+              loading={priority ? 'eager' : 'lazy'}
+            />
+            {children}
+          </div>
+        ) : children ? (
+          <div className="absolute inset-0">{children}</div>
+        ) : null
+      ) : (
+        <div className="absolute inset-0">
+          {tile.image ? (
+            <ArtDirectedPicture
+              data={tile.image}
+              imgClassName="absolute left-1/2 h-full w-auto max-w-none -translate-x-1/2 object-cover"
+              imgStyle={{
+                objectPosition: isHero
+                  ? (tile.index === 0 ? '50% 100%' : (tile.index === 1 ? '50% 50%' : '50% 30%'))
+                  : '50% 50%',
+              }}
+              fetchPriority={priority ? 'high' : undefined}
+              loading={priority ? 'eager' : 'lazy'}
+            />
+          ) : null}
+          {children}
+        </div>
+      )}
 
       {/* .tile-content */}
-      <div className="relative flex w-full max-w-full min-w-0 flex-col items-center px-[20px] text-center am:px-[28px]">
-        <div className={cn('relative z-2 w-full max-w-[540px] min-w-0', isDark ? 'text-[#f5f5f7]' : 'text-[#1d1d1f]')}>
-          <Headline
-            className={cn(
-              'font-[family-name:var(--gz-font-display)] font-semibold break-words',
-              isHero
-                ? 'text-[32px] leading-[36px] tracking-[0.064px] am:text-[48px] am:leading-[52.0077px] am:tracking-[-0.096px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]'
-                : 'text-[28px] leading-[32px] tracking-[0.04px] am:text-[32px] am:leading-[36px] al:text-[40px] al:leading-[44px] al:tracking-normal',
-              // logo headlines carry the target's optical nudge at every width
-              tile.headlineLogo ? 'mt-[4px] mb-[-5px]' : null,
-            )}
-            // Promo card headlines only — hero tiles keep --gz-font-display from the
-            // class above. Adding this to the hero side is a one-line change (drop
-            // the isHero guard) once that's wanted.~
-            style={
-              isHero
-                ? undefined
-                : {
-                  // DEACTIVATED (previous font) — kept for easy rollback:
-                  // fontFamily: 'var(--gz-font-display)',
-                  // ACTIVE — matches the hero headlines in GadzioHeroSection.tsx
-                  fontFamily:
-                    '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-                }
-            }
-          >
-            {tile.headlineLogo ? (
-              <ArtDirectedPicture
-                data={tile.headlineLogo}
-                className="block"
-                imgClassName="mx-auto block h-auto w-auto max-w-none"
-                intrinsic
-              />
-            ) : (
-              tile.headline
-            )}
-          </Headline>
-
-          <p
-            className={cn(
-              'gz-tile-subhead mx-auto max-w-full break-words font-normal',
-              // Hero subheads keep --gz-font-display (Inter). Promo subheads use
-              // Tailwind's default font-sans — the same stack the hero's eyebrow
-              // labels inherit from GadzioHeroSection's root <section>.
-              // DEACTIVATED (previous font, for both) — kept for easy rollback:
-              //   'font-[family-name:var(--gz-font-display)]',
-              isHero ? 'font-[family-name:var(--gz-font-display)]' : 'font-sans',
-              isHero
-                ? 'mt-[4px] text-[19px] leading-[23px] tracking-[0.228px] am:text-[24px] am:leading-[28px] am:tracking-[0.216px] al:mt-[6px] al:text-[28px] al:leading-[32px] al:tracking-[0.196px]'
-                : 'text-[17px] leading-[22px] tracking-[0.18px] am:text-[18px] am:leading-[23px] al:text-[21px] al:leading-[25px] al:tracking-[0.231px]',
-              // text headlines need the gap the logo tiles get from their -5px
-              !tile.headlineLogo ? (isHero ? null : 'mt-[4px] al:mt-[3px]') : null,
-            )}
-            style={
-              {
-                '--gz-subhead-sm': px(tile.subheadMaxWidth.sm),
-                '--gz-subhead-md': px(tile.subheadMaxWidth.md),
-                '--gz-subhead-lg': px(tile.subheadMaxWidth.lg),
-              } as CSSProperties
-            }
-          >
-            <Subhead segments={tile.subhead} />
-          </p>
-        </div>
-
-        {/* .tile-ctas */}
+      {!responsiveBanner || hasOverlayContent ? (
         <div
           className={cn(
-            'relative z-3 flex flex-wrap items-center justify-center gap-y-[10px]',
-            isHero
-              ? 'mt-[11px] gap-x-[14px] am:mt-[16px] am:gap-x-[17px] al:mt-[17px]'
-              : 'mt-[11px] gap-x-[14px] am:mt-[12px]',
+            responsiveBanner && tile.image
+              ? 'pointer-events-none absolute inset-0 flex w-full max-w-full min-w-0 flex-col items-center justify-start px-[20px] pt-[20px] pb-[20px] text-center am:px-[28px] am:pt-[36px] al:pt-[48px]'
+              : 'relative flex w-full max-w-full min-w-0 flex-col items-center px-[20px] text-center am:px-[28px]',
           )}
         >
-          {tile.ctas.map((cta, i) => {
-            const ctaClassName = cn(
-              'gz-button relative z-4',
-              cta.variant === 'secondary' && 'gz-button-secondary',
-              // hero buttons are small below 735px; promo buttons are always small
-              'gz-button-small',
-              isHero && 'gz-button-hero',
-            );
-            return (
-              <div key={`${cta.label}|${cta.href}`} className="relative inline-flex items-center">
-                {cta.internal ? (
-                  <Link
-                    href={cta.href}
-                    aria-label={cta.ariaLabel ?? undefined}
-                    className={ctaClassName}
-                  >
-                    {cta.label}
-                  </Link>
-                ) : (
-                  <a
-                    href={cta.href}
-                    aria-label={cta.ariaLabel ?? undefined}
-                    {...(isExternalHref(cta.href)
-                      ? { target: '_blank', rel: 'noopener noreferrer' }
-                      : null)}
-                    className={ctaClassName}
-                  >
-                    {cta.label}
-                  </a>
-                )}
-                {/* Very small (i) icon nestled at the corner of the CTA button */}
-                {i === 0 && tile.infoTooltip ? (
-                  <TileInfoTooltip text={tile.infoTooltip} />
-                ) : null}
-              </div>
-            );
-          })}
+          <div className={cn('relative z-2 w-full max-w-[540px] min-w-0', isDark ? 'text-[#f5f5f7]' : 'text-[#1d1d1f]')}>
+            <Headline
+              className={cn(
+                'font-[family-name:var(--gz-font-display)] font-semibold break-words',
+                isHero
+                  ? 'text-[32px] leading-[36px] tracking-[0.064px] am:text-[48px] am:leading-[52.0077px] am:tracking-[-0.096px] al:text-[56px] al:leading-[60px] al:tracking-[-0.28px]'
+                  : 'text-[28px] leading-[32px] tracking-[0.04px] am:text-[32px] am:leading-[36px] al:text-[40px] al:leading-[44px] al:tracking-normal',
+                // logo headlines carry the target's optical nudge at every width
+                tile.headlineLogo ? 'mt-[4px] mb-[-5px]' : null,
+              )}
+              // Promo card headlines only — hero tiles keep --gz-font-display from the
+              // class above. Adding this to the hero side is a one-line change (drop
+              // the isHero guard) once that's wanted.~
+              style={
+                isHero
+                  ? undefined
+                  : {
+                    // DEACTIVATED (previous font) — kept for easy rollback:
+                    // fontFamily: 'var(--gz-font-display)',
+                    // ACTIVE — matches the hero headlines in GadzioHeroSection.tsx
+                    fontFamily:
+                      '"Impact", "Arial Black", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+                  }
+              }
+            >
+              {tile.headlineLogo ? (
+                <ArtDirectedPicture
+                  data={tile.headlineLogo}
+                  className="block"
+                  imgClassName="mx-auto block h-auto w-auto max-w-none"
+                  intrinsic
+                />
+              ) : (
+                tile.headline
+              )}
+            </Headline>
+
+            <p
+              className={cn(
+                'gz-tile-subhead mx-auto max-w-full break-words font-normal',
+                // Hero subheads keep --gz-font-display (Inter). Promo subheads use
+                // Tailwind's default font-sans — the same stack the hero's eyebrow
+                // labels inherit from GadzioHeroSection's root <section>.
+                // DEACTIVATED (previous font, for both) — kept for easy rollback:
+                //   'font-[family-name:var(--gz-font-display)]',
+                isHero ? 'font-[family-name:var(--gz-font-display)]' : 'font-sans',
+                isHero
+                  ? 'mt-[4px] text-[19px] leading-[23px] tracking-[0.228px] am:text-[24px] am:leading-[28px] am:tracking-[0.216px] al:mt-[6px] al:text-[28px] al:leading-[32px] al:tracking-[0.196px]'
+                  : 'text-[17px] leading-[22px] tracking-[0.18px] am:text-[18px] am:leading-[23px] al:text-[21px] al:leading-[25px] al:tracking-[0.231px]',
+                // text headlines need the gap the logo tiles get from their -5px
+                !tile.headlineLogo ? (isHero ? null : 'mt-[4px] al:mt-[3px]') : null,
+              )}
+              style={
+                {
+                  '--gz-subhead-sm': px(tile.subheadMaxWidth.sm),
+                  '--gz-subhead-md': px(tile.subheadMaxWidth.md),
+                  '--gz-subhead-lg': px(tile.subheadMaxWidth.lg),
+                } as CSSProperties
+              }
+            >
+              <Subhead segments={tile.subhead} />
+            </p>
+          </div>
+
+          {/* .tile-ctas */}
+          <div
+            className={cn(
+              'relative z-3 flex flex-wrap items-center justify-center gap-y-[10px]',
+              responsiveBanner && tile.image && 'pointer-events-auto',
+              isHero
+                ? 'mt-[11px] gap-x-[14px] am:mt-[16px] am:gap-x-[17px] al:mt-[17px]'
+                : 'mt-[11px] gap-x-[14px] am:mt-[12px]',
+            )}
+          >
+            {tile.ctas.map((cta, i) => {
+              const ctaClassName = cn(
+                'gz-button relative z-4',
+                cta.variant === 'secondary' && 'gz-button-secondary',
+                // hero buttons are small below 735px; promo buttons are always small
+                'gz-button-small',
+                isHero && 'gz-button-hero',
+              );
+              return (
+                <div key={`${cta.label}|${cta.href}`} className="relative inline-flex items-center">
+                  {cta.internal ? (
+                    <Link
+                      href={cta.href}
+                      aria-label={cta.ariaLabel ?? undefined}
+                      className={ctaClassName}
+                    >
+                      {cta.label}
+                    </Link>
+                  ) : (
+                    <a
+                      href={cta.href}
+                      aria-label={cta.ariaLabel ?? undefined}
+                      {...(isExternalHref(cta.href)
+                        ? { target: '_blank', rel: 'noopener noreferrer' }
+                        : null)}
+                      className={ctaClassName}
+                    >
+                      {cta.label}
+                    </a>
+                  )}
+                  {/* Very small (i) icon nestled at the corner of the CTA button */}
+                  {i === 0 && tile.infoTooltip ? (
+                    <TileInfoTooltip text={tile.infoTooltip} />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {/* a.tile-link — covers the tile; the CTAs sit above it */}
       {tile.internal ? (

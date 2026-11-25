@@ -191,3 +191,17 @@ test('new UI showcase hero tile keeps 0.5 top spacing and removes bottom white g
     /<HeroSection[\s\S]*?baseTiles=\{NEW_UI_HERO_TILES\}[\s\S]*?className="mt-0\.5 mb-0 grid grid-cols-1 gap-\[12px\] text-center"/,
   );
 });
+
+test('new UI showcase hero tile uses full-width responsive banner without horizontal crop', () => {
+  const tileCard = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/TileCard.tsx'), 'utf8');
+  const hero = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection.tsx'), 'utf8');
+  const home = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage.tsx'), 'utf8');
+  assert.match(
+    home,
+    /<HeroSection[\s\S]*?baseTiles=\{NEW_UI_HERO_TILES\}[\s\S]*?responsiveBanner[\s\S]*?className="mt-0\.5 mb-0 grid grid-cols-1 gap-\[12px\] text-center"/,
+  );
+  assert.match(hero, /responsiveBanner=\{responsiveBanner\}/);
+  assert.match(tileCard, /responsiveBanner\?: boolean/);
+  assert.match(tileCard, /imgClassName="block h-auto w-full"/);
+  assert.match(tileCard, /imgClassName="absolute left-1\/2 h-full w-auto max-w-none -translate-x-1\/2 object-cover"/);
+});
