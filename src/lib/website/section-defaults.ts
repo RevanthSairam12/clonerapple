@@ -13,6 +13,23 @@ export interface TrustBadgeItem {
   href?: string;
 }
 
+export const TRUST_BADGE_ICON_OPTIONS = [
+  'shipping',
+  'returns',
+  'heart',
+  'shield',
+  'headset',
+  'headphones',
+  'message',
+  'messages',
+  'badge-check',
+  'sparkles',
+  'cpu',
+  'gem',
+  'stars',
+  'handshake',
+] as const;
+
 export const TRUST_BADGES_ITEMS: TrustBadgeItem[] = [
   {
     title: 'FREE SHIP $75+',

@@ -392,6 +392,47 @@ test('GadzioTrustBar inherits admin content from StorefrontTrustBarProvider acro
   assert.match(contentApi, /revalidatePath\('\/', 'layout'\)/);
 });
 
+test('GadzioTrustBar renders distinct SVGs for every new trust badge icon option and aliases', async () => {
+  const { TRUST_BADGE_ICON_OPTIONS } = await jiti.import(
+    path.join(root, 'src/lib/website/section-defaults.ts'),
+  );
+  const { getCollection } = await jiti.import(
+    path.join(root, 'src/lib/website/collections.ts'),
+  );
+
+  for (const expected of ['headset', 'headphones', 'message', 'messages', 'badge-check', 'sparkles', 'cpu', 'gem', 'stars', 'handshake']) {
+    assert.ok(TRUST_BADGE_ICON_OPTIONS.includes(expected), `missing option: ${expected}`);
+  }
+
+  const trustCollection = getCollection('gadzio.trust_badges');
+  const iconField = trustCollection.lists[0].itemFields.find((f) => f.path === 'icon');
+  assert.equal(iconField.type, 'select');
+  assert.equal(trustCollection.lists[0].maxItems, 8);
+
+  const renderedSvgByOption = new Map();
+  for (const icon of TRUST_BADGE_ICON_OPTIONS) {
+    const html = renderToStaticMarkup(
+      React.createElement(GadzioTrustBar, {
+        enabled: true,
+        items: [{ title: `Badge ${icon}`, icon }],
+      }),
+    );
+    const svgMatch = html.match(/<svg[\s\S]*?<\/svg>/);
+    assert.ok(svgMatch, `missing SVG for ${icon}`);
+    assert.ok(!renderedSvgByOption.has(svgMatch[0]), `duplicate SVG markup for ${icon}`);
+    renderedSvgByOption.set(svgMatch[0], icon);
+  }
+
+  // Natural aliases normalize to their matching SVG
+  const badgeCheckHtml = renderToStaticMarkup(
+    React.createElement(GadzioTrustBar, { enabled: true, items: [{ title: 'A', icon: 'badge-check' }] }),
+  );
+  const badgeCheckAliasHtml = renderToStaticMarkup(
+    React.createElement(GadzioTrustBar, { enabled: true, items: [{ title: 'A', icon: 'Badge Check' }] }),
+  );
+  assert.equal(badgeCheckAliasHtml, badgeCheckHtml);
+});
+
 /* ------------------------------------------- 4. Spin & Win Desktop Popup */
 
 test('HomeSpinPopup modal overlays sticky header and floating brand switcher cleanly', async () => {

@@ -133,8 +133,13 @@ test('brand wordmarks ignore stale saved names while preserving links', () => {
 });
 
 test('editor drops dead paths without exposing retired OPPO keys', () => {
-  assert.equal(COLLECTIONS.length, 33);
+  assert.equal(COLLECTIONS.length, 34);
   assert.equal(COLLECTIONS.filter(collection => collection.key.startsWith('edu.')).length, 11);
+  assert.deepEqual(plain(getCollectionDefaults('gadzio.hero_overlay')), {
+    enabled: false,
+    tapeImage1: '',
+    tapeImage2: '',
+  });
   assert.equal(LEGACY_COLLECTION_KEYS.length, 11);
   for (const key of LEGACY_COLLECTION_KEYS) {
     assert.match(key, /^oppo\./);
@@ -185,10 +190,10 @@ test('new UI showcase hero tile keeps 0.5 top spacing and removes bottom white g
   const hero = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/HeroSection.tsx'), 'utf8');
   const home = readFileSync(path.join(root, 'src/components/sites/www-apple-com-736d3707/root-8a5edab2/GadzioHomePage.tsx'), 'utf8');
   assert.match(hero, /className\s*=\s*'mb-\[12px\] grid grid-cols-1 gap-\[12px\] text-center'/);
-  assert.match(hero, /<section className=\{className\}>/);
+  assert.match(hero, /<section[\s\S]*?id=\{id\}[\s\S]*?className=\{className\}/);
   assert.match(
     home,
-    /<HeroSection[\s\S]*?baseTiles=\{NEW_UI_HERO_TILES\}[\s\S]*?className="mt-0\.5 mb-0 grid grid-cols-1 gap-\[12px\] text-center"/,
+    /<HeroSection[\s\S]*?id=\{HERO_OVERLAY_TARGET_ID\}[\s\S]*?baseTiles=\{NEW_UI_HERO_TILES\}[\s\S]*?className="mt-0\.5 mb-0 grid grid-cols-1 gap-\[12px\] text-center"/,
   );
 });
 
@@ -202,6 +207,7 @@ test('new UI showcase hero tile uses full-width responsive banner without horizo
   );
   assert.match(hero, /responsiveBanner=\{responsiveBanner\}/);
   assert.match(tileCard, /responsiveBanner\?: boolean/);
-  assert.match(tileCard, /imgClassName="block h-auto w-full"/);
+  assert.match(tileCard, /al:min-h-\[692px\]/);
+  assert.match(tileCard, /imgClassName="block h-auto w-full al:absolute al:top-0 al:left-1\/2 al:h-full al:w-auto al:max-w-none al:-translate-x-1\/2 al:object-cover"/);
   assert.match(tileCard, /imgClassName="absolute left-1\/2 h-full w-auto max-w-none -translate-x-1\/2 object-cover"/);
 });

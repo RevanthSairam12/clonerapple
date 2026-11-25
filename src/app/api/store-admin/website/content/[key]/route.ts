@@ -9,6 +9,7 @@ import { validateLegacyContentWrite } from '@/lib/website/boundary';
 import { getCollection } from '@/lib/website/collections';
 import { getStorefrontProducts } from '@/lib/catalog/storefront';
 import { homepageSlotCount, validateHomepageSlots } from '@/lib/website/homepage-products';
+import { HERO_OVERLAY_COLLECTION_KEY, validateHeroOverlayConfig } from '@/lib/website/hero-overlay';
 import { archiveContentBlock, saveContentBlock } from '@/lib/website/content-store';
 
 export const dynamic = 'force-dynamic';
@@ -91,6 +92,23 @@ export async function PUT(
         status: 'denied', reason: 'invalid_product_selection', request,
       });
       return noStore({ error }, 400);
+    }
+  }
+
+  if (collection.key === HERO_OVERLAY_COLLECTION_KEY) {
+    const overlayError = validateHeroOverlayConfig(value);
+    if (overlayError) {
+      await writeAudit({
+        actorId: guard.session.adminId,
+        actorEmail: guard.session.email,
+        action: 'website.content_save',
+        entity: 'content_block',
+        entityId: collection.key,
+        status: 'denied',
+        reason: 'invalid_hero_overlay',
+        request,
+      });
+      return noStore({ error: overlayError }, 400);
     }
   }
 

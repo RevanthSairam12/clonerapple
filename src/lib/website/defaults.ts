@@ -49,6 +49,7 @@ import {
   REVIEWS_ITEMS, REVIEWS_COPY, IN_THE_WILD_ITEMS, IN_THE_WILD_COPY,
   EVENT_BANNER_COPY, SALE_BANNER_COPY,
 } from './section-defaults';
+import { HERO_OVERLAY_COLLECTION_KEY, HERO_OVERLAY_DEFAULTS } from './hero-overlay';
 
 /* ------------------------------------------------------------- helpers */
 
@@ -346,11 +347,15 @@ export const GADZIO_HERO_TILES_DEFAULTS = {
   enabled: true,
   heroTiles: NEW_UI_HERO_TILES.map(tileOverride),
 };
+export const GADZIO_HERO_OVERLAY_DEFAULTS = {
+  ...HERO_OVERLAY_DEFAULTS,
+};
 
 /* -------------------------------------------------------------- build */
 
 const DEFAULTS: Record<string, Record<string, unknown>> = {
   /* Gadzio homepage */
+  [HERO_OVERLAY_COLLECTION_KEY]: GADZIO_HERO_OVERLAY_DEFAULTS,
   'gadzio.hero_tiles': GADZIO_HERO_TILES_DEFAULTS,
   'gadzio.reviews': GADZIO_REVIEWS_DEFAULTS,
   'gadzio.in_the_wild': GADZIO_IN_THE_WILD_DEFAULTS,

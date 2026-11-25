@@ -1,9 +1,18 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import type { CollectionSchema, FieldSchema, ListSchema } from '@/lib/website/collections';
+import {
+  HERO_OVERLAY_COLLECTION_KEY,
+  computeHeroOverlayGeometry,
+  computeTapeImageStyle,
+  isSafeOverlayImageUrl,
+  normalizeHeroOverlayConfig,
+  validateHeroOverlayConfig,
+  type OverlayImageDimensions,
+} from '@/lib/website/hero-overlay';
 import { getByPath, setByPath } from '@/lib/website/json-path';
 import { homepageSlotCount, normalizeHomepageSlots } from '@/lib/website/homepage-products';
 
@@ -22,6 +31,160 @@ function isEnabled(value: Record<string, unknown>): boolean {
 /** Group scalar fields by the first path segment for scannable sections. */
 function sectionLabel(root: string): string {
   return root.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()).trim();
+}
+
+/** Compact Store Admin preview showing how both uploaded tape images cross the 3-tile hero. */
+function HeroOverlayAdminPreview({ value }: { value: Record<string, unknown> }) {
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [boxSize, setBoxSize] = useState({ width: 640, height: 280 });
+  const [natural1, setNatural1] = useState<{ src: string; size: OverlayImageDimensions } | null>(null);
+  const [natural2, setNatural2] = useState<{ src: string; size: OverlayImageDimensions } | null>(null);
+
+  const config = normalizeHeroOverlayConfig(value);
+  const src1 = isSafeOverlayImageUrl(config.tapeImage1) ? config.tapeImage1 : '';
+  const src2 = isSafeOverlayImageUrl(config.tapeImage2) ? config.tapeImage2 : '';
+
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setBoxSize({ width: rect.width, height: rect.height });
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const geometry = computeHeroOverlayGeometry(boxSize.width, boxSize.height);
+  const style1 = computeTapeImageStyle(
+    geometry,
+    1,
+    natural1?.src === src1 ? natural1.size : null,
+  );
+  const style2 = computeTapeImageStyle(
+    geometry,
+    -1,
+    natural2?.src === src2 ? natural2.size : null,
+  );
+
+  return (
+    <section className="sa-detail-card" style={{ marginBottom: 14 }}>
+      <h2 className="sa-card-title">Three-tile hero preview</h2>
+      <p className="sa-hint" style={{ marginBottom: 10 }}>
+        {config.enabled
+          ? 'Overlay is enabled: clicking anywhere on this combined hero smoothly scrolls visitors to Homepage — Hero Tiles (New UI).'
+          : 'Overlay is currently disabled. Upload both vertical tape images, check your composition below, then enable and save.'}
+      </p>
+      <div
+        ref={previewRef}
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: 680,
+          aspectRatio: '1560 / 680',
+          borderRadius: 12,
+          overflow: 'hidden',
+          background: '#ebebe7',
+          padding: 8,
+          border: '1px solid var(--sa-line)',
+        }}
+      >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 8,
+            height: '100%',
+            opacity: config.enabled ? 0.92 : 0.72,
+          }}
+        >
+          <div
+            style={{
+              background: '#f5f5f5',
+              borderRadius: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 11,
+              fontWeight: 700,
+              color: '#333',
+              padding: 8,
+              textAlign: 'center',
+            }}
+          >
+            Hero Tile 1 (Main)
+          </div>
+          <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 8 }}>
+            <div
+              style={{
+                background: '#171717',
+                borderRadius: 10,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 11,
+                fontWeight: 700,
+                color: '#f5f5f5',
+                padding: 6,
+              }}
+            >
+              Hero Tile 2 (Audio)
+            </div>
+            <div
+              style={{
+                background: '#18422b',
+                borderRadius: 10,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 11,
+                fontWeight: 700,
+                color: '#f5f5f5',
+                padding: 6,
+              }}
+            >
+              Hero Tile 3 (New Arrivals)
+            </div>
+          </div>
+        </div>
+
+        {src1 ? (
+          // eslint-disable-next-line @next/next/no-img-element -- admin preview of uploaded overlay tape
+          <img
+            src={src1}
+            alt="Tape image 1 preview"
+            style={{ ...style1, pointerEvents: 'none', zIndex: 2 }}
+            onLoad={(event) => {
+              const img = event.currentTarget;
+              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                setNatural1({ src: src1, size: { width: img.naturalWidth, height: img.naturalHeight } });
+              }
+            }}
+          />
+        ) : null}
+
+        {src2 ? (
+          // eslint-disable-next-line @next/next/no-img-element -- admin preview of uploaded overlay tape
+          <img
+            src={src2}
+            alt="Tape image 2 preview"
+            style={{ ...style2, pointerEvents: 'none', zIndex: 3 }}
+            onLoad={(event) => {
+              const img = event.currentTarget;
+              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                setNatural2({ src: src2, size: { width: img.naturalWidth, height: img.naturalHeight } });
+              }
+            }}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
 interface Props {
@@ -95,6 +258,11 @@ export function WebsiteContentEditor({
     [value, effectiveDefaults],
   );
 
+  const isHeroOverlay = collection.key === HERO_OVERLAY_COLLECTION_KEY;
+  const overlayValidationError = useMemo(
+    () => (isHeroOverlay ? validateHeroOverlayConfig(value) : null),
+    [isHeroOverlay, value],
+  );
   const enabled = collection.disablable ? isEnabled(value) : true;
 
   const changedFieldCount = useMemo(() => {
@@ -377,6 +545,9 @@ export function WebsiteContentEditor({
       ) : null}
 
       {error ? <p className="sa-error" role="alert">{error}</p> : null}
+      {overlayValidationError ? (
+        <p className="sa-warning" role="alert">{overlayValidationError}</p>
+      ) : null}
       {message ? <p className="sa-success" role="status">{message}</p> : null}
 
       {initialValue === null ? (
@@ -412,6 +583,7 @@ export function WebsiteContentEditor({
       ) : null}
 
       <div style={enabled || slotCount > 0 ? undefined : { opacity: 0.55, pointerEvents: canEdit ? 'none' : undefined }}>
+        {isHeroOverlay ? <HeroOverlayAdminPreview value={value} /> : null}
         {groups.map(([root, fields]) => (
           <section className="sa-detail-card" key={root} style={{ marginBottom: 14 }}>
             <h2 className="sa-card-title">
@@ -557,7 +729,7 @@ export function WebsiteContentEditor({
           <button
             className="sa-btn sa-btn-primary"
             type="button"
-            disabled={busy !== null || (slotCount > 0 && !slotsValid)}
+            disabled={busy !== null || (slotCount > 0 && !slotsValid) || Boolean(overlayValidationError)}
             onClick={save}
           >
             {busy === 'save' ? 'Saving…' : 'Save changes'}

@@ -17,6 +17,7 @@
  */
 
 import { SITE_FONT_NAMES } from '@/lib/fonts';
+import { TRUST_BADGE_ICON_OPTIONS } from '@/lib/website/section-defaults';
 
 export type FieldType = 'text' | 'textarea' | 'image' | 'video' | 'url' | 'color' | 'boolean' | 'select';
 
@@ -104,6 +105,18 @@ const colorField = (path: string, label: string, hint?: string): FieldSchema => 
   label,
   type: 'color',
   hint: hint ?? `Choose a hex color value for ${label.toLowerCase()}.`,
+});
+const selectField = (
+  path: string,
+  label: string,
+  options: readonly string[],
+  hint?: string,
+): FieldSchema => ({
+  path,
+  label,
+  type: 'select',
+  options,
+  hint,
 });
 
 /**
@@ -325,11 +338,16 @@ export const COLLECTIONS: CollectionSchema[] = [
         path: 'items',
         itemLabel: 'Badge',
         minItems: 1,
-        maxItems: 6,
+        maxItems: 8,
         itemFields: [
           text('title', 'Badge Title', 'e.g. FREE SHIPPING OVER ₹999 or 30-DAY RETURNS'),
           text('subtitle', 'Badge Subtitle (optional)', 'Small helper text under the badge title'),
-          text('icon', 'Icon Type', 'One of: shipping, returns, heart, genuine, shield'),
+          selectField(
+            'icon',
+            'Icon Type',
+            TRUST_BADGE_ICON_OPTIONS,
+            `Choose from: ${TRUST_BADGE_ICON_OPTIONS.join(', ')}`,
+          ),
           url('href', 'Badge link (optional)'),
         ],
       },
@@ -420,6 +438,30 @@ export const COLLECTIONS: CollectionSchema[] = [
     disablable: true,
   },
   /* — Gadzio homepage (route: /) — */
+  {
+    key: 'gadzio.hero_overlay',
+    label: 'Hero Section Campaign Overlay',
+    sitePaths: ['/'],
+    description:
+      'Optional diagonal X-shaped campaign overlay spanning the combined three-tile New UI hero section. Clicking anywhere smoothly scrolls to Homepage — Hero Tiles (New UI).',
+    fields: [
+      booleanField(
+        'enabled',
+        'Enable overlay',
+        'Turn on after uploading both vertical tape images. When enabled, all individual hero card links are paused and clicking anywhere scrolls smoothly to Homepage — Hero Tiles (New UI).',
+      ),
+      image(
+        'tapeImage1',
+        'Tape image 1',
+        'Upload the first vertical campaign tape image. Rendered directly across all three hero tiles as the first diagonal band.',
+      ),
+      image(
+        'tapeImage2',
+        'Tape image 2',
+        'Upload the second vertical campaign tape image. Rendered directly across all three hero tiles as the opposing diagonal band forming an X.',
+      ),
+    ],
+  },
   {
     key: 'gadzio.hero_tiles',
     label: 'Homepage — Hero Tiles (New UI)',

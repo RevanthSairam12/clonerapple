@@ -22,6 +22,7 @@ import { GadzioEventBanner } from '@/components/banner/GadzioEventBanner';
 import { LocaleBanner } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/LocaleBanner';
 import { PromoSection } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/PromoSection';
 import { Ribbon } from '@/components/sites/www-apple-com-736d3707/root-8a5edab2/Ribbon';
+import { HERO_OVERLAY_TARGET_ID, type HeroCampaignOverlayConfig } from '@/lib/website/hero-overlay';
 import type {
   BrandBarOverride,
   CategoryGridOverride,
@@ -54,6 +55,8 @@ export interface HomePageOverrides {
   heroTiles?: TileOverride[];
   /** Back to School video stage (tile 1 motion). */
   heroVideo?: HeroVideoOverride;
+  /** Campaign X-tape overlay rendered across the three-tile New UI hero. */
+  heroOverlay?: HeroCampaignOverlayConfig;
   /** Showcase Hero Tiles rendered in the New UI above Diwali & Crowd Favorites. */
   showcaseHeroTiles?: TileOverride[];
   /** false = New UI showcase hero tiles hidden from admin panel. */
@@ -138,7 +141,7 @@ export function GadzioHomePage({
           /* NEW / MODERN UI: Modern Gadzio Storefront */
           <>
             {/* 1. ACTIVE GADZIO HERO SECTION (UNCHANGED) */}
-            <GadzioHeroSection />
+            <GadzioHeroSection campaignOverlay={overrides?.heroOverlay} />
             <HomeSpinStrip banner={spinBanner} />
 
             {/* 2. VALUE PROPOSITIONS & TRUST BADGES BAR */}
@@ -169,6 +172,7 @@ export function GadzioHomePage({
             {/* 4b. SHOWCASE HERO TILES (NEW UI, INDEPENDENT DATA FROM OLD UI) */}
             {overrides?.showcaseHeroTilesEnabled !== false ? (
               <HeroSection
+                id={HERO_OVERLAY_TARGET_ID}
                 baseTiles={NEW_UI_HERO_TILES}
                 tiles={overrides?.showcaseHeroTiles}
                 enableVideo={false}

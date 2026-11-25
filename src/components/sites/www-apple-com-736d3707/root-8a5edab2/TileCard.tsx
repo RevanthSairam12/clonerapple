@@ -84,7 +84,10 @@ export function TileCard({
         'relative overflow-clip rounded-[0.01rem]',
         isDark ? 'gz-theme-dark bg-black' : (tile.index === 0 && isHero ? 'bg-white' : 'bg-[#f5f5f7]'),
         responsiveBanner
-          ? cn('w-full', !tile.image && 'flex justify-center py-[40px]')
+          ? cn(
+              'w-full al:flex al:justify-center al:min-h-[692px] al:pt-[56px] al:pb-[63px]',
+              !tile.image && 'flex justify-center py-[40px]',
+            )
           : cn(
               'flex justify-center',
               isHero
@@ -96,11 +99,16 @@ export function TileCard({
       {/* .tile-image-wrapper */}
       {responsiveBanner ? (
         tile.image ? (
-          <div className="relative w-full">
+          <div className="relative w-full al:absolute al:inset-0">
             <ArtDirectedPicture
               data={tile.image}
               className="block w-full"
-              imgClassName="block h-auto w-full"
+              imgClassName="block h-auto w-full al:absolute al:top-0 al:left-1/2 al:h-full al:w-auto al:max-w-none al:-translate-x-1/2 al:object-cover"
+              imgStyle={{
+                objectPosition: isHero
+                  ? (tile.index === 0 ? '50% 100%' : (tile.index === 1 ? '50% 50%' : '50% 30%'))
+                  : '50% 50%',
+              }}
               fetchPriority={priority ? 'high' : undefined}
               loading={priority ? 'eager' : 'lazy'}
             />
@@ -133,7 +141,7 @@ export function TileCard({
         <div
           className={cn(
             responsiveBanner && tile.image
-              ? 'pointer-events-none absolute inset-0 flex w-full max-w-full min-w-0 flex-col items-center justify-start px-[20px] pt-[20px] pb-[20px] text-center am:px-[28px] am:pt-[36px] al:pt-[48px]'
+              ? 'pointer-events-none absolute inset-0 flex w-full max-w-full min-w-0 flex-col items-center justify-start px-[20px] pt-[20px] pb-[20px] text-center am:px-[28px] am:pt-[36px] al:relative al:inset-auto al:pt-0 al:pb-0'
               : 'relative flex w-full max-w-full min-w-0 flex-col items-center px-[20px] text-center am:px-[28px]',
           )}
         >

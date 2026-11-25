@@ -149,6 +149,16 @@ export function ImageField({
         >
           {uploading ? 'Uploading…' : 'Upload'}
         </button>
+        {value ? (
+          <button
+            className="sa-btn sa-btn-danger sa-btn-small"
+            type="button"
+            disabled={disabled || uploading}
+            onClick={() => onChange('')}
+          >
+            Remove
+          </button>
+        ) : null}
         <input
           ref={fileRef}
           type="file"
@@ -215,6 +225,16 @@ export function VideoField({
         >
           {uploading ? 'Uploading…' : 'Upload'}
         </button>
+        {value ? (
+          <button
+            className="sa-btn sa-btn-danger sa-btn-small"
+            type="button"
+            disabled={disabled || uploading}
+            onClick={() => onChange('')}
+          >
+            Remove
+          </button>
+        ) : null}
         <input
           ref={fileRef}
           type="file"
@@ -246,6 +266,9 @@ export function BooleanField({
   onChange: (value: boolean) => void;
 }) {
   const checked = typeof value === 'boolean' ? value : defaultValue !== false;
+  const stateLabel = field.label.toLowerCase().includes('enable')
+    ? (checked ? 'enabled' : 'disabled')
+    : (checked ? 'shown on the site' : 'hidden from the site');
   return (
     <div className="sa-field sa-field-wide">
       <label className="sa-check">
@@ -255,7 +278,7 @@ export function BooleanField({
           disabled={disabled}
           onChange={(event) => onChange(event.target.checked)}
         />
-        {field.label} — {checked ? 'shown on the site' : 'hidden from the site'}
+        {field.label} — {stateLabel}
       </label>
       {field.hint ? <span className="sa-hint">{field.hint}</span> : null}
     </div>
@@ -273,6 +296,8 @@ export function SelectField({
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const baseOptions = field.options ?? [];
+  const options = value && !baseOptions.includes(value) ? [value, ...baseOptions] : baseOptions;
   return (
     <FieldFrame label={field.label} changed={false} hint={field.hint}>
       <select
@@ -281,7 +306,7 @@ export function SelectField({
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
-        {field.options?.map((option) => (
+        {options.map((option) => (
           <option key={option} value={option}>
             {option}
           </option>

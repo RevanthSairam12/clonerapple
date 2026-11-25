@@ -8,6 +8,7 @@ import { mergeTiles, type HeroVideoOverride, type TileOverride } from './admin-o
  * 12px gap and a 12px bottom margin. Old UI hosts the optional video stage.
  */
 export function HeroSection({
+  id,
   tiles: tilesOverride,
   video,
   baseTiles = HERO_TILES,
@@ -15,6 +16,8 @@ export function HeroSection({
   responsiveBanner = false,
   className = 'mb-[12px] grid grid-cols-1 gap-[12px] text-center',
 }: {
+  /** Optional stable anchor ID (used by Homepage — Hero Tiles New UI scroll target). */
+  id?: string;
   tiles?: TileOverride[];
   /** Admin overrides for the Back to School video stage (tile 1). */
   video?: HeroVideoOverride;
@@ -30,7 +33,11 @@ export function HeroSection({
   const tiles = mergeTiles(baseTiles, tilesOverride);
 
   return (
-    <section className={className}>
+    <section
+      id={id}
+      className={className}
+      style={id ? { scrollMarginTop: '112px' } : undefined}
+    >
       {tiles.map((tile, i) => (
         <TileCard
           key={tile.index}
