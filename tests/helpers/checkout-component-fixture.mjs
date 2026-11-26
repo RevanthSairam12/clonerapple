@@ -8,12 +8,13 @@ import { createJiti } from 'jiti';
 
 const nativeRequire = createRequire(import.meta.url);
 const root = path.resolve('.');
-const jiti = createJiti(import.meta.url, { alias: { '@': path.join(root, 'src') } });
+const jiti = createJiti(import.meta.url, { jsx: { runtime: 'automatic' }, alias: { '@': path.join(root, 'src') } });
 const quoteRules = await jiti.import(path.join(root, 'src/lib/checkout/client-quote.ts'));
 const shippingRules = await jiti.import(path.join(root, 'src/lib/checkout/shipping-rules.ts'));
 const decisionRules = await jiti.import(path.join(root, 'src/lib/checkout/checkout-decision.ts'));
 const cartIds = await jiti.import(path.join(root, 'src/lib/cart/cart-id.ts'));
 const recoveryRules = await jiti.import(path.join(root, 'src/lib/checkout/payment-recovery.ts'));
+const trustDeliveryCards = await jiti.import(path.join(root, 'src/components/checkout/CheckoutTrustDeliveryCards.tsx'));
 export const policy = { enabled: false, chargePaise: 0, freeShippingThresholdPaise: null };
 export const variant = { id: 'exact', sku: 'EXACT', label: 'Original option', pricePaise: 10000, inStock: true };
 
@@ -53,6 +54,7 @@ export function checkoutFixture() {
     },
     '@/lib/checkout/india-validation': { INDIAN_STATES: [], normalizeIndianMobile: value => value, normalizeIndianState: value => value, validateCheckoutContact: () => ({ ok: true, value: { phone: '9876543210' } }), validateIndianAddress: value => ({ ok: true, value }), checkoutFieldErrors: () => ({}) },
     '@/lib/store-admin/money': { formatRupees: value => String(value) },
+    './CheckoutTrustDeliveryCards': trustDeliveryCards,
   };
   const filename = path.join(root, 'src/components/checkout/CheckoutForm.tsx');
   const compiled = ts.transpileModule(readFileSync(filename, 'utf8'), { fileName: filename, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;

@@ -1,11 +1,14 @@
+import { CheckoutTrustDeliveryForm } from '@/components/store-admin/CheckoutTrustDeliveryForm';
 import { MaintenanceStatusBadge } from '@/components/store-admin/MaintenanceStatusBadge';
 import { SettingsForm } from '@/components/store-admin/SettingsForm';
 import { SettingsNav } from '@/components/store-admin/SettingsNav';
+import { listAdminCheckoutReviews } from '@/lib/checkout/trust-delivery-server';
 import { getStoreSession } from '@/lib/store-admin/auth';
 import { secretStatus } from '@/lib/store-admin/secret-status';
 import { getStoreSettings } from '@/lib/store-admin/settings';
 import { DEFAULT_SETTINGS, fieldsForSection } from '@/lib/store-admin/settings-rules';
 import { getMaintenanceState, maintenanceStatus } from '@/lib/storefront/maintenance';
+import { readSaleState } from '@/lib/storefront/sale-state';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +17,11 @@ export default async function StoreAdminStorefrontSettingsPage() {
   const result = await getStoreSettings();
   const settings = result.ok ? result.settings : DEFAULT_SETTINGS;
   const canEdit = session?.role === 'store_admin' || session?.role === 'store_owner';
-  const maintenance = await getMaintenanceState();
+  const [maintenance, saleState, eligibleReviews] = await Promise.all([
+    getMaintenanceState(),
+    readSaleState(),
+    listAdminCheckoutReviews(),
+  ]);
   const secrets = secretStatus([
     { label: 'reCAPTCHA secret key', envVar: 'RECAPTCHA_SECRET_KEY' },
   ]);
@@ -46,6 +53,19 @@ export default async function StoreAdminStorefrontSettingsPage() {
         canEdit={canEdit}
         note="The login screen reads these values on its next load. Media ids come from the Media library."
       />
+
+      <section id="checkout-trust-delivery" className="sa-detail-card">
+        <div className="sa-detail-head">
+          <h2>Checkout Trust &amp; Delivery</h2>
+        </div>
+        <CheckoutTrustDeliveryForm
+          initial={settings}
+          reviews={eligibleReviews}
+          saleStatus={saleState.status}
+          saleLive={saleState.live}
+          canEdit={canEdit}
+        />
+      </section>
 
       <section className="sa-detail-card">
         <div className="sa-detail-head">

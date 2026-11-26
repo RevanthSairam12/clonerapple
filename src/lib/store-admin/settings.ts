@@ -1,4 +1,9 @@
 import { getSql } from '@/lib/platform/db';
+import {
+  isCheckoutTrustDeliveryKey,
+  validateCheckoutTrustDeliveryCrossFields,
+} from '@/lib/checkout/trust-delivery-rules';
+import { clearCheckoutTrustDeliveryCache } from '@/lib/checkout/trust-delivery-server';
 import { clearMaintenanceCache } from '@/lib/storefront/maintenance';
 import { writeAudit, type AuditInput } from './audit';
 
@@ -136,6 +141,47 @@ export async function updateStoreSettings(
           return { ok: false as const, reason: 'unavailable' as const, error: 'Initialize shipping settings with the shipping-policy bootstrap before editing them.' };
         }
       }
+      if (validated.some((item) => isCheckoutTrustDeliveryKey(item.key))) {
+        const currentRows = (await tx`
+          select key, value from store_settings
+          where key like 'checkout_trust_%' or key like 'checkout_delivery_%'
+        `) as Row[];
+        const merged: Record<string, string> = { ...DEFAULT_SETTINGS };
+        for (const row of currentRows) {
+          if (isStoreSettingKey(row.key)) merged[row.key] = text(row.value);
+        }
+        for (const item of validated) {
+          merged[item.key] = item.value;
+        }
+        const crossCheck = validateCheckoutTrustDeliveryCrossFields(merged);
+        if (!crossCheck.ok) {
+          return {
+            ok: false as const,
+            reason: 'invalid-input' as const,
+            error: crossCheck.error,
+          };
+        }
+        const selectedReviewId = (merged.checkout_trust_review_id ?? '').trim();
+        if (
+          selectedReviewId !== '' &&
+          (validated.some((item) => item.key === 'checkout_trust_review_id') ||
+            (merged.checkout_trust_enabled === 'on' &&
+              merged.checkout_trust_mode === 'manual_review'))
+        ) {
+          const foundReview = (await tx`
+            select id from product_reviews
+            where id = ${selectedReviewId} and status = 'published'
+            limit 1
+          `) as Row[];
+          if (foundReview.length === 0) {
+            return {
+              ok: false as const,
+              reason: 'invalid-input' as const,
+              error: 'Selected customer review must be an existing published review.',
+            };
+          }
+        }
+      }
       const changes: SettingChange[] = [];
       for (const item of validated) {
         const beforeRows = (await tx`
@@ -174,6 +220,9 @@ export async function updateStoreSettings(
       // at the end of the cache window.
       if (changes.some((change) => change.key.startsWith('maintenance_'))) {
         clearMaintenanceCache();
+      }
+      if (changes.some((change) => isCheckoutTrustDeliveryKey(change.key))) {
+        clearCheckoutTrustDeliveryCache();
       }
       return { ok: true as const, changes };
     });

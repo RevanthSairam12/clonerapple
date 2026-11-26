@@ -8,11 +8,14 @@
 
 import { revalidateTag } from 'next/cache';
 
+import { clearCheckoutTrustDeliveryCache } from '@/lib/checkout/trust-delivery-server';
+
 import { CATALOG_CACHE_TAG, productCacheTag } from './catalog-tags';
 import { clearSaleStateCache } from './sale-state';
 
 export function revalidateCatalog(productIds?: string | string[] | null): void {
   clearSaleStateCache();
+  clearCheckoutTrustDeliveryCache();
   revalidateTag(CATALOG_CACHE_TAG, { expire: 0 });
 
   const ids = Array.isArray(productIds)

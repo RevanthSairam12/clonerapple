@@ -10,6 +10,64 @@
  * whether a secret is present, never its value.
  */
 
+export const CHECKOUT_TRUST_MODES = [
+  'manual_review',
+  'auto_rotate',
+  'trust_message',
+] as const;
+export type CheckoutTrustMode = (typeof CHECKOUT_TRUST_MODES)[number];
+
+export const CHECKOUT_DELIVERY_ICONS = [
+  'truck',
+  'package',
+  'clock',
+  'calendar',
+  'sparkles',
+  'none',
+] as const;
+export type CheckoutDeliveryIcon = (typeof CHECKOUT_DELIVERY_ICONS)[number];
+
+export const CHECKOUT_MIN_DELIVERY_DAYS = 1;
+export const CHECKOUT_MAX_DELIVERY_DAYS = 60;
+
+const CONTACT_EMAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+
+/** Detect email addresses or phone-like digit sequences (>= 10 digits). */
+export function containsContactPii(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (CONTACT_EMAIL_RE.test(trimmed)) return true;
+  const digitCount = trimmed.replace(/\D/g, '').length;
+  if (digitCount >= 10) return true;
+  return false;
+}
+
+/** Parse a whole integer number of delivery days in 1..60, or null if invalid. */
+export function parseDeliveryDays(raw: unknown): number | null {
+  if (typeof raw === 'number') {
+    if (
+      Number.isSafeInteger(raw) &&
+      raw >= CHECKOUT_MIN_DELIVERY_DAYS &&
+      raw <= CHECKOUT_MAX_DELIVERY_DAYS
+    ) {
+      return raw;
+    }
+    return null;
+  }
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^\d{1,2}$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < CHECKOUT_MIN_DELIVERY_DAYS ||
+    parsed > CHECKOUT_MAX_DELIVERY_DAYS
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
 const MAX_PRICE_PAISE = 1_000_000_00;
 
 function parseRupeesToPaise(value: unknown): { ok: true; paise: number | null } | { ok: false; message: string } {
@@ -96,6 +154,11 @@ export const SETTING_SECTIONS = [
     key: 'storefront',
     label: 'Storefront',
     description: 'Login screen copy and the reCAPTCHA site key.',
+  },
+  {
+    key: 'checkout_trust_delivery',
+    label: 'Checkout trust & delivery',
+    description: 'Checkout customer trust review and normal or sale delivery announcements.',
   },
   {
     key: 'maintenance',
@@ -568,6 +631,221 @@ const FIELD_DEFINITIONS = [
     options: TOGGLE_OPTIONS,
   },
 
+  // ------------------------------------------ checkout trust & delivery
+  {
+    key: 'checkout_trust_enabled',
+    label: 'Show checkout trust message',
+    kind: 'toggle',
+    limit: 3,
+    default: 'off',
+    section: 'checkout_trust_delivery',
+    options: TOGGLE_OPTIONS,
+    help: 'Display a compact customer review or honest trust message directly below the checkout Order Summary.',
+  },
+  {
+    key: 'checkout_trust_mode',
+    label: 'Trust display mode',
+    kind: 'select',
+    limit: 20,
+    default: 'trust_message',
+    section: 'checkout_trust_delivery',
+    options: [
+      { value: CHECKOUT_TRUST_MODES[0], label: 'Manual published review' },
+      { value: CHECKOUT_TRUST_MODES[1], label: 'Auto-rotate published reviews' },
+      { value: CHECKOUT_TRUST_MODES[2], label: 'Store trust message' },
+    ],
+    help: 'Choose a single published review, rotate published reviews automatically, or show an honest store trust message.',
+  },
+  {
+    key: 'checkout_trust_review_id',
+    label: 'Selected published review',
+    kind: 'text',
+    limit: 120,
+    default: '',
+    section: 'checkout_trust_delivery',
+    help: 'ID of an existing published customer review used when manual review mode is selected.',
+  },
+  {
+    key: 'checkout_trust_text',
+    label: 'Trust or review quote text',
+    kind: 'textarea',
+    limit: 240,
+    default: '',
+    section: 'checkout_trust_delivery',
+    help: 'Short excerpt shown in manual review mode (optional override) or the main text in store trust message mode.',
+  },
+  {
+    key: 'checkout_trust_reviewer_name',
+    label: 'Reviewer display name or initials',
+    kind: 'text',
+    limit: 60,
+    default: '',
+    section: 'checkout_trust_delivery',
+    help: 'Public name or initials shown below the quote (never enter emails or phone numbers).',
+  },
+  {
+    key: 'checkout_trust_min_rating',
+    label: 'Minimum rating filter',
+    kind: 'select',
+    limit: 1,
+    default: '4',
+    section: 'checkout_trust_delivery',
+    options: [
+      { value: '5', label: '5 stars' },
+      { value: '4', label: '4+ stars' },
+      { value: '3', label: '3+ stars' },
+      { value: '2', label: '2+ stars' },
+      { value: '1', label: '1+ stars' },
+    ],
+    help: 'Minimum genuine star rating used when filtering or auto-rotating published customer reviews.',
+  },
+  {
+    key: 'checkout_trust_show_verified',
+    label: 'Show Verified Purchase badge',
+    kind: 'toggle',
+    limit: 3,
+    default: 'on',
+    section: 'checkout_trust_delivery',
+    options: TOGGLE_OPTIONS,
+    help: 'Show the Verified Purchase label only when the database confirms the review came from a paid non-test order.',
+  },
+  {
+    key: 'checkout_trust_verified_only',
+    label: 'Auto-rotate verified purchases only',
+    kind: 'toggle',
+    limit: 3,
+    default: 'on',
+    section: 'checkout_trust_delivery',
+    options: TOGGLE_OPTIONS,
+    help: 'When auto-rotating reviews, restrict selection to genuine order-verified published reviews.',
+  },
+  {
+    key: 'checkout_delivery_normal_enabled',
+    label: 'Enable normal delivery announcement',
+    kind: 'toggle',
+    limit: 3,
+    default: 'off',
+    section: 'checkout_trust_delivery',
+    options: TOGGLE_OPTIONS,
+    help: 'Show the expected delivery range below the Order Summary when Sale Mode is not active.',
+  },
+  {
+    key: 'checkout_delivery_normal_title',
+    label: 'Normal delivery title',
+    kind: 'text',
+    limit: 80,
+    default: 'Expected Delivery',
+    section: 'checkout_trust_delivery',
+    help: 'Short heading displayed at the top of the normal delivery announcement box.',
+  },
+  {
+    key: 'checkout_delivery_normal_min_days',
+    label: 'Minimum delivery days',
+    kind: 'number',
+    limit: 2,
+    default: '4',
+    section: 'checkout_trust_delivery',
+    help: 'Minimum estimated delivery days (1 to 60) shown in normal mode; must not exceed maximum days.',
+  },
+  {
+    key: 'checkout_delivery_normal_max_days',
+    label: 'Maximum delivery days',
+    kind: 'number',
+    limit: 2,
+    default: '6',
+    section: 'checkout_trust_delivery',
+    help: 'Maximum estimated delivery days (1 to 60) shown in normal mode; must be greater than or equal to minimum days.',
+  },
+  {
+    key: 'checkout_delivery_normal_description',
+    label: 'Normal delivery description',
+    kind: 'textarea',
+    limit: 300,
+    default: 'Estimated delivery after your order is confirmed.',
+    section: 'checkout_trust_delivery',
+    help: 'Supporting explanation displayed beneath the normal delivery timeframe at checkout.',
+  },
+  {
+    key: 'checkout_delivery_normal_icon',
+    label: 'Normal delivery icon',
+    kind: 'select',
+    limit: 20,
+    default: 'truck',
+    section: 'checkout_trust_delivery',
+    options: [
+      { value: CHECKOUT_DELIVERY_ICONS[0], label: 'Delivery truck' },
+      { value: CHECKOUT_DELIVERY_ICONS[1], label: 'Package box' },
+      { value: CHECKOUT_DELIVERY_ICONS[2], label: 'Clock' },
+      { value: CHECKOUT_DELIVERY_ICONS[3], label: 'Calendar' },
+      { value: CHECKOUT_DELIVERY_ICONS[4], label: 'Sparkles' },
+      { value: CHECKOUT_DELIVERY_ICONS[5], label: 'No icon' },
+    ],
+    help: 'Optional subtle icon shown beside the normal delivery announcement.',
+  },
+  {
+    key: 'checkout_delivery_sale_enabled',
+    label: 'Enable sale dispatch announcement',
+    kind: 'toggle',
+    limit: 3,
+    default: 'off',
+    section: 'checkout_trust_delivery',
+    options: TOGGLE_OPTIONS,
+    help: 'Automatically replace the normal delivery box with this announcement whenever Store Admin Sale Mode is live.',
+  },
+  {
+    key: 'checkout_delivery_sale_title',
+    label: 'Sale announcement title',
+    kind: 'text',
+    limit: 80,
+    default: 'Sale Dispatch Update',
+    section: 'checkout_trust_delivery',
+    help: 'Short heading displayed on the checkout dispatch announcement while Sale Mode is live.',
+  },
+  {
+    key: 'checkout_delivery_sale_message',
+    label: 'Sale highlighted message',
+    kind: 'text',
+    limit: 160,
+    default: 'Dispatch starts after the sale ends.',
+    section: 'checkout_trust_delivery',
+    help: 'Primary dispatch expectation shown while Sale Mode is live.',
+  },
+  {
+    key: 'checkout_delivery_sale_description',
+    label: 'Sale supporting description',
+    kind: 'textarea',
+    limit: 300,
+    default: 'Orders placed during the sale will be processed once the sale concludes.',
+    section: 'checkout_trust_delivery',
+    help: 'Supporting explanation displayed beneath the sale dispatch headline.',
+  },
+  {
+    key: 'checkout_delivery_sale_estimate',
+    label: 'Optional post-sale dispatch estimate',
+    kind: 'text',
+    limit: 120,
+    default: '',
+    section: 'checkout_trust_delivery',
+    help: 'Optional note for reliable post-sale dispatch timing; leave blank to avoid promising specific dates.',
+  },
+  {
+    key: 'checkout_delivery_sale_icon',
+    label: 'Sale announcement icon',
+    kind: 'select',
+    limit: 20,
+    default: 'clock',
+    section: 'checkout_trust_delivery',
+    options: [
+      { value: CHECKOUT_DELIVERY_ICONS[2], label: 'Clock' },
+      { value: CHECKOUT_DELIVERY_ICONS[3], label: 'Calendar' },
+      { value: CHECKOUT_DELIVERY_ICONS[1], label: 'Package box' },
+      { value: CHECKOUT_DELIVERY_ICONS[0], label: 'Delivery truck' },
+      { value: CHECKOUT_DELIVERY_ICONS[4], label: 'Sparkles' },
+      { value: CHECKOUT_DELIVERY_ICONS[5], label: 'No icon' },
+    ],
+    help: 'Optional subtle icon shown beside the Sale Mode dispatch announcement.',
+  },
+
   // ------------------------------------------------------- maintenance
   {
     key: 'maintenance_enabled',
@@ -740,6 +1018,19 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
       }
       return { ok: true, value: text };
     case 'number':
+      if (
+        key === 'checkout_delivery_normal_min_days' ||
+        key === 'checkout_delivery_normal_max_days'
+      ) {
+        const parsedDays = parseDeliveryDays(text);
+        if (parsedDays === null) {
+          return {
+            ok: false,
+            error: `${field.label} must be a whole number between ${CHECKOUT_MIN_DELIVERY_DAYS} and ${CHECKOUT_MAX_DELIVERY_DAYS}.`,
+          };
+        }
+        return { ok: true, value: String(parsedDays) };
+      }
       if (text === '') return { ok: true, value: '0' };
       if (!/^[0-9]{1,10}$/.test(text)) {
         return { ok: false, error: `${field.label} must be a whole number.` };
@@ -762,6 +1053,15 @@ export function validateSettingValue(key: string, value: unknown): SettingValida
       }
       return { ok: true, value: text };
     default:
+      if (
+        (key === 'checkout_trust_reviewer_name' || key === 'checkout_trust_text') &&
+        containsContactPii(text)
+      ) {
+        return {
+          ok: false,
+          error: `${field.label} cannot contain an email address or phone number.`,
+        };
+      }
       return { ok: true, value: text };
   }
 }

@@ -24,6 +24,8 @@ import {
 } from '@/components/cart/FreeGiftCartWidgets';
 import { INDIAN_STATES, normalizeIndianMobile, normalizeIndianState, validateCheckoutContact, validateIndianAddress, checkoutFieldErrors, type CheckoutField, type FieldErrors } from '@/lib/checkout/india-validation';
 import { formatRupees } from '@/lib/store-admin/money';
+import { CheckoutDeliveryAnnouncementCard, CheckoutTrustReviewCard } from './CheckoutTrustDeliveryCards';
+import type { PublicCheckoutTrustDeliveryPayload } from '@/lib/checkout/trust-delivery-rules';
 
 interface CartItem {
   id: string;
@@ -84,9 +86,11 @@ interface Props {
   stockById?: Record<string, boolean>;
   /** Payments → Coupons. Off hides the box; the server refuses codes anyway. */
   couponsEnabled?: boolean;
+  /** Store Admin → Storefront Settings → Checkout Trust & Delivery. */
+  trustDelivery?: PublicCheckoutTrustDeliveryPayload | null;
 }
 
-export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy: serverPolicy, initialProducts, saleClock, saleLive = false, couponsEnabled = true }: Props) {
+export function CheckoutForm({ initialItems, userSession, productUnavailable = false, productIdFromQuery, marketingOptInEnabled = false, shippingPolicy: serverPolicy, initialProducts, saleClock, saleLive = false, couponsEnabled = true, trustDelivery = null }: Props) {
   const { items: bagItems, removeItem, syncPrices, isHydrated } = useCart();
   useCheckoutRefresh(saleClock);
   const [recovery, setRecovery] = useState<{ key: string; quote: PriceChangedQuote; couponCode: string | null } | null>(null);
@@ -719,7 +723,8 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
       )}
 
       <div className="grid min-w-0 grid-cols-1 items-start gap-6 lg:grid-cols-2 lg:gap-10">
-      <section aria-label="Order summary" className="min-w-0 rounded-2xl border border-[#d2d2d7] bg-white p-5 sm:p-6 lg:sticky lg:top-28">
+      <div className="min-w-0 space-y-4 lg:sticky lg:top-28">
+      <section aria-label="Order summary" className="min-w-0 rounded-2xl border border-[#d2d2d7] bg-white p-5 sm:p-6">
         <button type="button" aria-expanded={summaryOpen} aria-controls="checkout-summary-details" onClick={() => setSummaryOpen(open => !open)} className="flex w-full items-center justify-between gap-3 text-left font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#0066cc] lg:hidden">
           <span>Order summary <span aria-hidden="true">{summaryOpen ? '−' : '+'}</span></span>
           <span>{paymentUnavailable ? 'Unavailable' : formatRupees(totals.totalPaise)}</span>
@@ -882,6 +887,9 @@ export function CheckoutForm({ initialItems, userSession, productUnavailable = f
         </div>
         </div>
       </section>
+      {trustDelivery?.trust ? <CheckoutTrustReviewCard item={trustDelivery.trust} /> : null}
+      {trustDelivery?.delivery ? <CheckoutDeliveryAnnouncementCard announcement={trustDelivery.delivery} /> : null}
+      </div>
 
       <form onSubmit={handleSubmit} noValidate className="min-w-0 space-y-5 rounded-2xl border border-[#d2d2d7] bg-white p-5 sm:p-6">
         <h2 className="text-xl font-semibold">Your details</h2>

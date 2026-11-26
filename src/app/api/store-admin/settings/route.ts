@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { assertSameOrigin } from '@/lib/platform/api-guard';
 import { requireStoreRole } from '@/lib/store-admin/auth';
 import { writeAudit } from '@/lib/store-admin/audit';
+import { isCheckoutTrustDeliveryKey } from '@/lib/checkout/trust-delivery-rules';
 import { getStoreSettings, updateStoreSettings } from '@/lib/store-admin/settings';
 import { isShippingMoneyKey, isShippingSetting, validateShippingRupees } from '@/lib/store-admin/settings-rules';
 
@@ -99,6 +100,11 @@ export async function PUT(request: Request) {
     revalidatePath('/store-admin/settings/shipping');
     revalidatePath('/cart');
     revalidatePath('/bag');
+    revalidatePath('/checkout');
+  }
+
+  if (result.changes.some((change) => isCheckoutTrustDeliveryKey(change.key))) {
+    revalidatePath('/store-admin/settings/storefront');
     revalidatePath('/checkout');
   }
 

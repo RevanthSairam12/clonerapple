@@ -3,6 +3,7 @@ import { CheckoutForm } from '@/components/checkout/CheckoutForm';
 import { buildCartLineId } from '@/lib/cart/cart-id';
 import { parseCheckoutQuantity } from '@/lib/checkout/checkout-decision';
 import { readCheckoutConfiguration } from '@/lib/checkout/settings';
+import { getPublicCheckoutTrustDelivery } from '@/lib/checkout/trust-delivery-server';
 import { readSaleState } from '@/lib/storefront/sale-state';
 import { isOn } from '@/lib/store-admin/customer-rules';
 import { readCustomerSettings } from '@/lib/store-admin/customer-settings';
@@ -25,6 +26,9 @@ export default async function CheckoutPage({ searchParams }: Props) {
   const checkoutConfiguration = await readCheckoutConfiguration();
   const saleClock = await readSaleState();
   const { products, saleLive } = await getStorefrontRefs(saleClock);
+  const trustDelivery = checkoutConfiguration.ok
+    ? await getPublicCheckoutTrustDelivery({ settings: checkoutConfiguration.settings, saleLive })
+    : null;
   const { productId: rawProductId, variantId, qty } = await searchParams;
 
   // The same availability the bag and detail pages show. Checkout re-checks
@@ -116,6 +120,7 @@ export default async function CheckoutPage({ searchParams }: Props) {
         saleClock={{ enabled: saleClock.enabled, databaseNow: saleClock.databaseNow, startsAt: saleClock.startsAt, endsAt: saleClock.endsAt }}
         stockById={stockById}
         couponsEnabled={checkoutConfiguration.ok && isOn(checkoutConfiguration.settings.coupons_enabled)}
+        trustDelivery={trustDelivery}
       />
       </main>
       <GlobalFooter />
