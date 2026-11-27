@@ -21,7 +21,9 @@ import type { StorefrontProductRef } from '@/lib/catalog/client-catalog';
 import { verifyAvailabilityLines } from '@/lib/storefront/use-availability';
 import { useRouter } from 'next/navigation';
 import { stockBlocked } from '@/lib/storefront/availability-rules';
-import { priceCartLines, shippingNudge, type SaleRefreshClock } from '@/lib/checkout/client-quote';
+import { priceCartLines, type SaleRefreshClock } from '@/lib/checkout/client-quote';
+import { buildFreeShippingBanner } from '@/lib/checkout/shipping-banner';
+import { FreeShippingProgressBar } from '@/components/cart/FreeShippingProgressBar';
 import { useCheckoutRefresh } from '@/lib/checkout/useCheckoutRefresh';
 import type { SelectionPrice } from '@/lib/storefront/selection';
 import type { SearchResultItem } from '@/lib/search/searchService';
@@ -169,7 +171,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
   });
   const discountAmount = coupon.totals.discountPaise / 100;
   const totalAmount = coupon.totals.totalPaise / 100;
-  const nudge = shippingNudge(subtotalPaise, shippingPolicy, coupon.totals.shippingPaise);
+  const freeShippingBanner = buildFreeShippingBanner(subtotalPaise, shippingPolicy, coupon.totals.shippingPaise);
   const { evaluation: giftEval } = useCartFreeGifts({
     items: availableItems.map((item) => ({
       id: item.id,
@@ -303,7 +305,7 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
           </div>
 
           {/* Delivery & Assurance Strip */}
-          <div className="mb-8 p-4 rounded-2xl bg-[#f5f5f7] border border-black/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#1d1d1f]">
+          <div className={`${freeShippingBanner ? 'mb-4' : 'mb-8'} p-4 rounded-2xl bg-[#f5f5f7] border border-black/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#1d1d1f]`}>
             <div className="flex items-center gap-2.5">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-[#0071e3] shadow-2xs font-bold text-sm">
                 🚚
@@ -316,6 +318,8 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
               <span>Review your bag before checkout</span>
             </div>
           </div>
+
+          <FreeShippingProgressBar banner={freeShippingBanner} className="mb-8" />
 
           {/* Header Title */}
           <div className="mb-8 flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-3 border-b border-[#e5e5ea] pb-4">
@@ -581,7 +585,6 @@ export function CartPageView({ initialProducts, shippingPolicy, saleLive, saleCl
                       />
                     </div>
                   ) : null}
-                  {nudge && <p className="mb-4 text-xs text-[#6e6e73]">{nudge}</p>}
                   {!shippingPolicy && <p role="alert" className="mb-4 text-sm text-red-700">Shipping rates are temporarily unavailable. Please return shortly to check out.</p>}
                   {shippingPolicy && couponsEnabled && (
                     <div className="mb-4">
