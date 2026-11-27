@@ -66,8 +66,8 @@ export const FOOTER_DIRECTORY: FooterColumn[] = [
             "href": "/in/shop/iphone/accessories/cable-plug-case"
           },
           {
-            "label": "Mobile Cases",
-            "href": "/in/shop/iphone/accessories/mobile-cases"
+            "label": "Screen Protectors",
+            "href": "/in/shop/iphone/accessories/screen-protectors"
           },
           {
             "label": "Power Adapters & Cables",

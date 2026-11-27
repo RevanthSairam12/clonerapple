@@ -113,12 +113,12 @@ export const PAGE_SEARCH_ITEMS: SearchResultItem[] = [
   {
     id: 'page-mobile-cases',
     type: 'page',
-    name: 'Mobile Cases',
-    subtitle: 'Slim, clear, leather, and rugged cases for iPhone, Samsung & more',
+    name: 'Screen Protectors',
+    subtitle: 'Tempered glass, anti-glare, and privacy screen protectors for iPhone & Android',
     category: 'Store',
-    href: '/in/shop/iphone/accessories/mobile-cases',
+    href: '/in/shop/iphone/accessories/screen-protectors',
     badges: ['Store', 'Accessories'],
-    keywords: ['mobile', 'cases', 'phone case', 'iphone', 'samsung', 'oneplus', 'cover', 'rugged', 'clear', 'leather', 'accessories'],
+    keywords: ['screen protector', 'tempered glass', 'privacy glass', 'anti glare', 'iphone', 'samsung', 'display protection', 'accessories'],
   },
 ];
 
@@ -127,7 +127,7 @@ export const POPULAR_SEARCH_LINKS: QuickSuggestion[] = [
   { label: 'Power Adapter', href: '/search?q=adapter' },
   { label: 'Wired Earphones', href: '/search?q=earphones' },
   { label: 'AirPods Cases', href: '/search?q=airpods' },
-  { label: 'Mobile Cases', href: '/search?q=case' },
+  { label: 'Screen Protectors', href: '/in/shop/iphone/accessories/screen-protectors' },
   { label: 'Crystal Clear MagSafe Cases', href: '/search?q=clear' },
   { label: 'AeroWeave Textile Cases', href: '/search?q=aeroweave' },
   { label: 'Gadzio Book Air', href: '/search?q=book' },

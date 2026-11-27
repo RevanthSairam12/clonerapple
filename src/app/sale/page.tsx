@@ -61,7 +61,7 @@ export default async function SalePage() {
     categoryLinks: [
       { label: 'Sale', href: '/sale', active: true },
       { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
-      { label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+      { label: 'Screen Protectors', href: '/in/shop/iphone/accessories/screen-protectors' },
       { label: 'Chargers & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
       { label: 'Audio', href: '/in/shop/iphone/accessories/wired-earphones' },
       { label: 'AirPods Cases', href: '/in/shop/iphone/accessories/airpods-case' },

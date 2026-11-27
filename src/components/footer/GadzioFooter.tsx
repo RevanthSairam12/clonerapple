@@ -49,7 +49,7 @@ const FOOTER_COLUMNS = [
     title: 'Shop',
     links: [
       { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
-      { label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+      { label: 'Screen Protectors', href: '/in/shop/iphone/accessories/screen-protectors' },
       { label: 'Power & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
       { label: 'Wired Earphones', href: '/in/shop/iphone/accessories/wired-earphones' },
       { label: 'Cable & Plug Cases', href: '/in/shop/iphone/accessories/cable-plug-case' },

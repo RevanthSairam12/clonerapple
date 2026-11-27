@@ -9,7 +9,7 @@ import {
 } from './types';
 
 const SLUG = 'mobile-cases';
-const CATEGORY = 'Mobile Cases';
+const CATEGORY = 'Screen Protectors';
 const IMG = '/sites/www-apple-com-736d3707/root-8a5edab2/images/tiles';
 const IMG_A = `${IMG}/1_iph_case_large.jpg`;
 const IMG_B = `${IMG}/5_iph_case_large_2x.jpg`;
@@ -24,10 +24,10 @@ const SAND = { name: 'Desert Sand', hex: '#d5c4b0' };
 
 export const CONFIG: CategoryConfig = {
   slug: SLUG,
-  title: 'Mobile Cases',
-  subhead: 'One case, total confidence. Slim, clear, leather, and rugged cases for the phones people actually carry — across iPhone, Samsung, and OnePlus.',
-  breadcrumbLeaf: 'Mobile Cases',
-  countNoun: 'mobile cases',
+  title: 'Screen Protectors',
+  subhead: 'Edge-to-edge clarity and everyday scratch defense. Tempered glass and privacy screen protectors engineered for a bubble-free fit across iPhone and Android devices.',
+  breadcrumbLeaf: 'Screen Protectors',
+  countNoun: 'screen protectors',
   categoryLinks: buildCategoryLinks(SLUG),
   // Options are limited to facet values carried by at least one remaining
   // product in PRODUCTS. Full pre-trim lists: ../removed-products/mobile-cases.ts
@@ -44,11 +44,11 @@ export const CONFIG: CategoryConfig = {
   quickPillFacet: 'model',
   quickPills: ['iPhone 17 Pro Max', 'iPhone 17 Pro'],
   disclaimer:
-    'iPhone is a trademark of Apple Inc. Samsung and Galaxy are trademarks of Samsung Electronics. OnePlus is a trademark of OnePlus Technology. Gadzio cases are independently designed for device compatibility and are not affiliated with, sponsored by, or endorsed by these companies.',
+    'iPhone is a trademark of Apple Inc. Samsung and Galaxy are trademarks of Samsung Electronics. OnePlus is a trademark of OnePlus Technology. Gadzio screen protectors are independently designed for device compatibility and are not affiliated with, sponsored by, or endorsed by these companies.',
   seo: {
-    title: 'Mobile Cases | Gadzio Store',
+    title: 'Screen Protectors | Gadzio Store',
     description:
-      'Shop mobile cases for iPhone 17, iPhone 16 Pro, Samsung Galaxy S25, and OnePlus 13 — slim silicone, clear, leather, and rugged armor cases from Gadzio, Spigen, OtterBox, and more.',
+      'Shop tempered glass, anti-glare, and privacy screen protectors for iPhone and Android — crystal-clear display protection with easy bubble-free installation.',
   },
 };
 

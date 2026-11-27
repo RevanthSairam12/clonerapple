@@ -25,7 +25,7 @@ import '@/components/collection/collection.css';
 const CATEGORIES = [
   'All',
   'Cases & Protection',
-  'Mobile Cases',
+  'Screen Protectors',
   'Power & Cables',
   'Wired Earphones',
   'Cable & Plug Cases',
@@ -35,7 +35,7 @@ const CATEGORIES = [
 // Top navigation rail. Fixed routes, not catalogue data.
 const ACCESSORY_NAV: { label: string; href: string }[] = [
   { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
-  { label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+  { label: 'Screen Protectors', href: '/in/shop/iphone/accessories/screen-protectors' },
   { label: 'Power & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
   { label: 'Wired Earphones', href: '/in/shop/iphone/accessories/wired-earphones' },
   { label: 'Cable & Plug Case', href: '/in/shop/iphone/accessories/cable-plug-case' },

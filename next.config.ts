@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
   },
   redirects() {
     return [
+      { source: '/in/shop/iphone/accessories/mobile-cases', destination: '/in/shop/iphone/accessories/screen-protectors', statusCode: 301 },
       { source: '/admin', destination: '/store-admin/website', permanent: true },
       { source: '/admin/login', destination: '/store-admin/login?next=/store-admin/website', permanent: true },
       { source: '/admin/content/:key', destination: '/store-admin/website/content/:key', permanent: true },

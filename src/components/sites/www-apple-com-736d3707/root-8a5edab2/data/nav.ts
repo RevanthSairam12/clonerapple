@@ -47,7 +47,7 @@ export const DEFAULT_HEADER_PROMO = {
 
 export const DEFAULT_SECONDARY_LINKS: { label: string; href: string; ariaLabel?: string }[] = [
   { label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
-  { label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+  { label: 'Screen Protectors', href: '/in/shop/iphone/accessories/screen-protectors' },
   { label: 'Power Adapters & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
   { label: 'Wired Earphones', href: '/in/shop/iphone/accessories/wired-earphones' },
   { label: 'Shipping Policy', href: '/shipping-policy' },
@@ -106,9 +106,9 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     key: "accessories",
-    label: "Mobile Cases",
-    href: "/in/shop/iphone/accessories/mobile-cases",
-    ariaLabel: "Mobile Cases",
+    label: "Screen Protectors",
+    href: "/in/shop/iphone/accessories/screen-protectors",
+    ariaLabel: "Screen Protectors",
     wordmark: {
       viewBox: "0 0 1 1",
       width: 1,
@@ -152,7 +152,7 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: false,
         links: [
           { label: "Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: false },
-          { label: "Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases", elevated: false },
+          { label: "Screen Protectors", href: "/in/shop/iphone/accessories/screen-protectors", elevated: false },
           { label: "Wired Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: false },
           { label: "AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: false }
         ]
@@ -250,7 +250,7 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: true,
         links: [
           { label: "Explore All Cases", href: "/in/shop/iphone/accessories/cases-protection", elevated: true },
-          { label: "Explore Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases", elevated: true },
+          { label: "Explore Screen Protectors", href: "/in/shop/iphone/accessories/screen-protectors", elevated: true },
           { label: "Explore AirPods Cases", href: "/in/shop/iphone/accessories/airpods-case", elevated: true },
           { label: "Search Cases", href: "/search?q=case", elevated: true }
         ]
@@ -288,7 +288,7 @@ export const NAV_MENUS: FlyoutMenu[] = [
         elevatedGroup: true,
         links: [
           { label: "Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection", elevated: true },
-          { label: "Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases", elevated: true },
+          { label: "Screen Protectors", href: "/in/shop/iphone/accessories/screen-protectors", elevated: true },
           { label: "Power Adapters & Cables", href: "/in/shop/iphone/accessories/power-adapter-cable", elevated: true },
           { label: "Wired Earphones", href: "/in/shop/iphone/accessories/wired-earphones", elevated: true },
           { label: "Cable & Plug Cases", href: "/in/shop/iphone/accessories/cable-plug-case", elevated: true },
@@ -364,7 +364,7 @@ export const SEARCH_PANEL: SearchPanel = {
   quickLinksHeading: "Quick Collections",
   quickLinks: [
     { label: "Cases & Protection", href: "/in/shop/iphone/accessories/cases-protection" },
-    { label: "Mobile Cases", href: "/in/shop/iphone/accessories/mobile-cases" },
+    { label: "Screen Protectors", href: "/in/shop/iphone/accessories/screen-protectors" },
     { label: "Power Adapters & Cables", href: "/in/shop/iphone/accessories/power-adapter-cable" },
     { label: "Wired Earphones", href: "/in/shop/iphone/accessories/wired-earphones" },
     { label: "Cable & Plug Cases", href: "/in/shop/iphone/accessories/cable-plug-case" },

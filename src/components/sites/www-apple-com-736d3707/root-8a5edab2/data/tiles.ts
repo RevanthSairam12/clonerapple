@@ -166,7 +166,7 @@ export const NEW_UI_HERO_TILES: Tile[] = [
       },
       {
         "label": "Shop Collection",
-        "href": "/in/shop/iphone/accessories/mobile-cases",
+        "href": "/in/shop/iphone/accessories/screen-protectors",
         "ariaLabel": "Shop Collection, MagSafe Armor",
         "variant": "secondary",
         "internal": true
@@ -464,9 +464,9 @@ export const PROMO_TILES: Tile[] = [
     "group": "promo",
     "index": 4,
     "theme": "light",
-    "href": "/in/shop/iphone/accessories/mobile-cases",
+    "href": "/in/shop/iphone/accessories/screen-protectors",
     "internal": true,
-    "headline": "Mobile Cases",
+    "headline": "Screen Protectors",
     "headlineLogo": null,
     "subhead": [
       {
@@ -481,15 +481,15 @@ export const PROMO_TILES: Tile[] = [
     },
     "ctas": [
       {
-        "label": "Explore cases",
-        "href": "/in/shop/iphone/accessories/mobile-cases",
-        "ariaLabel": "Explore cases",
+        "label": "Explore Protectors",
+        "href": "/in/shop/iphone/accessories/screen-protectors",
+        "ariaLabel": "Explore Protectors",
         "variant": "primary",
         "internal": true
       },
       {
         "label": "Shop now",
-        "href": "/in/shop/iphone/accessories/mobile-cases",
+        "href": "/in/shop/iphone/accessories/screen-protectors",
         "ariaLabel": "Shop now",
         "variant": "secondary",
         "internal": true

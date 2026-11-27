@@ -86,7 +86,7 @@ export interface CategoryLink {
 /** Canonical accessories sub-navigation, shared by every category page. */
 export const ACCESSORY_NAV: { slug: string; label: string; href: string }[] = [
   { slug: 'cases-protection', label: 'Cases & Protection', href: '/in/shop/iphone/accessories/cases-protection' },
-  { slug: 'mobile-cases', label: 'Mobile Cases', href: '/in/shop/iphone/accessories/mobile-cases' },
+  { slug: 'mobile-cases', label: 'Screen Protectors', href: '/in/shop/iphone/accessories/screen-protectors' },
   { slug: 'power-adapter-cable', label: 'Power & Cables', href: '/in/shop/iphone/accessories/power-adapter-cable' },
   { slug: 'wired-earphones', label: 'Wired Earphones', href: '/in/shop/iphone/accessories/wired-earphones' },
   { slug: 'cable-plug-case', label: 'Cable & Plug Case', href: '/in/shop/iphone/accessories/cable-plug-case' },
